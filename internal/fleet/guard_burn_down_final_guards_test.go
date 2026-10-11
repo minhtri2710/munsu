@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -373,6 +374,23 @@ func TestGateRefuseFromCWD(t *testing.T) {
 			want: "classifying identity: git rev-parse --git-dir",
 		},
 		{
+			// darwin still reports a removed cwd by path, so there the refusal comes
+			// from resolving that path; linux fails os.Getwd and takes the first branch.
+			name: "removed working directory refuses",
+			setup: func(t *testing.T) string {
+				if runtime.GOOS == "windows" {
+					t.Skip("a process cannot remove its own working directory on windows")
+				}
+				gone := t.TempDir()
+				t.Chdir(gone)
+				if err := os.RemoveAll(gone); err != nil {
+					t.Fatal(err)
+				}
+				return ""
+			},
+			want: "classifying identity: ",
+		},
+		{
 			name: "ordinary checkout passes",
 			setup: func(t *testing.T) string {
 				return initRepo(t, t.TempDir())
@@ -390,8 +408,9 @@ func TestGateRefuseFromCWD(t *testing.T) {
 			t.Setenv("NO_MISTAKES_GATE", "")
 			os.Unsetenv("NO_MISTAKES_GATE")
 			t.Setenv("NM_HOME", filepath.Join(t.TempDir(), ".no-mistakes"))
-			cwd := tc.setup(t)
-			t.Chdir(cwd)
+			if cwd := tc.setup(t); cwd != "" {
+				t.Chdir(cwd)
+			}
 
 			err := GateRefuseFromCWD()
 			if tc.want == "" {

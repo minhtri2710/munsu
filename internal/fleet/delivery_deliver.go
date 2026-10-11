@@ -323,6 +323,9 @@ func prevalidateDeliveryTask(c *taskauthority.Canonical, agg taskauthority.Aggre
 	if err := c.DeliveryAuthorizationBlocker(tid); err != nil {
 		return err
 	}
+	if agg.Worktree == nil {
+		return fmt.Errorf("delivery requires the bound worktree of task %s", agg.TaskID)
+	}
 	observed, err := observeTree(agg.Worktree.Path)
 	if err != nil {
 		return fmt.Errorf("delivery of task %s: %w", agg.TaskID, err)

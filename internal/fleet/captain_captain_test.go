@@ -1661,6 +1661,14 @@ func TestCaptainIdentity(t *testing.T) {
 			},
 			want: "destination is parent home itself",
 		},
+		{
+			name: "handoff allows a captain home distinct from the parent",
+			run: func(t *testing.T) error {
+				parent, captain := seedHandoffPair(t)
+				seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
+				return Handoff(parent, captain, []string{"TASK-1"})
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

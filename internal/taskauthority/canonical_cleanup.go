@@ -70,10 +70,14 @@ func (c *Canonical) BeginCleanup(op domain.Operation, req CanonicalBeginCleanupR
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is %s; the cleanup claim requires the retired phase", cur.TaskID, cur.Generation, cur.Phase)
 		}
 		// Retire commits the cleanup claim atomically with the transition to
-		// retired, so a retired generation always carries one; Begin only
-		// continues an active claim, and checkCleanupFence has already required
-		// a stored claim, in ANY status, to carry the exact request identity.
+		// retired, so a retired generation carries one; Begin only continues an
+		// active claim. checkCleanupFence has already required a stored claim,
+		// in ANY status, to carry the exact request identity, but it passes a
+		// missing claim, which a hand-edited document can leave.
 		claim := cur.CleanupClaim
+		if claim == nil {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no cleanup claim; refusing to claim", cur.TaskID, cur.Generation)
+		}
 		if claim.Status == CleanupActive {
 			return cur, nil // already claimed by this cleanup under the exact identity: no-op
 		}

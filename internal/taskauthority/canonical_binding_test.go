@@ -181,16 +181,6 @@ func TestCanonicalBindEndpoint(t *testing.T) {
 	}
 }
 
-func TestCanonicalBindEndpointRequiresWorktree(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-no-wt", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("bind endpoint without worktree = %v, want ErrConflict", err)
-	}
-}
-
 // stepAddHold adds a hold on one dispatch action of task t1.
 func stepAddHold(t *testing.T, c *Canonical, action DispatchAction) {
 	t.Helper()
@@ -241,6 +231,10 @@ func TestTaskBindingAndDispatchRefusals(t *testing.T) {
 			mustStep(t, stepBlock(t, c, "t1", 3))
 			mustStep(t, stepUnblock(t, c, "t1", 4))
 			return bindEndpoint(t, c, 5)
+		}},
+		{name: "bind endpoint refuses a task with no worktree", class: ErrConflict, want: "bind endpoint requires a bound worktree", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return bindEndpoint(t, c, 1)
 		}},
 		{name: "bind endpoint allows a queued task with a worktree and no endpoint", run: func(t *testing.T, c *Canonical) error {
 			mustBindWorktree(t, c, "t1")

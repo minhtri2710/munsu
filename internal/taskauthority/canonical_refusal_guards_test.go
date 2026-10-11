@@ -302,6 +302,18 @@ func TestTaskLifecycleRefusals(t *testing.T) {
 			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
 			return stepReopen(t, c, "t1", 2)
 		}},
+		{name: "reopen refuses a superseded generation", class: ErrConflict, want: "is not current; it is superseded and cannot be mutated", run: func(t *testing.T, c *Canonical) error {
+			prec := supersededSource(t, c)
+			req := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, Reason: "reopen"}
+			_, err := c.Reopen(mustOperation(t, "op-reopen-superseded", req), req)
+			return err
+		}},
+		{name: "reopen refuses a task reserved for transfer", class: ErrConflict, want: "is reserved for transfer; unrelated mutations fail closed", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			mustReserveTransfer(t, c, "t1", preconditionOf(1, 2), "dest-home")
+			return stepReopen(t, c, "t1", 3)
+		}},
 
 		{name: "promote refuses a current kind that is not scout", class: ErrInvalidInput, want: "promotion requires scout -> ship kind promotion", run: func(t *testing.T, c *Canonical) error {
 			return promote(t, c, "t1", mustDoneScout(t, c, "t1"), func(r *CanonicalPromoteRequest) { r.CurrentKind = "ship" })

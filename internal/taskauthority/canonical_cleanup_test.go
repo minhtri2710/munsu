@@ -145,6 +145,11 @@ func TestCleanupClaimRefusals(t *testing.T) {
 			mustCreate(t, c, "t1")
 			return beginCleanup(t, c, 1, 1, claimOp, 1)
 		}},
+		{name: "begin cleanup refuses a retired task with no claim", class: ErrConflict, want: "has no cleanup claim; refusing to claim", run: func(t *testing.T, c *Canonical) error {
+			retired(t, c)
+			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate { agg.CleanupClaim = nil; return agg })
+			return beginCleanup(t, c, 1, currentRev(t, c), claimOp, 1)
+		}},
 		{name: "begin cleanup refuses an aborted claim", class: ErrConflict, want: "abort is terminal and cleanup is not re-activated", run: func(t *testing.T, c *Canonical) error {
 			retired(t, c)
 			reconcileCleanup(t, c, "t1", 1, CleanupAborted)

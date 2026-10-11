@@ -100,9 +100,6 @@ func outcomeFromFFReason(reason SafeFFReason, err error) UpdateOutcome {
 func outcomeFromFFError(err error) UpdateOutcome {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "tracked changes"),
-		strings.Contains(msg, "unignored untracked"):
-		return Dirty
 	case strings.Contains(msg, "remote origin"),
 		strings.Contains(msg, "origin/HEAD"),
 		strings.Contains(msg, "does not exist locally"):

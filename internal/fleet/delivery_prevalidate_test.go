@@ -96,3 +96,40 @@ func TestDeliverPrevalidatesTheTaskBeforeAnyIntent(t *testing.T) {
 		})
 	}
 }
+
+// prevalidateDeliveryTask reads the worktree from the aggregate Deliver read
+// before the canonical blocker re-read the task, so an aggregate without a
+// worktree is refused rather than dereferenced.
+func TestPrevalidateDeliveryTaskRequiresTheBoundWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		unbind  bool
+		wantErr string
+	}{
+		{name: "an aggregate with no worktree blocks", unbind: true, wantErr: "delivery requires the bound worktree of task t1"},
+		{name: "an aggregate with the bound worktree passes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newFleetCanonical(t)
+			mustWorkingShipTask(t, c, "t1")
+			agg, err := c.Get(mustFleetTaskID(t, "t1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.unbind {
+				agg.Worktree = nil
+			}
+
+			err = prevalidateDeliveryTask(c, agg, deliverRequest())
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("prevalidateDeliveryTask = %v, want it accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("prevalidateDeliveryTask = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

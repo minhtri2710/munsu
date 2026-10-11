@@ -54,18 +54,6 @@ func mkDir(t *testing.T, root, name string) {
 	}
 }
 
-// initRemote creates a bare repo and sets it as origin on the given repo,
-// then pushes main and sets origin/HEAD.
-func initRemote(t *testing.T, localRoot string) string {
-	t.Helper()
-	bare := t.TempDir()
-	runInstallRootCmd(t, bare, "git", "init", "--bare")
-	runInstallRootCmd(t, localRoot, "git", "remote", "add", "origin", bare)
-	runInstallRootCmd(t, localRoot, "git", "push", "-u", "origin", "main")
-	runInstallRootCmd(t, bare, "git", "symbolic-ref", "HEAD", "refs/heads/main")
-	return bare
-}
-
 // --- TestResolveInstallRoot_Precedence ---
 
 // TestResolveInstallRoot_Tier1_RepoOpt verifies that --repo is checked first
@@ -365,6 +353,7 @@ func TestUpdateIn_DefaultBranch(t *testing.T) {
 		checkout string // branch to switch to before updating, if any
 		head     string // origin/HEAD target to plant, if any
 		dirty    bool   // modify a tracked file before updating
+		untrack  bool   // add an unignored untracked file before updating
 		detach   bool   // detach HEAD before updating
 		wantErr  string // empty: the update succeeds
 	}{
@@ -372,6 +361,7 @@ func TestUpdateIn_DefaultBranch(t *testing.T) {
 		{name: "refuses a checkout on another branch", initial: "main", checkout: "develop", wantErr: "does not match default branch"},
 		{name: "refuses an origin/HEAD outside refs/remotes/origin/", initial: "main", head: "refs/remotes/upstream/main", wantErr: "unexpected origin/HEAD symbolic ref format"},
 		{name: "refuses a checkout with uncommitted changes", initial: "main", dirty: true, wantErr: "uncommitted changes"},
+		{name: "refuses a checkout with an unignored untracked file", initial: "main", untrack: true, wantErr: "uncommitted changes"},
 		{name: "refuses a detached HEAD", initial: "main", detach: true, wantErr: "detached HEAD"},
 		{name: "updates a checkout on the resolved default", initial: "main"},
 	}
@@ -402,6 +392,9 @@ func TestUpdateIn_DefaultBranch(t *testing.T) {
 			runInstallRootCmd(t, repo, "git", "reset", "--hard", "HEAD~1")
 			if tt.dirty {
 				writeFile(t, repo, "cmd/munsu/main.go", "package main\n\nfunc main() { /* dirty */ }\n")
+			}
+			if tt.untrack {
+				writeFile(t, repo, "scratch.txt", "x\n")
 			}
 			if tt.detach {
 				runInstallRootCmd(t, repo, "git", "checkout", "--detach")

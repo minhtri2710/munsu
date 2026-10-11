@@ -177,7 +177,7 @@ func gateCommonDir(commonDir string) bool {
 }
 
 // GateAgentEnvSet reports whether the NO_MISTAKES_GATE marker is in the
-// environment, even empty. It is the one reader of the marker.
+// environment, even empty. Every reader of the marker goes through it.
 func GateAgentEnvSet() bool {
 	_, present := os.LookupEnv("NO_MISTAKES_GATE")
 	return present
@@ -227,9 +227,10 @@ func GateRefusalError(path string) error {
 // GateRefuseFromCWD checks the current working directory for gate agent signals.
 // Returns nil (no error) when this is a normal session — neither the
 // NO_MISTAKES_GATE env marker nor a gate checkout path is detected.
-// When either signal is present, or the checkout cannot be classified because
-// git is unavailable, returns a non-nil error formatted for direct display to
-// the user, mirroring firstmate's fm-refuse-if-gate-agent.
+// When either signal is present, or the working directory cannot be classified
+// (git unavailable, a path that cannot be resolved), returns a non-nil error
+// formatted for direct display to the user, mirroring firstmate's
+// fm-refuse-if-gate-agent.
 func GateRefuseFromCWD() error {
 	// 1. Env marker check: NO_MISTAKES_GATE present (even empty) → immediate refuse.
 	if GateAgentEnvSet() {
@@ -240,12 +241,12 @@ func GateRefuseFromCWD() error {
 		return GateRefusalError(cwd)
 	}
 
-	// 2. Path check: detect a gate checkout from cwd. A classification
-	// failure (git unavailable or unresolvable) refuses; only a cwd that
-	// cannot be read at all passes through.
+	// 2. Path check: detect a gate checkout from cwd. A working directory that
+	// cannot be determined or classified (git unavailable, a path that cannot
+	// be resolved) refuses.
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil
+		return fmt.Errorf("classifying identity: working directory: %w", err)
 	}
 	return GateRefusalError(cwd)
 }

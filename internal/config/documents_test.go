@@ -410,6 +410,9 @@ func TestToolStepRefusals(t *testing.T) {
 		{"unknown review adapter", func(*testing.T) error {
 			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "bogus"}, Forge: &ToolEntry{Adapter: "github"}})
 		}, "review tool has unknown adapter \"bogus\""},
+		{"known review adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "gitlab"}})
+		}, ""},
 		{"github forge with path", func(*testing.T) error {
 			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Path: "/usr/bin/gh-axi"}})
 		}, "forge adapter github does not accept path or args"},
@@ -437,6 +440,10 @@ func TestToolStepRefusals(t *testing.T) {
 			_, err := (ResolvedSnapshot{}).WithSteps(baselineStep(), baselineStep())
 			return err
 		}, "resolved snapshot is empty"},
+		{"non-empty snapshot", func(t *testing.T) error {
+			_, err := snapshot(t).WithSteps(baselineStep(), baselineStep())
+			return err
+		}, ""},
 		{"configured tool not Ready at probe", func(*testing.T) error {
 			_, err := ResolveProjectWithToolProbe(base, facts, probe("absent"))
 			return err
