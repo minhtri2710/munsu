@@ -283,7 +283,7 @@ func isUnmanagedCaptainHome(homePath string) bool {
 		return false
 	}
 	// Has .munsu-captain-home marker but no .git worktree file.
-	_, markerErr := os.Stat(filepath.Join(homePath, ProvenanceMarkerName))
+	_, markerErr := os.Stat(filepath.Join(homePath, home.CaptainProvenanceMarkerName))
 	if markerErr != nil {
 		return false
 	}

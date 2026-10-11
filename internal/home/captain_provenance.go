@@ -25,6 +25,25 @@ var ErrCaptainMarkerUnusable = errors.New("captain provenance marker is missing 
 // marker's id alongside it.
 var ErrCaptainHomeMismatch = errors.New("captain provenance marker names another home")
 
+// IsCaptainHome is the one definition of a captain home: it carries the
+// .munsu-captain-home marker or the .captain-provenance file, present at all
+// (Lstat, so a dangling symlink counts). Only the General's home carries
+// neither. Callers that need the id run ValidateCaptainProvenance on a true
+// result; an Lstat failure other than absence is returned, never read as the
+// General's home.
+func IsCaptainHome(homePath string) (bool, error) {
+	for _, name := range []string{CaptainProvenanceMarkerName, CaptainProvenanceName} {
+		_, err := os.Lstat(filepath.Join(homePath, name))
+		if err == nil {
+			return true, nil
+		}
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
 func CanonicalCaptainHome(homePath string) (string, error) {
 	canonical, err := filepath.EvalSymlinks(homePath)
 	if err != nil {

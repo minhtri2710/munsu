@@ -21,7 +21,7 @@ func captainBackedSoldierReport(t *testing.T, taskID string) (soldierHome, capta
 	captainHome = t.TempDir()
 
 	// The provenance marker is what makes this a captain home.
-	if err := os.WriteFile(filepath.Join(captainHome, orchestrator.ProvenanceMarkerName),
+	if err := os.WriteFile(filepath.Join(captainHome, home.CaptainProvenanceMarkerName),
 		[]byte("captain=test-captain\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

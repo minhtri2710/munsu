@@ -511,6 +511,9 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 			}
 			id, rank, readErr := ReadHomeIdentity(dir)
 			_, validateErr := ValidateCaptainProvenance(dir)
+			if captain, err := IsCaptainHome(dir); err != nil || captain != (tc.wantRank != RankGeneral) {
+				t.Fatalf("IsCaptainHome = (%v, %v), want captain = %v (only the General's home carries neither file)", captain, err, tc.wantRank != RankGeneral)
+			}
 			if tc.wantSub != "" {
 				for name, err := range map[string]error{"ReadHomeIdentity": readErr, "ValidateCaptainProvenance": validateErr} {
 					if err == nil {

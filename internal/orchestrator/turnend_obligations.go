@@ -563,7 +563,3 @@ func writeObligationsFile(p string, obligations []Obligation) error {
 	}
 	return os.WriteFile(p, []byte(b.String()), 0644)
 }
-
-// ProvenanceMarkerName is the marker file written to a seeded captain home root.
-// Duplicated from captain package to avoid import cycle.
-const ProvenanceMarkerName = ".munsu-captain-home"

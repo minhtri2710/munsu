@@ -21,7 +21,7 @@ func deliverEnv(t *testing.T, withParent bool) (soldierHome, captainHome string)
 	soldierHome = t.TempDir()
 	if withParent {
 		captainHome = t.TempDir()
-		if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("captain=test-captain\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(captainHome, home.CaptainProvenanceMarkerName), []byte("captain=test-captain\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -42,7 +42,7 @@ func TestDeliverWake_SelfAcknowledgesRegardlessOfParent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			soldierHome, parentHome := deliverEnv(t, true)
 			if !tt.captainParent {
-				os.Remove(filepath.Join(parentHome, ProvenanceMarkerName))
+				os.Remove(filepath.Join(parentHome, home.CaptainProvenanceMarkerName))
 			}
 
 			receipt, err := DeliverWake(DeliverRequest{

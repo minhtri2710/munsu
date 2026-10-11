@@ -23,7 +23,7 @@ func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, erro
 	if ownerHome == "" {
 		ownerHome = home
 	}
-	bk, _, err := p.resolve(ownerHome, meta)
+	bk, _, err := boundBackend(ownerHome, meta, p.resolve)
 	if err != nil {
 		return false, err
 	}

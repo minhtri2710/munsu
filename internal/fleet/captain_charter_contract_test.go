@@ -341,7 +341,7 @@ func TestSeedCaptainRewritesOnlyAnUnusableMarker(t *testing.T) {
 	if err := SeedCaptain(opts); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(homePath, ProvenanceMarkerName)
+	marker := filepath.Join(homePath, home.CaptainProvenanceMarkerName)
 	canonical, err := canonicalCaptainHome(homePath)
 	if err != nil {
 		t.Fatal(err)

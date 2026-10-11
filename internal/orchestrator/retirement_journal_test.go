@@ -75,7 +75,7 @@ func TestVerifyRetirementContinuity(t *testing.T) {
 			name: "captain-backed soldier",
 			setup: func(t *testing.T) (string, string) {
 				soldierHome, captainHome := t.TempDir(), t.TempDir()
-				if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("captain=test-captain\n"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(captainHome, home.CaptainProvenanceMarkerName), []byte("captain=test-captain\n"), 0644); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := DeliverWake(DeliverRequest{

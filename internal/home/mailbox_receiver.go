@@ -140,18 +140,16 @@ func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
 // home with neither file is the General's: the identity is the directory
 // basename and rank is RankGeneral (parent/orchestrator home).
 func ReadHomeIdentity(homeDir string) (identity string, rank Rank, err error) {
-	for _, name := range []string{CaptainProvenanceMarkerName, CaptainProvenanceName} {
-		_, statErr := os.Lstat(filepath.Join(homeDir, name))
-		if statErr == nil {
-			id, err := ValidateCaptainProvenance(homeDir)
-			if err != nil {
-				return "", "", fmt.Errorf("reading home identity marker: %w", err)
-			}
-			return id, RankCaptain, nil
+	captain, err := IsCaptainHome(homeDir)
+	if err != nil {
+		return "", "", fmt.Errorf("reading home identity marker: %w", err)
+	}
+	if captain {
+		id, err := ValidateCaptainProvenance(homeDir)
+		if err != nil {
+			return "", "", fmt.Errorf("reading home identity marker: %w", err)
 		}
-		if !os.IsNotExist(statErr) {
-			return "", "", fmt.Errorf("reading home identity marker: %w", statErr)
-		}
+		return id, RankCaptain, nil
 	}
 	info, err := os.Stat(homeDir)
 	if err != nil {

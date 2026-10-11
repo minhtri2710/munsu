@@ -103,14 +103,11 @@ func syncOne(dir string) error {
 		return fmt.Errorf("not a git repository")
 	}
 
-	// Recover stale packed-refs.lock
-	gitDir := filepath.Join(dir, ".git")
-	if _, err := os.Stat(filepath.Join(gitDir, "packed-refs.lock")); err == nil {
-		os.Remove(filepath.Join(gitDir, "packed-refs.lock"))
+	dirty, err := CheckoutDirty(dir)
+	if err != nil {
+		return fmt.Errorf("reading git status: %w", err)
 	}
-
-	// Check if dirty
-	if dirty, _ := CheckoutDirty(dir); dirty != "" {
+	if dirty != "" {
 		return fmt.Errorf("dirty working tree, skipping")
 	}
 
@@ -140,12 +137,18 @@ func syncOne(dir string) error {
 // CheckoutDirty is the one definition of a dirty checkout: tracked changes or
 // unignored untracked files, which is exactly what `git status --porcelain`
 // prints on stdout (stderr is not a change). It returns the first entry, or ""
-// for a clean checkout.
+// for a clean checkout. A failed status read returns git's own stderr text.
 func CheckoutDirty(dir string) (string, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if msg := strings.TrimSpace(string(exit.Stderr)); msg != "" {
+				return "", errors.New(msg)
+			}
+		}
 		return "", err
 	}
 	entry, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")

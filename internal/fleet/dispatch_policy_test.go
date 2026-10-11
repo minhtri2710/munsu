@@ -49,6 +49,10 @@ func TestDispatchPolicyMatrix(t *testing.T) {
 	if err := home.SeedCaptainProvenance(captainHome, "sm-42"); err != nil {
 		t.Fatal(err)
 	}
+	provenanceOnlyHome := t.TempDir() // a captain home that lost its marker: .captain-provenance alone
+	if err := os.WriteFile(filepath.Join(provenanceOnlyHome, home.CaptainProvenanceName), []byte("source-repo\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	captainWithSnapshot := t.TempDir()
 	if err := home.SeedCaptainProvenance(captainWithSnapshot, "sm-7"); err != nil {
 		t.Fatal(err)
@@ -90,6 +94,7 @@ func TestDispatchPolicyMatrix(t *testing.T) {
 		{name: "captain on proven home with assigned snapshot", homeDir: captainWithSnapshot, parentRank: "captain", wantPolicy: DispatchPolicyCaptainMediated, wantParent: "sm-7"},
 
 		// Refusal rows (ambiguous parent/home/config combinations).
+		{name: "general on a home with .captain-provenance and no marker", homeDir: provenanceOnlyHome, parentRank: "general", wantProblem: DispatchPolicyProblemCaptainOnUnprovenHome},
 		{name: "general on captain-owned home", homeDir: captainHome, parentRank: "general", wantProblem: DispatchPolicyProblemGeneralOnCaptainHome},
 		{name: "empty rank on captain-owned home", homeDir: captainHome, parentRank: "", wantProblem: DispatchPolicyProblemGeneralOnCaptainHome},
 		{name: "general on captain-owned home with snapshot", homeDir: captainWithSnapshot, parentRank: "general", wantProblem: DispatchPolicyProblemGeneralOnCaptainHome},
@@ -253,6 +258,52 @@ func TestRunnerBoundaryDoesNotScanCaptainStateForGeneral(t *testing.T) {
 	}
 	if scanned {
 		t.Fatalf("General dispatch into a Captain home scanned endpoint state (currentEndpointKind invoked)")
+	}
+}
+
+// TestRunnerBoundaryCaptainHomeIdentity proves the early boundary reads a
+// captain home by the one home predicate: a home with only .captain-provenance
+// is refused as an unproven captain home, never passed as the General's, and a
+// valid marker passes for the explicit Captain.
+func TestRunnerBoundaryCaptainHomeIdentity(t *testing.T) {
+	cases := []struct {
+		name        string
+		arrange     func(t *testing.T, homeDir string)
+		wantProblem DispatchPolicyProblem
+	}{
+		{name: "block: .captain-provenance and no marker", arrange: func(t *testing.T, homeDir string) {
+			if err := os.WriteFile(filepath.Join(homeDir, home.CaptainProvenanceName), []byte("source-repo\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}, wantProblem: DispatchPolicyProblemCaptainOnUnprovenHome},
+		{name: "allow: valid marker", arrange: func(t *testing.T, homeDir string) {
+			if err := home.SeedCaptainProvenance(homeDir, "sm-7"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captainHome := t.TempDir()
+			tc.arrange(t, captainHome)
+			t.Setenv("MUNSU_ROLE", "captain")
+			t.Chdir(captainHome)
+			r := NewRunner(Args{ID: "task-1", HomeDir: captainHome})
+			if err := r.resolveHome(); err != nil {
+				t.Fatal(err)
+			}
+			err := r.checkFleetBoundary()
+			if tc.wantProblem == "" {
+				if err != nil {
+					t.Fatalf("checkFleetBoundary = %v, want nil", err)
+				}
+				return
+			}
+			var perr *DispatchPolicyError
+			if !errors.As(err, &perr) || perr.Problem != tc.wantProblem {
+				t.Fatalf("checkFleetBoundary err = %v, want %s", err, tc.wantProblem)
+			}
+		})
 	}
 }
 

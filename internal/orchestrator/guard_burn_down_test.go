@@ -184,7 +184,7 @@ func TestResolveCaptainActivationTarget(t *testing.T) {
 	}
 	writeMarker := func(t *testing.T, captainHome, content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(captainHome, mhome.CaptainProvenanceMarkerName), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -265,7 +265,7 @@ func TestActivationRefusesUnusableCaptainMarkerAndReportsOnce(t *testing.T) {
 	}
 
 	captainHome := t.TempDir()
-	marker := filepath.Join(captainHome, ProvenanceMarkerName)
+	marker := filepath.Join(captainHome, mhome.CaptainProvenanceMarkerName)
 	for i := 0; i < 3; i++ {
 		ActivateOnReceiptWithTransport(captainHome, parentHome, nil)
 	}
@@ -287,7 +287,7 @@ func TestActivationRefusesUnusableCaptainMarkerAndReportsOnce(t *testing.T) {
 func TestActivationReportsCopiedHomeRefusalOnce(t *testing.T) {
 	captainHome := t.TempDir()
 	parentHome := t.TempDir()
-	if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2\ncopied-captain\n/somewhere/else\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(captainHome, mhome.CaptainProvenanceMarkerName), []byte("munsu-v2\ncopied-captain\n/somewhere/else\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := mhome.WriteMeta(parentHome, "captain:copied-captain", map[string]string{

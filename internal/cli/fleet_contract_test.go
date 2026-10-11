@@ -108,3 +108,32 @@ func TestCLIEndpointProbeRejectsHerdrSessionMismatch(t *testing.T) {
 		t.Fatalf("status=%+v, want stale-identity", status)
 	}
 }
+
+func TestCLIEndpointProbeTaskProbeSessionOwnership(t *testing.T) {
+	tests := []struct {
+		name      string
+		session   string
+		wantAlive bool
+		wantErr   string
+	}{
+		{name: "pane in another herdr session than the task records is refused", session: "session-b", wantErr: "herdr session ownership mismatch"},
+		{name: "pane in the recorded herdr session is probed", session: "session-a", wantAlive: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			probe := cliEndpointProbe{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+				return &captainProbeBackend{paneAlive: true, agentAlive: true}, "herdr", nil
+			}}
+			alive, err := probe.Probe("/home", map[string]string{"backend": "herdr", "window": "session-a:pane-1", "herdr_session": tt.session})
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr || alive {
+					t.Fatalf("alive=%v err=%v, want refusal %q", alive, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || alive != tt.wantAlive {
+				t.Fatalf("alive=%v err=%v, want alive=%v", alive, err, tt.wantAlive)
+			}
+		})
+	}
+}
