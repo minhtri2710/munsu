@@ -1,9 +1,6 @@
 package domain
 
-import (
-	"strings"
-	"unicode"
-)
+import "strings"
 
 // ClaudeComposerRows is how many bottom pane rows the caller captures for
 // ClassifyClaudeComposer.
@@ -44,14 +41,18 @@ func ClassifyClaudeComposer(capture string) Verdict {
 	switch between := rows[upper+1 : lower]; {
 	case upper < 0, len(between) == 0:
 		return Unknown
-	case len(between) == 1 && strings.TrimFunc(between[0], unicode.IsSpace) == glyphClaude:
+	case len(between) == 1 && trimClaudeSpace(between[0]) == glyphClaude:
 		return Empty
 	default:
 		return Pending
 	}
 }
 
+// trimClaudeSpace trims U+0020 and U+00A0 only: the words approved for the
+// gate ignore spaces and NBSP, not tabs or other Unicode spaces.
+func trimClaudeSpace(row string) string { return strings.Trim(row, " \u00a0") }
+
 func isClaudeRule(row string) bool {
-	row = strings.TrimFunc(row, unicode.IsSpace)
+	row = trimClaudeSpace(row)
 	return len([]rune(row)) >= claudeRuleMinRunes && strings.Trim(row, "─") == ""
 }

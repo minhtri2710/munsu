@@ -284,7 +284,14 @@ func recordGeneralDelivery(w io.Writer, home string) {
 		fmt.Fprintf(w, "general-pane: not recorded: %v\n", err)
 		return
 	}
+	backend, backendErr := fleet.ResolveGeneralHomeBackend(home)
 	if target.Source == orchestrator.RuntimeSource {
+		// A herdr handle names its session; a bare pane id is the tmux one,
+		// which the resolver prefers when both environments are set.
+		if backendErr == nil && backend == "herdr" && target.Session == "" {
+			fmt.Fprintf(w, "general-pane: not recorded: runtime pane %q is not a herdr pane\n", target.Handle)
+			return
+		}
 		if err := sessionStartSetConfig(home, "general-pane", target.Handle); err != nil {
 			fmt.Fprintf(w, "general-pane: not recorded: %v\n", err)
 			return
@@ -293,7 +300,11 @@ func recordGeneralDelivery(w io.Writer, home string) {
 		return
 	}
 
-	if backend, err := fleet.ResolveGeneralHomeBackend(home); err != nil || backend != "herdr" {
+	if backendErr != nil {
+		fmt.Fprintf(w, "wake-delivery-mode: not recorded: %v\n", backendErr)
+		return
+	}
+	if backend != "herdr" {
 		return
 	}
 	switch _, err := os.ReadFile(filepath.Join(config.ConfigDir(home), "wake-delivery-mode")); {

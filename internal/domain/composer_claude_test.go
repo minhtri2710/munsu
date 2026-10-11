@@ -45,12 +45,16 @@ func TestClassifyClaudeComposer(t *testing.T) {
 		want Verdict
 	}{
 		{"glyph with spaces and NBSP around it", func(r []string) []string { r[rowGlyph] = "  ❯  "; return r }, Empty},
+		{"tab beside the glyph", func(r []string) []string { r[rowGlyph] = "\t\u276f"; return r }, Pending},
+		{"em space beside the glyph", func(r []string) []string { r[rowGlyph] = "\u2003\u276f"; return r }, Pending},
 		{"glyph followed by text", func(r []string) []string { r[rowGlyph] = "❯ half typed"; return r }, Pending},
 		{"two input rows", func(r []string) []string {
 			return append(r[:rowGlyph+1], append([]string{"wrapped second row"}, r[rowGlyph+1:]...)...)
 		}, Pending},
 		{"upper rule missing", func(r []string) []string { return append(r[:rowUpperRule], r[rowGlyph:]...) }, Unknown},
 		{"lower rule missing", func(r []string) []string { return append(r[:rowLowerRule], r[rowFooter:]...) }, Unknown},
+		{"rule padded with a tab", func(r []string) []string { r[rowLowerRule] += "\t"; return r }, Unknown},
+		{"rule followed by text", func(r []string) []string { r[rowLowerRule] += " text"; return r }, Unknown},
 		{"rule cut short", func(r []string) []string { r[rowLowerRule] = rule[:9*len("─")]; return r }, Unknown},
 		{"rules with no row between", func(r []string) []string { return append(r[:rowGlyph], r[rowLowerRule:]...) }, Unknown},
 		{"three rows below the lower rule", func(r []string) []string {

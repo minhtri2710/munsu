@@ -819,6 +819,33 @@ func TestRunSessionStartRecordsGeneralDeliveryForTheGeneral(t *testing.T) {
 			}
 		}
 	})
+	t.Run("tmux pane beside the herdr environment", func(t *testing.T) {
+		home := generalSession(t, "p7")
+		t.Setenv("TMUX_PANE", "%3")
+		_, out := runGeneralSession(t, home)
+		if !strings.Contains(out, "general-pane: not recorded:") {
+			t.Fatalf("output lacks the not-recorded line:\n%s", out)
+		}
+		for _, key := range []string{"general-pane", "wake-delivery-mode"} {
+			if got, ok := readConfigFixture(t, home, key); ok {
+				t.Fatalf("a tmux pane under a herdr backend wrote config/%s = %q", key, got)
+			}
+		}
+	})
+	t.Run("tmux pane under a tmux backend", func(t *testing.T) {
+		home := generalSession(t, "")
+		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        config.FleetBaseConfig{Backend: "tmux"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMUX_PANE", "%3")
+		runGeneralSession(t, home)
+		if got, ok := readConfigFixture(t, home, "general-pane"); !ok || strings.TrimSpace(got) != "%3" {
+			t.Fatalf("config/general-pane = %q (present %v), want %%3", got, ok)
+		}
+	})
 	t.Run("backend is not herdr", func(t *testing.T) {
 		home := generalSession(t, "p7")
 		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
@@ -906,6 +933,11 @@ func TestRunSessionStartReportsDeliveryValuesItCannotRecord(t *testing.T) {
 		"pane write fails": {func(t *testing.T, _ string) { failKey(t, "general-pane") }, "general-pane: not recorded: disk full"},
 		"existing mode unreadable": {func(t *testing.T, home string) {
 			if err := os.MkdirAll(filepath.Join(home, "config", "wake-delivery-mode"), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}, "wake-delivery-mode: not recorded:"},
+		"backend unresolvable": {func(t *testing.T, home string) {
+			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte("{"), 0600); err != nil {
 				t.Fatal(err)
 			}
 		}, "wake-delivery-mode: not recorded:"},
