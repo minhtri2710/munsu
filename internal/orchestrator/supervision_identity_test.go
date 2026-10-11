@@ -202,11 +202,15 @@ func TestValidatePIDOwnership_NoIdentityFile(t *testing.T) {
 func TestValidatePIDOwnership_WrongPID(t *testing.T) {
 	home := t.TempDir()
 	id := NewIdentity(home)
-	id.PID = 99999
-	WriteIdentity(home, id)
+	// Executable and start token stay this process's own, so only the PID
+	// comparison tells the identity's process from the asking one.
+	id.PID = os.Getpid() + 100000
+	if err := WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
 
-	if ValidatePIDOwnership(home, 42) {
-		t.Error("ValidatePIDOwnership with wrong PID should return false")
+	if ValidatePIDOwnership(home, os.Getpid()) {
+		t.Error("ValidatePIDOwnership must refuse a PID the identity does not name")
 	}
 }
 

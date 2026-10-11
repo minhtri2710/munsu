@@ -771,9 +771,6 @@ func pushFlagAllowed(flag string) bool {
 }
 
 func pushRefspecAllowed(taskBranch, refspec string) bool {
-	if strings.HasPrefix(refspec, "+") {
-		return false
-	}
 	switch refspec {
 	case taskBranch, "HEAD:refs/heads/" + taskBranch, "HEAD:" + taskBranch, "HEAD":
 		return true
@@ -871,9 +868,6 @@ func gitSafetyIdentity(path string) (string, string, string, error) {
 	identity, gitDir, commonDir, err := fleet.ClassifyIdentity(path)
 	if err != nil {
 		return "", "", "", err
-	}
-	if identity != fleet.Primary && identity != fleet.Worktree {
-		return identity.String(), "", "", nil
 	}
 	return identity.String(), gitDir, commonDir, nil
 }
