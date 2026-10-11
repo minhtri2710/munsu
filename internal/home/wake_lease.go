@@ -35,6 +35,7 @@ type ClaimedWakeRecord struct {
 	Kind    string
 	Key     string
 	Payload string
+	Ref     string
 }
 
 // ClaimResult holds a set of claimed wakes and the lease that owns them.

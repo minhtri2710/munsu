@@ -193,7 +193,7 @@ func TestAckWakes_NoCollision(t *testing.T) {
 
 	// Ack only the middle wake.
 	mid := result.Wakes[1]
-	if err := AckWakes(home, result.LeaseID, []string{mid.Epoch + ":" + mid.Seq}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{mid.Epoch + ":" + mid.Seq}); err != nil {
 		t.Fatalf("AckWakes: %v", err)
 	}
 

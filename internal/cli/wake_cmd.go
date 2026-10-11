@@ -83,14 +83,15 @@ func newWakeCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			if err := orchestrator.ResolveWake(ctx.Home, claimID, eventID, summary); err != nil {
+			unaccepted, err := orchestrator.ResolveWake(ctx.Home, claimID, eventID, summary)
+			if err != nil {
 				return operationError("invalid_argument", "Use the exact claim-id and event-id from the wake prompt", err.Error())
 			}
 			return writeContract(cmd, Response[WakeAck]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "wake.resolve",
 				Status:        "success",
-				Data:          WakeAck{WakeID: eventID, ClaimID: claimID, State: "resolved"},
+				Data:          newWakeAck(eventID, claimID, "resolved", unaccepted),
 			})
 		}),
 	}
@@ -115,7 +116,8 @@ func newWakeCmd() *cobra.Command {
 				return err
 			}
 
-			if err := orchestrator.AckWakes(ctx.Home, leaseID, eventIDs); err != nil {
+			unaccepted, err := orchestrator.AckWakes(ctx.Home, leaseID, eventIDs)
+			if err != nil {
 				return operationError("internal", "Run `munsu wake ack "+leaseID+" ...` again", err.Error())
 			}
 
@@ -127,11 +129,7 @@ func newWakeCmd() *cobra.Command {
 				SchemaVersion: SchemaVersion,
 				Kind:          "wake.ack",
 				Status:        "success",
-				Data: WakeAck{
-					WakeID:  ackedCount,
-					ClaimID: leaseID,
-					State:   state,
-				},
+				Data:          newWakeAck(ackedCount, leaseID, state, unaccepted),
 			})
 		}),
 	}
@@ -146,4 +144,17 @@ func newWakeCmd() *cobra.Command {
 	cmd.AddCommand(ackCmd)
 
 	return cmd
+}
+
+// newWakeAck builds the settle result. The wake is settled whether or not its
+// report was accepted; unaccepted reports ride along with the retry hint.
+func newWakeAck(wakeID, claimID, state string, unaccepted []orchestrator.UnacceptedReport) WakeAck {
+	ack := WakeAck{WakeID: wakeID, ClaimID: claimID, State: state}
+	for _, u := range unaccepted {
+		ack.UnacceptedReports = append(ack.UnacceptedReports, WakeUnacceptedReport{Key: u.Key, Payload: u.Payload, Ref: u.Ref, Reason: u.Reason})
+	}
+	if len(unaccepted) > 0 {
+		ack.Hint = orchestrator.UnacceptedReportsHint
+	}
+	return ack
 }

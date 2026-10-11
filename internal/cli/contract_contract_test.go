@@ -116,7 +116,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 		FleetSnapshot{}, Soldier{}, CaptainEntry{}, CaptainGuidance{},
 		CaptainChildBrief{}, CaptainDecision{}, CaptainHold{}, CaptainQueued{},
 		CaptainLanded{}, CaptainOmitted{}, CaptainHomeCounts{},
-		WakeAck{}, WakeClaim{}, WakeClaimedWake{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, InboxReceiveResult{}, EmptyResult{},
+		WakeAck{}, WakeUnacceptedReport{}, WakeClaim{}, WakeClaimedWake{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, InboxReceiveResult{}, EmptyResult{},
 		TruncatedResult{}, Guard{}, GuardViolation{}, WatchEnsure{}, WatchRun{}, WatchStop{}, WatchStatus{}, WatchLeaseInfo{},
 		EventRecord{}, EventAppend{}, DrainCycle{}, SessionStart{},
 		SafetyCheckData{}, ReportInjection{}, DecisionHoldInfo{},

@@ -52,6 +52,7 @@ type BatchedEntry struct {
 	Kind    string         `json:"kind"`
 	Key     string         `json:"key"`
 	Payload string         `json:"payload"`
+	Ref     string         `json:"ref,omitempty"`
 	Type    EscalationType `json:"type"`
 	At      time.Time      `json:"at"`
 }
@@ -136,6 +137,7 @@ func (d *Digester) Feed(digest *Digest) {
 			Kind:    wd.Kind,
 			Key:     wd.Key,
 			Payload: wd.Payload,
+			Ref:     wd.Ref,
 			Type:    classifyEscalationType(wd.Payload),
 			At:      now,
 		})
@@ -147,6 +149,7 @@ func (d *Digester) Feed(digest *Digest) {
 			Kind:    wd.Kind,
 			Key:     wd.Key,
 			Payload: wd.Payload,
+			Ref:     wd.Ref,
 			Type:    EscalationRoutine,
 			At:      now,
 		})

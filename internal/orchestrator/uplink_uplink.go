@@ -134,14 +134,19 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if err := NewStore(req.ReceiverHome).WriteEnvelope(env); err != nil {
 		return nil, fmt.Errorf("uplink report: write envelope: %w", err)
 	}
+	// The wake lands before the sender's pending record: a crash between them
+	// leaves a wake for a report the sender does not track yet, which the
+	// receiver can still settle, never a pending report nothing will ever
+	// surface to a General (its recovery pass does not re-notify one).
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
+	if err := mhome.EnqueueRefWake(req.ReceiverHome, "uplink", req.TaskID, ref.Encode(), payload); err != nil {
+		return nil, fmt.Errorf("uplink report: enqueue receiver wake: %w", err)
+	}
 	if err := NewStore(req.SenderHome).WritePending(env); err != nil {
 		return nil, fmt.Errorf("uplink report: write pending: %w", err)
 	}
 	if err := writeEvidence(openEvidencePath(req.SenderHome, req.TaskID, req.Key), evidence{MessageID: env.MessageID, TaskID: req.TaskID, Key: req.Key, State: req.State, At: time.Now().UnixNano()}); err != nil {
 		return nil, fmt.Errorf("uplink report: write open evidence: %w", err)
-	}
-	if err := EnqueueWake(req.ReceiverHome, "uplink", req.TaskID, payload); err != nil {
-		return nil, fmt.Errorf("uplink report: enqueue receiver wake: %w", err)
 	}
 	if err := retireSuperseded(req.SenderHome, req.ReceiverHome, oldReports); err != nil {
 		return nil, fmt.Errorf("%w: message %s landed in %s; retire superseded: %w", ErrReportDurable, env.MessageID, req.ReceiverHome, err)
@@ -151,7 +156,6 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if req.Notify == nil {
 		return result, nil
 	}
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
 	nr := req.Notify(ref)
 	// Both failures below land after the durable commit, and this one lands
 	// after Notify has already run -- the receiver may well have been told.
@@ -346,32 +350,36 @@ func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref Notific
 	return transport.Notify(senderHome, target, ref.Encode())
 }
 
+// resolveReceiverTarget names the pane to notify. Only a Captain receiver has
+// one: the General's pane is written by the watcher wake dispatch alone, so a
+// General-bound report stays queued here and its wake is already in the
+// General's queue (Report enqueues it before notifying).
 func resolveReceiverTarget(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error) {
-	if selfDirected {
-		return ResolveTargetWithSource(receiverHome)
-	}
 	env, err := NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
 		return TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)
 	}
-	if env.ReceiverRank == RankCaptain {
-		parentHome, err := config.Get(receiverHome, "parent-home")
-		if err != nil {
-			return TargetResult{}, fmt.Errorf("captain parent-home unavailable: %w", err)
-		}
-		meta, err := mhome.ReadMeta(parentHome, "captain:"+env.ReceiverID)
-		if err != nil {
-			return TargetResult{}, err
-		}
-		paneID := strings.TrimSpace(meta["herdr_pane_id"])
-		if paneID == "" {
-			return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
-		}
-		sessionID := strings.TrimSpace(meta["herdr_session"])
-		if sessionID == "" {
-			sessionID = "default"
-		}
-		return TargetResult{Source: RuntimeSource, Handle: sessionID + ":" + paneID, Session: sessionID}, nil
+	if env.ReceiverRank != RankCaptain {
+		return TargetResult{Source: Unsupported}, nil
 	}
-	return ResolveTargetWithSource(receiverHome)
+	if selfDirected {
+		return ResolveTargetWithSource(receiverHome)
+	}
+	parentHome, err := config.Get(receiverHome, "parent-home")
+	if err != nil {
+		return TargetResult{}, fmt.Errorf("captain parent-home unavailable: %w", err)
+	}
+	meta, err := mhome.ReadMeta(parentHome, "captain:"+env.ReceiverID)
+	if err != nil {
+		return TargetResult{}, err
+	}
+	paneID := strings.TrimSpace(meta["herdr_pane_id"])
+	if paneID == "" {
+		return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+	}
+	sessionID := strings.TrimSpace(meta["herdr_session"])
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	return TargetResult{Source: RuntimeSource, Handle: sessionID + ":" + paneID, Session: sessionID}, nil
 }

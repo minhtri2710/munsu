@@ -343,7 +343,7 @@ func TestIsClean_UnreadableDigestFailsClosed(t *testing.T) {
 
 func TestDrainDigest_NoFile(t *testing.T) {
 	tmp := t.TempDir()
-	be, err := drainDigest(tmp)
+	be, err := drainDigest(tmp, func(*BatchedEscalation) {})
 	if err != nil {
 		t.Fatalf("drainDigest with no file: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestDrainDigest_RemovesFile(t *testing.T) {
 	digestPath := filepath.Join(stateDir, ".afk-digest")
 	os.WriteFile(digestPath, data, 0644)
 
-	_, err := drainDigest(tmp)
+	_, err := drainDigest(tmp, func(*BatchedEscalation) {})
 	if err != nil {
 		t.Fatalf("drainDigest: %v", err)
 	}

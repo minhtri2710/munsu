@@ -19,14 +19,26 @@ type wakeResolutionRecord struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
-func ResolveWake(homeDir, leaseID, eventID, summary string) (err error) {
+// NormalizeWakeResolution trims the claim id, event id and summary of a wake
+// resolution and refuses an empty value or an invalid lease id. It is the one
+// check ResolveWake applies, exported so a caller that acts on the request
+// first (the uplink acceptance) sees the same values and the same refusals.
+func NormalizeWakeResolution(leaseID, eventID, summary string) (string, string, string, error) {
 	leaseID = strings.TrimSpace(leaseID)
 	eventID = strings.TrimSpace(eventID)
 	summary = strings.TrimSpace(summary)
 	if leaseID == "" || eventID == "" || summary == "" {
-		return fmt.Errorf("claim-id, event-id, and summary are required")
+		return "", "", "", fmt.Errorf("claim-id, event-id, and summary are required")
 	}
 	if err := validateLeaseID(leaseID); err != nil {
+		return "", "", "", err
+	}
+	return leaseID, eventID, summary, nil
+}
+
+func ResolveWake(homeDir, leaseID, eventID, summary string) (err error) {
+	leaseID, eventID, summary, err = NormalizeWakeResolution(leaseID, eventID, summary)
+	if err != nil {
 		return err
 	}
 	lock, err := acquireWakeLock(homeDir)
@@ -85,31 +97,61 @@ func resolveWakeLocked(homeDir, leaseID, eventID, summary string) error {
 }
 
 func leaseContainsEvent(homeDir, leaseID, eventID string) (bool, error) {
-	leasePath, err := validatedLeasePath(homeDir, leaseID)
+	records, err := leaseWakes(homeDir, leaseID)
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(leasePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
-		}
-		return false, err
-	}
-	if string(data) == wakeLeaseTombstone+"\n" || string(data) == wakeLeaseTombstone {
-		return false, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
-	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return false, fmt.Errorf("lease %q is empty", leaseID)
-	}
-	for _, line := range lines[1:] {
-		record, ok := decodeWakeRecordLine(line)
-		if ok && record.Epoch+":"+record.Seq == eventID {
+	for _, record := range records {
+		if record.Epoch+":"+record.Seq == eventID {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// LeaseWakes returns the wakes a lease still holds, read without the wake lock
+// like ListClaimedLeases. A lease that is absent or tombstoned holds none.
+func LeaseWakes(homeDir, leaseID string) ([]ClaimedWakeRecord, error) {
+	records, err := leaseWakes(homeDir, leaseID)
+	if isLeaseAbsent(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	wakes := make([]ClaimedWakeRecord, len(records))
+	for i, record := range records {
+		wakes[i] = ClaimedWakeRecord(record)
+	}
+	return wakes, nil
+}
+
+func leaseWakes(homeDir, leaseID string) ([]WakeRecord, error) {
+	leasePath, err := validatedLeasePath(homeDir, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(leasePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
+		}
+		return nil, err
+	}
+	if string(data) == wakeLeaseTombstone+"\n" || string(data) == wakeLeaseTombstone {
+		return nil, fmt.Errorf("lease %q not found or expired: %w", leaseID, os.ErrNotExist)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return nil, fmt.Errorf("lease %q is empty", leaseID)
+	}
+	var records []WakeRecord
+	for _, line := range lines[1:] {
+		if record, ok := decodeWakeRecordLine(line); ok {
+			records = append(records, record)
+		}
+	}
+	return records, nil
 }
 
 func resolutionPath(homeDir, leaseID, eventID string) string {

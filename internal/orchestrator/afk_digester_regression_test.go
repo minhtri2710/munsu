@@ -23,7 +23,7 @@ func TestDigesterFlushAccumulatesAcrossWindowsAndDrains(t *testing.T) {
 		t.Fatalf("second Flush: %v", err)
 	}
 
-	be, err := drainDigest(home)
+	be, err := drainDigest(home, func(*BatchedEscalation) {})
 	if err != nil {
 		t.Fatalf("drainDigest: %v", err)
 	}

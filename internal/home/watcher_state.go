@@ -22,7 +22,10 @@ const ProcessEventWakeKind = "process-event"
 
 var removeWakeQueueFile = os.Remove
 
-type WakeRecord struct{ Epoch, Seq, Kind, Key, Payload string }
+// WakeRecord is one queued wake. Ref is empty unless the producer owns a durable
+// record the wake points at (an uplink report's NotificationRef); the wake
+// layer stores it and hands it back, and never interprets it.
+type WakeRecord struct{ Epoch, Seq, Kind, Key, Payload, Ref string }
 type WatcherBeatStatus struct {
 	Exists, Stale bool
 	Age           time.Duration
@@ -70,7 +73,22 @@ func EnqueueWake(h, kind, key, payload string) error {
 	if err := validateWakeIdentifier("key", key); err != nil {
 		return err
 	}
-	return enqueueWakeAt(h, kind, key, payload, time.Now())
+	return enqueueWakeAt(h, kind, key, "", payload, time.Now())
+}
+
+// EnqueueRefWake enqueues a wake that carries ref, the identity of a durable
+// record the receiver settles when it resolves or acks the wake.
+func EnqueueRefWake(h, kind, key, ref, payload string) error {
+	if err := validateWakeIdentifier("kind", kind); err != nil {
+		return err
+	}
+	if err := validateWakeIdentifier("key", key); err != nil {
+		return err
+	}
+	if err := validateWakeIdentifier("ref", ref); err != nil {
+		return err
+	}
+	return enqueueWakeAt(h, kind, key, ref, payload, time.Now())
 }
 
 // WatcherSeenMarkerPath is the dedup marker the watcher keeps for one wake
@@ -122,7 +140,7 @@ func validateWakeIdentifier(name, value string) error {
 	return nil
 }
 
-func enqueueWakeAt(h, kind, key, payload string, at time.Time) (err error) {
+func enqueueWakeAt(h, kind, key, ref, payload string, at time.Time) (err error) {
 	lock, err := acquireWakeLock(h)
 	if err != nil {
 		return err
@@ -131,15 +149,15 @@ func enqueueWakeAt(h, kind, key, payload string, at time.Time) (err error) {
 	if err := recoverWakeMutationLocked(h); err != nil {
 		return err
 	}
-	return enqueueWakeLocked(h, kind, key, payload, at)
+	return enqueueWakeLocked(h, kind, key, ref, payload, at)
 }
 
-func enqueueWakeLocked(h, kind, key, payload string, at time.Time) error {
+func enqueueWakeLocked(h, kind, key, ref, payload string, at time.Time) error {
 	records, err := readWakeQueue(h)
 	if err != nil {
 		return err
 	}
-	records = append(records, newWakeRecord(kind, key, payload, at))
+	records = append(records, newWakeRecord(kind, key, ref, payload, at))
 	return applyWakeMutationLocked(h, wakeMutation{
 		queueSet:  true,
 		queueData: wakeQueueData(records),
@@ -229,13 +247,14 @@ func drainWakesPartition(h string, take func(WakeRecord) bool) (records []WakeRe
 	return records, nil
 }
 
-func newWakeRecord(kind, key, payload string, at time.Time) WakeRecord {
+func newWakeRecord(kind, key, ref, payload string, at time.Time) WakeRecord {
 	return WakeRecord{
 		Epoch:   fmt.Sprint(at.Unix()),
 		Seq:     fmt.Sprintf("%d-%d", os.Getpid(), atomic.AddInt64(&wakeSeq, 1)),
 		Kind:    kind,
 		Key:     key,
 		Payload: payload,
+		Ref:     ref,
 	}
 }
 

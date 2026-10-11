@@ -260,6 +260,20 @@ type WakeAck struct {
 	WakeID  string `json:"wake_id"`
 	ClaimID string `json:"claim_id"`
 	State   string `json:"state"`
+
+	// UnacceptedReports lists the uplink reports the settled wakes pointed at
+	// whose envelope could not be accepted. The wake is settled regardless; the
+	// reports stay pending and Hint says how to retry.
+	UnacceptedReports []WakeUnacceptedReport `json:"unaccepted_reports,omitempty"`
+	Hint              string                 `json:"hint,omitempty"`
+}
+
+// WakeUnacceptedReport is one uplink report a settled wake could not accept.
+type WakeUnacceptedReport struct {
+	Key     string `json:"key"`
+	Payload string `json:"payload,omitempty"`
+	Ref     string `json:"ref"`
+	Reason  string `json:"reason"`
 }
 
 // DrainCycle records one General drain cycle: actionable wakes claimed,

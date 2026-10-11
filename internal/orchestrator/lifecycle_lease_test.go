@@ -117,7 +117,7 @@ func TestAckWakes(t *testing.T) {
 	}
 
 	// Ack the general wake (epoch:seq = 1780000001:2)
-	if err := AckWakes(home, result.LeaseID, []string{"1780000001:2"}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{"1780000001:2"}); err != nil {
 		t.Fatalf("AckWakes() error = %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestAckWakesAllRemovesLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := AckWakes(home, result.LeaseID, []string{"1780000000:1"}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{"1780000000:1"}); err != nil {
 		t.Fatalf("AckWakes() error = %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestAckWakesAllRemovesLease(t *testing.T) {
 
 func TestAckWakesNonexistentLease(t *testing.T) {
 	home := t.TempDir()
-	err := AckWakes(home, "nonexistent-lease", []string{"1:1"})
+	_, err := AckWakes(home, "nonexistent-lease", []string{"1:1"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent lease")
 	}
@@ -275,12 +275,12 @@ func TestIdempotencyAck(t *testing.T) {
 	}
 
 	// Ack once
-	if err := AckWakes(home, r.LeaseID, []string{"100:1"}); err != nil {
+	if _, err := AckWakes(home, r.LeaseID, []string{"100:1"}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Ack again should be no-op (lease already removed)
-	err = AckWakes(home, r.LeaseID, []string{"100:1"})
+	_, err = AckWakes(home, r.LeaseID, []string{"100:1"})
 	if err == nil {
 		// Ok if lease is already gone
 	}
@@ -326,7 +326,7 @@ func TestParity_WakeKind_Signal(t *testing.T) {
 	}
 
 	// Ack and drain.
-	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
 		t.Fatalf("AckWakes: %v", err)
 	}
 }
@@ -352,7 +352,7 @@ func TestParity_WakeKind_Stale(t *testing.T) {
 		t.Errorf("key = %q, want captain:1", w.Key)
 	}
 
-	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
 		t.Fatalf("AckWakes: %v", err)
 	}
 }
@@ -378,7 +378,7 @@ func TestParity_WakeKind_Check(t *testing.T) {
 		t.Errorf("key = %q, want task-1", w.Key)
 	}
 
-	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
 		t.Fatalf("AckWakes: %v", err)
 	}
 }
@@ -404,7 +404,7 @@ func TestParity_WakeKind_ConfigReread(t *testing.T) {
 		t.Errorf("payload = %q, want 'config refreshed via converge'", w.Payload)
 	}
 
-	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
 		t.Fatalf("AckWakes: %v", err)
 	}
 }
@@ -430,7 +430,7 @@ func TestParity_WakeKind_InstructionSurface(t *testing.T) {
 		t.Errorf("payload = %q, want 'AGENTS.md changed in abc1234'", w.Payload)
 	}
 
-	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+	if _, err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
 		t.Fatalf("AckWakes: %v", err)
 	}
 }

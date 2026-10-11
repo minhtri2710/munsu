@@ -18,20 +18,9 @@ import (
 // mustReadWakeQueue reads the queue without draining it.
 func mustReadWakeQueue(t *testing.T, homeDir string) []WakeRecord {
 	t.Helper()
-	data, err := os.ReadFile(home.WakeQueuePath(homeDir))
-	if os.IsNotExist(err) {
-		return nil
-	}
+	records, err := home.PeekWakes(homeDir)
 	if err != nil {
 		t.Fatal(err)
-	}
-	var records []WakeRecord
-	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		f := strings.SplitN(line, "\t", 5)
-		if len(f) != 5 {
-			t.Fatalf("malformed queue line %q", line)
-		}
-		records = append(records, WakeRecord{Epoch: f[0], Seq: f[1], Kind: f[2], Key: f[3], Payload: f[4]})
 	}
 	return records
 }
