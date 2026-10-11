@@ -701,15 +701,52 @@ func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
 	})
 }
 
+// A committed operation replays even when its scope holds a journal record
+// recovery cannot read: the receipt is checked before the journal is touched.
+func TestCanonicalReplayOverUnrecoverableJournal(t *testing.T) {
+	plant := func(t *testing.T, root string) {
+		path := filepath.Join(root, home.JournalDirName, taskScope("t1")+".junk.json")
+		if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("create", func(t *testing.T) {
+		c, _, root := newTestCanonical(t)
+		req := createRequest(c, "t1")
+		op := mustOperation(t, "op-create-t1", req)
+		if _, err := c.Create(op, req); err != nil {
+			t.Fatal(err)
+		}
+		plant(t, root)
+		if out, err := c.Create(op, req); err != nil || !out.Replayed {
+			t.Fatalf("Create retry = %+v, %v; want a replay", out, err)
+		}
+	})
+	t.Run("receive", func(t *testing.T) {
+		c, _, root := newTestCanonical(t)
+		req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
+		op := mustOperation(t, "op-receive-1", req)
+		if _, err := c.ReceiveTransfer(op, req); err != nil {
+			t.Fatal(err)
+		}
+		plant(t, root)
+		if out, err := c.ReceiveTransfer(op, req); err != nil || !out.Replayed {
+			t.Fatalf("ReceiveTransfer retry = %+v, %v; want a replay", out, err)
+		}
+	})
+}
+
 // A removed record leaves its scope revision behind. Receive reuses the id at
 // that revision, and refuses only when a receipt or hold still names the id.
 func TestCanonicalReceiveTransferAfterRecordRemoved(t *testing.T) {
 	tests := []struct {
 		name        string
+		never       bool
 		keepReceipt bool
 		hold        bool
 		wantResidue string
 	}{
+		{name: "hold on an id never received", never: true, hold: true},
 		{name: "scope revision only"},
 		{name: "receipt left", keepReceipt: true, wantResidue: "op-create-t1.json"},
 		{name: "hold left", hold: true, wantResidue: "t1-decision-k.json"},
@@ -717,14 +754,16 @@ func TestCanonicalReceiveTransferAfterRecordRemoved(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _, root := newTestCanonical(t)
-			mustCreate(t, c, "t1")
-			state := filepath.Join(root, "state", "task-authority")
-			if err := os.RemoveAll(filepath.Join(state, "tasks", "t1")); err != nil {
-				t.Fatal(err)
-			}
-			if !tt.keepReceipt {
-				if err := os.Remove(filepath.Join(state, "receipts", "op-create-t1.json")); err != nil {
+			if !tt.never {
+				mustCreate(t, c, "t1")
+				state := filepath.Join(root, "state", "task-authority")
+				if err := os.RemoveAll(filepath.Join(state, "tasks", "t1")); err != nil {
 					t.Fatal(err)
+				}
+				if !tt.keepReceipt {
+					if err := os.Remove(filepath.Join(state, "receipts", "op-create-t1.json")); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 			if tt.hold {

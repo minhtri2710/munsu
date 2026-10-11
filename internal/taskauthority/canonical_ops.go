@@ -75,30 +75,19 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	}
 	defer lk.Release()
 
-	// Revision recovers an interrupted commit, so a retry replays its receipt.
-	rev, err := c.h.Revision(lk)
+	prior, replayed, rev, err := c.receiptThenRevision(lk, op)
 	if err != nil {
 		return Outcome{}, err
-	}
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
+	} else if replayed {
+		return prior.outcome(), nil
 	}
 	if _, exists, err := c.readTaskDoc(req.TaskID.Value()); err != nil {
 		return Outcome{}, err
 	} else if exists {
 		return Outcome{}, conflictError(ErrConflict, "task %s already exists", req.TaskID.Value())
 	}
-	// A scope revision above zero means the id was committed before and its
-	// record is gone. Receipts and holds that name it would be replayed against
-	// the new task, so they must be removed first.
-	if rev > 0 {
-		if residue, err := c.taskResidue(req.TaskID.Value()); err != nil {
-			return Outcome{}, err
-		} else if len(residue) > 0 {
-			return Outcome{}, conflictError(ErrConflict, "task %s has no record but earlier state still names it: %s; munsu cannot clear it (ADR-0008 section 11): remove these files by hand or discard the home", req.TaskID.Value(), strings.Join(residue, ", "))
-		}
+	if err := c.refuseTaskResidue(req.TaskID.Value(), rev); err != nil {
+		return Outcome{}, err
 	}
 
 	if req.Kind == KindReview {
@@ -130,6 +119,39 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 		return Outcome{}, commitError(req.TaskID, domain.Of(0, rev), err)
 	}
 	return outcomeFor(op, agg, false), nil
+}
+
+// receiptThenRevision replays a committed operation without touching the
+// journal, so a scope holding an unrecoverable record still replays. Otherwise
+// it reads the scope revision, which recovers an interrupted commit, and looks
+// again: that commit may have been this operation.
+func (c *Canonical) receiptThenRevision(lk *home.Lock, op domain.Operation) (receipt, bool, uint64, error) {
+	if rec, ok, err := c.checkedReceipt(op); err != nil || ok {
+		return rec, ok, 0, err
+	}
+	rev, err := c.h.Revision(lk)
+	if err != nil {
+		return receipt{}, false, 0, err
+	}
+	rec, ok, err := c.checkedReceipt(op)
+	return rec, ok, rev, err
+}
+
+// refuseTaskResidue refuses a new record for an id committed before (scope
+// revision above zero) while receipts or holds that name it remain: they would
+// be replayed against the new task.
+func (c *Canonical) refuseTaskResidue(taskID string, rev uint64) error {
+	if rev == 0 {
+		return nil
+	}
+	residue, err := c.taskResidue(taskID)
+	if err != nil {
+		return err
+	}
+	if len(residue) > 0 {
+		return conflictError(ErrConflict, "task %s has no record but earlier state still names it: %s; munsu cannot clear it (ADR-0008 section 11): remove these files by hand or discard the home", taskID, strings.Join(residue, ", "))
+	}
+	return nil
 }
 
 // taskResidue returns the paths of committed receipts and dispatch holds that
