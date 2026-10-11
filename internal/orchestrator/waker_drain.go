@@ -18,6 +18,10 @@ const (
 	ConditionWatcherAbsent      ConditionCode = "watcher_absent"
 	ConditionWatcherStale       ConditionCode = "watcher_stale"
 	ConditionAgedWakePending    ConditionCode = "aged_wake_pending"
+
+	ConditionClaimedWakeExpired     ConditionCode = "claimed_wake_expired"
+	ConditionClaimedWakeStalled     ConditionCode = "claimed_wake_stalled"
+	ConditionClaimedWakesUnreadable ConditionCode = "claimed_wakes_unreadable"
 )
 
 // MaterialWakeAgeThreshold is the age at which a material (done/failed/needs-decision/blocked)
@@ -39,9 +43,12 @@ type GuardResult struct {
 }
 
 // EvaluateGuard returns the current guard state combining beat liveness,
-// queued-wake status, aged wake threshold, and the caller-supplied in-flight
-// task count. Aged material wakes (beyond MaterialWakeAgeThreshold) produce
-// an unhealthy condition rather than merely indeterminate.
+// queued-wake status, aged wake threshold, claimed-wake state, and the
+// caller-supplied in-flight task count. Aged material wakes (beyond
+// MaterialWakeAgeThreshold) produce an unhealthy condition rather than merely
+// indeterminate. A claimed wake whose lease expired or whose claimant has not
+// acked or resolved it produces a condition of its own; a lease directory that
+// cannot be read produces one too, never silence.
 // Both the pre-run middleware and the contract guard command use this to
 // produce consistent warnings and state.
 func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
@@ -67,7 +74,97 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 		}
 	}
 
+	result.Conditions = append(result.Conditions, claimedWakeConditions(homeDir, now)...)
+
 	return result
+}
+
+// claimedWakeConditions turns held-but-unacked wakes into guard conditions,
+// one per code, citing the first wake in claim order.
+func claimedWakeConditions(homeDir string, now time.Time) []ConditionInfo {
+	claimed, err := ListClaimedWakes(homeDir, now)
+	if err != nil {
+		return []ConditionInfo{{
+			Code:    ConditionClaimedWakesUnreadable,
+			Message: fmt.Sprintf("CLAIMED WAKES UNKNOWN - lease directory unreadable: %v", err),
+		}}
+	}
+	var expired, stalled []ClaimedWake
+	for _, c := range claimed {
+		switch c.State {
+		case mhome.ClaimExpired:
+			expired = append(expired, c)
+		case mhome.ClaimStalled:
+			stalled = append(stalled, c)
+		}
+	}
+	var conditions []ConditionInfo
+	if len(expired) > 0 {
+		conditions = append(conditions, ConditionInfo{
+			Code:    ConditionClaimedWakeExpired,
+			Message: fmt.Sprintf("CLAIMED WAKE EXPIRED (%d) - %s - the next munsu wake claim reclaims it", len(expired), expired[0].Evidence),
+		})
+	}
+	if len(stalled) > 0 {
+		conditions = append(conditions, ConditionInfo{
+			Code:    ConditionClaimedWakeStalled,
+			Message: fmt.Sprintf("CLAIMED WAKE STALLED (%d) - %s", len(stalled), stalled[0].Evidence),
+		})
+	}
+	return conditions
+}
+
+// ClaimedWake is one unacked wake held in a lease, with the state derived by
+// mhome.ClaimState.
+type ClaimedWake struct {
+	LeaseID   string
+	Consumer  string
+	ClaimedAt time.Time // zero when the lease header has no claim time
+	Wake      mhome.ClaimedWakeRecord
+	State     string
+	Evidence  string
+	Material  bool
+}
+
+// ListClaimedWakes returns the unacked wakes held in leases, in claim order.
+// A wake with a completed resolution is not unacked and is omitted, and so is
+// a wake that is also in the queue (mid-reclaim it is in both; the queued copy
+// is the live one). The error is the lease directory's: callers show it as
+// unknown, never as none.
+func ListClaimedWakes(homeDir string, now time.Time) ([]ClaimedWake, error) {
+	leases, err := mhome.ListClaimedLeases(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	queued := map[string]bool{}
+	if records, err := mhome.PeekWakes(homeDir); err == nil {
+		for _, r := range records {
+			queued[r.Epoch+":"+r.Seq] = true
+		}
+	}
+	var out []ClaimedWake
+	for _, l := range leases {
+		var claimedAt time.Time
+		if l.ClaimedAt > 0 {
+			claimedAt = time.Unix(l.ClaimedAt, 0)
+		}
+		for _, w := range l.Wakes {
+			state, evidence := mhome.ClaimState(l, w, now, MaterialWakeAgeThreshold)
+			if state == mhome.ClaimResolved || queued[w.Epoch+":"+w.Seq] {
+				continue
+			}
+			out = append(out, ClaimedWake{
+				LeaseID:   l.LeaseID,
+				Consumer:  l.Consumer,
+				ClaimedAt: claimedAt,
+				Wake:      w.ClaimedWakeRecord,
+				State:     state,
+				Evidence:  evidence,
+				Material:  payloadHasMaterialMarker(w.Key, w.Payload),
+			})
+		}
+	}
+	return out, nil
 }
 
 // hasAgedMaterialWake returns true when the wake queue contains at least one

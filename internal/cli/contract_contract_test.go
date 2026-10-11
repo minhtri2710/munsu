@@ -1,16 +1,21 @@
 package cli
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 //go:embed contract_fixtures/*.json contract_fixtures/*.toon
@@ -478,4 +483,37 @@ func splitTOONValues(values string) []string {
 		}
 	}
 	return append(result, values[start:])
+}
+
+// A claimed wake's guard violation cites the lease store it was read from, not
+// the queue: that is where an operator looks for it.
+func TestGuardClaimedWakeViolationCitesTheLeaseStore(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", homeDir)
+	claimedAt := time.Now().Add(-orchestrator.MaterialWakeAgeThreshold - time.Minute)
+	writeClaimedLease(t, homeDir, "lease-1", time.Now().Add(time.Hour), claimedAt,
+		fmt.Sprintf("%d\t1\tsignal\ttask-1\ttask-1: done: PR merged [event=1]", claimedAt.Unix()))
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"guard", "--output", "json"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("guard: %v\n%s", err, buf.String())
+	}
+
+	var resp Response[Guard]
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("guard output is not JSON: %v\n%s", err, buf.String())
+	}
+	for _, v := range resp.Data.Violations {
+		if v.Code == string(orchestrator.ConditionClaimedWakeStalled) {
+			if !slices.Contains(v.Evidence, "state/.wake-leases") || slices.Contains(v.Evidence, "state/.wake-queue") {
+				t.Errorf("evidence = %v, want the lease store and not the queue", v.Evidence)
+			}
+			return
+		}
+	}
+	t.Fatalf("violations = %+v, want %q", resp.Data.Violations, orchestrator.ConditionClaimedWakeStalled)
 }

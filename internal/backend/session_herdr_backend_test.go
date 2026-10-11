@@ -267,7 +267,7 @@ func writeFakeHerdrWithAgent(t *testing.T, dir string, agentStatus string) strin
 			"      exit 1\n" +
 			"    fi\n"
 	} else {
-		jsonStr := `{"result":{"agent":{"agent_status":"` + agentStatus + `"}}}`
+		jsonStr := `{"result":{"agent":{"agent":"claude","agent_status":"` + agentStatus + `"}}}`
 		script += "      echo '" + jsonStr + "'\n" +
 			"      exit 0\n" +
 			"    fi\n"
@@ -301,6 +301,33 @@ func TestHerdrBackend_CheckAgentAlive_WithAgent(t *testing.T) {
 	}
 	if !agentAlive {
 		t.Error("CheckAgentAlive agentAlive=false, want true")
+	}
+}
+
+func TestHerdrBackend_ObservedAgentIsTheNameTheLatestProbeRead(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrWithAgent(t, tmp, "idle")
+	testutil.PrependPath(t, tmp)
+
+	h := NewHerdrBackend("test-s")
+	if got := h.ObservedAgent("wTest:p1"); got != "" {
+		t.Fatalf("ObservedAgent before any probe = %q, want empty", got)
+	}
+	if _, _, _, _, err := h.ObserveAgent("wTest:p1"); err != nil {
+		t.Fatalf("ObserveAgent error: %v", err)
+	}
+	if got := h.ObservedAgent("wTest:p1"); got != "claude" {
+		t.Fatalf("ObservedAgent = %q, want claude", got)
+	}
+
+	noAgent := t.TempDir()
+	writeFakeHerdrWithAgent(t, noAgent, "")
+	testutil.PrependPath(t, noAgent)
+	if _, _, _, _, err := h.ObserveAgent("wTest:p1"); err != nil {
+		t.Fatalf("ObserveAgent error: %v", err)
+	}
+	if got := h.ObservedAgent("wTest:p1"); got != "" {
+		t.Fatalf("ObservedAgent after a probe that found no agent = %q, want empty", got)
 	}
 }
 

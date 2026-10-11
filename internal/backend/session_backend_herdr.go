@@ -41,6 +41,10 @@ type HerdrBackend struct {
 
 	// lastCreate stores the last tab-creation result for MetaExtras.
 	lastCreate *herdrLastCreate
+
+	// observedAgents holds, per window, the agent name the latest observeAgent
+	// read from `herdr agent get` (empty when none was read).
+	observedAgents map[string]string
 }
 
 // herdrLastCreate captures the IDs from the most recent NewWindow call.
@@ -477,6 +481,11 @@ type herdrAgentObservation struct {
 // observeAgent probes a single pane once (pane get + agent get) and returns
 // both liveness and the raw agent status.
 func (h *HerdrBackend) observeAgent(windowID string) herdrAgentObservation {
+	if h.observedAgents == nil {
+		h.observedAgents = map[string]string{}
+	}
+	h.observedAgents[windowID] = ""
+
 	// First verify pane exists.
 	_, err := h.CheckAlive(windowID)
 	if err != nil {
@@ -484,7 +493,7 @@ func (h *HerdrBackend) observeAgent(windowID string) herdrAgentObservation {
 	}
 
 	// Pane exists; now check agent registration.
-	status, err := h.agentGet(windowID)
+	status, name, err := h.agentGet(windowID)
 	if err != nil {
 		return herdrAgentObservation{err: err}
 	}
@@ -492,6 +501,7 @@ func (h *HerdrBackend) observeAgent(windowID string) herdrAgentObservation {
 		return herdrAgentObservation{paneAlive: true}
 	}
 
+	h.observedAgents[windowID] = name
 	return herdrAgentObservation{
 		paneAlive:  true,
 		agentAlive: isAgentStatusAlive(status),
@@ -521,6 +531,13 @@ func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
 func (h *HerdrBackend) ObserveAgent(windowID string) (paneAlive bool, agentAlive bool, recognized bool, status string, err error) {
 	o := h.observeAgent(windowID)
 	return o.paneAlive, o.agentAlive, o.recognized, o.status, o.err
+}
+
+// ObservedAgent returns the agent name (for example "claude") that the latest
+// observeAgent of windowID read from `herdr agent get`. It is empty when that
+// probe found no agent, failed, or never ran; it starts no herdr process.
+func (h *HerdrBackend) ObservedAgent(windowID string) string {
+	return h.observedAgents[windowID]
 }
 
 func isAgentStatusAlive(status string) bool {
@@ -727,6 +744,7 @@ type herdrAgentGetResponse struct {
 
 type herdrAgentGetResult struct {
 	Agent struct {
+		Agent       string `json:"agent"`
 		AgentStatus string `json:"agent_status"`
 	} `json:"agent"`
 }
@@ -740,40 +758,41 @@ type herdrAgentGetResult struct {
 // Callers should distinguish alive-non-agent from dead by calling CheckAlive
 // when IsRecognizedAgent returns (false, "").
 func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
-	status, err := h.agentGet(windowID)
+	status, _, err := h.agentGet(windowID)
 	if err != nil || status == "" {
 		return false, ""
 	}
 	return true, status
 }
 
-// agentGet runs `herdr agent get` for the pane and returns its agent status.
-// An empty status with a nil error means the pane has no recognized agent
-// (agent_not_found or no status reported); any other failure is an error.
-func (h *HerdrBackend) agentGet(windowID string) (string, error) {
+// agentGet runs `herdr agent get` for the pane and returns its agent status
+// and agent name. An empty status with a nil error means the pane has no
+// recognized agent (agent_not_found or no status reported); any other failure
+// is an error.
+func (h *HerdrBackend) agentGet(windowID string) (status, name string, err error) {
 	out, err := h.herdrCaptureForWindow(windowID, "agent", "get", herdrPaneID(windowID))
 	if err != nil {
 		var errResp herdrErrorEnvelope
 		if out != "" && json.Unmarshal([]byte(out), &errResp) == nil && errResp.Error != nil && errResp.Error.Code == "agent_not_found" {
-			return "", nil
+			return "", "", nil
 		}
-		return "", err
+		return "", "", err
 	}
 
 	var resp herdrAgentGetResponse
 	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
-		return "", fmt.Errorf("parsing agent get response: %w", jsonErr)
+		return "", "", fmt.Errorf("parsing agent get response: %w", jsonErr)
 	}
 	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
-		return "", nil
+		return "", "", nil
 	}
 	if resp.Error != nil {
-		return "", fmt.Errorf("agent get error: %s", resp.Error.Message)
+		return "", "", fmt.Errorf("agent get error: %s", resp.Error.Message)
 	}
 	if resp.Result == nil {
-		return "", nil
+		return "", "", nil
 	}
-	return resp.Result.Agent.AgentStatus, nil
+	return resp.Result.Agent.AgentStatus, resp.Result.Agent.Agent, nil
 }
 
 // AgentPrompt submits a prompt to the target agent and returns a typed

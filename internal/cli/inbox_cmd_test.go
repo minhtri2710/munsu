@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -34,6 +36,87 @@ func TestInboxCmd_Wakes(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "Pending wakes: 1") {
 		t.Errorf("inbox should show pending wakes count, got:\n%s", output)
+	}
+	if !strings.Contains(output, "`munsu wake claim --consumer <id>`") {
+		t.Errorf("inbox hint must name the required --consumer flag, got:\n%s", output)
+	}
+}
+
+// writeClaimedLease writes a lease file the way ClaimWakes lays it out, with
+// its mtime set to claimedAt so ClaimState sees a claim that is not fresh.
+func writeClaimedLease(t *testing.T, homeDir, leaseID string, expiresAt, claimedAt time.Time, wakeLines ...string) {
+	t.Helper()
+	if err := os.MkdirAll(home.LeaseDir(homeDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("%s\tmunsu:herdr\t%d\t%d\n%s\n", leaseID, expiresAt.Unix(), claimedAt.Unix(), strings.Join(wakeLines, "\n"))
+	path := home.LeaseFilePath(homeDir, leaseID)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, claimedAt, claimedAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runInboxView(t *testing.T, homeDir string) string {
+	t.Helper()
+	t.Setenv("MUNSU_HOME", homeDir)
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"inbox"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("inbox: unexpected error: %v", err)
+	}
+	return buf.String()
+}
+
+// A wake held in a lease is in neither queue, so the inbox is the only place
+// the General can see it: it must not read "none pending" and must carry the
+// derived state and its evidence.
+func TestInboxCmd_ClaimedWakes(t *testing.T) {
+	homeDir := t.TempDir()
+	claimedAt := time.Now().Add(-10 * time.Minute)
+	writeClaimedLease(t, homeDir, "lease-1", time.Now().Add(time.Hour), claimedAt,
+		fmt.Sprintf("%d\t7\tuplink\ttask-1\tdone: PR merged", claimedAt.Unix()))
+
+	output := runInboxView(t, homeDir)
+
+	if strings.Contains(output, "none pending") || strings.Contains(output, "All quiet") {
+		t.Errorf("a claimed wake must not read as none pending or all quiet, got:\n%s", output)
+	}
+	for _, want := range []string{
+		"Wakes: none queued, 1 claimed",
+		"Claimed wakes: 1",
+		"lease-1 held by munsu:herdr, claimed 10m",
+		fmt.Sprintf(`%d:7 uplink task-1 "done: PR merged" [stalled]: claimed 10m`, claimedAt.Unix()),
+		"by munsu:herdr, no ack or resolve since",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("inbox missing %q, got:\n%s", want, output)
+		}
+	}
+}
+
+// An unreadable lease directory is unknown, never none.
+func TestInboxCmd_UnreadableLeaseDirectoryIsUnknown(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(home.LeaseDir(homeDir), []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	output := runInboxView(t, homeDir)
+
+	if strings.Contains(output, "none pending") || strings.Contains(output, "All quiet") {
+		t.Errorf("unreadable leases must not read as none pending or all quiet, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Claimed wakes: unknown") {
+		t.Errorf("inbox should show claimed wakes as unknown, got:\n%s", output)
 	}
 }
 

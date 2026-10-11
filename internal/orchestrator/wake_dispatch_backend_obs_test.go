@@ -90,9 +90,10 @@ func TestDispatchWake_ConsumesCanonicalBackendObservation(t *testing.T) {
 				Mode:    WakeDeliveryHerdr,
 				Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
 				// Real production adapter: the canonical backend observation flows in.
-				Probe:  &observeProbePort{bk: tc.bk},
-				Submit: &mockSubmitPort{acknowledged: true},
-				Busy:   &mockBusyPort{reading: "idle"},
+				Probe:    &observeProbePort{bk: tc.bk},
+				Submit:   &mockSubmitPort{acknowledged: true},
+				Busy:     &mockBusyPort{reading: "idle"},
+				Composer: claudeIdleComposer(t),
 			}
 
 			result, err := DispatchWake(req)

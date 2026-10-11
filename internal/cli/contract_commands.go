@@ -228,10 +228,15 @@ func newContractGuardCmd() *cobra.Command {
 
 			var violations []GuardViolation
 			for _, c := range allConditions {
+				store := "state/.wake-queue"
+				switch c.Code {
+				case orchestrator.ConditionClaimedWakeExpired, orchestrator.ConditionClaimedWakeStalled, orchestrator.ConditionClaimedWakesUnreadable:
+					store = "state/.wake-leases"
+				}
 				v := GuardViolation{
 					Code:      string(c.Code),
 					Condition: c.Message,
-					Evidence:  []string{"munsu guard", "state/.wake-queue"},
+					Evidence:  []string{"munsu guard", store},
 				}
 				violations = append(violations, v)
 			}

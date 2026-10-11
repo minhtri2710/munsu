@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -710,3 +711,249 @@ func TestPrintCaptainLiveness_RecoverSummaryPrinted(t *testing.T) {
 // this untagged file because the untagged tests use it too, and a helper
 // defined only under the integration tag is invisible to that build.
 func reclaimEvery(string, func() error) (bool, error) { return false, nil }
+
+// generalSession prepares a canonical General home for a session-start run
+// whose bootstrap is stubbed: herdr backend, no config values, and the pane
+// metadata the process names.
+func generalSession(t *testing.T, herdrPane string) string {
+	t.Helper()
+	home := t.TempDir()
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.FleetBaseConfig{Backend: "herdr"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NO_MISTAKES_GATE", "")
+	_ = os.Unsetenv("NO_MISTAKES_GATE")
+	t.Setenv("MUNSU_ROLE", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("HERDR_ENV", "")
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_SESSION", "")
+	if herdrPane != "" {
+		t.Setenv("HERDR_ENV", "1")
+		t.Setenv("HERDR_PANE_ID", herdrPane)
+		t.Setenv("HERDR_SESSION", "lab")
+	}
+	savedBootstrap := sessionStartBootstrap
+	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
+		return &Result{}, nil
+	}
+	t.Cleanup(func() {
+		sessionStartBootstrap = savedBootstrap
+		_ = mhome.ReleaseSessionLock(home)
+	})
+	return home
+}
+
+func writeConfigFixture(t *testing.T, home, key, value string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, "config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config", key), []byte(value), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readConfigFixture(t *testing.T, home, key string) (string, bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, "config", key))
+	if os.IsNotExist(err) {
+		return "", false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data), true
+}
+
+func runGeneralSession(t *testing.T, home string) (*SessionStartResult, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	res, err := RunSessionStartWithWatcher(&buf, home, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("session-start: %v\n%s", err, buf.String())
+	}
+	return res, buf.String()
+}
+
+// TestRunSessionStartRecordsGeneralDeliveryForTheGeneral pins when session-start
+// writes the General's pane and herdr delivery mode.
+func TestRunSessionStartRecordsGeneralDeliveryForTheGeneral(t *testing.T) {
+	t.Run("lock held, pane named, herdr backend", func(t *testing.T) {
+		home := generalSession(t, "p7")
+		runGeneralSession(t, home)
+		if got, ok := readConfigFixture(t, home, "general-pane"); !ok || strings.TrimSpace(got) != "lab:p7" {
+			t.Fatalf("config/general-pane = %q (present %v), want lab:p7", got, ok)
+		}
+		if got, ok := readConfigFixture(t, home, "wake-delivery-mode"); !ok || strings.TrimSpace(got) != "herdr" {
+			t.Fatalf("config/wake-delivery-mode = %q (present %v), want herdr", got, ok)
+		}
+	})
+	t.Run("another session holds the lock", func(t *testing.T) {
+		home := generalSession(t, "p7")
+		held, err := mhome.AcquireSessionLock(home)
+		if err != nil || !held {
+			t.Fatalf("pre-acquiring the session lock: %v, %v", held, err)
+		}
+		if res, _ := runGeneralSession(t, home); res.LockAcquired {
+			t.Fatal("test setup: session-start acquired a lock already held")
+		}
+		for _, key := range []string{"general-pane", "wake-delivery-mode"} {
+			if got, ok := readConfigFixture(t, home, key); ok {
+				t.Fatalf("read-only session wrote config/%s = %q", key, got)
+			}
+		}
+	})
+	t.Run("no pane named", func(t *testing.T) {
+		home := generalSession(t, "")
+		runGeneralSession(t, home)
+		for _, key := range []string{"general-pane", "wake-delivery-mode"} {
+			if got, ok := readConfigFixture(t, home, key); ok {
+				t.Fatalf("session without a pane wrote config/%s = %q", key, got)
+			}
+		}
+	})
+	t.Run("tmux pane beside the herdr environment", func(t *testing.T) {
+		home := generalSession(t, "p7")
+		t.Setenv("TMUX_PANE", "%3")
+		_, out := runGeneralSession(t, home)
+		if !strings.Contains(out, "general-pane: not recorded:") {
+			t.Fatalf("output lacks the not-recorded line:\n%s", out)
+		}
+		for _, key := range []string{"general-pane", "wake-delivery-mode"} {
+			if got, ok := readConfigFixture(t, home, key); ok {
+				t.Fatalf("a tmux pane under a herdr backend wrote config/%s = %q", key, got)
+			}
+		}
+	})
+	t.Run("tmux pane under a tmux backend", func(t *testing.T) {
+		home := generalSession(t, "")
+		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        config.FleetBaseConfig{Backend: "tmux"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMUX_PANE", "%3")
+		runGeneralSession(t, home)
+		if got, ok := readConfigFixture(t, home, "general-pane"); !ok || strings.TrimSpace(got) != "%3" {
+			t.Fatalf("config/general-pane = %q (present %v), want %%3", got, ok)
+		}
+	})
+	t.Run("backend is not herdr", func(t *testing.T) {
+		home := generalSession(t, "p7")
+		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        config.FleetBaseConfig{Backend: "tmux"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		runGeneralSession(t, home)
+		if got, ok := readConfigFixture(t, home, "wake-delivery-mode"); ok {
+			t.Fatalf("tmux backend wrote config/wake-delivery-mode = %q", got)
+		}
+	})
+}
+
+// TestRunSessionStartWritesNothingOutsideTheGeneral proves a Captain home or a
+// non-General role gets neither key: Captain watchers run the same dispatch
+// hook and would otherwise start writing to their environment pane.
+func TestRunSessionStartWritesNothingOutsideTheGeneral(t *testing.T) {
+	cases := map[string]func(t *testing.T, home string){
+		"captain home marker": func(t *testing.T, home string) {
+			if err := os.WriteFile(filepath.Join(home, mhome.CaptainProvenanceMarkerName), []byte("cap-1\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"soldier role": func(t *testing.T, _ string) { t.Setenv("MUNSU_ROLE", "soldier") },
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := generalSession(t, "p7")
+			arrange(t, home)
+			runGeneralSession(t, home)
+			for _, key := range []string{"general-pane", "wake-delivery-mode"} {
+				if got, ok := readConfigFixture(t, home, key); ok {
+					t.Fatalf("config/%s = %q, want none", key, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRunSessionStartKeepsExplicitDeliveryValues proves an operator's value,
+// including an empty one, is never replaced.
+func TestRunSessionStartKeepsExplicitDeliveryValues(t *testing.T) {
+	for _, key := range []string{"general-pane", "wake-delivery-mode"} {
+		for name, explicit := range map[string]string{"set": "manual\n", "empty": ""} {
+			t.Run(key+"/"+name, func(t *testing.T) {
+				home := generalSession(t, "p7")
+				writeConfigFixture(t, home, key, explicit)
+				if key == "wake-delivery-mode" {
+					writeConfigFixture(t, home, "general-pane", "ops:p1\n")
+				}
+				runGeneralSession(t, home)
+				if got, _ := readConfigFixture(t, home, key); got != explicit {
+					t.Fatalf("config/%s = %q, want the explicit %q", key, got, explicit)
+				}
+			})
+		}
+	}
+}
+
+// TestRunSessionStartReportsDeliveryValuesItCannotRecord proves a value that
+// cannot be read or written is named on the output and does not stop the
+// session.
+func TestRunSessionStartReportsDeliveryValuesItCannotRecord(t *testing.T) {
+	failKey := func(t *testing.T, key string) {
+		saved := sessionStartSetConfig
+		sessionStartSetConfig = func(home, k, v string) error {
+			if k == key {
+				return errors.New("disk full")
+			}
+			return saved(home, k, v)
+		}
+		t.Cleanup(func() { sessionStartSetConfig = saved })
+	}
+	cases := map[string]struct {
+		arrange func(t *testing.T, home string)
+		want    string
+	}{
+		"existing pane unreadable": {func(t *testing.T, home string) {
+			if err := os.MkdirAll(filepath.Join(home, "config", "general-pane"), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}, "general-pane: not recorded:"},
+		"pane write fails": {func(t *testing.T, _ string) { failKey(t, "general-pane") }, "general-pane: not recorded: disk full"},
+		"existing mode unreadable": {func(t *testing.T, home string) {
+			if err := os.MkdirAll(filepath.Join(home, "config", "wake-delivery-mode"), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}, "wake-delivery-mode: not recorded:"},
+		"backend unresolvable": {func(t *testing.T, home string) {
+			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte("{"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}, "wake-delivery-mode: not recorded:"},
+		"mode write fails": {func(t *testing.T, _ string) { failKey(t, "wake-delivery-mode") }, "wake-delivery-mode: not recorded: disk full"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := generalSession(t, "p7")
+			tc.arrange(t, home)
+			res, out := runGeneralSession(t, home)
+			if !res.LockAcquired {
+				t.Fatal("a delivery value failure must not release the session")
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("output lacks %q:\n%s", tc.want, out)
+			}
+		})
+	}
+}

@@ -477,16 +477,18 @@ type ReportInjection struct {
 // WatchStatus reports the bounded watcher health and status.
 // Never enters foreground daemon mode — pure stateless read of beat/identity/wake state.
 type WatchStatus struct {
-	WatchID     string          `json:"watch_id"`
-	State       string          `json:"state"` // healthy | stale | absent
-	BeatAge     string          `json:"beat_age"`
-	PID         int             `json:"pid"`
-	Identity    string          `json:"identity,omitempty"`
-	QueuedWakes int             `json:"queued_wakes"`
-	MaterialAge string          `json:"material_age,omitempty"` // age of oldest material wake
-	GuardState  string          `json:"guard_state"`            // healthy | unhealthy | indeterminate
-	Lease       *WatchLeaseInfo `json:"lease,omitempty"`
-	Diagnostics []string        `json:"diagnostics,omitempty"`
+	WatchID        string          `json:"watch_id"`
+	State          string          `json:"state"` // healthy | stale | absent
+	BeatAge        string          `json:"beat_age"`
+	PID            int             `json:"pid"`
+	Identity       string          `json:"identity,omitempty"`
+	QueuedWakes    int             `json:"queued_wakes"`
+	ClaimedWakes   int             `json:"claimed_wakes"`          // unacked wakes held in leases
+	ClaimedStalled int             `json:"claimed_stalled"`        // held wakes with no ack or resolve within the stall window
+	MaterialAge    string          `json:"material_age,omitempty"` // age of oldest material wake
+	GuardState     string          `json:"guard_state"`            // healthy | unhealthy | indeterminate
+	Lease          *WatchLeaseInfo `json:"lease,omitempty"`
+	Diagnostics    []string        `json:"diagnostics,omitempty"`
 }
 
 // DecisionHoldInfo is one row in a decision-hold list.

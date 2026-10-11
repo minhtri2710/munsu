@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -261,6 +262,62 @@ func TestWatchStatus_WithMaterialWake(t *testing.T) {
 	}
 	if resp.Data.QueuedWakes < 1 {
 		t.Errorf("queued_wakes=%d", resp.Data.QueuedWakes)
+	}
+}
+
+// TestWatchStatus_ClaimedWakes: a wake held in a lease is in neither queue, so
+// watch status reports it itself. A stalled material wake makes the guard
+// unhealthy; a stalled routine one is reported and does not.
+func TestWatchStatus_ClaimedWakes(t *testing.T) {
+	claimedAt := time.Now().Add(-orchestrator.MaterialWakeAgeThreshold - time.Minute)
+	for _, tc := range []struct {
+		name, payload, wantGuard string
+	}{
+		{"material", "task-1: done: PR merged [event=1]", "unhealthy"},
+		{"routine", "working: in progress", "healthy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			os.MkdirAll(filepath.Join(home, "state"), 0755)
+			if err := orchestrator.WriteBeat(home); err != nil {
+				t.Fatal(err)
+			}
+			writeClaimedLease(t, home, "lease-1", time.Now().Add(time.Hour), claimedAt,
+				fmt.Sprintf("%d\t1\tsignal\ttask-1\t%s", claimedAt.Unix(), tc.payload))
+
+			data := evaluateWatcherStatus(home).Data
+
+			if data.ClaimedWakes != 1 || data.ClaimedStalled != 1 || data.QueuedWakes != 0 {
+				t.Errorf("claimed_wakes=%d claimed_stalled=%d queued_wakes=%d, want 1 1 0", data.ClaimedWakes, data.ClaimedStalled, data.QueuedWakes)
+			}
+			if data.GuardState != tc.wantGuard {
+				t.Errorf("guard_state=%q, want %q", data.GuardState, tc.wantGuard)
+			}
+			if !slices.Contains(data.Diagnostics, "Claimed wakes: 1 held (0 expired, 1 stalled)") {
+				t.Errorf("diagnostics missing the claimed-wake line: %v", data.Diagnostics)
+			}
+		})
+	}
+}
+
+// An unreadable lease directory is unknown: indeterminate, never healthy.
+func TestWatchStatus_UnreadableLeaseDirectoryIsIndeterminate(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	if err := orchestrator.WriteBeat(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mhome.LeaseDir(home), []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	data := evaluateWatcherStatus(home).Data
+
+	if data.GuardState != "indeterminate" {
+		t.Errorf("guard_state=%q, want indeterminate", data.GuardState)
+	}
+	if len(data.Diagnostics) != 1 || !strings.HasPrefix(data.Diagnostics[0], "Claimed wakes: unknown") {
+		t.Errorf("diagnostics=%v, want one claimed-wakes-unknown line", data.Diagnostics)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// ListClaimedLeases (wake_claimed.go) is the lock-free read of these leases.
 const wakeLeaseDir = "state/.wake-leases"
 
 // LeasePath returns the directory for wake lease files.

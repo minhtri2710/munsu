@@ -287,3 +287,120 @@ func TestPayloadHasMaterialMarker(t *testing.T) {
 		})
 	}
 }
+
+// writeClaimedLease writes a lease file the way ClaimWakes lays it out, with
+// its mtime set to claimedAt so ClaimState sees a claim that is not fresh.
+func writeClaimedLease(t *testing.T, homeDir, leaseID string, expiresAt, claimedAt time.Time, wakeLines ...string) {
+	t.Helper()
+	if err := os.MkdirAll(mhome.LeaseDir(homeDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("%s\tconsumer-a\t%d\t%d\n%s\n", leaseID, expiresAt.Unix(), claimedAt.Unix(), strings.Join(wakeLines, "\n"))
+	path := mhome.LeaseFilePath(homeDir, leaseID)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, claimedAt, claimedAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEvaluateGuard_ClaimedWakeConditions: a wake held in a lease is in
+// neither queue, so only the lease read can say it expired or stalled.
+func TestEvaluateGuard_ClaimedWakeConditions(t *testing.T) {
+	now := time.Now()
+	wake := func(epoch time.Time) string {
+		return fmt.Sprintf("%d\t1\tsignal\ttask-1\ttask-1: done: PR merged [event=1]", epoch.Unix())
+	}
+	cases := []struct {
+		name      string
+		expiresAt time.Time
+		claimedAt time.Time
+		want      ConditionCode
+	}{
+		{"held", now.Add(time.Minute), now.Add(-time.Minute), ""},
+		{"expired", now.Add(-time.Minute), now.Add(-2 * time.Minute), ConditionClaimedWakeExpired},
+		{"stalled", now.Add(time.Hour), now.Add(-MaterialWakeAgeThreshold - time.Minute), ConditionClaimedWakeStalled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeBeatFile(t, home, now.Unix())
+			writeClaimedLease(t, home, "lease-1", tc.expiresAt, tc.claimedAt, wake(tc.claimedAt))
+
+			result := EvaluateGuard(home, 1, now)
+
+			var got []ConditionInfo
+			for _, c := range result.Conditions {
+				if c.Code == ConditionClaimedWakeExpired || c.Code == ConditionClaimedWakeStalled {
+					got = append(got, c)
+				}
+			}
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("held wake produced conditions %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Code != tc.want {
+				t.Fatalf("conditions = %v, want exactly %q", got, tc.want)
+			}
+			if !strings.Contains(got[0].Message, "consumer-a") {
+				t.Errorf("message %q does not name the claimant", got[0].Message)
+			}
+		})
+	}
+}
+
+// A lease directory that cannot be read is unknown, never an empty fleet.
+func TestEvaluateGuard_UnreadableLeaseDirectoryIsACondition(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+	if err := os.WriteFile(filepath.Join(home, "state", ".wake-leases"), []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := EvaluateGuard(home, 1, time.Now())
+
+	for _, c := range result.Conditions {
+		if c.Code == ConditionClaimedWakesUnreadable {
+			return
+		}
+	}
+	t.Fatalf("conditions = %v, want %q", result.Conditions, ConditionClaimedWakesUnreadable)
+}
+
+// ListClaimedWakes counts a wake once: a completed resolution means it is no
+// longer unacked, and a wake mid-reclaim (in the lease and the queue) is the
+// queued copy's.
+func TestListClaimedWakes_OmitsResolvedAndQueued(t *testing.T) {
+	now := time.Now()
+	home := t.TempDir()
+	claimedAt := now.Add(-time.Minute)
+	expires := now.Add(time.Minute)
+	writeClaimedLease(t, home, "lease-1", expires, claimedAt,
+		"100\t1\tsignal\ttask-1\ttask-1: done: kept [event=1]",
+		"100\t2\tsignal\ttask-2\tresolved elsewhere",
+		"100\t3\tsignal\ttask-3\talso queued")
+	resDir := filepath.Join(home, "state/.wake-resolutions")
+	if err := os.MkdirAll(resDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	resName := "lease-1-100_2.json"
+	resContent := `{"lease_id":"lease-1","event_id":"100:2","summary":"checked","state":"completed","updated_at":100}`
+	if err := os.WriteFile(filepath.Join(resDir, resName), []byte(resContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeWakeQueue(t, home, []string{"100\t3\tsignal\ttask-3\talso queued"})
+
+	got, err := ListClaimedWakes(home, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Wake.Seq != "1" {
+		t.Fatalf("claimed wakes = %+v, want only 100:1", got)
+	}
+	if !got[0].Material || got[0].State != mhome.ClaimHeld || got[0].Consumer != "consumer-a" || !got[0].ClaimedAt.Equal(time.Unix(claimedAt.Unix(), 0)) {
+		t.Errorf("claimed wake = %+v, want held material wake of consumer-a claimed at %v", got[0], claimedAt)
+	}
+}
