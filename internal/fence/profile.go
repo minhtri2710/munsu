@@ -54,7 +54,7 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}
-	dirs, files, err := harnessState(l.Harness, userHome, p.stateDir)
+	dirs, files, binDirs, err := harnessState(l.Harness, userHome, p.stateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +108,15 @@ func New(l Launch) (*Fence, error) {
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
 	}
+	// Last, so nothing above reopens it: a seat's PATH directories, and every
+	// ancestor's own name so a directory cannot be renamed away and replaced.
+	// No lane runs this off darwin; the darwin fence lane covers it.
+	pathDirs, ancestors, err := pathDirDenies(append(append([]string{}, l.PathDirs...), binDirs...))
+	if err != nil {
+		return nil, err
+	}
+	deny(&b, "subpath", pathDirs...)
+	deny(&b, "literal", ancestors...)
 
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
@@ -121,6 +130,30 @@ func New(l Launch) (*Fence, error) {
 		role: l.Role, harness: l.Harness,
 		profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse), roots: p.roots,
 	}, nil
+}
+
+// pathDirDenies returns the PATH directories as given and symlink-resolved, and
+// the names of all their ancestors. A relative or empty entry names the seat's
+// working directory, which the fence cannot refuse, so it is an error: the
+// caller keeps such entries off the seat's PATH.
+func pathDirDenies(pathDirs []string) (dirs, ancestors []string, err error) {
+	for _, d := range pathDirs {
+		if !filepath.IsAbs(d) {
+			return nil, nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
+		}
+		d = filepath.Clean(d)
+		dirs = append(dirs, d)
+		if r, err := resolvePath(d, false); err == nil {
+			dirs = append(dirs, r)
+		}
+	}
+	dirs = dedupe(dirs)
+	for _, d := range dirs {
+		for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
+			ancestors = append(ancestors, a)
+		}
+	}
+	return dirs, dedupe(ancestors), nil
 }
 
 func resolveLaunch(l Launch) (launchPaths, error) {
@@ -312,23 +345,31 @@ func gitBranchFiles(commonDir, branch string) []string {
 
 // harnessState returns the writable state of a harness kind, including the
 // launch's own state dir for a kind that has one: directories and single files
-// (with their atomic temp siblings). An unmodeled kind fails closed.
-func harnessState(kind, userHome, stateDir string) (dirs, files []string, err error) {
+// (with their atomic temp siblings). binDirs are the directories inside those
+// roots that the harness itself puts on its commands' PATH, which the seat must
+// not write. An unmodeled kind fails closed.
+//
+// Claude puts none on PATH (2.1.296 appends only a host-supplied dir the CLI
+// never sets). Pi prepends <agent dir>/bin to every command its bash tool runs,
+// where the agent dir is PI_CODING_AGENT_DIR (the launch's state dir) or
+// ~/.pi/agent, which also holds the user's pi launcher.
+func harnessState(kind, userHome, stateDir string) (dirs, files, binDirs []string, err error) {
 	if stateDir != "" && kind != harness.Pi {
-		return nil, nil, fmt.Errorf("fence: harness %q has no per-launch state dir", kind)
+		return nil, nil, nil, fmt.Errorf("fence: harness %q has no per-launch state dir", kind)
 	}
 	switch kind {
 	case harness.Claude:
 		return []string{filepath.Join(userHome, ".claude"), filepath.Join(userHome, "Library", "Caches", "claude-cli-nodejs")},
-			[]string{filepath.Join(userHome, ".claude.json")}, nil
+			[]string{filepath.Join(userHome, ".claude.json")}, nil, nil
 	case harness.Pi:
-		dirs = []string{filepath.Join(userHome, ".pi", "agent")}
+		agent := filepath.Join(userHome, ".pi", "agent")
+		dirs, binDirs = []string{agent}, []string{filepath.Join(agent, "bin")}
 		if stateDir != "" {
-			dirs = append(dirs, stateDir)
+			dirs, binDirs = append(dirs, stateDir), append(binDirs, filepath.Join(stateDir, "bin"))
 		}
-		return dirs, nil, nil
+		return dirs, nil, binDirs, nil
 	}
-	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
+	return nil, nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
 }
 
 // goCaches returns the Go build cache, module cache (with the checksum db) and

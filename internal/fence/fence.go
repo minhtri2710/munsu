@@ -64,6 +64,9 @@ type Launch struct {
 	// also stay clear of. A reviewer has neither.
 	WritableRoots []string
 	Checkouts     []string
+	// PathDirs are the directories on the seat's launch PATH. The seat can write
+	// none of them, nor rename or replace one, whatever else it may write.
+	PathDirs []string
 }
 
 // UnsupportedError is returned by New on a GOOS with no fence implementation.

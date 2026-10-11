@@ -371,12 +371,12 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		b.WriteString(shQuote(in.SnapshotDigest))
 		b.WriteString("\n")
 	}
-	// Git-mutation fence: prepend the munsu-owned git shim so Git resolved by
-	// the harness (including through a shell wrapper) runs through the
-	// worktree-binding fence. The shim lives
-	// under the home's untracked state/ tree; provisioning failure fails the
-	// launch closed. munsu's own git strips this path back off (git-guard).
-	shimDir, err := provisionGitShim(in.HomeDir)
+	// Git-mutation fence: put the munsu-owned git shim first on PATH so Git
+	// resolved by the harness (including through a shell wrapper) runs through
+	// the worktree-binding fence. The shim lives under the home's untracked
+	// state/ tree; provisioning failure fails the launch closed. munsu's own git
+	// strips this path back off (git-guard).
+	_, err := provisionGitShim(in.HomeDir)
 	if err != nil {
 		return preparedLaunchArtifact{}, err
 	}
@@ -396,9 +396,10 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		b.WriteString("\n")
 		posture.SkillBlock = true
 	}
+	// The seat's PATH is exactly the list the fence denies, never the pane's.
 	b.WriteString("export PATH=")
-	b.WriteString(shQuote(shimDir))
-	b.WriteString(":\"$PATH\"\n")
+	b.WriteString(shQuote(strings.Join(seatPathDirs(in.HomeDir), string(os.PathListSeparator))))
+	b.WriteString("\n")
 	// A fenced git cannot write the gc and maintenance state it would start in
 	// the background, so turn both off for every git the harness runs.
 	b.WriteString("export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")

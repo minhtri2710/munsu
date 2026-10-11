@@ -65,7 +65,7 @@ func TestBuildLaunchArtifactExecsTheHarnessUnderTheFence(t *testing.T) {
 	if !strings.Contains(art.Command, LaunchScriptName) {
 		t.Fatalf("submission command = %q, want it to run the script", art.Command)
 	}
-	if strings.Index(string(script), "exec") < strings.Index(string(script), "printf '%s' \"$identity\"") {
+	if strings.Index(string(script), "\nexec ") < strings.Index(string(script), "printf '%s' \"$identity\"") {
 		t.Fatal("the fenced exec precedes the launch guard, which must run unfenced before it")
 	}
 }

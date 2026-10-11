@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,19 +112,46 @@ func TestGitBranchFilesAreExactlyTheCommitWriteSet(t *testing.T) {
 }
 
 func TestHarnessStateRefusals(t *testing.T) {
-	if _, _, err := harnessState(harness.Claude, "/u", "/state/x"); err == nil || !strings.Contains(err.Error(), "has no per-launch state dir") {
+	if _, _, _, err := harnessState(harness.Claude, "/u", "/state/x"); err == nil || !strings.Contains(err.Error(), "has no per-launch state dir") {
 		t.Errorf("claude with a state dir: err = %v", err)
 	}
-	if _, _, err := harnessState(harness.Codex, "/u", ""); err == nil || !strings.Contains(err.Error(), "no state profile") {
+	if _, _, _, err := harnessState(harness.Codex, "/u", ""); err == nil || !strings.Contains(err.Error(), "no state profile") {
 		t.Errorf("unmodeled harness: err = %v", err)
 	}
-	dirs, files, err := harnessState(harness.Pi, "/u", "/state/x")
-	if err != nil || strings.Join(dirs, " ") != "/u/.pi/agent /state/x" || len(files) != 0 {
-		t.Errorf("pi state = %q, %q, %v", dirs, files, err)
+	dirs, files, bins, err := harnessState(harness.Pi, "/u", "/state/x")
+	if err != nil || strings.Join(dirs, " ") != "/u/.pi/agent /state/x" || len(files) != 0 || strings.Join(bins, " ") != "/u/.pi/agent/bin /state/x/bin" {
+		t.Errorf("pi state = %q, %q, %q, %v", dirs, files, bins, err)
 	}
-	dirs, files, err = harnessState(harness.Claude, "/u", "")
-	if err != nil || len(dirs) != 2 || strings.Join(files, " ") != "/u/.claude.json" {
-		t.Errorf("claude state = %q, %q, %v", dirs, files, err)
+	dirs, files, bins, err = harnessState(harness.Claude, "/u", "")
+	if err != nil || len(dirs) != 2 || strings.Join(files, " ") != "/u/.claude.json" || len(bins) != 0 {
+		t.Errorf("claude state = %q, %q, %q, %v", dirs, files, bins, err)
+	}
+}
+
+func TestPathDirDenies(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want string // the refusal, or "" when the list is accepted
+	}{
+		{"a relative entry", []string{"/usr/bin", "bin"}, `PATH directory "bin" is not absolute`},
+		{"an empty entry", []string{""}, `PATH directory "" is not absolute`},
+		{"a dot entry", []string{"."}, `PATH directory "." is not absolute`},
+		{"absolute entries", []string{"/usr/bin", "/usr/local/bin/"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dirs, ancestors, err := pathDirDenies(tt.in)
+			if tt.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Fatalf("err = %v, want %q", err, tt.want)
+				}
+				return
+			}
+			if err != nil || !slices.Contains(dirs, "/usr/local/bin") || !slices.Contains(ancestors, "/usr/local") || slices.Contains(ancestors, "/") {
+				t.Fatalf("pathDirDenies = %q, %q, %v; want the cleaned dirs and their ancestors below the root", dirs, ancestors, err)
+			}
+		})
 	}
 }
 

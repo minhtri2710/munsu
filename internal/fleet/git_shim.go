@@ -16,6 +16,25 @@ import (
 // needs no launch-envelope manifest entry.
 const GitShimBinRelPath = "state/shim/bin"
 
+func gitShimDir(homeDir string) string {
+	return filepath.Join(homeDir, filepath.FromSlash(GitShimBinRelPath))
+}
+
+// seatPathDirs are the directories on a seat's launch PATH, in order: the shim
+// directory, then the absolute entries of the inherited PATH. The launch script
+// exports exactly this list and the fence denies exactly this list. Relative and
+// empty entries name the seat's working directory, which it writes, so they are
+// left off.
+func seatPathDirs(homeDir string) []string {
+	dirs := []string{gitShimDir(homeDir)}
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		if filepath.IsAbs(d) {
+			dirs = append(dirs, filepath.Clean(d))
+		}
+	}
+	return dirs
+}
+
 // provisionGitShim writes the git shim under <homeDir>/state/shim/bin/git and
 // returns the shim directory to prepend to PATH. The shim is a small bash
 // script that re-invokes this munsu binary's git-guard with the git arguments;
@@ -25,7 +44,7 @@ const GitShimBinRelPath = "state/shim/bin"
 // the home. Provisioning failure is returned so the caller fails the launch
 // closed.
 func provisionGitShim(homeDir string) (string, error) {
-	shimDir := filepath.Join(homeDir, filepath.FromSlash(GitShimBinRelPath))
+	shimDir := gitShimDir(homeDir)
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		return "", fmt.Errorf("provisioning git shim directory: %w", err)
 	}
