@@ -35,8 +35,24 @@ func TestGuardBurnDownRegistrySyncRefusals(t *testing.T) {
 		}
 		registrySyncGit(t, dir, "init")
 		registrySyncGit(t, dir, "remote", "add", "origin", remote)
-		if err := syncOne(dir); err == nil || !strings.Contains(err.Error(), "no default branch (main/master) found on origin") {
+		if err := syncOne(dir); err == nil || !strings.Contains(err.Error(), "cannot resolve default branch") {
 			t.Fatalf("syncOne no-default-branch error = %v, want default-branch refusal", err)
+		}
+	})
+
+	t.Run("sync refuses an origin/HEAD outside refs/remotes/origin/", func(t *testing.T) {
+		dir := registrySyncRepoWithOrigin(t)
+		registrySyncGit(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/upstream/main")
+		if err := syncOne(dir); err == nil || !strings.Contains(err.Error(), "unexpected origin/HEAD symbolic ref format") {
+			t.Fatalf("syncOne malformed-origin-HEAD error = %v, want malformed refusal", err)
+		}
+	})
+
+	t.Run("sync accepts a valid origin/HEAD", func(t *testing.T) {
+		dir := registrySyncRepoWithOrigin(t)
+		registrySyncGit(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		if err := syncOne(dir); err != nil {
+			t.Fatalf("syncOne with a valid origin/HEAD = %v, want nil", err)
 		}
 	})
 
@@ -53,6 +69,28 @@ func TestGuardBurnDownRegistrySyncRefusals(t *testing.T) {
 			t.Fatalf("syncOne dirty-tree error = %v, want dirty-tree refusal", err)
 		}
 	})
+}
+
+// registrySyncRepoWithOrigin returns a clean repo on main whose origin has main.
+func registrySyncRepoWithOrigin(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	dir := filepath.Join(root, "repo")
+	registrySyncGit(t, root, "init", "--bare", remote)
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	registrySyncGit(t, dir, "init", "-b", "main")
+	registrySyncGit(t, dir, "config", "user.email", "test@example.invalid")
+	registrySyncGit(t, dir, "config", "user.name", "Registry Guard Test")
+	writeFile(t, filepath.Join(dir, "tracked.txt"), "clean\n")
+	registrySyncGit(t, dir, "add", "tracked.txt")
+	registrySyncGit(t, dir, "commit", "-m", "initial")
+	registrySyncGit(t, dir, "remote", "add", "origin", remote)
+	registrySyncGit(t, dir, "push", "origin", "main")
+	registrySyncGit(t, dir, "config", "remote.origin.followRemoteHEAD", "never")
+	return dir
 }
 
 func registrySyncGit(t *testing.T, dir string, args ...string) {

@@ -3,7 +3,6 @@ package harness
 import (
 	"encoding/json"
 	"sort"
-	"strings"
 	"testing"
 )
 
@@ -508,26 +507,5 @@ func TestResolveDispatchSelection_LegacyWhenProse(t *testing.T) {
 	got := ResolveDispatchSelection(cfg, "please do deep architectural redesign of the module")
 	if got.Harness != "pi" || got.Model != "glm" || got.Effort != "high" {
 		t.Errorf("got %+v", got)
-	}
-}
-
-func TestLaunchStringWith_Overrides(t *testing.T) {
-	tmpl := Templates[Pi]
-	cmd := LaunchStringWith(Pi, tmpl, "opencode-go/deepseek-v4-flash", "medium")
-	if !strings.Contains(cmd, "--model") || !strings.Contains(cmd, "opencode-go/deepseek-v4-flash") {
-		t.Errorf("missing model in %q", cmd)
-	}
-	if !strings.Contains(cmd, "--thinking") || !strings.Contains(cmd, "medium") {
-		t.Errorf("missing effort in %q", cmd)
-	}
-	// empty keeps no flags
-	cmd = LaunchStringWith(Pi, tmpl, "", "")
-	if strings.Contains(cmd, "--model") || strings.Contains(cmd, "--thinking") {
-		t.Errorf("empty overrides should omit flags: %q", cmd)
-	}
-	// default sentinel omitted
-	cmd = LaunchStringWith(Pi, tmpl, "default", "default")
-	if strings.Contains(cmd, "--model") || strings.Contains(cmd, "--thinking") {
-		t.Errorf("default sentinel should omit flags: %q", cmd)
 	}
 }

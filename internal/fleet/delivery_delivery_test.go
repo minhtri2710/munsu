@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -23,32 +24,6 @@ func TestGitBranch(t *testing.T) {
 	}
 	if branch == "" {
 		t.Fatal("expected non-empty branch name")
-	}
-}
-
-func TestGitDefaultBranch(t *testing.T) {
-	tmp := t.TempDir()
-	initGitRepo(t, tmp, "")
-
-	branch, err := gitDefaultBranch(tmp)
-	if err != nil {
-		t.Fatalf("gitDefaultBranch: %v", err)
-	}
-	if branch != "main" && branch != "master" {
-		t.Errorf("expected main or master, got %q", branch)
-	}
-}
-
-func TestGitDefaultBranch_NoRemote(t *testing.T) {
-	tmp := t.TempDir()
-	initGitRepo(t, tmp, "")
-
-	branch, err := gitDefaultBranch(tmp)
-	if err != nil {
-		t.Fatalf("gitDefaultBranch without remote: %v", err)
-	}
-	if branch == "" {
-		t.Fatal("expected a branch name even without remote")
 	}
 }
 
@@ -112,12 +87,12 @@ func TestGitDiffSummary_WithDiff(t *testing.T) {
 	}
 
 	// Get the default branch name
-	defaultBranch, err := gitDefaultBranch(tmp)
+	defaultBranch, err := backend.DefaultBranch(tmp)
 	if err != nil {
 		t.Fatalf("gitDefaultBranch: %v", err)
 	}
 
-	summary, err := gitDiffSummary(tmp, defaultBranch, "feature/test-branch")
+	summary, err := gitDiffSummary(tmp, defaultBranch.Ref, "feature/test-branch")
 	if err != nil {
 		t.Fatalf("gitDiffSummary: %v", err)
 	}
@@ -136,7 +111,7 @@ func TestGitDiffSummary_BinaryNumstatCountsZero(t *testing.T) {
 	tmp := t.TempDir()
 	initGitRepo(t, tmp, "")
 	gitEnv := gitEnvForDir(tmp)
-	defaultBranch, err := gitDefaultBranch(tmp)
+	defaultBranch, err := backend.DefaultBranch(tmp)
 	if err != nil {
 		t.Fatalf("gitDefaultBranch: %v", err)
 	}
@@ -159,7 +134,7 @@ func TestGitDiffSummary_BinaryNumstatCountsZero(t *testing.T) {
 	run("add", "blob.bin", "text.txt")
 	run("commit", "-m", "binary and text")
 
-	summary, err := gitDiffSummary(tmp, defaultBranch, "feature/binary")
+	summary, err := gitDiffSummary(tmp, defaultBranch.Ref, "feature/binary")
 	if err != nil {
 		t.Fatalf("gitDiffSummary: %v", err)
 	}
@@ -238,6 +213,91 @@ func TestReviewDiffUsesStoredIdentityBaseOnOrigin(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "- **Base:** `origin/trunk`") || !strings.Contains(string(out), "change.txt") {
 		t.Fatalf("review-diff output = %s, want a diff of change.txt against origin/trunk", out)
+	}
+}
+
+// TestReviewDiffDefaultBase runs ReviewDiff end to end, with no stored
+// identity and origin/HEAD unset, over the states that decide which ref the
+// diff is taken against: the local default branch when there is one, else
+// origin/<default> (never a bare name no local branch carries). A malformed
+// origin/HEAD is refused.
+func TestReviewDiffDefaultBase(t *testing.T) {
+	tests := []struct {
+		name    string
+		local   string // initial local branch
+		origin  string // branch pushed to origin
+		feature bool   // branch off local into feature/x; else local is the feature
+		head    string // planted origin/HEAD target, if any
+		want    string // Base shown, or the refusal when wantErr
+		wantErr bool
+	}{
+		{name: "local master with origin/main diffs against master", local: "master", origin: "main", feature: true, want: "- **Base:** `master`"},
+		{name: "default known only as origin/main diffs against origin/main", local: "feature/x", origin: "main", want: "- **Base:** `origin/main`"},
+		{name: "malformed origin/HEAD is refused", local: "main", origin: "main", feature: true, head: "refs/remotes/upstream/main", want: "cannot detect default branch", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			remote := filepath.Join(t.TempDir(), "remote.git")
+			run := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repo
+				cmd.Env = gitEnvForDir(repo)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %s", args, out)
+				}
+			}
+			run("init", "-b", tt.local)
+			run("config", "user.email", "test@test.com")
+			run("config", "user.name", "Test")
+			if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# test"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			run("add", "README.md")
+			run("commit", "-m", "initial")
+			run("init", "--bare", remote)
+			run("remote", "add", "origin", remote)
+			run("push", "origin", "HEAD:refs/heads/"+tt.origin)
+			if tt.head != "" {
+				run("symbolic-ref", "refs/remotes/origin/HEAD", tt.head)
+			}
+			if tt.feature {
+				run("checkout", "-b", "feature/x")
+			}
+			if err := os.WriteFile(filepath.Join(repo, "change.txt"), []byte("change\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			run("add", "change.txt")
+			run("commit", "-m", "change")
+
+			_, homeDir := newFleetCanonical(t)
+			if err := home.WriteMeta(homeDir, "t1", map[string]string{"project": "project", "worktree": repo}); err != nil {
+				t.Fatal(err)
+			}
+			stdout := os.Stdout
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Stdout = w
+			diffErr := ReviewDiff(homeDir, "t1")
+			os.Stdout = stdout
+			w.Close()
+			out, _ := io.ReadAll(r)
+			if tt.wantErr {
+				if diffErr == nil || !strings.Contains(diffErr.Error(), tt.want) {
+					t.Fatalf("ReviewDiff = %v, want refusal %q", diffErr, tt.want)
+				}
+				return
+			}
+			if diffErr != nil {
+				t.Fatalf("ReviewDiff: %v", diffErr)
+			}
+			if !strings.Contains(string(out), tt.want) || !strings.Contains(string(out), "change.txt") {
+				t.Fatalf("review-diff output = %s, want %q and change.txt", out, tt.want)
+			}
+		})
 	}
 }
 

@@ -540,34 +540,14 @@ func AssertNotTangled(projectDir, projectName string) error {
 		return nil
 	}
 
-	// Get the default branch from origin/HEAD, with main/master fallback
-	out, _, err = runWorktreeCommand("git", projectDir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-	if err == nil {
-		defaultRef := strings.TrimSpace(string(out))
-		defaultBranch := strings.TrimPrefix(defaultRef, "origin/")
-
-		// On the default branch = no tangle
-		if branch == defaultBranch {
-			return nil
-		}
-	} else {
-		// Fall back to common default branch names when origin/HEAD unavailable
-		foundDefault := false
-		for _, candidate := range []string{"main", "master"} {
-			_, _, err := runWorktreeCommand("git", projectDir, "rev-parse", "--verify", candidate)
-			if err == nil {
-				foundDefault = true
-				// On the default branch = no tangle
-				if branch == candidate {
-					return nil
-				}
-				break
-			}
-		}
-		if !foundDefault {
-			// Can't determine default branch; skip tangle check
-			return nil
-		}
+	def, err := DefaultBranch(projectDir)
+	if err != nil {
+		// Can't determine default branch; skip tangle check
+		return nil
+	}
+	// On the default branch = no tangle
+	if branch == def.Name {
+		return nil
 	}
 	// Tangle detected: on a non-default branch in the primary checkout
 	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",

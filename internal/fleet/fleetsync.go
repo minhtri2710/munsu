@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // SyncResult holds the result of a fleet-sync operation.
@@ -123,17 +125,9 @@ func syncOne(dir string) error {
 	}
 
 	// Identify default branch
-	var defaultBranch string
-	for _, candidate := range []string{"main", "master"} {
-		refCmd := exec.Command("git", "rev-parse", "--verify", "refs/remotes/origin/"+candidate)
-		refCmd.Dir = dir
-		if refCmd.Run() == nil {
-			defaultBranch = candidate
-			break
-		}
-	}
-	if defaultBranch == "" {
-		return fmt.Errorf("no default branch (main/master) found on origin")
+	defaultBranch, err := backend.RemoteDefaultBranch(dir)
+	if err != nil {
+		return err
 	}
 
 	// Fast-forward merge

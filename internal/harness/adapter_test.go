@@ -21,24 +21,6 @@ func TestAdapters_AllVerifiedPresent(t *testing.T) {
 		if len(a.ProcessMatchers) == 0 {
 			t.Errorf("adapter %q has no ProcessMatchers", name)
 		}
-		if a.BusyPattern == "" {
-			t.Errorf("adapter %q has empty BusyPattern", name)
-		}
-		if a.ExitCommand == "" {
-			t.Errorf("adapter %q has empty ExitCommand", name)
-		}
-		if a.InterruptKeys == "" {
-			t.Errorf("adapter %q has empty InterruptKeys", name)
-		}
-		if a.SkillInvocation == "" {
-			t.Errorf("adapter %q has empty SkillInvocation", name)
-		}
-		if a.TurnEndHook == "" {
-			t.Errorf("adapter %q has empty TurnEndHook", name)
-		}
-		if a.TrustDialog == "" {
-			t.Errorf("adapter %q has empty TrustDialog", name)
-		}
 	}
 }
 
@@ -166,101 +148,6 @@ func TestAdapters_ProcessDetectionMatchesAdapter(t *testing.T) {
 	}
 }
 
-func TestAdapters_LaunchStringFromRegistry(t *testing.T) {
-	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
-		t.Run(name, func(t *testing.T) {
-			a, ok := GetAdapter(name)
-			if !ok {
-				t.Fatal("missing adapter")
-			}
-
-			cmd := LaunchString(name, a.LaunchTemplate)
-
-			// All launch strings should start with the harness name
-			if !strings.HasPrefix(cmd, strings.ToLower(name)) {
-				t.Errorf("LaunchString(%q) = %q, want prefix %q", name, cmd, name)
-			}
-
-			// If a ModelFlag is set, the command should contain it
-			if a.LaunchTemplate.ModelFlag != "" {
-				if !strings.Contains(cmd, a.LaunchTemplate.ModelFlag) {
-					// Pi and Grok have ModelFlag but may not have DefaultModel, so they
-					// won't include the flag if DefaultModel is empty
-					if a.LaunchTemplate.DefaultModel != "" {
-						t.Errorf("LaunchString(%q) = %q, should contain %q", name, cmd, a.LaunchTemplate.ModelFlag)
-					}
-				}
-			}
-
-			// If an EffortFlag is set and DefaultEffort is set, should contain both
-			if a.LaunchTemplate.EffortFlag != "" && a.LaunchTemplate.DefaultEffort != "" {
-				if !strings.Contains(cmd, a.LaunchTemplate.EffortFlag) {
-					t.Errorf("LaunchString(%q) = %q, should contain %q", name, cmd, a.LaunchTemplate.EffortFlag)
-				}
-			}
-		})
-	}
-}
-
-func TestAdapters_SkillInvocationFormat(t *testing.T) {
-	tests := []struct {
-		harness string
-		skill   string
-		want    string
-	}{
-		{Claude, "no-mistakes", "/no-mistakes"},
-		{Grok, "no-mistakes", "/no-mistakes"},
-		{Opencode, "no-mistakes", "/no-mistakes"},
-		{Pi, "no-mistakes", "/no-mistakes"},
-		{Agy, "no-mistakes", "/no-mistakes"},
-		{Codex, "no-mistakes", "$no-mistakes"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.harness, func(t *testing.T) {
-			a, ok := GetAdapter(tt.harness)
-			if !ok {
-				t.Skip("adapter not in registry")
-			}
-			got := a.SkillInvocation + tt.skill
-			if got != tt.want {
-				t.Errorf("SkillInvocation for %q = %q, want %q", tt.harness, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestAdapters_LaunchTemplateMatchesRegistry(t *testing.T) {
-	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
-		t.Run(name, func(t *testing.T) {
-			a, ok := GetAdapter(name)
-			if !ok {
-				t.Fatal("missing adapter")
-			}
-			tmpl, ok := Templates[name]
-			if !ok {
-				t.Fatal("missing template")
-			}
-
-			if a.LaunchTemplate.ModelFlag != tmpl.ModelFlag {
-				t.Errorf("%s: adapter.ModelFlag=%q, Templates.ModelFlag=%q",
-					name, a.LaunchTemplate.ModelFlag, tmpl.ModelFlag)
-			}
-			if a.LaunchTemplate.EffortFlag != tmpl.EffortFlag {
-				t.Errorf("%s: adapter.EffortFlag=%q, Templates.EffortFlag=%q",
-					name, a.LaunchTemplate.EffortFlag, tmpl.EffortFlag)
-			}
-			if a.LaunchTemplate.DefaultModel != tmpl.DefaultModel {
-				t.Errorf("%s: adapter.DefaultModel=%q, Templates.DefaultModel=%q",
-					name, a.LaunchTemplate.DefaultModel, tmpl.DefaultModel)
-			}
-			if a.LaunchTemplate.DefaultEffort != tmpl.DefaultEffort {
-				t.Errorf("%s: adapter.DefaultEffort=%q, Templates.DefaultEffort=%q",
-					name, a.LaunchTemplate.DefaultEffort, tmpl.DefaultEffort)
-			}
-		})
-	}
-}
-
 func TestAdapters_RegistryImmutability(t *testing.T) {
 	// Verify that getting an adapter returns a copy that doesn't affect the registry
 	a, ok := GetAdapter(Claude)
@@ -268,9 +155,9 @@ func TestAdapters_RegistryImmutability(t *testing.T) {
 		t.Fatal("missing adapter")
 	}
 
-	a.BusyPattern = "modified"
+	a.Name = "modified"
 	a2, _ := GetAdapter(Claude)
-	if a2.BusyPattern == "modified" {
+	if a2.Name == "modified" {
 		t.Error("modifying a returned Adapter should not affect the registry")
 	}
 }

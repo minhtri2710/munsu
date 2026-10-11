@@ -58,25 +58,6 @@ type Adapter struct {
 	// detection, checked in order (exact matches first, then substring).
 	ProcessMatchers []ProcessNameMatcher
 
-	// BusyPattern is the regex pattern for detecting a busy agent pane.
-	BusyPattern string
-
-	// IdlePattern is the regex pattern for detecting an idle agent pane.
-	IdlePattern string
-
-	// ExitCommand is the command string to exit the harness.
-	ExitCommand string
-
-	// InterruptKeys describes the key sequence to interrupt a running turn.
-	InterruptKeys string
-
-	// SkillInvocation is the prefix character used for skill invocation
-	// (e.g. "/" for claude/grok, "$" for codex).
-	SkillInvocation string
-
-	// TurnEndHook describes the turn-end hook mechanism for this harness.
-	TurnEndHook string
-
 	// LaunchTemplate contains the CLI flag conventions and defaults for spawning.
 	LaunchTemplate Template
 
@@ -93,7 +74,6 @@ type Adapter struct {
 	// refused.
 	QuestionDeny []string
 
-	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	// ReadyPatterns is a list of substrings that indicate the agent is ready
 	// for input. When empty, DefaultReadyPatterns is used.
 	ReadyPatterns []string
@@ -107,18 +87,13 @@ type Adapter struct {
 	// instead of waiting for the full ready timeout.
 	FailurePatterns []string
 
-	// TrustDialog describes the trust/permission dialog behavior on first launch.
-	TrustDialog string
-
 	// StateArtifacts lists the state file suffixes (excluding the task ID prefix)
 	// that this harness creates in the munsu state directory.
 	// These are cleaned up during teardown alongside munsu-native artifacts.
 	StateArtifacts []string
 }
 
-// Adapters is the registry
-// This is the authoritative source of harness metadata; Templates and detection
-// functions derive from it.
+// Adapters is the registry and the authoritative source of harness metadata.
 var Adapters = map[string]Adapter{
 	Claude: {
 		Name:       Claude,
@@ -128,7 +103,6 @@ var Adapters = map[string]Adapter{
 			{Name: "claude-code"},
 			{Name: "claude code"},
 		},
-		BusyPattern: `esc to interrupt`,
 		// Measured on claude 2.1.289 under the soldier posture: the footer
 		// "bypass permissions on" is in the busy and the idle capture.
 		ReadyPatterns: []string{"bypass permissions on"},
@@ -138,10 +112,6 @@ var Adapters = map[string]Adapter{
 		// The folder-trust dialog of an untrusted project repository; short
 		// enough to fit one line at 38 columns.
 		FailurePatterns: []string{"Quick safety check"},
-		ExitCommand:     `/exit`,
-		InterruptKeys:   `Escape`,
-		SkillInvocation: `/`,
-		TurnEndHook:     `Stop hook (exit 2 + stderr); Primary-only global ~/.claude/hooks/`,
 		LaunchTemplate: Template{
 			ModelFlag: "--model",
 			// DefaultModel omitted — let Claude Code use its runtime default
@@ -155,7 +125,6 @@ var Adapters = map[string]Adapter{
 			Separator: "--",
 		},
 		QuestionDeny: []string{"--disallowedTools", "AskUserQuestion"},
-		TrustDialog:  `Folder trust dialog on first launch per project repository, default "No, exit"; a linked worktree inherits its main repository's trust, a nested git repository does not`,
 	},
 	Codex: {
 		Name:       Codex,
@@ -165,21 +134,15 @@ var Adapters = map[string]Adapter{
 			{Name: "codeclimb"},
 			{Name: "codex", Substr: true},
 		},
-		BusyPattern:     `esc to interrupt`,
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
 		FailurePatterns: []string{"AuthenticationError", "Incorrect API key"},
-		ExitCommand:     `/quit`,
-		InterruptKeys:   `Escape`,
-		SkillInvocation: `$`,
-		TurnEndHook:     `Stop hook (exit 2 + stderr); Primary-only ~/.codex/hooks.json`,
 		LaunchTemplate: Template{
 			ModelFlag:     "--model",
 			EffortFlag:    "--effort",
 			DefaultModel:  "gpt-5.2-codex",
 			DefaultEffort: "80",
 		},
-		TrustDialog: `Directory trust dialog on first run per repo root; accept with Enter`,
 	},
 	Opencode: {
 		Name:       Opencode,
@@ -188,21 +151,15 @@ var Adapters = map[string]Adapter{
 			{Name: "opencode"},
 			{Name: "opencode", Substr: true},
 		},
-		BusyPattern:     `esc interrupt`,
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
 		FailurePatterns: []string{"AuthenticationError", "Incorrect API key"},
-		ExitCommand:     `/exit`,
-		InterruptKeys:   `Escape Escape`,
-		SkillInvocation: `/`,
-		TurnEndHook:     `Passive session.idle plugin; Primary-only .opencode/plugins/`,
 		LaunchTemplate: Template{
 			ModelFlag:     "--model",
 			EffortFlag:    "--effort",
 			DefaultModel:  "gpt-5.2-codex",
 			DefaultEffort: "80",
 		},
-		TrustDialog: `No trust dialog`,
 	},
 	Pi: {
 		Name:       Pi,
@@ -212,14 +169,9 @@ var Adapters = map[string]Adapter{
 			{Name: "pi-coding-agent"},
 			{Name: "pi-coding", Substr: true},
 		},
-		BusyPattern:     `Working\.\.\.`,
 		ReadyPatterns:   []string{">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
 		TrustPatterns:   []string{"Trust project folder", "→ Trust", "Do not trust"},
 		FailurePatterns: []string{"OPENAI_API_KEY", "AuthenticationError"},
-		ExitCommand:     `/quit`,
-		InterruptKeys:   `Escape`,
-		SkillInvocation: `/`,
-		TurnEndHook:     `agent_settled extension with deliverAs: "followUp"; Primary-only .pi/extensions/`,
 		LaunchTemplate: Template{
 			ModelFlag:  "--model",
 			EffortFlag: "--thinking",
@@ -235,7 +187,6 @@ var Adapters = map[string]Adapter{
 		// selection; ask_user_question is the tool of the installed
 		// rpiv-ask-user-question extension.
 		QuestionDeny:   []string{"--exclude-tools", "ask_user_question"},
-		TrustDialog:    `Project trust dialog on first run per path; accept with Enter`,
 		StateArtifacts: []string{"pi-ext.ts", PiAgentDirSuffix},
 	},
 	Grok: {
@@ -244,20 +195,13 @@ var Adapters = map[string]Adapter{
 		ProcessMatchers: []ProcessNameMatcher{
 			{Name: "grok", Substr: true},
 		},
-		BusyPattern:     `Ctrl\+c:cancel`,
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
 		FailurePatterns: []string{"Invalid API key"},
-		IdlePattern:     `Shift\+Tab:mode`,
-		ExitCommand:     `Ctrl+Q Ctrl+Q`,
-		InterruptKeys:   `Ctrl+C`,
-		SkillInvocation: `/`,
-		TurnEndHook:     `Passive Stop hook (global ~/.grok/hooks/); Primary-only global hooks with workspace token`,
 		LaunchTemplate: Template{
 			ModelFlag:  "--model",
 			EffortFlag: "--reasoning-effort",
 		},
-		TrustDialog:    `No trust dialog when launched from a git repo root`,
 		StateArtifacts: []string{"grok-turnend-token"},
 	},
 	Agy: {
@@ -267,20 +211,13 @@ var Adapters = map[string]Adapter{
 			{Name: "agy"},
 			{Name: "antigravity"},
 		},
-		BusyPattern:     `Thinking\.\.\.`,
 		ReadyPatterns:   []string{"esc to cancel", "Ready for your prompt", "What would you like"},
 		TrustPatterns:   []string{"Do you trust", "Yes, I trust this folder"},
 		FailurePatterns: []string{"Failed to authenticate"},
-		IdlePattern:     `Press shift\+tab to cycle modes`,
-		ExitCommand:     `Ctrl+Q Ctrl+Q`,
-		InterruptKeys:   `Ctrl+C`,
-		SkillInvocation: `/`,
-		TurnEndHook:     `Stop hook (stdout decision JSON); Primary-only .agents/hooks.json`,
 		LaunchTemplate: Template{
 			ModelFlag: "--model",
 			ExtraArgs: []string{"--dangerously-skip-permissions"},
 		},
-		TrustDialog: `File/command permission dialog per session; pre-approved commands persisted in settings.json`,
 	},
 }
 

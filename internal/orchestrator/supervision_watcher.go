@@ -36,6 +36,9 @@ type WakeReason struct {
 	TaskIDs              []string
 	Message              string
 	DemandDeepInspection bool // set after stale-by-idle-seconds threshold for same task
+	// ReportOwned marks a signal whose status line an uplink report already
+	// delivered as its own wake; the cycle records it but enqueues no second one.
+	ReportOwned bool
 }
 
 // Run starts the persistent watcher daemon. It records actionable conditions in
@@ -488,9 +491,10 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		}
 		seenStatus[match.TaskID] = true
 		reasons = append(reasons, &WakeReason{
-			Kind:    "signal",
-			TaskIDs: []string{match.TaskID},
-			Message: match.LastLine,
+			Kind:        "signal",
+			TaskIDs:     []string{match.TaskID},
+			Message:     match.LastLine,
+			ReportOwned: reportOwnsStatus(homeDir, match.TaskID, match.LastLine),
 		})
 	}
 	for _, entry := range entries {
@@ -751,8 +755,11 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			}
 			continue
 		}
-		if err := EnqueueWake(homeDir, reason.Kind, id, reason.Message); err != nil {
-			return emitted, fmt.Errorf("enqueue watcher wake: %w", err)
+		if !reason.ReportOwned {
+			if err := EnqueueWake(homeDir, reason.Kind, id, reason.Message); err != nil {
+				return emitted, fmt.Errorf("enqueue watcher wake: %w", err)
+			}
+			emitted = true
 		}
 		if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
 			return emitted, err
@@ -760,7 +767,6 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		if err := os.WriteFile(marker, []byte(fingerprint), 0644); err != nil {
 			return emitted, err
 		}
-		emitted = true
 		if reason.Kind == "signal" {
 			humanNeeded = append(humanNeeded, humanNeededEvent{TaskID: id, Line: reason.Message})
 		}
@@ -1174,6 +1180,39 @@ func isPausedBeyondResurface(homeDir, id string) bool {
 		return false
 	}
 	return time.Since(fi.ModTime()) > pauseResurfaceThreshold
+}
+
+// reportOwnsStatus reports whether line, taskID's last status line, is the
+// status projection of an uplink report. The report's payload hash is durable
+// on its envelope while it is open and on its ack once accepted, so the match
+// holds before and after the General settles the report's wake.
+func reportOwnsStatus(homeDir, taskID, line string) bool {
+	i := strings.LastIndex(line, " [key=")
+	if i < 0 || !strings.HasSuffix(line, "]") {
+		return false
+	}
+	key := strings.TrimSuffix(line[i+len(" [key="):], "]")
+	hash := home.PayloadHashHex(fmt.Sprintf("%s [task=%s key=%s]", line[:i], taskID, key))
+	store := NewStore(homeDir)
+	sender := home.ReceiverIDForTask(taskID)
+	for _, path := range []string{openEvidencePath(homeDir, taskID, key), acceptedEvidencePath(homeDir, taskID, key)} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var ev evidence
+		if json.Unmarshal(data, &ev) != nil {
+			continue
+		}
+		if ack, _ := store.ReadAck(sender, ev.MessageID); ack != nil {
+			if ack.PayloadHash == hash {
+				return true
+			}
+		} else if env, _ := store.ReadEnvelope(sender, ev.MessageID); env != nil && env.PayloadHash == hash {
+			return true
+		}
+	}
+	return false
 }
 
 // isStatusGeneralRelevant checks whether the task's last status line contains

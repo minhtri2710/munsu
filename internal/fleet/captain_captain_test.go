@@ -588,21 +588,6 @@ func TestIsManagedWorktree_ExistingPathNotWorktree(t *testing.T) {
 	}
 }
 
-func TestResolveDefaultBranch_UsesOriginHead(t *testing.T) {
-	repo := t.TempDir()
-	initTestRepo(t, repo, "https://github.com/test/repo.git")
-
-	// Rename default to main via -b main in init, confirm origin/HEAD exists.
-	// initTestRepo uses -b main and adds origin remote, so origin/HEAD is set.
-	branch, err := resolveDefaultBranch(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if branch != "main" {
-		t.Errorf("expected main, got %q", branch)
-	}
-}
-
 func TestSeedWorktree_GitignoreContent(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
@@ -2964,49 +2949,6 @@ func TestIsManagedWorktree(t *testing.T) {
 		}
 	})
 }
-
-func TestDefaultBranch_WithOriginHEAD(t *testing.T) {
-	project := newWorktreeFixture(t)
-	branch, err := resolveDefaultBranch(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if branch != "main" {
-		t.Errorf("branch = %q, want %q", branch, "main")
-	}
-}
-
-func TestDefaultBranch_FallbackToMain(t *testing.T) {
-	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	exec.Command("git", "init", "--bare", remote).Run()
-	project := filepath.Join(root, "project")
-	exec.Command("git", "clone", remote, project).Run()
-	gitTestRun(t, project, "config", "user.name", "Munsu Test")
-	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
-	gitTestRun(t, project, "checkout", "-b", "main")
-	os.WriteFile(filepath.Join(project, "file"), []byte("x"), 0644)
-	gitTestRun(t, project, "add", "file")
-	gitTestRun(t, project, "commit", "-m", "init")
-	gitTestRun(t, project, "push", "-u", "origin", "main")
-
-	// Remove origin/HEAD symbolic ref to test fallback.
-	gitTestRun(t, project, "remote", "set-head", "origin", "--delete")
-
-	branch, err := resolveDefaultBranch(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if branch != "main" {
-		t.Errorf("branch = %q, want %q", branch, "main")
-	}
-}
-
-// --- MigrateToWorktree tests ---
-
-// ---------------------------------------------------------------------------
-// Regression tests for captain-migration-postconditions
-// ---------------------------------------------------------------------------
 
 // TestSeedWorktree_GitClean proves that after SeedFromWorktree, the managed
 // worktree is git-clean — no tracked modifications, and the only untracked

@@ -18,6 +18,8 @@ func FixCommand(tool string) string {
 		return "Install GitHub CLI: brew install gh  |  https://cli.github.com/"
 	case "tmux":
 		return "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"
+	case "fuser":
+		return "Install psmisc: apt install psmisc  |  dnf install psmisc (macOS ships fuser)"
 	case "herdr":
 		return "Install herdr from the herdr repository, or set HERDR_ENV=1 if already installed"
 	case "zellij":

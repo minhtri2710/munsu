@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -101,10 +102,11 @@ func updateIn(installRoot, realPath string) error {
 	}
 
 	// Resolve default branch from remote HEAD
-	defaultBranch, err := resolveDefaultBranch(installRoot)
+	def, err := backend.DefaultBranch(installRoot)
 	if err != nil {
 		return err
 	}
+	defaultBranch := def.Name
 
 	// Verify on default branch (not detached)
 	currentBranch, err := currentBranch(installRoot)
@@ -168,34 +170,6 @@ func requireCleanWorktree(root string) error {
 		return fmt.Errorf("worktree at %s has uncommitted changes; refusing to update", root)
 	}
 	return nil
-}
-
-// resolveDefaultBranch resolves the default branch name from
-// refs/remotes/origin/HEAD. Requires a fetch to have been done.
-func resolveDefaultBranch(root string) (string, error) {
-	out, err := gitDir(root, "symbolic-ref", "refs/remotes/origin/HEAD")
-	if err != nil {
-		// Fallback: try rev-parse --abbrev-ref, then hardcode main/master
-		// as last resort.
-		ref, refErr := gitDir(root, "rev-parse", "--abbrev-ref", "HEAD")
-		if refErr == nil {
-			branch := strings.TrimSpace(string(ref))
-			if branch != "" && branch != "HEAD" {
-				return branch, nil
-			}
-		}
-		// Try common defaults as fallback
-		for _, candidate := range []string{"main", "master"} {
-			if _, err := gitDir(root, "rev-parse", "--verify", candidate); err == nil {
-				return candidate, nil
-			}
-		}
-		return "", fmt.Errorf("cannot resolve default branch for %s: %w", root, err)
-	}
-	ref := strings.TrimSpace(string(out))
-	// ref is like "refs/remotes/origin/main" — extract the branch name.
-	parts := strings.Split(ref, "/")
-	return parts[len(parts)-1], nil
 }
 
 // currentBranch returns the checked-out branch name.
