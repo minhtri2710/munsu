@@ -74,7 +74,9 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 			}
 			val, err := config.Get(ctx.Home, key)
 			if err != nil {
-				if config.IsKnownKey(key) {
+				// Only an unset known key reports empty success; a key that is
+				// set but unreadable, or an unknown key, is an error.
+				if errors.Is(err, os.ErrNotExist) {
 					return nil
 				}
 				return err
