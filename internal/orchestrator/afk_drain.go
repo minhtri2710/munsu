@@ -2,12 +2,9 @@ package orchestrator
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -183,36 +180,12 @@ func DrainCycle(opts DrainCycleOptions) (*DrainReport, error) {
 
 // peekFleet builds a compact actionable fleet peek from the snapshot.
 func peekFleet(homeDir string, provider FleetSnapshotProvider) (*DrainFleetPeek, error) {
-	var tasks []FleetTaskSnapshot
-	if provider != nil {
-		var err error
-		tasks, err = provider(homeDir)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Default fallback: scan state/*.meta
-		stateDir := filepath.Join(homeDir, "state")
-		entries, err := os.ReadDir(stateDir)
-		if err == nil {
-			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), ".meta") && !strings.HasPrefix(e.Name(), ".") {
-					id, err := home.ReverseDurableKey(strings.TrimSuffix(e.Name(), ".meta"))
-					if err != nil {
-						continue
-					}
-					meta, err := home.ReadMeta(homeDir, id)
-					if err == nil {
-						tasks = append(tasks, FleetTaskSnapshot{
-							ID:         id,
-							Kind:       meta["kind"],
-							LastStatus: meta["last_status"],
-							Window:     meta["window"],
-						})
-					}
-				}
-			}
-		}
+	if provider == nil {
+		return nil, fmt.Errorf("no fleet snapshot provider")
+	}
+	tasks, err := provider(homeDir)
+	if err != nil {
+		return nil, err
 	}
 
 	peek := &DrainFleetPeek{}

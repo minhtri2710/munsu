@@ -44,15 +44,3 @@ func newCanonicalOperation(verb string, intent domain.Intent) (domain.Operation,
 	}
 	return domain.NewOperation(opID, intent)
 }
-
-// authoritativeMetaField reports whether a .meta projection key duplicates an
-// authoritative Task Aggregate field. Canonical records win: `task show`
-// prints these from the Aggregate and never lets the projection override
-// them (Task 3.2 criterion 3).
-func authoritativeMetaField(key string) bool {
-	switch key {
-	case "description", "kind", "project", "owner", "generation", "state":
-		return true
-	}
-	return false
-}

@@ -249,37 +249,47 @@ func TestResolveTaskHome_EmptyTaskID(t *testing.T) {
 // Group H: delivery_reviewdiff.go (2 guards)
 // ----------------------------------------------------------------------------
 
-func TestReviewDiff_NoProjectInMeta(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := home.Init(tmpDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(h.Root(), "t1", map[string]string{
-		"worktree": tmpDir,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	err = ReviewDiff(h.Root(), "t1")
-	if err == nil || !strings.Contains(err.Error(), "task t1 has no project in meta") {
-		t.Fatalf("ReviewDiff err = %v, want no project in meta", err)
-	}
-}
-
-func TestReviewDiff_NoWorktreeInMeta(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := home.Init(tmpDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(h.Root(), "t1", map[string]string{
-		"project": "proj-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	err = ReviewDiff(h.Root(), "t1")
-	if err == nil || !strings.Contains(err.Error(), "task t1 has no worktree path in meta") {
-		t.Fatalf("ReviewDiff err = %v, want no worktree path in meta", err)
+// TestReviewDiff_ProjectAndWorktreeRefusals pins the two refusals in
+// ReviewDiff's preamble. The project is read from the canonical task, never
+// from .meta: the blocking row names a project in .meta that the canonical
+// task lacks, the passing row holds the project only in the canonical task.
+func TestReviewDiff_ProjectAndWorktreeRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		project   string
+		meta      func(worktree string) map[string]string
+		wantError string
+	}{
+		{"canonical task without a project is refused although meta names one", "", func(wt string) map[string]string {
+			return map[string]string{"project": "proj-1", "worktree": wt}
+		}, "task t1 has no project"},
+		{"canonical project passes to the worktree check without a meta project", "proj-1", func(string) map[string]string {
+			return map[string]string{}
+		}, "task t1 has no worktree path in meta"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth, homeDir := newFleetCanonical(t)
+			req := taskauthority.CanonicalCreateRequest{
+				HomeID: auth.HomeID(), TaskID: mustFleetTaskID(t, "t1"), Owner: "owner", Description: "work", Kind: "ship", Reason: "create",
+			}
+			if tc.project != "" {
+				pid, err := domain.NewProjectID(tc.project)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Project = pid
+			}
+			if _, err := auth.Create(mustFleetOperation(t, "op-create-t1", req), req); err != nil {
+				t.Fatal(err)
+			}
+			if err := home.WriteMeta(homeDir, "t1", tc.meta(t.TempDir())); err != nil {
+				t.Fatal(err)
+			}
+			err := ReviewDiff(homeDir, "t1")
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("ReviewDiff err = %v, want %q", err, tc.wantError)
+			}
+		})
 	}
 }
 

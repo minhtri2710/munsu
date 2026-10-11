@@ -117,21 +117,16 @@ func TestDrainCycle_DrainsQueue(t *testing.T) {
 
 func TestDrainCycle_PeekFleet(t *testing.T) {
 	home := t.TempDir()
-	// Create an in-flight task with a window but no liveness probe wired.
-
-	meta := []byte("id = task-ship\nproject = demo\nkind = ship\nwindow = @9999\n")
-	stateDir := filepath.Join(home, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "task-ship.meta"), meta, 0644); err != nil {
-		t.Fatal(err)
+	// An in-flight task with a window, as the fleet snapshot reports it.
+	provider := func(string) ([]FleetTaskSnapshot, error) {
+		return []FleetTaskSnapshot{{ID: "task-ship", Kind: "ship", Window: "@9999"}}, nil
 	}
 
 	report, err := DrainCycle(DrainCycleOptions{
-		HomeDir:   home,
-		Consumer:  "general",
-		PeekFleet: true,
+		HomeDir:       home,
+		Consumer:      "general",
+		PeekFleet:     true,
+		FleetSnapshot: provider,
 	})
 	if err != nil {
 		t.Fatalf("DrainCycle: %v", err)
@@ -152,23 +147,41 @@ func TestDrainCycle_PeekFleet(t *testing.T) {
 }
 
 func TestDrainCycle_PeekFleetCountsReviewSoldiersOnly(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
+	provider := func(string) ([]FleetTaskSnapshot, error) {
+		return []FleetTaskSnapshot{
+			{ID: "task-review", Kind: "review", Window: "@9999"},
+			{ID: "task-other", Kind: "captain", Window: "@9999"},
+		}, nil
 	}
-	for id, kind := range map[string]string{"task-review": "review", "task-other": "captain"} {
-		meta := []byte("id = " + id + "\nproject = demo\nkind = " + kind + "\nwindow = @9999\n")
-		if err := os.WriteFile(filepath.Join(stateDir, id+".meta"), meta, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	report, err := DrainCycle(DrainCycleOptions{HomeDir: home, Consumer: "general", PeekFleet: true})
+	report, err := DrainCycle(DrainCycleOptions{HomeDir: t.TempDir(), Consumer: "general", PeekFleet: true, FleetSnapshot: provider})
 	if err != nil {
 		t.Fatalf("DrainCycle: %v", err)
 	}
 	if report.FleetPeek == nil || report.FleetPeek.InFlight != 1 {
 		t.Fatalf("FleetPeek = %+v, want exactly the review soldier in flight", report.FleetPeek)
+	}
+}
+
+// TestDrainCycle_PeekFleetNeedsSnapshotProvider pins that the peek reads the
+// fleet only through the snapshot provider: without one it reports the failure
+// as guidance and does not scan .meta files.
+func TestDrainCycle_PeekFleetNeedsSnapshotProvider(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("window = @9999\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := DrainCycle(DrainCycleOptions{HomeDir: home, Consumer: "general", PeekFleet: true})
+	if err != nil {
+		t.Fatalf("DrainCycle: %v", err)
+	}
+	if report.FleetPeek != nil {
+		t.Fatalf("FleetPeek = %+v, want none without a provider", report.FleetPeek)
+	}
+	if len(report.Guidance) == 0 || !strings.Contains(report.Guidance[0], "no fleet snapshot provider") {
+		t.Fatalf("Guidance = %v, want the provider-missing failure", report.Guidance)
 	}
 }

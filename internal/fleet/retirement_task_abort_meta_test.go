@@ -71,7 +71,7 @@ func TestAbortReopenThenSpawnPassesBacklogAuthority(t *testing.T) {
 			t.Errorf("abort kept session key %s=%q", k, v)
 		}
 	}
-	if meta["kind"] != "ship" || meta["worktree"] == "" {
+	if meta["worktree"] == "" {
 		t.Errorf("abort dropped non-session keys: %v", meta)
 	}
 	r := &Runner{args: Args{ID: taskID, Authority: auth}, homeDir: homeDir}
@@ -145,7 +145,7 @@ func TestAbortWithoutSessionKeysDoesNotRewriteMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(metaPath, []byte("# operator note\nkind=ship\nworktree=/wt\n"), 0600); err != nil {
+	if err := os.WriteFile(metaPath, []byte("# operator note\nworktree=/wt\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(metaPath)

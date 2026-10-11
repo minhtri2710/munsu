@@ -16,6 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -2379,27 +2380,78 @@ func TestUnregister_MissingIDIdempotent(t *testing.T) {
 	}
 }
 
+// TestInFlightSoldierIDs pins that the roster is the task's .meta and the
+// kind is the canonical task's: .meta carries no kind for a soldier, a .meta
+// with no canonical task is not a soldier, and a task added and never spawned
+// (task add writes a key-free .meta) is counted. A canonical record that
+// cannot be read refuses the scan instead of dropping the task.
 func TestInFlightSoldierIDs(t *testing.T) {
-	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	os.WriteFile(filepath.Join(home, "state", "TASK-1.meta"), []byte("kind=ship\nwindow=w1\n"), 0644)
-	os.WriteFile(filepath.Join(home, "state", "TASK-2.meta"), []byte("kind=scout\nwindow=w2\n"), 0644)
-	os.WriteFile(filepath.Join(home, "state", "TASK-3.meta"), []byte("kind=captain\nwindow=w3\n"), 0644)
-	os.WriteFile(filepath.Join(home, "state", "TASK-4.meta"), []byte("kind=other\n"), 0644)
+	dir := t.TempDir()
+	seedTaskInHome(t, dir, "TASK-1", taskauthority.KindShip)
+	seedTaskInHome(t, dir, "TASK-2", taskauthority.KindScout)
+	seedTaskInHome(t, dir, "TASK-5", taskauthority.KindShip)
+	for name, body := range map[string]string{
+		"TASK-1": "window=w1\n",
+		"TASK-2": "window=w2\n",
+		"TASK-3": "kind=captain\nwindow=w3\n", // no canonical task: a captain meta
+		"TASK-4": "window=w4\n",               // no canonical task
+		"TASK-5": "kind=captain\n",            // canonical ship wins over the .meta kind
+	} {
+		os.WriteFile(filepath.Join(dir, "state", name+".meta"), []byte(body), 0644)
+	}
+	seedTaskInHome(t, dir, "TASK-6", taskauthority.KindShip) // added, never spawned: key-free .meta
+	os.WriteFile(filepath.Join(dir, "state", "TASK-6.meta"), nil, 0644)
 
-	ids, err := inFlightSoldierIDs(home)
+	ids, err := inFlightSoldierIDs(dir)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(ids) != 2 {
-		t.Fatalf("ids=%v", ids)
 	}
 	got := map[string]bool{}
 	for _, id := range ids {
 		got[id] = true
 	}
-	if !got["TASK-1"] || !got["TASK-2"] {
-		t.Fatalf("ids=%v", ids)
+	if len(ids) != 4 || !got["TASK-1"] || !got["TASK-2"] || !got["TASK-5"] || !got["TASK-6"] {
+		t.Fatalf("ids=%v, want TASK-1, TASK-2, TASK-5, TASK-6", ids)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		corrupt bool
+		want    string
+	}{
+		{"unreadable canonical record refuses the scan", true, "cannot scan captain home for in-flight soldiers"},
+		{"readable canonical ship task is listed", false, "1 in-flight soldier(s) (soldier-1)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			if _, err := home.Init(parent); err != nil {
+				t.Fatal(err)
+			}
+			smHome := filepath.Join(parent, "captains", "test-sm")
+			seedTaskInHome(t, smHome, "soldier-1", taskauthority.KindShip)
+			os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+			os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
+			if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
+				t.Fatal(err)
+			}
+			if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
+				t.Fatal(err)
+			}
+			os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("window=w\n"), 0644)
+			if tc.corrupt {
+				current := filepath.Join(smHome, "state", "task-authority", "tasks", "soldier-1", "current.json")
+				if err := os.WriteFile(current, []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Retire = %v, want error containing %q", err, tc.want)
+			}
+			if tc.corrupt == strings.Contains(err.Error(), "in-flight soldier(s)") {
+				t.Fatalf("Retire = %v: corrupt=%v must not be reported as an in-flight roster", err, tc.corrupt)
+			}
+		})
 	}
 }
 
@@ -2437,6 +2489,7 @@ func captainInFlightBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
+	seedTaskInHome(t, smHome, "soldier-1", taskauthority.KindShip)
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
@@ -2445,7 +2498,7 @@ func captainInFlightBlock(t *testing.T) {
 	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("kind=ship\nwindow=w\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("window=w\n"), 0644)
 
 	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
@@ -2469,6 +2522,7 @@ func captainInFlightForceAllow(t *testing.T) {
 		t.Fatal(err)
 	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
+	seedTaskInHome(t, smHome, "soldier-1", taskauthority.KindShip)
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	if err := home.SeedCaptainProvenance(smHome, "test-sm"); err != nil {
@@ -2477,7 +2531,7 @@ func captainInFlightForceAllow(t *testing.T) {
 	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("kind=ship\nwindow=w\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("window=w\n"), 0644)
 
 	if err := Retire(smHome, parent, false, true, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)

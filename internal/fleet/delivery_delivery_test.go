@@ -187,9 +187,10 @@ func TestReviewDiffUsesStoredIdentityBaseOnOrigin(t *testing.T) {
 	run("add", "change.txt")
 	run("commit", "-m", "change")
 
-	_, homeDir := newFleetCanonical(t)
+	auth, homeDir := newFleetCanonical(t)
+	mustFleetCreate(t, auth, "t1")
 	if err := home.WriteMeta(homeDir, "t1", map[string]string{
-		"project": "project", "worktree": repo,
+		"worktree":    repo,
 		"pr_provider": "github", "pr_owner": "minhtri2710", "pr_repo": "munsu",
 		"pr_number": "42", "pr_url": "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_base_ref": "trunk", "pr_head_ref": "feature/review", "pr_head_sha": deliveryTestHead,
@@ -271,8 +272,9 @@ func TestReviewDiffDefaultBase(t *testing.T) {
 			run("add", "change.txt")
 			run("commit", "-m", "change")
 
-			_, homeDir := newFleetCanonical(t)
-			if err := home.WriteMeta(homeDir, "t1", map[string]string{"project": "project", "worktree": repo}); err != nil {
+			auth, homeDir := newFleetCanonical(t)
+			mustFleetCreate(t, auth, "t1")
+			if err := home.WriteMeta(homeDir, "t1", map[string]string{"worktree": repo}); err != nil {
 				t.Fatal(err)
 			}
 			stdout := os.Stdout

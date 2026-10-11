@@ -26,8 +26,8 @@ func TestRetirementIntentEvidence(t *testing.T) {
 		t.Run(tc.name+" teardown retains generation-scoped report", func(t *testing.T) {
 			homeDir := t.TempDir()
 			taskID := "evidence-report-" + tc.name
-			auth := canonicalMergeTestAuth(t, homeDir, taskID)
-			if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+			auth := canonicalScoutTestAuth(t, homeDir, taskID)
+			if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
 			dataDir := filepath.Join(homeDir, "data", taskID)
@@ -58,7 +58,7 @@ func TestRetirementIntentEvidence(t *testing.T) {
 					t.Fatalf("entry %s is not a generation-scoped report; the write path must not produce unversioned report files", entry)
 				}
 			}
-			if err := scoutSafetyCheck(Options{HomeDir: homeDir, ID: taskID}, map[string]string{"kind": "scout"}, 2); err == nil {
+			if err := scoutSafetyCheck(Options{HomeDir: homeDir, ID: taskID}, map[string]string{}, 2); err == nil {
 				t.Fatal("later generation unexpectedly accepted retired report evidence")
 			} else {
 				t.Logf("%s later-generation safety check refused retired report: %v", tc.name, err)
@@ -69,7 +69,7 @@ func TestRetirementIntentEvidence(t *testing.T) {
 	t.Run("crash resume commits cleanup once", func(t *testing.T) {
 		homeDir := t.TempDir()
 		taskID := "evidence-crash"
-		auth := canonicalMergeTestAuth(t, homeDir, taskID)
+		auth := canonicalScoutTestAuth(t, homeDir, taskID)
 		wtDir := filepath.Join(homeDir, "worktrees", taskID)
 		if err := os.MkdirAll(wtDir, 0755); err != nil {
 			t.Fatal(err)
@@ -104,7 +104,7 @@ func TestRetirementIntentEvidence(t *testing.T) {
 	t.Run("terminal continuation refuses reopened generation", func(t *testing.T) {
 		homeDir := t.TempDir()
 		taskID := "evidence-stale"
-		auth := canonicalMergeTestAuth(t, homeDir, taskID)
+		auth := canonicalScoutTestAuth(t, homeDir, taskID)
 		wtDir := filepath.Join(homeDir, "worktrees", taskID)
 		if err := os.MkdirAll(wtDir, 0755); err != nil {
 			t.Fatal(err)

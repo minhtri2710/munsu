@@ -83,19 +83,9 @@ func newTaskCmd() *cobra.Command {
 			if _, err := auth.Create(op, req); err != nil {
 				return err
 			}
-			// .meta and .status are post-commit projections:
-			// the authoritative fields are derived from the canonical
-			// aggregate; a projection failure must not roll back the
-			// authoritative Task Generation.
-			agg, err := auth.Get(tid)
-			if err != nil {
-				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
-			}
-			runtimeFields := map[string]string{}
-			if repo != "" {
-				runtimeFields["repo"] = repo
-			}
-			if perr := projectTaskMeta(ctx.Home, agg, runtimeFields); perr != nil {
+			// .meta and .status are post-commit projections: a projection
+			// failure must not roll back the authoritative Task Generation.
+			if perr := touchTaskMeta(ctx.Home, id); perr != nil {
 				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: perr}
 			}
 			if perr := home.AppendStatus(ctx.Home, id, "queued: cli task add"); perr != nil {
@@ -226,9 +216,6 @@ func newTaskCmd() *cobra.Command {
 				b.WriteString(fmt.Sprintf("state: %s\n", agg.Phase))
 			}
 			for k, v := range meta {
-				if authoritativeMetaField(k) {
-					continue
-				}
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
 
@@ -524,27 +511,14 @@ func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []st
 	return nil
 }
 
-// projectTaskMeta overlays the canonical aggregate fields onto the task .meta
-// projection, preserving runtime-only projection fields. Empty canonical
-// values remove stale keys. It is the post-commit projection write: the authoritative Task Generation is never written here.
-func projectTaskMeta(homeDir string, agg taskauthority.Aggregate, runtime map[string]string) error {
-	return home.UpdateMeta(homeDir, agg.TaskID, func(derived map[string]string) error {
-		for k, v := range runtime {
-			derived[k] = v
-		}
-		put := func(k, v string) {
-			if v == "" {
-				delete(derived, k)
-				return
-			}
-			derived[k] = v
-		}
-		put("owner", agg.Definition.Owner)
-		put("description", agg.Definition.Description)
-		put("kind", agg.Definition.Kind)
-		put("project", agg.Definition.Project)
-		put("generation", agg.Generation.String())
-		put("state", string(agg.Phase))
-		return nil
-	})
+// touchTaskMeta rewrites the task .meta without changing any key, bumping its
+// mtime. It is the post-commit write of task add, promote and the scout-done
+// report; no task field is copied into .meta (the canonical Task is the only
+// owner of those).
+//
+// Constraint: .meta mtime is the staleness witness for AcceptOrRefuseStale
+// (orchestrator/supervision_check.go); removal condition: the staleness rule
+// moves to a canonical witness, which refuses more and needs Human words.
+func touchTaskMeta(homeDir, taskID string) error {
+	return home.UpdateMeta(homeDir, taskID, func(map[string]string) error { return nil })
 }

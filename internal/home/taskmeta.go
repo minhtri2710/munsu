@@ -415,12 +415,11 @@ func ParseStatusKey(line string) (message, key string) {
 type MetaEntry struct {
 	ID         string
 	Kind       string
-	Project    string
 	LastStatus string // last line from .status file, key stripped
 }
 
 // ListMeta reads all meta files from the state directory and returns them.
-// It reads *.meta files, extracts key fields, and reads the last status line
+// It reads *.meta files, extracts the kind, and reads the last status line
 // from the corresponding .status file for each task.
 // ListMetaIDs returns the logical task IDs of every .meta file in the state
 // directory, reversing the durable key so enumeration and the write path agree
@@ -489,24 +488,14 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		}
 
 		kind := meta["kind"]
-		project := pickProject(meta)
 		result = append(result, MetaEntry{
 			ID:         id,
 			Kind:       kind,
-			Project:    project,
 			LastStatus: lastStatus,
 		})
 	}
 
 	return result, nil
-}
-
-// pickProject returns the project from meta, falling back to repo if project is unset.
-func pickProject(meta map[string]string) string {
-	if p := meta["project"]; p != "" {
-		return p
-	}
-	return meta["repo"]
 }
 
 // lockPath returns the path to the advisory lock file for a meta file.

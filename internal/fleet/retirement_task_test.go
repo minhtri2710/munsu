@@ -170,7 +170,6 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 	// Clean state should pass
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
@@ -208,7 +207,6 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
@@ -249,7 +247,6 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
@@ -293,7 +290,6 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
@@ -355,7 +351,6 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err != nil {
@@ -372,7 +367,6 @@ func TestShipSafetyCheck_NoRemoteBranch(t *testing.T) {
 	md := setupRetirementTestManifest(t, wt)
 	meta := map[string]string{
 		"worktree": wt,
-		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{}, meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
 	if err == nil {
@@ -455,7 +449,7 @@ func TestRun_SafetyCheckGenerationFailsClosedWithoutAuthority(t *testing.T) {
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "no-authority.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, "no-authority.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
 
 	// The scout safety check answers for a canonical generation, so a nil
 	// authority fails closed before any report is resolved.
@@ -475,10 +469,10 @@ func TestRun_PinnedTeardownConflictPreemptsReportCheck(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	auth := canonicalMergeTestAuth(t, tmp, "pinned-conflict")
+	auth := canonicalScoutTestAuth(t, tmp, "pinned-conflict")
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "pinned-conflict.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, "pinned-conflict.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
 
 	target := taskauthority.Generation(2)
 	_, err := RetireTask(Options{HomeDir: tmp, ID: "pinned-conflict", ExpectedGeneration: &target}, fakeTeardown{}, fakeRetirementJournals{}, auth)
@@ -498,12 +492,12 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 
 	// Compose the canonical Authority and task before the projection write so
 	// the home is initialized first.
-	auth := canonicalMergeTestAuth(t, tmp, "nonexistent")
+	auth := canonicalScoutTestAuth(t, tmp, "nonexistent")
 
 	// Create a minimal meta file
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
+	metaContent := "backend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
@@ -521,11 +515,11 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	auth := canonicalMergeTestAuth(t, tmp, "scout-test")
+	auth := canonicalScoutTestAuth(t, tmp, "scout-test")
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
+	metaContent := "backend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Without --force, should fail
@@ -549,11 +543,11 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	auth := canonicalMergeTestAuth(t, tmp, "scout-report")
+	auth := canonicalScoutTestAuth(t, tmp, "scout-report")
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "scout-report.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, "scout-report.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
 
 	dataDir := filepath.Join(tmp, "data", "scout-report")
 	os.MkdirAll(dataDir, 0755)
@@ -586,10 +580,10 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 	// The report belongs to generation 1 and stops answering for any other:
 	// a later generation's check resolves only its own generation-named
 	// report, and its absence from that name is what refuses the check.
-	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{"kind": "scout"}, 1); err != nil {
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{}, 1); err != nil {
 		t.Fatalf("generation 1's own report must answer for generation 1: %v", err)
 	}
-	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{"kind": "scout"}, 2); err == nil {
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{}, 2); err == nil {
 		t.Fatal("scoutSafetyCheck must refuse a generation that wrote no report of its own")
 	}
 
@@ -605,11 +599,11 @@ func TestRun_ForcePreservesBriefForSweep(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	auth := canonicalMergeTestAuth(t, tmp, "stub-brief")
+	auth := canonicalScoutTestAuth(t, tmp, "stub-brief")
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "stub-brief.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, "stub-brief.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
 
 	dataDir := filepath.Join(tmp, "data", "stub-brief")
 	os.MkdirAll(dataDir, 0755)
@@ -648,13 +642,13 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	auth := canonicalMergeTestAuth(t, tmp, "test-residual")
+	auth := canonicalScoutTestAuth(t, tmp, "test-residual")
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
 	// Create meta file with harness=pi so adapter-driven artifacts are included
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nharness=pi\n"
+	metaContent := "backend=tmux\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
 	// Create residual artifacts: munsu-native + pi adapter artifacts, the
@@ -708,29 +702,30 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 	stateDir := mhome.StateDir(tmp)
 	for _, tc := range []struct {
 		name string
+		kind string
 		meta map[string]string
 		want []string
 	}{
-		{"ship with pi", map[string]string{"kind": "ship", "harness": "pi"}, []string{
+		{"ship with pi", taskauthority.KindShip, map[string]string{"harness": "pi"}, []string{
 			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
-		{"review also removes its launch home", map[string]string{"kind": taskauthority.KindReview, "harness": "pi"}, []string{
+		{"review also removes its launch home", taskauthority.KindReview, map[string]string{"harness": "pi"}, []string{
 			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
-		{"unknown harness has only the native artifacts", map[string]string{"kind": "ship"}, []string{
+		{"unknown harness has only the native artifacts", taskauthority.KindShip, map[string]string{}, []string{
 			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.meta)
+			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.kind, tc.meta)
 			if err != nil || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("cleanupResidualArtifactPaths = %v, %v; want %v", got, err, tc.want)
 			}
 		})
 	}
-	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", map[string]string{}); err == nil {
+	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", taskauthority.KindShip, map[string]string{}); err == nil {
 		t.Fatal("cleanupResidualArtifactPaths accepted an id that escapes the state dir")
 	}
 }
@@ -747,7 +742,7 @@ func reviewTaskRetire(t *testing.T, extra map[string]string, force bool) error {
 	if _, err := auth.Create(mustOp(t, "op-create-review-1", create), create); err != nil {
 		t.Fatalf("Create(review-1): %v", err)
 	}
-	meta := map[string]string{"kind": taskauthority.KindReview}
+	meta := map[string]string{}
 	for k, v := range extra {
 		meta[k] = v
 	}
@@ -842,12 +837,12 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	auth := canonicalMergeTestAuth(t, tmp, "scout-test")
+	auth := canonicalScoutTestAuth(t, tmp, "scout-test")
 
 	// Create meta file for a scout task.
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
+	metaContent := "backend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Create the generation's report so the report check passes before the
@@ -884,12 +879,12 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 
 func TestRun_DataPathFileFailsClosed(t *testing.T) {
 	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "data-file")
+	auth := canonicalScoutTestAuth(t, tmp, "data-file")
 	stateDir := filepath.Join(tmp, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "data-file.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "data-file.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	dataDir := filepath.Join(tmp, "data", "data-file")
@@ -916,12 +911,12 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 		t.Fatal("permission proof did not run: tests run as root, so a data-parent stat refusal cannot be established")
 	}
 	tmp := t.TempDir()
-	auth := canonicalMergeTestAuth(t, tmp, "data-parent")
+	auth := canonicalScoutTestAuth(t, tmp, "data-parent")
 	stateDir := filepath.Join(tmp, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "data-parent.meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "data-parent.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	dataRoot := filepath.Join(tmp, "data")
@@ -957,7 +952,7 @@ func abortPendingCleanup(t *testing.T) (*taskauthority.Canonical, string) {
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "abort-live.meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "abort-live.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-live", Force: true}, fakeTeardown{alive: true, disposeErr: errors.New("stuck")}, fakeRetirementJournals{}, auth); err == nil {
@@ -1008,12 +1003,12 @@ func (failingRetirementJournals) FinalizeRetirementJournals(string, string) ([]s
 func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "retry-journal"
-	auth := canonicalMergeTestAuth(t, tmp, taskID)
+	auth := canonicalScoutTestAuth(t, tmp, taskID)
 	metaPath := filepath.Join(tmp, "state", taskID+".meta")
 	if err := os.MkdirAll(filepath.Dir(metaPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(metaPath, []byte("kind=scout\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(metaPath, []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, failingRetirementJournals{}, auth); err == nil {
@@ -1065,7 +1060,7 @@ func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "projection-retry"
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	lift := blockResidualRemoval(t, filepath.Join(tmp, "state"), taskID)
@@ -1089,7 +1084,7 @@ func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
 	taskID := "prune-retry"
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
 	metaPath := filepath.Join(tmp, "state", taskID+".meta")
-	if err := os.WriteFile(metaPath, []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(metaPath, []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	marker := mhome.WatcherSeenMarkerPath(tmp, taskID)
@@ -1129,7 +1124,7 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
 	metaPath := filepath.Join(tmp, "state", taskID+".meta")
 	statusPath := filepath.Join(tmp, "state", taskID+".status")
-	if err := os.WriteFile(metaPath, []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(metaPath, []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	lift := blockResidualRemoval(t, filepath.Join(tmp, "state"), taskID)
@@ -1188,7 +1183,7 @@ func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "abort-brief-only"
 	auth := mergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("kind=ship\nbackend=tmux\nwindow=@1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	dataDir := filepath.Join(tmp, "data", taskID)

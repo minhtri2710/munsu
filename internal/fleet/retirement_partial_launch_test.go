@@ -53,15 +53,7 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 		agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil || agg.Endpoint != nil {
 		t.Fatalf("fixture is not an unbound partial launch: %+v", agg)
 	}
-	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"project":     "test-proj",
-		"generation":  "1",
-		"state":       "queued",
-		"repo":        f.repoPath,
-		"owner":       "general",
-		"description": "Ready",
-		"kind":        taskauthority.KindShip,
-	}); err != nil {
+	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
 	wtPath := agg.Worktree.Path
@@ -119,8 +111,6 @@ func TestRetirePartialLaunchRefusesDeliveryIdentityBeforeMutation(t *testing.T) 
 		t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
 	}
 	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"project": "test-proj", "generation": "1", "state": "queued", "repo": f.repoPath,
-		"owner": "general", "description": "Ready", "kind": taskauthority.KindShip,
 		"pr_url": "https://github.com/minhtri2710/munsu/pull/42",
 	}); err != nil {
 		t.Fatal(err)
@@ -146,8 +136,6 @@ func TestRetireTaskAuthoritativelyRefusesPartialLaunchDeliveryIdentity(t *testin
 		t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
 	}
 	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"project": "test-proj", "generation": "1", "state": "queued", "repo": f.repoPath,
-		"owner": "general", "description": "Ready", "kind": taskauthority.KindShip,
 		"pr_url": "https://github.com/minhtri2710/munsu/pull/42",
 	}); err != nil {
 		t.Fatal(err)

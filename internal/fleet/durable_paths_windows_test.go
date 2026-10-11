@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestDurableAppendStatusEncodedIDRoundTrip(t *testing.T) {
@@ -86,7 +87,7 @@ func TestTeardownCleanupTargetsEncodedProjections(t *testing.T) {
 	if err := os.Remove(metaPath); err != nil {
 		t.Fatalf("removing teardown meta target %q: %v", metaPath, err)
 	}
-	residualPaths, err := cleanupResidualArtifactPaths(tmp, id, meta)
+	residualPaths, err := cleanupResidualArtifactPaths(tmp, id, taskauthority.KindShip, meta)
 	if err != nil {
 		t.Fatal(err)
 	}

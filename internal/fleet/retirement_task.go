@@ -637,16 +637,25 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, err)
 	}
 
-	kind := meta["kind"]
-	if kind == "" {
-		kind = taskauthority.KindShip // default
-	}
-
 	// Resolve the task identity and the safety-check generation up front: the
 	// scout check answers for the exact generation this invocation retires.
 	taskID, err := domain.NewTaskID(opts.ID)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: resolving task identity: %w", opts.ID, err)
+	}
+
+	// The kind routes the safety check and the residual cleanup; the canonical
+	// Task is its only owner.
+	if authority == nil {
+		return nil, fmt.Errorf("teardown %s: retirement requires a composed task authority", opts.ID)
+	}
+	current, err := authority.Get(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("teardown %s: resolving task kind: %w", opts.ID, err)
+	}
+	kind := current.Definition.Kind
+	if kind == "" {
+		kind = taskauthority.KindShip // default
 	}
 
 	// A review owns no worktree; --force does not override this check.
@@ -767,7 +776,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return result, nil
 	}
 	if claimCompleted {
-		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, result) })
+		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, kind, result) })
 		if err != nil {
 			return result, &RetirementProjectionError{TaskID: opts.ID, Err: err}
 		}
@@ -1055,7 +1064,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return err
 		}
 		projectionCleanup := func() error {
-			if err := finalizeCompletedProjectionCleanup(opts, meta, result); err != nil {
+			if err := finalizeCompletedProjectionCleanup(opts, meta, kind, result); err != nil {
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
 			}
 			return nil
@@ -1088,8 +1097,8 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 // completed retirement claim, run by teardown and by the completed-claim
 // retry. Residual artifacts go first, then the retired wake state, and the
 // .meta last, so a failed step leaves the retry identity in place.
-func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, result *TeardownResult) error {
-	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, meta)
+func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, kind string, result *TeardownResult) error {
+	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, kind, meta)
 	if err != nil {
 		return err
 	}
@@ -1224,9 +1233,6 @@ func reviewSafetyCheck(opts Options, meta map[string]string) error {
 // the typed conflict BEFORE any safety check runs, so a stale generation is
 // never certified against another generation's report.
 func safetyCheckGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, opts Options) (taskauthority.Generation, error) {
-	if authority == nil {
-		return 0, fmt.Errorf("retirement requires a composed task authority")
-	}
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return 0, err
@@ -1612,13 +1618,13 @@ func taskMetaFilePath(homeDir, id string) (string, error) {
 // cleanupResidualArtifactPaths lists the task's residual state paths: files and,
 // for a pi soldier, the per-task agent dir, which the callers remove with
 // os.RemoveAll (it unlinks the dir's symlinks and never follows them).
-func cleanupResidualArtifactPaths(homeDir, id string, meta map[string]string) ([]string, error) {
+func cleanupResidualArtifactPaths(homeDir, id, kind string, meta map[string]string) ([]string, error) {
 	statusPath, err := home.StatusFilePath(homeDir, id)
 	if err != nil {
 		return nil, err
 	}
 	paths := []string{statusPath}
-	if meta["kind"] == taskauthority.KindReview {
+	if kind == taskauthority.KindReview {
 		paths = append(paths, reviewHomeDir(homeDir, id))
 	}
 	stateDir := home.StateDir(homeDir)
