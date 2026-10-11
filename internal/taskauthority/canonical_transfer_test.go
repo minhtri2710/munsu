@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -540,25 +541,64 @@ func TestCanonicalTransferSurvivesHomeReopen(t *testing.T) {
 	}
 }
 
-// interruptCommit turns the committed change-set at keys back into a pending
-// journal record: the documents and the scope revision vanish, as after a crash
-// between the journal write and the apply.
-func interruptCommit(t *testing.T, c *Canonical, root, scope, txnID string, keys []string) {
+// interruptedCommit turns the change-set the operation run commits into a
+// pending journal record: every document it wrote reverts to its earlier bytes
+// (or vanishes) and the scope revision steps back, as after a crash between the
+// journal write and the apply.
+func interruptedCommit(t *testing.T, root, scope, txnID string, run func()) {
 	t.Helper()
-	items := make([]home.ChangeItem, 0, len(keys))
-	for _, key := range keys {
-		p, err := c.h.Path(canonicalRoot, key)
-		if err != nil {
+	state := filepath.Join(root, canonicalRoot)
+	read := func() map[string][]byte {
+		files := map[string][]byte{}
+		err := filepath.WalkDir(state, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			rel, _ := filepath.Rel(state, path)
+			files[filepath.ToSlash(rel)] = data
+			return err
+		})
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
 		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(p); err != nil {
-			t.Fatal(err)
+		return files
+	}
+	revPath := filepath.Join(root, home.JournalDirName, scope+".rev")
+	before := read()
+	revBefore, err := os.ReadFile(revPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	run()
+	var items []home.ChangeItem
+	for key, data := range read() {
+		old, existed := before[key]
+		if existed && string(old) == string(data) {
+			continue
 		}
 		items = append(items, home.ChangeItem{Root: canonicalRoot, Key: key, Data: data})
+		path := filepath.Join(state, filepath.FromSlash(key))
+		if existed {
+			err = os.WriteFile(path, old, 0600)
+		} else {
+			err = os.Remove(path)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var expected uint64
+	if revBefore == nil {
+		err = os.Remove(revPath)
+	} else {
+		_, err = fmt.Sscanf(strings.TrimSpace(string(revBefore)), "%d", &expected)
+		if err == nil {
+			err = os.WriteFile(revPath, revBefore, 0600)
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	rec, err := json.Marshal(struct {
 		TxnID            string            `json:"txn_id"`
@@ -567,48 +607,127 @@ func interruptCommit(t *testing.T, c *Canonical, root, scope, txnID string, keys
 		ExpectedRevision uint64            `json:"expected_revision"`
 		NewRevision      uint64            `json:"new_revision"`
 		Items            []home.ChangeItem `json:"items"`
-	}{txnID, scope, 1, 0, 1, items})
+	}{txnID, scope, 1, expected, expected + 1, items})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(root, home.JournalDirName)
-	if err := os.Remove(filepath.Join(dir, scope+".rev")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, scope+"."+txnID+".json"), append(rec, '\n'), 0600); err != nil {
+	journal := filepath.Join(root, home.JournalDirName, scope+"."+txnID+".json")
+	if err := os.WriteFile(journal, append(rec, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// pendingCommitRun is one entry point staged for a retry test: run performs the
+// operation and reports whether it replayed a prior commit; conflict, when set,
+// retries the same operation ID with a different intent.
+type pendingCommitRun struct {
+	run      func() (replayed bool, err error)
+	conflict func() error
+}
+
 // A retry of the same operation over its own interrupted commit replays the
-// receipt the commit carries instead of refusing it.
+// receipt the commit carries instead of refusing it. Each row is one call site
+// of the receipt-before-recovery order; a retry with a different intent over
+// the same pending commit is still refused.
 func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
-	t.Run("create", func(t *testing.T) {
-		c, _, root := newTestCanonical(t)
-		req := createRequest(c, "t1")
-		op := mustOperation(t, "op-create-t1", req)
-		if _, err := c.Create(op, req); err != nil {
-			t.Fatal(err)
-		}
-		interruptCommit(t, c, root, taskScope("t1"), "op-create-t1", []string{taskCurrentKey("t1"), receiptKey("op-create-t1")})
-		out, err := c.Create(op, req)
-		if err != nil || !out.Replayed {
-			t.Fatalf("Create retry = %+v, %v; want a replay", out, err)
-		}
-	})
-	t.Run("receive", func(t *testing.T) {
-		c, _, root := newTestCanonical(t)
-		req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
-		op := mustOperation(t, "op-receive-1", req)
-		if _, err := c.ReceiveTransfer(op, req); err != nil {
-			t.Fatal(err)
-		}
-		interruptCommit(t, c, root, taskScope("t1"), "op-receive-1", []string{taskGenKey("t1", 1), receiptKey("op-receive-1")})
-		out, err := c.ReceiveTransfer(op, req)
-		if err != nil || !out.Replayed {
-			t.Fatalf("ReceiveTransfer retry = %+v, %v; want a replay", out, err)
-		}
-	})
+	startReq := func(c *Canonical, reason string) CanonicalStartRequest {
+		return CanonicalStartRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1), Reason: reason}
+	}
+	holdReq := func(c *Canonical) CanonicalAddHoldRequest {
+		return CanonicalAddHoldRequest{HomeID: c.HomeID(), HoldID: "t1-decision-k", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}}, Actions: []DispatchAction{DispatchActionSpawn}, Reason: "freeze"}
+	}
+	rows := []struct {
+		name  string
+		scope string
+		stage func(t *testing.T, c *Canonical) pendingCommitRun
+	}{
+		{"create", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			req := createRequest(c, "t1")
+			op := mustOperation(t, "op-create-t1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.Create(op, req); return out.Replayed, err }}
+		}},
+		{"receive", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
+			op := mustOperation(t, "op-receive-1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.ReceiveTransfer(op, req); return out.Replayed, err }}
+		}},
+		{"start", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			mustCreate(t, c, "t1")
+			req, other := startReq(c, "start"), startReq(c, "start again")
+			op := mustOperation(t, "op-start-1", req)
+			return pendingCommitRun{
+				run: func() (bool, error) { out, err := c.Start(op, req); return out.Replayed, err },
+				conflict: func() error {
+					_, err := c.Start(mustOperation(t, "op-start-1", other), other)
+					return err
+				},
+			}
+		}},
+		{"reopen", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			mustCreate(t, c, "t1")
+			done := CanonicalCompleteRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1), To: PhaseDone, Reason: "done"}
+			if _, err := c.Complete(mustOperation(t, "op-complete-1", done), done); err != nil {
+				t.Fatal(err)
+			}
+			req := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 2), Reason: "reopen"}
+			op := mustOperation(t, "op-reopen-1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.Reopen(op, req); return out.Replayed, err }}
+		}},
+		{"add hold", holdScope("t1-decision-k"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			req := holdReq(c)
+			op := mustOperation(t, "op-hold-1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.AddHold(op, req); return out.Replayed, err }}
+		}},
+		{"release hold", holdScope("t1-decision-k"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			add := holdReq(c)
+			if _, err := c.AddHold(mustOperation(t, "op-hold-1", add), add); err != nil {
+				t.Fatal(err)
+			}
+			req := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: add.HoldID, Reason: "thaw", Words: testWords()}
+			op := mustOperation(t, "op-release-1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.ReleaseHold(op, req); return out.Replayed, err }}
+		}},
+		{"authorize delivery", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			req := authorizeRequest(c, "t1", preconditionOf(1, mustDeliveryTask(t, c, "t1")))
+			op := mustOperation(t, "op-auth-1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.AuthorizeDelivery(op, req); return out.Replayed, err }}
+		}},
+		{"record gate", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			auth := mustAuthorize(t, c, "t1", mustDeliveryTask(t, c, "t1"), "op-auth-gate")
+			req := gateRequest(t, c, auth)
+			op := mustOperation(t, "op-gate-1", req)
+			calls := 0 // RecordGate reports no replay flag; the second call is the retry
+			return pendingCommitRun{run: func() (bool, error) { calls++; _, err := c.RecordGate(op, req); return calls > 1, err }}
+		}},
+		{"activate transfer", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
+			recv := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
+			if _, err := c.ReceiveTransfer(mustOperation(t, "op-receive-1", recv), recv); err != nil {
+				t.Fatal(err)
+			}
+			req := CanonicalActivateTransferRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1), ReservationID: "res-t1", Reason: "activate"}
+			op := mustOperation(t, "op-activate-1", req)
+			return pendingCommitRun{run: func() (bool, error) { out, err := c.ActivateTransfer(op, req); return out.Replayed, err }}
+		}},
+	}
+	for _, tt := range rows {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, root := newTestCanonical(t)
+			staged := tt.stage(t, c)
+			interruptedCommit(t, root, tt.scope, "pending-txn", func() {
+				if replayed, err := staged.run(); err != nil || replayed {
+					t.Fatalf("first run: replayed=%v err=%v", replayed, err)
+				}
+			})
+			if staged.conflict != nil {
+				if err := staged.conflict(); !errors.Is(err, ErrOperationConflict) {
+					t.Fatalf("different intent over the pending commit = %v, want ErrOperationConflict", err)
+				}
+			}
+			if replayed, err := staged.run(); err != nil || !replayed {
+				t.Fatalf("retry: replayed=%v err=%v; want a replay", replayed, err)
+			}
+		})
+	}
 }
 
 // A committed operation replays even when its scope holds a journal record
