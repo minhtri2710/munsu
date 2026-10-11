@@ -8,5 +8,7 @@ data:
   pid: 12345
   identity: munsu-watch
   queued_wakes: 0
+  claimed_wakes: 0
+  claimed_stalled: 0
   guard_state: healthy
 help[1]: "Run `munsu guard` to check supervision health"

@@ -386,6 +386,26 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 		}
 	}
 
+	// Claimed wakes are in neither queue; an unreadable lease directory is
+	// unknown, never none.
+	claimedWakes, claimedErr := orchestrator.ListClaimedWakes(homeDir, time.Now())
+	var claimedExpired, claimedStalled int
+	for _, c := range claimedWakes {
+		switch c.State {
+		case home.ClaimExpired:
+			claimedExpired++
+		case home.ClaimStalled:
+			claimedStalled++
+			// A stalled material wake makes the guard unhealthy, as an aged queued one does.
+			if c.Material && guardState == "healthy" {
+				guardState = "unhealthy"
+			}
+		}
+	}
+	if claimedErr != nil && guardState == "healthy" {
+		guardState = "indeterminate"
+	}
+
 	var diagnostics []string
 	if !beatStatus.Exists {
 		diagnostics = append(diagnostics, "Watcher never started — run 'munsu watch ensure'")
@@ -399,6 +419,12 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 		}
 	}
 
+	if claimedErr != nil {
+		diagnostics = append(diagnostics, fmt.Sprintf("Claimed wakes: unknown — %v", claimedErr))
+	} else if len(claimedWakes) > 0 {
+		diagnostics = append(diagnostics, fmt.Sprintf("Claimed wakes: %d held (%d expired, %d stalled)", len(claimedWakes), claimedExpired, claimedStalled))
+	}
+
 	lease := watcherLeaseInfo(homeDir)
 
 	return Response[WatchStatus]{
@@ -406,16 +432,18 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 		Kind:          "watch.status",
 		Status:        "success",
 		Data: WatchStatus{
-			WatchID:     watchID,
-			State:       state,
-			BeatAge:     beatAge,
-			PID:         pid,
-			Identity:    identity,
-			QueuedWakes: queuedWakes,
-			MaterialAge: materialAge,
-			GuardState:  guardState,
-			Lease:       lease,
-			Diagnostics: diagnostics,
+			WatchID:        watchID,
+			State:          state,
+			BeatAge:        beatAge,
+			PID:            pid,
+			Identity:       identity,
+			QueuedWakes:    queuedWakes,
+			ClaimedWakes:   len(claimedWakes),
+			ClaimedStalled: claimedStalled,
+			MaterialAge:    materialAge,
+			GuardState:     guardState,
+			Lease:          lease,
+			Diagnostics:    diagnostics,
 		},
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -23,6 +24,7 @@ func newInboxCmd() *cobra.Command {
 		Long: `Display a compact inbox view for the General, combining:
 
   - Pending wakes from the wake queue
+  - Claimed wakes still held in a lease, with their derived state
   - Last captain status lines (state/captain:<id>.status) that are general-relevant
 
 No behavior change to the watcher. Use 'munsu inbox' before 'munsu wake claim' or
@@ -207,15 +209,44 @@ func renderInbox(homeDir string, w interface{ Write([]byte) (int, error) }) erro
 
 	hasContent := false
 
-	// --- Section 1: Pending wakes ---
+	// --- Section 1: Wakes, queued and claimed ---
 	pending := countQueuedWakes(homeDir)
-	if pending > 0 {
-		hasContent = true
+	now := time.Now()
+	claimed, claimedErr := orchestrator.ListClaimedWakes(homeDir, now)
+	switch {
+	case pending > 0:
 		out("Pending wakes: %d\n", pending)
-		out("  Run `munsu wake claim <consumer-id>` to process.\n\n")
-	} else {
-		out("Wakes: none pending\n\n")
+		out("  Run `munsu wake claim --consumer <id>` to process.\n")
+	case len(claimed) > 0:
+		out("Wakes: none queued, %d claimed\n", len(claimed))
+	case claimedErr != nil:
+		out("Wakes: none queued, claimed unknown\n")
+	default:
+		out("Wakes: none pending\n")
 	}
+	if claimedErr != nil {
+		out("Claimed wakes: unknown (%v)\n", claimedErr)
+	} else if len(claimed) > 0 {
+		out("Claimed wakes: %d\n", len(claimed))
+		lastLease := ""
+		for _, c := range claimed {
+			if c.LeaseID != lastLease {
+				lastLease = c.LeaseID
+				out("  %s held by %s", c.LeaseID, c.Consumer)
+				if !c.ClaimedAt.IsZero() {
+					out(", claimed %s ago", now.Sub(c.ClaimedAt).Round(time.Second))
+				}
+				out("\n")
+			}
+			out("    %s:%s %s %s %q [%s]", c.Wake.Epoch, c.Wake.Seq, c.Wake.Kind, c.Wake.Key, c.Wake.Payload, c.State)
+			if c.Evidence != "" {
+				out(": %s", c.Evidence)
+			}
+			out("\n")
+		}
+	}
+	out("\n")
+	hasContent = pending > 0 || len(claimed) > 0 || claimedErr != nil
 
 	// --- Section 2: Captain status lines ---
 	out("Captain status:\n")
