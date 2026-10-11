@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -96,6 +97,9 @@ type Runner struct {
 	launchID      string
 	windowLabel   string
 	launchReentry bool // the intent pre-existed this run (recovery, not first attempt)
+	// seatPath is the seat's launch PATH as the committed intent holds it. The
+	// fence profile and the launch script are both built from it.
+	seatPath []string
 
 	// launch submission evidence: the exact endpoint command submitted for
 	// the launch and its sha256 digest, durably recorded after submission.
@@ -1157,9 +1161,12 @@ func (r *Runner) beginLaunchIntent() error {
 	// after create but before attach can reuse the same token.
 	// Recovery reuses the persisted LaunchIntent incarnation; a first attempt
 	// mints it here and the mint error aborts (never a shared sentinel).
-	endpointIncarnation := ""
+	// The seat PATH is read once, here, and committed with the intent; a resumed
+	// launch adopts the committed list, so its profile and script bytes are the
+	// same whatever PATH the resuming process has.
+	endpointIncarnation, seatPath := "", seatPathDirs(r.homeDir)
 	if agg.Launch != nil {
-		endpointIncarnation = agg.Launch.EndpointIncarnation
+		endpointIncarnation, seatPath = agg.Launch.EndpointIncarnation, agg.Launch.SeatPathDirs
 	} else {
 		inc, err := r.mintEndpointIncarnation()
 		if err != nil {
@@ -1168,7 +1175,7 @@ func (r *Runner) beginLaunchIntent() error {
 		endpointIncarnation = inc
 	}
 	r.incarnation = endpointIncarnation
-	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation)
+	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation, seatPath)
 	if agg.Launch != nil {
 		if !r.launchIntentMatches(req, *agg.Launch) {
 			return fmt.Errorf("launch intent: task %s generation %s already holds a different launch intent; refuse to re-launch", r.args.ID, agg.Generation)
@@ -1258,7 +1265,7 @@ func (r *Runner) recordDeliveryContract() error {
 // freshly minted on first attempt). Every derived value is reproducible on a
 // retry (same Operation ID and digest); the incarnation is provided by the
 // caller because it is opaque and cannot be re-derived.
-func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string) taskauthority.CanonicalBeginSpawnRequest {
+func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string, seatPath []string) taskauthority.CanonicalBeginSpawnRequest {
 	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
 	if r.kind == taskauthority.KindReview {
 		wtRes, wtFence = "", "" // a review task reserves no worktree
@@ -1283,6 +1290,7 @@ func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthor
 		EndpointReservationID: epRes,
 		EndpointFenceToken:    epFence,
 		EndpointIncarnation:   endpointIncarnation,
+		SeatPathDirs:          seatPath,
 		Reason:                "spawn",
 	}
 }
@@ -1296,7 +1304,8 @@ func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnReques
 		l.Project == req.Project && l.ParentTaskID == req.ParentTaskID && l.LaunchID == req.LaunchID &&
 		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
 		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
-		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation
+		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation &&
+		slices.Equal(l.SeatPathDirs, req.SeatPathDirs)
 }
 
 // adoptLaunch copies the committed launch intent identities onto the Runner
@@ -1306,6 +1315,7 @@ func (r *Runner) adoptLaunch(l taskauthority.LaunchIntent) {
 	r.launch = &l
 	r.launchID = l.LaunchID
 	r.windowLabel = l.WindowLabel
+	r.seatPath = slices.Clone(l.SeatPathDirs)
 }
 
 // spawnReservationIdentities derives the one-time worktree/endpoint
@@ -2026,6 +2036,7 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	launch := fence.Launch{
 		Role: fence.RoleSoldier, Harness: r.launchBin, Home: r.homeDir, Primary: primary,
 		Worktree: bound.Path(), GitDir: gitDir, CommonDir: commonDir, Branch: "mu/" + r.args.ID,
+		PathDirs: r.seatPath, ShimDir: gitShimDir(r.homeDir),
 	}
 	if r.launchBin == harness.Pi {
 		if launch.HarnessStateDir, err = piAgentDirPath(r.homeDir, r.args.ID); err != nil {
@@ -2154,7 +2165,7 @@ func (r *Runner) submitLaunch() error {
 			WorktreePath: r.cwd, LaunchDir: r.launchDir, Review: r.review, HomeDir: r.homeDir,
 			TaskID: r.args.ID, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
-			EndpointFence: r.epFenceToken(), Fence: r.fence,
+			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
 		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
@@ -2271,6 +2282,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		PathDirs: r.seatPath,
 	})
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)

@@ -615,6 +615,9 @@ func TestSeedWorktree_GitignoreContent(t *testing.T) {
 	if !strings.Contains(content, "state/") {
 		t.Error("captain excludes missing state/ entry")
 	}
+	if !strings.Contains(content, filepath.Dir(GitShimBinRelPath)+"/") {
+		t.Error("captain excludes missing the git shim dir entry")
+	}
 	if !strings.Contains(content, home.CaptainProvenanceName) {
 		t.Errorf("captain excludes missing %s entry", home.CaptainProvenanceName)
 	}

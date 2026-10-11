@@ -25,6 +25,7 @@ const (
 // never pollute the host project's index without modifying tracked .gitignore.
 var worktreeExcludeContent = []string{
 	"state/",
+	"git-shim/",
 	"tmp/",
 	"sessions/",
 	"holds/",

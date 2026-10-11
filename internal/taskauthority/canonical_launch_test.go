@@ -35,8 +35,8 @@ func launchRequest(c *Canonical, taskID string, prec domain.Precondition) Canoni
 		WorktreeFenceToken:    "wt-fence-" + taskID,
 		EndpointReservationID: "ep-res-" + taskID,
 		EndpointFenceToken:    "ep-fence-" + taskID,
-		EndpointIncarnation:   "inc-" + taskID,
-		Reason:                "spawn",
+		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID,
+		Reason: "spawn",
 	}
 }
 
@@ -1244,5 +1244,57 @@ func TestCommittedOperationReceiptRejectsInvalidIdentity(t *testing.T) {
 				t.Fatalf("CommittedOperationReceipt error = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// The seat PATH is part of the immutable launch identity: the same list
+// adopts the committed intent, a different one conflicts, and the operation
+// digest differs.
+func TestLaunchIntentSameComparesTheSeatPath(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	req := launchRequest(c, "t1", preconditionOf(1, 1))
+	committed := LaunchIntent{
+		SnapshotDigest: req.SnapshotDigest, Backend: req.Backend, Harness: req.Harness, Model: req.Model,
+		Effort: req.Effort, Mode: req.Mode, Kind: req.Kind, Project: req.Project, ParentTaskID: req.ParentTaskID,
+		LaunchID: req.LaunchID, WindowLabel: req.WindowLabel,
+		WorktreeReservationID: req.WorktreeReservationID, WorktreeFenceToken: req.WorktreeFenceToken,
+		EndpointReservationID: req.EndpointReservationID, EndpointFenceToken: req.EndpointFenceToken,
+		EndpointIncarnation: req.EndpointIncarnation, SeatPathDirs: []string{"/usr/bin"},
+	}
+	tests := []struct {
+		name string
+		path []string
+		same bool
+	}{
+		{"the same seat PATH adopts the committed intent", []string{"/usr/bin"}, true},
+		{"a different seat PATH conflicts", []string{"/usr/bin", "/opt/bin"}, false},
+		{"a reordered seat PATH conflicts", []string{"/opt/bin", "/usr/bin"}, false},
+	}
+	var digests [][]byte
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := req
+			r.SeatPathDirs = tt.path
+			if got := launchIntentSame(committed, r); got != tt.same {
+				t.Errorf("launchIntentSame with seat PATH %q = %v, want %v", tt.path, got, tt.same)
+			}
+			d, err := r.DigestBytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			digests = append(digests, d)
+		})
+	}
+	if string(digests[0]) == string(digests[1]) || string(digests[0]) == string(digests[2]) || string(digests[1]) == string(digests[2]) {
+		t.Errorf("BeginSpawn digests of different seat PATHs are not all distinct: %q", digests)
+	}
+}
+
+func TestAggregateCloneCopiesTheSeatPath(t *testing.T) {
+	orig := Aggregate{Launch: &LaunchIntent{SeatPathDirs: []string{"/usr/bin", "/opt/bin"}}}
+	cp := orig.clone()
+	cp.Launch.SeatPathDirs[0] = "/mutated"
+	if got := orig.Launch.SeatPathDirs[0]; got != "/usr/bin" {
+		t.Errorf("mutating the clone's seat PATH changed the original to %q", got)
 	}
 }

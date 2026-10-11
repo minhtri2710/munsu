@@ -1250,8 +1250,8 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 		WorktreeFenceToken:    "wt-fence-2",
 		EndpointReservationID: "ep-res-2",
 		EndpointFenceToken:    "ep-fence-2",
-		EndpointIncarnation:   "inc-" + taskID, // REUSED from generation 1
-		Reason:                "spawn",
+		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID, // REUSED from generation 1
+		Reason: "spawn",
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-2", begin), begin); err != nil {
 		t.Fatalf("BeginSpawn(gen 2): %v", err)
@@ -1516,7 +1516,7 @@ func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) 
 		SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: "pi", Model: "opus", Effort: "high",
 		Mode: "direct-PR", Kind: "ship", Project: "proj", ParentTaskID: "parent", LaunchID: "launch-" + taskID,
 		WindowLabel: "window-" + taskID, WorktreeReservationID: "wt-res-1", WorktreeFenceToken: "wt-fence-1",
-		EndpointReservationID: "ep-res-1", EndpointFenceToken: "ep-fence-1", EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
+		EndpointReservationID: "ep-res-1", EndpointFenceToken: "ep-fence-1", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-"+taskID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn: %v", err)
@@ -1593,8 +1593,8 @@ func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
 		WorktreeFenceToken:    "wt-fence-1",
 		EndpointReservationID: "ep-res-1",
 		EndpointFenceToken:    "ep-fence-1",
-		EndpointIncarnation:   "inc-" + taskID,
-		Reason:                "spawn",
+		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID,
+		Reason: "spawn",
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-"+taskID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn: %v", err)

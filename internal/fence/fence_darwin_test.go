@@ -220,6 +220,151 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 	)
 }
 
+// A seat's PATH directories are refused wholesale, whatever allowed root they
+// sit in, and so is renaming one away. The allow rows are the nearest valid
+// writes: the same roots, one name over.
+func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
+	out := outsideDir(t)
+	uhome := seatEnv(t, out)
+	l := newSplitLayout(t, out)
+	state := filepath.Join(l.home, "state")
+	// The shim sits beside state/, outside every writable root.
+	shim := filepath.Join(l.home, "git-shim", "bin")
+	claudeBin := filepath.Join(uhome, ".claude", "local")
+	tmpBin := filepath.Join(l.root, "pathbin")
+	mkdirs(t, shim, claudeBin, tmpBin)
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte("shim"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planted := filepath.Join(l.worktree, "planted")
+	if err := os.WriteFile(planted, []byte("planted"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A PATH entry that is a symlink names a directory the sandbox only sees by
+	// its real path.
+	realBin, linkBin := filepath.Join(l.root, "realbin"), filepath.Join(l.root, "linkbin")
+	mkdirs(t, realBin, filepath.Join(l.root, "realbin-sibling"))
+	if err := os.Symlink(realBin, linkBin); err != nil {
+		t.Fatal(err)
+	}
+	// A PATH dir deeper under a harness root: its middle directory is strictly
+	// inside the root, the root itself is not.
+	deepBin := filepath.Join(uhome, ".claude", "deep", "mid", "bin")
+	mkdirs(t, deepBin)
+	// A PATH dir inside the worktree, a writable root: node_modules is strictly
+	// inside it.
+	wtBin := filepath.Join(l.worktree, "node_modules", ".bin")
+	mkdirs(t, wtBin)
+	// The same shim under a home that sits inside a temp root, itself a
+	// writable root: nothing above the shim may be chmod'ed either.
+	tl := newSplitLayout(t, "")
+	tshim := filepath.Join(tl.home, "git-shim", "bin")
+	mkdirs(t, tshim)
+	// A refused chmod 000 that is not refused must not leave a tree the
+	// cleanup cannot remove.
+	t.Cleanup(func() {
+		for _, d := range []string{filepath.Dir(shim), shim, claudeBin, filepath.Dir(deepBin), deepBin, filepath.Dir(wtBin), wtBin, tl.home, filepath.Dir(tshim), tshim} {
+			os.Chmod(d, 0o755)
+		}
+	})
+	piAgentBin := filepath.Join(uhome, ".pi", "agent", "bin")
+	mkdirs(t, filepath.Join(l.stateDir(), "bin"), piAgentBin)
+	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, "/usr/bin"}
+	sl, rl := l.soldier(), l.reviewer()
+	sl.PathDirs, rl.PathDirs = pathDirs, pathDirs
+	sl.ShimDir, rl.ShimDir = shim, shim
+	soldier, reviewer := mustNew(t, sl), mustNew(t, rl)
+	tsl := tl.soldier()
+	tsl.PathDirs, tsl.ShimDir = []string{tshim, "/usr/bin"}, tshim
+	tmpHome := mustNew(t, tsl)
+	// The user's temp root that holds that home. chmod skips a mode the file
+	// already has, so its times are touched instead: a refusal is the sandbox's,
+	// and an allowed touch of a temp dir changes nothing that matters.
+	tmpRoot, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pi prepends <agent dir>/bin to the PATH of its commands, so the pi seat's
+	// own state dir and the default agent dir hold two more PATH directories.
+	psl, prl := sl, rl
+	psl.Harness, prl.Harness = harness.Pi, harness.Pi
+	psl.HarnessStateDir, prl.HarnessStateDir = l.stateDir(), l.stateDir()
+	piSoldier, piReviewer := mustNew(t, psl), mustNew(t, prl)
+
+	tests := []struct {
+		name    string
+		f       *Fence
+		argv    []string
+		refused bool
+		absent  string // a path a refused write must not have created
+		kept    string // a path a refused write must leave as it was
+	}{
+		{"soldier creates a file in the git shim dir", soldier, []string{touchBin, filepath.Join(shim, "gh")}, true, filepath.Join(shim, "gh"), ""},
+		{"soldier replaces the git shim", soldier, []string{"/bin/cp", planted, filepath.Join(shim, "git")}, true, "", filepath.Join(shim, "git")},
+		{"soldier creates a file in a PATH dir under a harness root", soldier, []string{touchBin, filepath.Join(claudeBin, "go")}, true, filepath.Join(claudeBin, "go"), ""},
+		{"soldier creates a file in a PATH dir under a temp root", soldier, []string{touchBin, filepath.Join(tmpBin, "go")}, true, filepath.Join(tmpBin, "go"), ""},
+		{"reviewer creates a file in a PATH dir under a temp root", reviewer, []string{touchBin, filepath.Join(tmpBin, "go")}, true, filepath.Join(tmpBin, "go"), ""},
+		{"soldier creates a file in a symlinked PATH dir's real directory", soldier, []string{touchBin, filepath.Join(realBin, "go")}, true, filepath.Join(realBin, "go"), ""},
+		{"soldier creates a file through a symlinked PATH dir", soldier, []string{touchBin, filepath.Join(linkBin, "go")}, true, filepath.Join(realBin, "go"), ""},
+		{"soldier writes beside a symlinked PATH dir's real directory", soldier, []string{touchBin, filepath.Join(l.root, "realbin-sibling", "f")}, false, "", ""},
+		{"soldier writes its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "f")}, false, "", ""},
+		{"soldier writes its task status", soldier, []string{touchBin, filepath.Join(state, "T-1.status")}, false, "", ""},
+		{"soldier writes beside a harness PATH dir", soldier, []string{touchBin, filepath.Join(uhome, ".claude", "f")}, false, "", ""},
+		{"pi soldier creates a file in its agent dir's bin", piSoldier, []string{touchBin, filepath.Join(l.stateDir(), "bin", "gh")}, true, filepath.Join(l.stateDir(), "bin", "gh"), ""},
+		{"pi soldier creates a file in the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(piAgentBin, "pi")}, true, filepath.Join(piAgentBin, "pi"), ""},
+		{"pi reviewer creates a file in its agent dir's bin", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "bin", "gh")}, true, filepath.Join(l.stateDir(), "bin", "gh"), ""},
+		{"pi soldier writes its agent dir", piSoldier, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
+		{"pi soldier writes beside the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(uhome, ".pi", "agent", "f")}, false, "", ""},
+		{"pi reviewer writes its agent dir", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
+		{"soldier chmods its state dir", soldier, []string{"/bin/chmod", "700", state}, false, "", ""},
+		{"soldier chmods a harness root that holds a PATH dir", soldier, []string{"/bin/chmod", "700", filepath.Join(uhome, ".claude")}, false, "", ""},
+		{"soldier creates a directory under the state dir", soldier, []string{"/bin/mkdir", filepath.Join(state, "newdir")}, false, "", ""},
+		{"pi soldier chmods its own state dir", piSoldier, []string{"/bin/chmod", "700", l.stateDir()}, false, "", ""},
+		{"soldier chmods a PATH dir under a harness root to 000", soldier, []string{"/bin/chmod", "000", claudeBin}, true, "", claudeBin},
+		{"soldier creates a file in a PATH dir inside its worktree", soldier, []string{touchBin, filepath.Join(wtBin, "go")}, true, filepath.Join(wtBin, "go"), ""},
+		{"soldier writes beside a PATH dir inside its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "node_modules", "f")}, false, "", ""},
+		{"soldier chmods the directory above a PATH dir inside its worktree to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(wtBin)}, true, "", wtBin},
+		{"soldier chmods its worktree", soldier, []string{"/bin/chmod", "700", l.worktree}, false, "", ""},
+		{"soldier chmods the state dir of a home under a temp root", tmpHome, []string{"/bin/chmod", "700", filepath.Join(tl.home, "state")}, false, "", ""},
+		{"soldier chmods a home under a temp root to 000", tmpHome, []string{"/bin/chmod", "000", tl.home}, true, "", tshim},
+		{"soldier chmods the dir holding a home under a temp root to 000", tmpHome, []string{"/bin/chmod", "000", filepath.Dir(tl.home)}, true, "", tshim},
+		{"soldier changes the temp root holding the home", tmpHome, []string{touchBin, tmpRoot}, true, "", tshim},
+		{"soldier chmods the git shim dir to 000", soldier, []string{"/bin/chmod", "000", shim}, true, "", shim},
+		{"soldier chmods the git shim dir's parent to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(shim)}, true, "", shim},
+		{"soldier chmods a middle dir above a PATH dir under a harness root to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(deepBin)}, true, "", deepBin},
+		{"soldier renames the git shim dir", soldier, []string{"/bin/mv", shim, shim + ".old"}, true, shim + ".old", shim},
+		{"soldier renames the git shim dir's parent", soldier, []string{"/bin/mv", filepath.Dir(shim), filepath.Dir(shim) + ".old"}, true, filepath.Dir(shim) + ".old", shim},
+		{"soldier removes the git shim dir's parent", soldier, []string{"/bin/rm", "-r", filepath.Dir(shim)}, true, "", shim},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, err := fenced(t, tt.f, tt.argv...)
+			if !tt.refused {
+				if err != nil {
+					t.Fatalf("%q was refused: %v %s", tt.argv, err, o)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(o, "Operation not permitted") {
+				t.Errorf("%q was not refused by the fence: %v %s", tt.argv, err, o)
+			}
+			if tt.absent != "" {
+				if _, statErr := os.Lstat(tt.absent); statErr == nil {
+					t.Errorf("%s exists after a write the fence must refuse", tt.absent)
+				}
+			}
+			if _, statErr := os.Lstat(tt.kept); tt.kept != "" && statErr != nil {
+				t.Errorf("%s is gone after a write the fence must refuse", tt.kept)
+			}
+			if tt.kept == filepath.Join(shim, "git") {
+				if b, _ := os.ReadFile(tt.kept); string(b) != "shim" {
+					t.Errorf("the git shim now reads %q", b)
+				}
+			}
+		})
+	}
+}
+
 func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 	out := outsideDir(t)
 	seatEnv(t, out)
@@ -345,6 +490,7 @@ func TestNewRefusals(t *testing.T) {
 		{"a file inside the primary checkout", func(x *Launch) { x.Files = []string{filepath.Join(l.primary, "v.json")} }, "overlaps protected path " + l.primary},
 		{"a file inside the git common dir", func(x *Launch) { x.Files = []string{filepath.Join(l.common, "v.json")} }, "overlaps protected path"},
 		{"a file inside the git dir", func(x *Launch) { x.Files = []string{filepath.Join(l.gitDir, "v.json")} }, "overlaps protected path"},
+		{"a relative PATH directory", func(x *Launch) { x.PathDirs = []string{"/usr/bin", "bin"} }, `PATH directory "bin" is not absolute`},
 		{"a home whose state root holds the primary", func(x *Launch) {
 			x.Home, x.Primary, x.CommonDir, x.GitDir = h2, pri, filepath.Join(pri, ".git"), filepath.Join(pri, ".git", "worktrees", "wt")
 		}, "overlaps protected path"},
@@ -373,6 +519,11 @@ func TestNewRefusals(t *testing.T) {
 		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "overlaps protected path "+launch.GitDir) {
 			t.Fatalf("err = %v", err)
 		}
+	})
+	t.Run("absolute PATH directories are accepted", func(t *testing.T) {
+		launch := l.soldier()
+		launch.PathDirs = []string{filepath.Join(l.home, "git-shim", "bin"), "/usr/bin"}
+		mustNew(t, launch)
 	})
 	t.Run("a soldier may write a file inside its own worktree", func(t *testing.T) {
 		launch := l.soldier()

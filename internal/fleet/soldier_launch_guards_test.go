@@ -153,11 +153,12 @@ func TestBuildLaunchPromptRefusesScoutContractOnShipTask(t *testing.T) {
 // guard test copies it and breaks one field.
 func launchArtifactInputForGuards(t *testing.T) LaunchArtifactInput {
 	t.Helper()
-	wtDir := t.TempDir()
+	wtDir, homeDir := t.TempDir(), t.TempDir()
 	return LaunchArtifactInput{
 		WorktreePath:   wtDir,
 		LaunchDir:      wtDir,
-		HomeDir:        t.TempDir(),
+		HomeDir:        homeDir,
+		PathDirs:       seatPathDirs(homeDir),
 		TaskID:         "guard-task",
 		SnapshotDigest: "sha256:snapshot",
 		LaunchBin:      "pi",
@@ -194,6 +195,12 @@ func TestBuildLaunchArtifactRefusesWithoutPromptArgCommand(t *testing.T) {
 			break_:  func(in *LaunchArtifactInput) { in.LaunchArgs = nil },
 			repair:  func(in *LaunchArtifactInput) { in.LaunchArgs = []string{"prompt text"} },
 			wantSub: "no prompt-arg launch command",
+		},
+		{
+			name:    "no seat PATH",
+			break_:  func(in *LaunchArtifactInput) { in.PathDirs = nil },
+			repair:  func(in *LaunchArtifactInput) { in.PathDirs = seatPathDirs(in.HomeDir) },
+			wantSub: "the seat PATH is required",
 		},
 	}
 	for _, tc := range cases {
