@@ -1233,9 +1233,6 @@ func reviewSafetyCheck(opts Options, meta map[string]string) error {
 // the typed conflict BEFORE any safety check runs, so a stale generation is
 // never certified against another generation's report.
 func safetyCheckGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, opts Options) (taskauthority.Generation, error) {
-	if authority == nil {
-		return 0, fmt.Errorf("retirement requires a composed task authority")
-	}
 	cur, err := authority.Get(taskID)
 	if err != nil {
 		return 0, err

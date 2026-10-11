@@ -994,7 +994,10 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 			continue
 		}
 		agg, ok, err := currentCanonicalAggregate(captainHome, id)
-		if err != nil || !ok {
+		if err != nil {
+			return nil, fmt.Errorf("reading task %s: %w", id, err)
+		}
+		if !ok {
 			continue
 		}
 		if taskauthority.SoldierKind(agg.Definition.Kind) {

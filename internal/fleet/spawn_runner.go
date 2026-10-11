@@ -2591,8 +2591,8 @@ func newEndpointToken() string {
 // effort, config digest, endpoint metadata) and never
 // acts as a writer of record for authoritative Task Aggregate fields (kind,
 // project, description, owner, generation, state). Existing projection
-// fields are preserved; runtime fields are overlaid. Authoritative fields
-// are reconciled from the canonical aggregate by the projection layer.
+// fields are preserved; runtime fields are overlaid. Nothing reconciles
+// Authoritative fields into it: readers take them from the canonical aggregate.
 func (r *Runner) writeTaskMeta() error {
 	yoloVal := "off"
 	if r.args.Yolo {

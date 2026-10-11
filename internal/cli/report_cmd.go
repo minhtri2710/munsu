@@ -95,7 +95,11 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// Ship tasks cannot use "resolved" as delivery completion.
 			// Only "done" is the valid terminal delivery state for ship tasks.
 			if state == "resolved" {
-				if isTaskKind(targetHome, taskID, taskauthority.KindShip) {
+				kind, err := canonicalTaskKind(targetHome, taskID)
+				if err != nil {
+					return fmt.Errorf("report: cannot read task %s kind to check 'resolved': %w", taskID, err)
+				}
+				if kind == taskauthority.KindShip {
 					return fmt.Errorf("report: ship task %s cannot use 'resolved' as delivery completion; use 'done' instead", taskID)
 				}
 			}
@@ -249,20 +253,29 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 }
 
 func isTaskKind(homeDir, taskID, kind string) bool {
-	h, err := home.Open(homeDir)
-	if err != nil {
-		return false
-	}
-	auth, err := taskauthority.NewCanonical(h)
-	if err != nil {
-		return false
-	}
+	got, err := canonicalTaskKind(homeDir, taskID)
+	return err == nil && got == kind
+}
+
+// canonicalTaskKind reads the task's kind from its canonical record. A task
+// with no canonical record has no kind (""); an unreadable record is an error.
+func canonicalTaskKind(homeDir, taskID string) (string, error) {
 	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
-		return false
+		return "", nil
+	}
+	auth, err := taskAuthorityForRead(homeDir)
+	if err != nil {
+		return "", err
 	}
 	agg, err := auth.Get(tid)
-	return err == nil && agg.Definition.Kind == kind
+	if errors.Is(err, taskauthority.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return agg.Definition.Kind, nil
 }
 
 func formatScoutBudgetEvidence(e orchestrator.ScoutBudgetEvidence) string {

@@ -102,19 +102,25 @@ func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 }
 
 // TestReportResolvedRefusalReadsCanonicalKind pins the `resolved` refusal for
-// a ship task: the kind is the canonical task's, never the .meta's. The
-// blocking row is a canonical ship whose .meta carries no kind; the allowing
-// row is a canonical scout whose .meta claims ship.
+// a ship task: the kind is the canonical task's, never the .meta's, and a
+// canonical record that cannot be read refuses. The blocking rows are a
+// canonical ship whose .meta carries no kind and a corrupt canonical record;
+// the allowing row is a canonical scout whose .meta claims ship.
 func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
-	const refusal = "cannot use 'resolved' as delivery completion"
+	const (
+		shipRefusal = "cannot use 'resolved' as delivery completion"
+		readRefusal = "cannot read task res-1 kind to check 'resolved'"
+	)
 	for _, tc := range []struct {
-		name      string
-		addArgs   []string
-		meta      map[string]string
-		wantBlock bool
+		name    string
+		addArgs []string
+		meta    map[string]string
+		corrupt bool
+		want    string
 	}{
-		{"canonical ship is refused with no meta kind", []string{"--kind", "ship"}, map[string]string{"window": "w"}, true},
-		{"canonical scout passes although meta claims ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false},
+		{"canonical ship is refused with no meta kind", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, shipRefusal},
+		{"unreadable canonical record is refused", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "scout"}, true, readRefusal},
+		{"canonical scout passes although meta claims ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -129,12 +135,20 @@ func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
 			if err := home.WriteMeta(homeDir, "res-1", tc.meta); err != nil {
 				t.Fatal(err)
 			}
+			if tc.corrupt {
+				current := filepath.Join(homeDir, "state", "task-authority", "tasks", "res-1", "current.json")
+				if err := os.WriteFile(current, []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			root := NewRootCommand()
 			root.SetArgs([]string{"report", "resolved", "done with it", "--key", "res-1", "--ring", "no-ring"})
 			err := root.Execute()
-			blocked := err != nil && strings.Contains(err.Error(), refusal)
-			if blocked != tc.wantBlock {
-				t.Fatalf("report resolved blocked=%v (err=%v), want blocked=%v", blocked, err, tc.wantBlock)
+			for _, refusal := range []string{shipRefusal, readRefusal} {
+				got := err != nil && strings.Contains(err.Error(), refusal)
+				if got != (refusal == tc.want) {
+					t.Fatalf("report resolved err = %v, refusal %q seen=%v, want only %q", err, refusal, got, tc.want)
+				}
 			}
 		})
 	}
