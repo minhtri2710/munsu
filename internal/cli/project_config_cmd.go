@@ -25,6 +25,9 @@ type projectOverlayKey struct {
 	// set validates value and applies it to the overlay. An empty value clears
 	// the field so the Project returns to inheriting the fleet base document.
 	set func(o *config.ProjectOverlay, value string) error
+	// check, when set, validates the overlay against the home after set applied
+	// the value and before the overlay is stored.
+	check func(home string, o config.ProjectOverlay) error
 }
 
 func toolEntryKey(get func(config.ProjectOverlay) *config.ToolEntry, set func(*config.ProjectOverlay, *config.ToolEntry)) projectOverlayKey {
@@ -91,6 +94,40 @@ var projectOverlayKeys = map[string]projectOverlayKey{
 				return usageError("invalid_value", "Pass the command on one line without backticks", fmt.Sprintf("tamper-check must not contain a carriage return, line feed or backtick, got %q", value[i]))
 			}
 			o.TamperCheck = strings.TrimSpace(value)
+			return nil
+		},
+	},
+	"fence-unsupported": {
+		get: func(o config.ProjectOverlay) (string, bool) { return o.FenceUnsupported, o.FenceUnsupported != "" },
+		set: func(o *config.ProjectOverlay, value string) error {
+			value = strings.TrimSpace(value)
+			if value != "" && value != "allow" {
+				return usageError("invalid_value", "Pass allow, or an empty value to clear it", fmt.Sprintf("fence-unsupported must be allow, got %q", value))
+			}
+			o.FenceUnsupported = value
+			return nil
+		},
+	},
+	"fence-writable-roots": {
+		get: func(o config.ProjectOverlay) (string, bool) {
+			return strings.Join(o.FenceWritableRoots, "\n"), len(o.FenceWritableRoots) > 0
+		},
+		set: func(o *config.ProjectOverlay, value string) error {
+			o.FenceWritableRoots = nil
+			for _, line := range strings.Split(value, "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					o.FenceWritableRoots = append(o.FenceWritableRoots, line)
+				}
+			}
+			return nil
+		},
+		check: func(home string, o config.ProjectOverlay) error {
+			if len(o.FenceWritableRoots) == 0 {
+				return nil
+			}
+			if err := fleet.ValidateFenceWritableRoots(home, o.FenceWritableRoots); err != nil {
+				return usageError("invalid_value", "Pass one absolute directory per line, outside every checkout and tool directory", err.Error())
+			}
 			return nil
 		},
 	},
@@ -178,6 +215,11 @@ Overlay keys: ` + strings.Join(projectOverlayKeyNames(), ", ") + `.
 			}
 			if err := spec.set(&overlay, value); err != nil {
 				return err
+			}
+			if spec.check != nil {
+				if err := spec.check(ctx.Home, overlay); err != nil {
+					return err
+				}
 			}
 			return config.StoreProjectOverlay(ctx.Home, name, overlay)
 		}),

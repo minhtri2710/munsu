@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,8 +97,15 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		return
 	}
 	if managed && !force {
-		// Already managed — safe no-op.
-		return nil
+		// Already managed — a no-op, except that a missing or malformed
+		// .munsu-captain-home marker is rewritten from the surviving
+		// .captain-provenance. A marker naming another home is left alone.
+		if _, verr := home.ValidateCaptainProvenance(absHome); errors.Is(verr, home.ErrCaptainMarkerUnusable) {
+			if err = home.SeedCaptainProvenance(absHome, id); err != nil {
+				err = fmt.Errorf("rewriting provenance marker: %w", err)
+			}
+		}
+		return err
 	}
 
 	// Refuse to replace an existing unmanaged captain home (force would delete it).

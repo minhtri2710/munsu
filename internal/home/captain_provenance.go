@@ -1,6 +1,7 @@
 package home
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,16 @@ import (
 
 const CaptainProvenanceMarkerName = ".munsu-captain-home"
 const CaptainProvenanceVersion = "munsu-v2"
+
+// ErrCaptainMarkerUnusable marks a provenance marker that is missing or cannot
+// name a captain (malformed, wrong version, blank id). A marker that names
+// another home is not unusable in this sense: that is the copy/move check.
+var ErrCaptainMarkerUnusable = errors.New("captain provenance marker is missing or malformed")
+
+// ErrCaptainHomeMismatch marks a well-formed marker that names another home
+// (a copied or moved captain home). ValidateCaptainProvenance returns the
+// marker's id alongside it.
+var ErrCaptainHomeMismatch = errors.New("captain provenance marker names another home")
 
 func CanonicalCaptainHome(homePath string) (string, error) {
 	canonical, err := filepath.EvalSymlinks(homePath)
@@ -36,23 +47,23 @@ func ValidateCaptainProvenance(homePath string) (string, error) {
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed'", homePath, CaptainProvenanceMarkerName)
+			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed <id> <home> --repo <repo>' (it rewrites the marker while .captain-provenance exists): %w", homePath, CaptainProvenanceMarkerName, ErrCaptainMarkerUnusable)
 		}
 		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
 	}
 	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 4)
 	if len(lines) < 3 {
-		return "", fmt.Errorf("provenance marker %s is malformed: expected exactly 3 lines (version, id, canonical-home), got %d", markerPath, len(lines))
+		return "", fmt.Errorf("provenance marker %s is malformed: expected exactly 3 lines (version, id, canonical-home), got %d: %w", markerPath, len(lines), ErrCaptainMarkerUnusable)
 	}
 	if len(lines) > 3 {
-		return "", fmt.Errorf("provenance marker %s has extra content — expected exactly 3 lines", markerPath)
+		return "", fmt.Errorf("provenance marker %s has extra content — expected exactly 3 lines: %w", markerPath, ErrCaptainMarkerUnusable)
 	}
 	if strings.TrimSpace(lines[0]) != CaptainProvenanceVersion {
-		return "", fmt.Errorf("provenance marker %s has unsupported version %q (expected %q)", markerPath, lines[0], CaptainProvenanceVersion)
+		return "", fmt.Errorf("provenance marker %s has unsupported version %q (expected %q): %w", markerPath, lines[0], CaptainProvenanceVersion, ErrCaptainMarkerUnusable)
 	}
 	id := strings.TrimSpace(lines[1])
 	if id == "" {
-		return "", fmt.Errorf("provenance marker %s has empty id", markerPath)
+		return "", fmt.Errorf("provenance marker %s has empty id: %w", markerPath, ErrCaptainMarkerUnusable)
 	}
 	stored := strings.TrimSpace(lines[2])
 	actual, err := CanonicalCaptainHome(homePath)
@@ -60,7 +71,7 @@ func ValidateCaptainProvenance(homePath string) (string, error) {
 		return "", fmt.Errorf("cannot verify canonical home for copied/move check: %w", err)
 	}
 	if actual != stored {
-		return "", fmt.Errorf("provenance marker home %s does not match actual canonical home %s — captain may have been copied/moved", stored, actual)
+		return id, fmt.Errorf("provenance marker home %s does not match actual canonical home %s — captain may have been copied/moved: %w", stored, actual, ErrCaptainHomeMismatch)
 	}
 	return id, nil
 }

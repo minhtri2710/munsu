@@ -69,6 +69,35 @@ func TestEvaluateGuard_QueuedWakesPendingHasCode(t *testing.T) {
 	}
 }
 
+// TestEvaluateGuard_UnusableWakeModeSaysWatcherCannotDeliver verifies the guard
+// does not promise watcher delivery while wake-delivery-mode cannot be read.
+func TestEvaluateGuard_UnusableWakeModeSaysWatcherCannotDeliver(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+	writeWakeQueue(t, home, []string{"1780000000\t1\tsignal\tkey\tpayload"})
+	if err := os.MkdirAll(filepath.Join(home, "config", "wake-delivery-mode"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	result := EvaluateGuard(home, 0, time.Now())
+
+	for _, c := range result.Conditions {
+		if c.Code != ConditionQueuedWakesPending {
+			continue
+		}
+		for _, want := range []string{"the watcher cannot deliver them", "config/wake-delivery-mode", "munsu config set wake-delivery-mode", "munsu wake claim"} {
+			if !strings.Contains(c.Message, want) {
+				t.Errorf("guard message lacks %q: %s", want, c.Message)
+			}
+		}
+		if strings.Contains(c.Message, "the watcher delivers each as a prompt") {
+			t.Errorf("guard message still promises watcher delivery: %s", c.Message)
+		}
+		return
+	}
+	t.Fatalf("no %q condition in %v", ConditionQueuedWakesPending, result.Conditions)
+}
+
 // TestEvaluateGuard_CodesAreStable verifies condition codes are stable string constants.
 func TestEvaluateGuard_CodesAreStable(t *testing.T) {
 	// Verify codes are not ad-hoc sprintf strings — they're typed constants

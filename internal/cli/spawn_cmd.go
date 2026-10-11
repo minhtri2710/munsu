@@ -4,13 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
@@ -170,10 +168,9 @@ func newSendCmd() *cobra.Command {
 
 			// Non-captain: mailbox-based send with busy-queueing for soldier tasks.
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := orchestrator.ReadHomeIdentity(ctx.Home)
+			senderIdentity, _, identErr := homeIdentity(ctx.Home)
 			if identErr != nil {
-				// Fallback to home basename.
-				senderIdentity = filepath.Base(ctx.Home)
+				return fmt.Errorf("send: deriving sender identity: %w", identErr)
 			}
 
 			sendResult := fleet.SendToSoldier(ctx.Home, id, senderIdentity, line, newSessionSoldierEndpoints())
@@ -486,9 +483,9 @@ Calling when the soldier is busy returns with "still busy".
 			id := args[0]
 
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := orchestrator.ReadHomeIdentity(ctx.Home)
+			senderIdentity, _, identErr := homeIdentity(ctx.Home)
 			if identErr != nil {
-				senderIdentity = filepath.Base(ctx.Home)
+				return fmt.Errorf("soldier-flush: deriving sender identity: %w", identErr)
 			}
 
 			result := fleet.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity, newSessionSoldierEndpoints())

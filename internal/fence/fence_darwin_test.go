@@ -405,3 +405,21 @@ func TestNewBuildsOneProfilePerLaunch(t *testing.T) {
 		t.Fatal("a reviewer and a soldier share a profile digest")
 	}
 }
+
+func TestWritableRootsAreWritableAndTheProbeStillRefuses(t *testing.T) {
+	out := outsideDir(t)
+	seatEnv(t, out)
+	l := newSplitLayout(t, out)
+	cache := filepath.Join(out, "npm-cache")
+	mkdirs(t, cache)
+	launch := l.soldier()
+	launch.WritableRoots = []string{cache}
+	f := mustNew(t, launch)
+
+	mustWrite(t, f, filepath.Join(cache, "f"))
+	mustRefuse(t, f, filepath.Join(l.primary, "f"))
+	ev, err := f.Probe(context.Background())
+	if err != nil || len(ev.WritableRoots) != 1 || ev.WritableRoots[0] != cache {
+		t.Fatalf("probe = %+v, %v; want the roots in the evidence and every refusal proven", ev, err)
+	}
+}

@@ -2,6 +2,9 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -218,5 +221,24 @@ func TestSubmitAdapter_ConvertsPromptResult(t *testing.T) {
 				t.Errorf("Err presence = %v, want %v", got.Err != nil, tt.want.Err != nil)
 			}
 		})
+	}
+}
+
+func TestDispatchHerdrWakeRecordsUnusableModeOnce(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "config", "wake-delivery-mode"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := dispatchHerdrWake(home); err == nil {
+			t.Fatal("dispatchHerdrWake with an unreadable wake-delivery-mode returned nil")
+		}
+	}
+	recs, _, err := orchestrator.LatestEvents(home, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Type != "wake.dispatch.refused" || !strings.Contains(recs[0].Payload, "config/wake-delivery-mode") || !strings.Contains(recs[0].Payload, "munsu config set wake-delivery-mode") {
+		t.Fatalf("events after 3 cycles = %+v, want exactly one wake.dispatch.refused naming the key and the fix", recs)
 	}
 }

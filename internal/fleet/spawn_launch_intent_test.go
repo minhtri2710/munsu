@@ -161,7 +161,7 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 			SchemaVersion: config.FleetBaseSchemaVersion,
 			Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 		},
-		config.ProjectFacts{Name: "test-proj", Path: repoPath},
+		config.ProjectFacts{Name: "test-proj", Path: repoPath, Overlay: config.ProjectOverlay{FenceUnsupported: "allow"}},
 		nil,
 	)
 	if err != nil {
@@ -820,8 +820,8 @@ func TestLaunchRecordsTheSeatOfTheLaunch(t *testing.T) {
 		if !seat.Fence.Applied || seat.Fence.Role != "soldier" || seat.Fence.ProfileDigest == "" {
 			t.Fatalf("seat fence = %+v, want an applied soldier fence on darwin", seat.Fence)
 		}
-	} else if seat.Fence.Applied || seat.Fence.Reason == "" {
-		t.Fatalf("seat fence = %+v, want the no-fence reason off darwin", seat.Fence)
+	} else if seat.Fence.Applied || seat.Fence.Reason == "" || seat.Fence.FenceUnsupported != "allow" {
+		t.Fatalf("seat fence = %+v, want the no-fence reason and the allow it ran under off darwin", seat.Fence)
 	}
 }
 

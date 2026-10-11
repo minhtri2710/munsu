@@ -286,6 +286,11 @@ type FenceRecord struct {
 	Role          string `json:"role,omitempty"`
 	ProfileDigest string `json:"profile_digest,omitempty"`
 	Reason        string `json:"reason,omitempty"`
+	// WritableRoots are the project's extra writable roots the applied profile
+	// carries (fence-writable-roots). FenceUnsupported is the project's
+	// fence-unsupported value ("allow") that let an unapplied launch proceed.
+	WritableRoots    []string `json:"writable_roots,omitempty"`
+	FenceUnsupported string   `json:"fence_unsupported,omitempty"`
 }
 
 // RetirementEvidence is the immutable, generation-bound record of the resource

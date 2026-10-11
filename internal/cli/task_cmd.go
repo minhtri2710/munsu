@@ -44,10 +44,14 @@ func newTaskCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			owner, err := resolveTaskOwner(ctx.Home)
+			if err != nil {
+				return err
+			}
 			req := taskauthority.CanonicalCreateRequest{
 				HomeID:                 auth.HomeID(),
 				TaskID:                 tid,
-				Owner:                  resolveTaskOwner(ctx.Home),
+				Owner:                  owner,
 				Description:            desc,
 				Kind:                   kind,
 				Project:                domain.ProjectID{},

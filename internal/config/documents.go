@@ -75,6 +75,12 @@ type ProjectOverlay struct {
 	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
 	Review           *ToolEntry        `json:"review,omitempty"`
 	Forge            *ToolEntry        `json:"forge,omitempty"`
+	// FenceWritableRoots are extra absolute directories the write fence leaves
+	// writable for this project's soldiers. FenceUnsupported "allow" lets this
+	// project's seats launch unfenced on a host with no write fence. Both are
+	// project-only, like the tool entries: the fleet base cannot carry them.
+	FenceWritableRoots []string `json:"fenceWritableRoots,omitempty"`
+	FenceUnsupported   string   `json:"fenceUnsupported,omitempty"`
 }
 
 type ResolvedStep struct {
@@ -118,18 +124,20 @@ type ProjectFacts struct {
 }
 
 type ResolvedProjectConfig struct {
-	Project          string            `json:"project"`
-	ProjectPath      string            `json:"projectPath"`
-	SoldierHarness   string            `json:"soldierHarness,omitempty"`
-	DispatchAutonomy string            `json:"dispatchAutonomy,omitempty"`
-	Model            string            `json:"model,omitempty"`
-	Backend          string            `json:"backend,omitempty"`
-	TamperCheck      string            `json:"tamperCheck,omitempty"`
-	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
-	CaptainProfile   CaptainProfile    `json:"captainProfile,omitempty"`
-	ReviewStep       ResolvedStep      `json:"reviewStep"`
-	ForgeStep        ResolvedStep      `json:"forgeStep"`
-	Digest           string            `json:"digest"`
+	Project            string            `json:"project"`
+	ProjectPath        string            `json:"projectPath"`
+	SoldierHarness     string            `json:"soldierHarness,omitempty"`
+	DispatchAutonomy   string            `json:"dispatchAutonomy,omitempty"`
+	Model              string            `json:"model,omitempty"`
+	Backend            string            `json:"backend,omitempty"`
+	TamperCheck        string            `json:"tamperCheck,omitempty"`
+	DispatchProfiles   []DispatchProfile `json:"dispatchProfiles,omitempty"`
+	CaptainProfile     CaptainProfile    `json:"captainProfile,omitempty"`
+	ReviewStep         ResolvedStep      `json:"reviewStep"`
+	ForgeStep          ResolvedStep      `json:"forgeStep"`
+	FenceWritableRoots []string          `json:"fenceWritableRoots,omitempty"`
+	FenceUnsupported   string            `json:"fenceUnsupported,omitempty"`
+	Digest             string            `json:"digest"`
 }
 
 func (d FleetBaseDocument) Validate() error {
@@ -200,7 +208,9 @@ func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, reviewS
 		DispatchProfiles: cloneProfiles(effective.DispatchProfiles),
 		CaptainProfile:   base.CaptainProfile,
 		ReviewStep:       cloneResolvedStep(reviewStep), ForgeStep: cloneResolvedStep(forgeStep),
-		Digest: digest,
+		FenceWritableRoots: append([]string(nil), effective.FenceWritableRoots...),
+		FenceUnsupported:   effective.FenceUnsupported,
+		Digest:             digest,
 	}, nil
 }
 
@@ -320,6 +330,12 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	if src.Forge != nil {
 		dst.Forge = cloneToolEntry(src.Forge)
 	}
+	if len(src.FenceWritableRoots) > 0 {
+		dst.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
+	}
+	if src.FenceUnsupported != "" {
+		dst.FenceUnsupported = src.FenceUnsupported
+	}
 }
 
 func cloneOverlay(src ProjectOverlay) ProjectOverlay {
@@ -327,6 +343,7 @@ func cloneOverlay(src ProjectOverlay) ProjectOverlay {
 	result.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
 	result.Review = cloneToolEntry(src.Review)
 	result.Forge = cloneToolEntry(src.Forge)
+	result.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
 	return result
 }
 

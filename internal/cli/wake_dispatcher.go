@@ -82,6 +82,7 @@ func watcherHooks() orchestrator.WatcherHooks {
 func dispatchHerdrWake(homeDir string) error {
 	mode, err := orchestrator.ResolveWakeDeliveryMode(homeDir)
 	if err != nil {
+		orchestrator.RecordWakeDispatchRefusal(homeDir, err)
 		return err
 	}
 	target, err := orchestrator.ResolveTargetWithSource(homeDir)

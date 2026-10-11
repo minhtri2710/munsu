@@ -3,13 +3,13 @@ package cli
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type captainProbeBackend struct {
@@ -243,7 +243,9 @@ func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
 	t.Run("marked captain home readable prefix", func(t *testing.T) {
 		captainHome := t.TempDir()
 		os.MkdirAll(captainHome, 0755)
-		os.WriteFile(filepath.Join(captainHome, ".munsu-captain-home"), []byte("munsu-v2\ncaptain-one\ntag\n"), 0600)
+		if err := mhome.SeedCaptainProvenance(captainHome, "captain-one"); err != nil {
+			t.Fatal(err)
+		}
 		c := &labelCaptureBackend{}
 		ep := makeEndpoint(c)
 		if _, err := ep.Launch("home", fleet.LaunchRequest{Backend: "tmux", WindowName: "mu-captain-x", Command: "echo", WorkingDir: captainHome}); err != nil {

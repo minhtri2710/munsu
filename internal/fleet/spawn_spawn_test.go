@@ -1009,19 +1009,19 @@ func TestCheckCaptainTaskAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
 // a Ready github forge, and local-only the baseline.
 func deliveryOverlayForMode(t *testing.T, mode string) config.ProjectOverlay {
 	t.Helper()
+	// A spawn that reaches the launch must not stop at the fence on a host with
+	// none: the fixture project allows an unfenced seat.
+	overlay := config.ProjectOverlay{FenceUnsupported: "allow"}
 	switch mode {
 	case "no-mistakes":
 		installFakeGH(t)
-		return config.ProjectOverlay{
-			Review: &config.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(createFakeNoMistakesReady(t), "no-mistakes")},
-			Forge:  &config.ToolEntry{Adapter: "github"},
-		}
+		overlay.Review = &config.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(createFakeNoMistakesReady(t), "no-mistakes")}
+		overlay.Forge = &config.ToolEntry{Adapter: "github"}
 	case "direct-PR":
 		installFakeGH(t)
-		return config.ProjectOverlay{Forge: &config.ToolEntry{Adapter: "github"}}
-	default:
-		return config.ProjectOverlay{}
+		overlay.Forge = &config.ToolEntry{Adapter: "github"}
 	}
+	return overlay
 }
 
 func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Args) {

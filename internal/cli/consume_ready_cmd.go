@@ -3,10 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -34,9 +32,9 @@ Flags:
 			// Derive sender identity.
 			senderIdentity, _ := cmd.Flags().GetString("sender")
 			if senderIdentity == "" {
-				senderIdentity, _, _ = orchestrator.ReadHomeIdentity(ctx.Home)
-				if senderIdentity == "" {
-					senderIdentity = filepath.Base(ctx.Home)
+				var identErr error
+				if senderIdentity, _, identErr = homeIdentity(ctx.Home); identErr != nil {
+					return fmt.Errorf("consume-ready: deriving sender identity: %w", identErr)
 				}
 			}
 

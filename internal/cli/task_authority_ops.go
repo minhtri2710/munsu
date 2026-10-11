@@ -3,26 +3,23 @@ package cli
 import (
 	"crypto/rand"
 	"fmt"
-	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // resolveTaskOwner resolves the authoritative owner identity for a CLI task
-// mutation from the exact home, matching the legacy home fallback: captain
-// identity for captain homes, otherwise the home identity (basename for a
-// general home).
-func resolveTaskOwner(homeDir string) string {
-	identity, rank, err := home.ReadHomeIdentity(homeDir)
+// mutation from the exact home: captain identity for captain homes, otherwise
+// the home identity (basename for a general home).
+func resolveTaskOwner(homeDir string) (string, error) {
+	identity, rank, err := homeIdentity(homeDir)
 	if err != nil {
-		identity = filepath.Base(homeDir)
-		rank = home.RankGeneral
+		return "", fmt.Errorf("resolving task owner: %w", err)
 	}
 	if rank == home.RankCaptain {
-		return "captain:" + identity
+		return "captain:" + identity, nil
 	}
-	return identity
+	return identity, nil
 }
 
 // newTaskAuthorityOperationID supplies a fresh invocation identity for one

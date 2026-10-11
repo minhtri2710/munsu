@@ -321,6 +321,9 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if err := fleet.Add(generalHome, "alpha", repo, false); err != nil {
 		t.Fatalf("register project: %v", err)
 	}
+	if err := config.StoreProjectOverlay(generalHome, "alpha", config.ProjectOverlay{FenceUnsupported: "allow"}); err != nil {
+		t.Fatalf("store project overlay: %v", err)
+	}
 
 	spawnHome := generalHome
 	if tc.policy == fleet.DispatchPolicyCaptainMediated {
@@ -577,15 +580,16 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 		t.Fatalf("seed captain provenance: %v", err)
 	}
 	if err := config.StorePublishedSnapshot(captainHome, config.ResolvedProjectConfig{
-		Project:        "alpha",
-		ProjectPath:    repo,
-		Backend:        "tmux",
-		SoldierHarness: harness.Pi,
-		Model:          "workflow-captain-model",
-		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
-		ReviewStep:     config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
-		ForgeStep:      config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
-		Digest:         workflowPublishedDigest,
+		Project:          "alpha",
+		ProjectPath:      repo,
+		Backend:          "tmux",
+		SoldierHarness:   harness.Pi,
+		Model:            "workflow-captain-model",
+		CaptainProfile:   config.CaptainProfile{Harness: harness.Pi},
+		ReviewStep:       config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
+		ForgeStep:        config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
+		FenceUnsupported: "allow",
+		Digest:           workflowPublishedDigest,
 	}); err != nil {
 		t.Fatalf("publish captain snapshot: %v", err)
 	}

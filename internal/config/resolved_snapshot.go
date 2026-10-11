@@ -58,6 +58,7 @@ func (s ResolvedSnapshot) WithSteps(review, forge ResolvedStep) (ResolvedSnapsho
 		TamperCheck:      resolved.TamperCheck,
 		DispatchProfiles: cloneProfiles(resolved.DispatchProfiles),
 		Review:           toolEntryFromStep(review), Forge: toolEntryFromStep(forge),
+		FenceWritableRoots: resolved.FenceWritableRoots, FenceUnsupported: resolved.FenceUnsupported,
 	}
 	digest, err := projectDigest(config, review, forge)
 	if err != nil {
@@ -76,5 +77,6 @@ func cloneResolvedProjectConfig(src ResolvedProjectConfig) ResolvedProjectConfig
 	result.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
 	result.ReviewStep = cloneResolvedStep(src.ReviewStep)
 	result.ForgeStep = cloneResolvedStep(src.ForgeStep)
+	result.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
 	return result
 }

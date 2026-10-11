@@ -4,4 +4,5 @@ package fence
 
 import "runtime"
 
-func platformCheck() error { return &UnsupportedError{GOOS: runtime.GOOS} }
+// Supported returns *UnsupportedError: this GOOS has no write fence.
+func Supported() error { return &UnsupportedError{GOOS: runtime.GOOS} }

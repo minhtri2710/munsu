@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -708,3 +709,18 @@ func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
 // reclaimNone stands in for a composition-root reclaimer that performs every
 // reclaim it is asked for.
 func reclaimNone(_ string, reclaim func() error) (bool, error) { return true, reclaim() }
+
+func TestWriteFenceDiagnostic(t *testing.T) {
+	unsupported := &fence.UnsupportedError{GOOS: "linux"}
+	if d := writeFenceDiagnostic(nil, []string{"a"}); d != nil {
+		t.Fatalf("a host with a fence reports %v, want nothing", d)
+	}
+	refused := writeFenceDiagnostic(unsupported, nil).String()
+	if !strings.HasPrefix(refused, "WRITE_FENCE: unsupported; soldier and reviewer launches are refused") || !strings.Contains(refused, "fence-unsupported allow") {
+		t.Fatalf("refused = %q", refused)
+	}
+	unfenced := writeFenceDiagnostic(unsupported, []string{"beta", "alpha"}).String()
+	if !strings.HasPrefix(unfenced, "WRITE_FENCE: unsupported; seats of alpha, beta launch UNFENCED") {
+		t.Fatalf("unfenced = %q", unfenced)
+	}
+}
