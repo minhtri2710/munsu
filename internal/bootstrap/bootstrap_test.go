@@ -551,48 +551,47 @@ func mustHomeID(t *testing.T, dir string) domain.HomeID {
 	return id
 }
 
-func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
-	home := t.TempDir()
-	dataDir := filepath.Join(home, "data")
-	if err := os.MkdirAll(filepath.Join(dataDir, "orphan-id"), 0755); err != nil {
-		t.Fatal(err)
+// TestGCOrphanDataDirsRetention pins the two reasons an otherwise orphaned data
+// directory survives a sweep; the first row is the nearest directory that does not.
+func TestGCOrphanDataDirsRetention(t *testing.T) {
+	cases := []struct {
+		name   string
+		age    time.Duration
+		report bool
+		kept   bool
+	}{
+		{"older than the grace period without a report", 48 * time.Hour, false, false},
+		{"older than the grace period holding a report", 48 * time.Hour, true, true},
+		{"younger than the grace period", 0, false, true},
 	}
-	// Make it older than the grace period
-	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			dir := filepath.Join(home, "data", "orphan-id")
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.report {
+				if err := os.WriteFile(fleet.ReportPath(home, "orphan-id", 1), []byte("report"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.age > 0 {
+				setDirMtime(t, dir, tc.age)
+			}
 
-	cleaned := gcOrphanDataDirs(home, reclaimNone)
-	if len(cleaned) != 1 || cleaned[0] != "orphan-id" {
-		t.Errorf("expected [orphan-id], got %v", cleaned)
-	}
-	// Verify dir was actually removed
-	if _, err := os.Stat(filepath.Join(dataDir, "orphan-id")); !os.IsNotExist(err) {
-		t.Errorf("expected dir to be removed, stat err: %v", err)
-	}
-}
-
-func TestGCOrphanDataDirs_WithReportKept(t *testing.T) {
-	home := t.TempDir()
-	dataDir := filepath.Join(home, "data")
-	if err := os.MkdirAll(filepath.Join(dataDir, "with-report"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Create the generation's report — should protect from GC
-	if err := os.WriteFile(fleet.ReportPath(home, "with-report", 1), []byte("report"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// Make it older than the grace period so only the report keeps it
-	setDirMtime(t, filepath.Join(dataDir, "with-report"), 48*time.Hour)
-
-	cleaned := gcOrphanDataDirs(home, reclaimNone)
-	// Should not remove a dir holding a report
-	for _, id := range cleaned {
-		if id == "with-report" {
-			t.Errorf("expected dir with a report to be kept, but it was removed")
-		}
-	}
-	// Verify dir still exists
-	if _, err := os.Stat(filepath.Join(dataDir, "with-report")); os.IsNotExist(err) {
-		t.Errorf("expected dir with a report to still exist")
+			cleaned := gcOrphanDataDirs(home, reclaimNone)
+			_, statErr := os.Stat(dir)
+			if tc.kept {
+				if len(cleaned) != 0 || statErr != nil {
+					t.Fatalf("cleaned = %v, stat err = %v, want the directory kept", cleaned, statErr)
+				}
+				return
+			}
+			if len(cleaned) != 1 || cleaned[0] != "orphan-id" || !os.IsNotExist(statErr) {
+				t.Fatalf("cleaned = %v, stat err = %v, want orphan-id removed", cleaned, statErr)
+			}
+		})
 	}
 }
 
@@ -640,49 +639,6 @@ func TestGCOrphanDataDirs_BriefOfReleasedTaskReclaimed(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "torn-down")); !os.IsNotExist(err) {
 		t.Errorf("expected released brief dir to be removed, stat err: %v", err)
-	}
-}
-
-func TestGCOrphanDataDirs_ArchivedReportKept(t *testing.T) {
-	home := t.TempDir()
-	dataDir := filepath.Join(home, "data")
-	if err := os.MkdirAll(filepath.Join(dataDir, "retired-scout"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	// What a teardown leaves for the operator to read: the retired
-	// generation's report, under that generation's name.
-	if err := os.WriteFile(fleet.ReportPath(home, "retired-scout", 1), []byte("findings"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	setDirMtime(t, filepath.Join(dataDir, "retired-scout"), 48*time.Hour)
-
-	cleaned := gcOrphanDataDirs(home, reclaimNone)
-	for _, id := range cleaned {
-		if id == "retired-scout" {
-			t.Errorf("expected archived report to be kept, but the dir was removed")
-		}
-	}
-	if _, err := os.Stat(fleet.ReportPath(home, "retired-scout", 1)); err != nil {
-		t.Errorf("expected archived report to survive the sweep: %v", err)
-	}
-}
-
-func TestGCOrphanDataDirs_RecentDirKept(t *testing.T) {
-	home := t.TempDir()
-	dataDir := filepath.Join(home, "data")
-	if err := os.MkdirAll(filepath.Join(dataDir, "recent-id"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Leave it at its original mtime (current time) — should be too recent to GC
-
-	cleaned := gcOrphanDataDirs(home, reclaimNone)
-	for _, id := range cleaned {
-		if id == "recent-id" {
-			t.Errorf("expected recent dir to be kept, but it was removed")
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "recent-id")); os.IsNotExist(err) {
-		t.Errorf("expected recent dir to still exist")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -297,45 +298,131 @@ func TestClassifyIdentity_NotDirectory(t *testing.T) {
 	}
 }
 
-func TestGateRefuseFromCWD_EnvPresent(t *testing.T) {
-	t.Setenv("NO_MISTAKES_GATE", "1")
-	t.Setenv("PATH", t.TempDir())
-	err := GateRefuseFromCWD()
-	if err == nil || !strings.Contains(err.Error(), "classifying identity:") {
-		t.Fatalf("GateRefuseFromCWD err = %v, want classifying identity error", err)
+// runCmd is a test helper that runs a command in a directory.
+func scopeRunCmd(t *testing.T, dir, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cmd %s %v failed (dir=%s): %v\n%s", name, args, dir, err, string(out))
 	}
 }
 
-func TestGateRefuseFromCWD_GitCommonDirGatePresent(t *testing.T) {
-	t.Setenv("NO_MISTAKES_GATE", "")
-	os.Unsetenv("NO_MISTAKES_GATE")
+// initRepo creates a minimal git repo at dir with an initial commit and
+// returns the canonical resolved path.
+func initRepo(t *testing.T, dir string) string {
+	t.Helper()
+	scopeRunCmd(t, dir, "git", "init")
+	scopeRunCmd(t, dir, "git", "config", "user.email", "test@test.com")
+	scopeRunCmd(t, dir, "git", "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	scopeRunCmd(t, dir, "git", "add", ".")
+	scopeRunCmd(t, dir, "git", "commit", "-m", "initial")
+	return dir
+}
+
+func initGateCheckout(t *testing.T) (string, string) {
+	t.Helper()
 	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
 	commonDir := filepath.Join(nmHome, "repos", "gate.git")
 	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "init", "--bare", commonDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v, %s", err, string(out))
-	}
+	scopeRunCmd(t, filepath.Dir(commonDir), "git", "init", "--bare", commonDir)
 	checkout := t.TempDir()
 	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("NM_HOME", nmHome)
+	return checkout, commonDir
+}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(checkout); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(cwd)
+// --- GateRefuseFromCWD tests ---
 
-	err = GateRefuseFromCWD()
-	if err == nil || !strings.Contains(err.Error(), "gate agent refused for") || !strings.Contains(err.Error(), "git-common-dir") {
-		t.Fatalf("GateRefuseFromCWD err = %v, want gate agent refused (git-common-dir)", err)
+func TestGateRefuseFromCWD(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T) string // returns the cwd; may set env
+		want  string                    // refusal text; empty means allowed
+	}{
+		{
+			name: "gate marker in the environment refuses",
+			setup: func(t *testing.T) string {
+				t.Setenv("NO_MISTAKES_GATE", "1")
+				return initRepo(t, t.TempDir())
+			},
+			want: "gate agent refused for",
+		},
+		{
+			name: "checkout of a gate repository refuses",
+			setup: func(t *testing.T) string {
+				checkout, _ := initGateCheckout(t)
+				return checkout
+			},
+			want: "(git-common-dir)",
+		},
+		{
+			name: "git unavailable refuses",
+			setup: func(t *testing.T) string {
+				repo := initRepo(t, t.TempDir())
+				t.Setenv("PATH", t.TempDir())
+				return repo
+			},
+			want: "classifying identity: git rev-parse --git-dir",
+		},
+		{
+			// darwin still reports a removed cwd by path, so there the refusal comes
+			// from resolving that path; linux fails os.Getwd and takes the first branch.
+			name: "removed working directory refuses",
+			setup: func(t *testing.T) string {
+				if runtime.GOOS == "windows" {
+					t.Skip("a process cannot remove its own working directory on windows")
+				}
+				gone := t.TempDir()
+				t.Chdir(gone)
+				if err := os.RemoveAll(gone); err != nil {
+					t.Fatal(err)
+				}
+				return ""
+			},
+			want: "classifying identity: ",
+		},
+		{
+			name: "ordinary checkout passes",
+			setup: func(t *testing.T) string {
+				return initRepo(t, t.TempDir())
+			},
+		},
+		{
+			name: "directory outside any repository passes",
+			setup: func(t *testing.T) string {
+				return t.TempDir()
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NO_MISTAKES_GATE", "")
+			os.Unsetenv("NO_MISTAKES_GATE")
+			t.Setenv("NM_HOME", filepath.Join(t.TempDir(), ".no-mistakes"))
+			if cwd := tc.setup(t); cwd != "" {
+				t.Chdir(cwd)
+			}
+
+			err := GateRefuseFromCWD()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("GateRefuseFromCWD = %v, want allowed", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("GateRefuseFromCWD = %v, want a refusal containing %q", err, tc.want)
+			}
+		})
 	}
 }
 

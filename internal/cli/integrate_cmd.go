@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
@@ -925,7 +926,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 //     after the lock is already held
 func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
 	// 1. Check for gate agent (NO_MISTAKES_GATE)
-	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+	if fleet.GateAgentEnvSet() {
 		return nil
 	}
 

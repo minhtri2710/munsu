@@ -139,8 +139,8 @@ func gitlabMergeSquashValue(method string) (string, error) {
 // irreversible API call. The base ref is checked here as the compensating
 // observation for the endpoint's lack of an expected-target parameter.
 func (p *gitlabDeliveryProvider) ValidateMergeRequest(ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
-	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
-		return fmt.Errorf("GitLab merge constraints do not match the delivery identity")
+	if err := validateMergeConstraints("GitLab", ident, request); err != nil {
+		return err
 	}
 	_, err := gitlabMergeSquashValue(request.Method)
 	return err
@@ -297,9 +297,6 @@ func (c *glabClient) MergeMR(host, owner, project string, iid int, request Deliv
 	squash, err := gitlabMergeSquashValue(request.Method)
 	if err != nil {
 		return err
-	}
-	if request.HeadSHA == "" {
-		return fmt.Errorf("GitLab merge requires a pinned head SHA")
 	}
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/merge", url.PathEscape(owner+"/"+project), iid)
 	args := []string{

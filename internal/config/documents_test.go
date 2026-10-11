@@ -123,7 +123,7 @@ func TestProjectDigestCoversFinalResolvedBackend(t *testing.T) {
 	}
 }
 
-func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
+func TestResolveProjectBackendPrecedence(t *testing.T) {
 	base := validBase() // Backend: "tmux" fleet default
 	facts := validFacts("alpha", "/alpha", ProjectOverlay{})
 
@@ -141,16 +141,6 @@ func TestResolveProjectBackendPrecedenceAndRequired(t *testing.T) {
 	}
 	if project.Backend != "herdr" {
 		t.Fatalf("project overlay Backend = %q, want herdr", project.Backend)
-	}
-
-	// No Backend anywhere after resolution is a typed validation failure,
-	// never auto-detection or an env/PATH default.
-	noBackendBase := FleetBaseDocument{
-		SchemaVersion: FleetBaseSchemaVersion,
-		Config:        FleetBaseConfig{SoldierHarness: "pi"},
-	}
-	if _, err := resolveBaseline(noBackendBase, facts); err == nil || !strings.Contains(err.Error(), "backend") {
-		t.Fatalf("resolving with no Backend identity = %v, want typed validation failure", err)
 	}
 }
 
@@ -390,91 +380,116 @@ func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
 	}
 }
 
-func TestValidateProjectToolsRefusesUnsupportedEntries(t *testing.T) {
-	cases := []struct {
-		name    string
-		overlay ProjectOverlay
-		want    string
-	}{
-		{"unknown review adapter", ProjectOverlay{Review: &ToolEntry{Adapter: "bogus"}, Forge: &ToolEntry{Adapter: "github"}}, "review tool has unknown adapter \"bogus\""},
-		{"github forge with path", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Path: "/usr/bin/gh-axi"}}, "forge adapter github does not accept path or args"},
-		{"github forge with args", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Args: []string{"--x"}}}, "forge adapter github does not accept path or args"},
-		{"no-mistakes review without forge", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}}, "review adapter no-mistakes requires a configured forge tool"},
-		{"no-mistakes review with relative path", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes", Path: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}, "review adapter no-mistakes path must be absolute"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateProjectTools(tc.overlay)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ValidateProjectTools() error = %v, want refusal containing %q", err, tc.want)
-			}
-		})
-	}
-	valid := ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}
-	if err := ValidateProjectTools(valid); err != nil {
-		t.Fatalf("ValidateProjectTools(no-mistakes + github) = %v, want nil", err)
-	}
-}
-
-// TestResolveRefusesMalformedConfiguredTools pins the refusals that keep a
-// configured tool from resolving outside the Fleet probe or from carrying a
-// step the snapshot cannot trust.
-func TestResolveRefusesMalformedConfiguredTools(t *testing.T) {
+// TestToolStepRefusals pins every refusal on the way from an overlay or a
+// captured step to a resolved project configuration. An empty want is the
+// nearest valid input and must resolve.
+func TestToolStepRefusals(t *testing.T) {
 	base := validBase()
-	facts := validFacts("alpha", "/alpha", ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}})
+	pair := ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}
+	facts := validFacts("alpha", "/alpha", pair)
 	bare := validFacts("alpha", "/alpha", ProjectOverlay{})
+	probe := func(state string) func(string, ToolEntry) ResolvedStep {
+		return func(string, ToolEntry) ResolvedStep {
+			return ResolvedStep{ProbeState: state, Path: "/bin/tool", Reason: "not on PATH"}
+		}
+	}
 	ready := ResolvedStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"}
-	absent := func(string, ToolEntry) ResolvedStep {
-		return ResolvedStep{Adapter: "no-mistakes", ProbeState: "absent", Reason: "not on PATH"}
+	readyForge := ResolvedStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}
+	snapshot := func(t *testing.T) ResolvedSnapshot {
+		snap, err := NewResolvedSnapshotWithToolProbe(base, bare, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snap
 	}
 	cases := []struct {
 		name string
-		run  func() error
+		run  func(t *testing.T) error
 		want string
 	}{
-		{"configured tool not Ready at probe", func() error {
-			_, err := ResolveProjectWithToolProbe(base, facts, absent)
+		{"unknown review adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "bogus"}, Forge: &ToolEntry{Adapter: "github"}})
+		}, "review tool has unknown adapter \"bogus\""},
+		{"known review adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "gitlab"}})
+		}, ""},
+		{"github forge with path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Path: "/usr/bin/gh-axi"}})
+		}, "forge adapter github does not accept path or args"},
+		{"github forge with args", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Args: []string{"--x"}}})
+		}, "forge adapter github does not accept path or args"},
+		{"no-mistakes review with relative path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes", Path: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}})
+		}, "review adapter no-mistakes path must be absolute"},
+		{"no-mistakes review without forge in the overlay", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}})
+		}, "review adapter no-mistakes requires a configured forge tool"},
+		{"no-mistakes review with forge in the overlay", func(*testing.T) error {
+			return ValidateProjectTools(pair)
+		}, ""},
+		{"no-mistakes review without forge in a captured step", func(t *testing.T) error {
+			_, err := snapshot(t).WithSteps(ready, baselineStep())
 			return err
-		}, "review adapter no-mistakes probe absent"},
-		{"step not matching the overlay", func() error {
-			_, err := ResolveProjectWithSteps(base, bare, ready, baselineStep())
+		}, "review adapter no-mistakes requires a configured forge tool"},
+		{"no-mistakes review with forge in a captured step", func(t *testing.T) error {
+			_, err := snapshot(t).WithSteps(ready, readyForge)
 			return err
-		}, "do not match the project overlay"},
-		{"baseline step carrying tool data", func() error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "no-mistakes", ProbeState: "baseline"}, baselineStep())
+		}, ""},
+		{"empty snapshot", func(*testing.T) error {
+			_, err := (ResolvedSnapshot{}).WithSteps(baselineStep(), baselineStep())
 			return err
-		}, "baseline carries configured tool data"},
-		{"review adapter outside the review set", func() error {
+		}, "resolved snapshot is empty"},
+		{"non-empty snapshot", func(t *testing.T) error {
+			_, err := snapshot(t).WithSteps(baselineStep(), baselineStep())
+			return err
+		}, ""},
+		{"configured tool not Ready at probe", func(*testing.T) error {
+			_, err := ResolveProjectWithToolProbe(base, facts, probe("absent"))
+			return err
+		}, "resolved review adapter no-mistakes probe absent"},
+		{"configured tool Ready at probe", func(*testing.T) error {
+			_, err := ResolveProjectWithToolProbe(base, facts, probe("ready"))
+			return err
+		}, ""},
+		{"review adapter outside the review set", func(*testing.T) error {
 			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}, baselineStep())
 			return err
 		}, "resolved review adapter github probe ready"},
-		{"relative executable path", func() error {
+		{"step not matching the overlay", func(*testing.T) error {
+			_, err := ResolveProjectWithSteps(base, bare, ready, baselineStep())
+			return err
+		}, "do not match the project overlay"},
+		{"baseline step carrying tool data", func(*testing.T) error {
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "no-mistakes", ProbeState: "baseline"}, baselineStep())
+			return err
+		}, "baseline carries configured tool data"},
+		{"relative executable path", func(*testing.T) error {
 			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "no-mistakes", Path: "no-mistakes", ProbeState: "ready"}, baselineStep())
 			return err
 		}, "requires an absolute executable path"},
+		{"no session backend identity anywhere", func(*testing.T) error {
+			noBackend := FleetBaseDocument{SchemaVersion: FleetBaseSchemaVersion, Config: FleetBaseConfig{SoldierHarness: "pi"}}
+			_, err := resolveBaseline(noBackend, bare)
+			return err
+		}, "resolved no session backend identity"},
+		{"session backend identity from the fleet base", func(*testing.T) error {
+			_, err := resolveBaseline(base, bare)
+			return err
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.run()
+			err := tc.run(t)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want nil", err)
+				}
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want refusal containing %q", err, tc.want)
 			}
 		})
-	}
-}
-
-// TestResolvedSnapshotWithStepsRefusesInvalidSteps pins the snapshot rebase
-// refusals: an empty snapshot, and a no-mistakes review without a forge step.
-func TestResolvedSnapshotWithStepsRefusesInvalidSteps(t *testing.T) {
-	snap, err := NewResolvedSnapshotWithToolProbe(validBase(), validFacts("alpha", "/alpha", ProjectOverlay{}), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ready := ResolvedStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"}
-	if _, err := (ResolvedSnapshot{}).WithSteps(baselineStep(), baselineStep()); err == nil || !strings.Contains(err.Error(), "resolved snapshot is empty") {
-		t.Fatalf("WithSteps on an empty snapshot = %v, want an empty-snapshot refusal", err)
-	}
-	if _, err := snap.WithSteps(ready, baselineStep()); err == nil || !strings.Contains(err.Error(), "requires a configured forge tool") {
-		t.Fatalf("WithSteps(no-mistakes, baseline forge) = %v, want a forge refusal", err)
 	}
 }

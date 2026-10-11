@@ -109,7 +109,7 @@ func validateBeginSpawnRequest(req CanonicalBeginSpawnRequest) error {
 // generation. It is exact-generation and idempotent: the request carries the
 // expected Generation/Revision precondition, and reusing the same Operation
 // ID with the same digest replays the durable prior outcome. The mutation
-// checks the queued phase, owner presence, and the committed DispatchAction
+// checks the queued phase and the committed DispatchAction
 // Spawn holds transactionally, and fails closed on a generation that already
 // holds acquired worktree/endpoint bindings (durable intent must precede
 // resource acquisition), on a second distinct intent for the same generation,
@@ -126,7 +126,7 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 		if cur.Worktree != nil || cur.Endpoint != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already holds acquired bindings; launch intent must precede resource acquisition", cur.TaskID, cur.Generation)
 		}
-		if (cur.Definition.Kind == KindReview) != (req.Kind == KindReview) {
+		if ownsWorktree(cur.Definition.Kind) != ownsWorktree(req.Kind) {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a %s task; its launch intent kind %q must agree (only a review launch reserves no worktree)", cur.TaskID, cur.Generation, cur.Definition.Kind, req.Kind)
 		}
 		if cur.Launch != nil {
@@ -137,9 +137,6 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 		}
 		if cur.Phase != PhaseQueued {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is %s, begin spawn requires queued", cur.TaskID, cur.Generation, cur.Phase)
-		}
-		if strings.TrimSpace(cur.Definition.Owner) == "" {
-			return Aggregate{}, conflictError(ErrPrecondition, "task %s generation %s is not ready to spawn: %s", cur.TaskID, cur.Generation, ReadinessMissingOwner)
 		}
 		holds, err := c.listHolds()
 		if err != nil {
@@ -383,7 +380,7 @@ func (c *Canonical) RecordLaunchManifest(op domain.Operation, req CanonicalRecor
 		return Outcome{}, err
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Definition.Kind == KindReview {
+		if !ownsWorktree(cur.Definition.Kind) {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is a review task; it owns no launch manifest", cur.TaskID, cur.Generation)
 		}
 		if cur.Phase != PhaseQueued {
@@ -498,7 +495,7 @@ func (c *Canonical) RecordLaunch(op domain.Operation, req CanonicalRecordLaunchR
 		if cur.AcquiredEndpoint == nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded acquired endpoint; launch evidence requires the acquired endpoint", cur.TaskID, cur.Generation)
 		}
-		if cur.Definition.Kind != KindReview && (cur.Worktree == nil || cur.Worktree.LaunchManifest == nil || cur.Worktree.LaunchManifest.LaunchID != cur.Launch.LaunchID) {
+		if ownsWorktree(cur.Definition.Kind) && (cur.Worktree == nil || cur.Worktree.LaunchManifest == nil || cur.Worktree.LaunchManifest.LaunchID != cur.Launch.LaunchID) {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no matching canonical launch manifest evidence", cur.TaskID, cur.Generation)
 		}
 		if req.LaunchID != cur.Launch.LaunchID {

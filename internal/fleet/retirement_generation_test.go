@@ -800,7 +800,7 @@ func TestRetirementMetaOnlyResourcesAreNeverReleased(t *testing.T) {
 	}
 }
 
-func TestRetirementCrashResumeReusesReceiptWithoutDoubleTransition(t *testing.T) {
+func activeCleanupClaimAllow(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "crash-resume"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
@@ -1375,11 +1375,11 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 	}
 }
 
-// TestRetirementAbortTerminalSameGenerationRetryNeverResumes proves that a
+// terminalCleanupClaimBlock proves that a
 // teardown retry on a task whose claim was aborted (same generation still
 // current) does NOT re-activate or resume the cleanup: abort is terminal, the
 // retry reports the terminal state, and nothing is released.
-func TestRetirementAbortTerminalSameGenerationRetryNeverResumes(t *testing.T) {
+func terminalCleanupClaimBlock(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "abort-samegen"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
@@ -1653,29 +1653,23 @@ func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
 	}
 }
 
-// TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration
-// proves the invocation binding also covers a COMPLETED prior retirement: a
-// delayed retry of the original teardown must never implicitly retire the
-// reopened generation even though the prior cleanup finished normally — a
-// fresh teardown requires the distinct explicit target.
-func TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "stale-completed"
-	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+// staleRetryFixture retires generation 1 to a completed cleanup claim, then
+// reopens the task to generation 2 with its own resources.
+func staleRetryFixture(t *testing.T) (auth *taskauthority.Canonical, homeDir, taskID string) {
+	t.Helper()
+	homeDir = t.TempDir()
+	taskID = "stale-completed"
+	auth = canonicalMergeTestAuth(t, homeDir, taskID)
 	wtDir := filepath.Join(homeDir, "worktrees", taskID)
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
 	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
-	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
-	// Generation-1 retirement completes normally (claim completed).
 	first := &recordingTeardown{alive: true}
-	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err != nil {
+	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, first, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("generation-1 teardown: %v", err)
 	}
-
-	// Reopen to generation 2; it acquires NEW resources.
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1696,12 +1690,16 @@ func TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration(t
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
 	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-2", "fence-ep-2")
 	writeRetireMeta(t, homeDir, taskID, "@2", wtDir)
+	return auth, homeDir, taskID
+}
 
-	// A delayed retry of the ORIGINAL teardown (nil target) is a stale
-	// continuation of the completed generation-1 retirement: typed error,
-	// generation 2 never retired.
+// A delayed retry of the original teardown (no target) is a stale continuation
+// of the completed generation-1 retirement: typed error, generation 2 never
+// retired.
+func staleRetryBlock(t *testing.T) {
+	auth, homeDir, taskID := staleRetryFixture(t)
 	stale := &recordingTeardown{alive: true}
-	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
+	_, retErr := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, stale, fakeRetirementJournals{}, auth)
 	if retErr == nil {
 		t.Fatal("stale teardown retry must fail closed")
 	}
@@ -1715,15 +1713,18 @@ func TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration(t
 	if len(stale.disposed) != 0 || len(stale.returned) != 0 {
 		t.Fatalf("stale retry released resources: disposed=%v returned=%v", stale.disposed, stale.returned)
 	}
-	aggMid, err := auth.Get(mustTaskID(t, taskID))
+	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aggMid.Generation != 2 || aggMid.Phase != taskauthority.PhaseWorking || aggMid.CleanupClaim != nil {
-		t.Fatalf("stale retry disturbed the reopened generation: %+v", aggMid)
+	if agg.Generation != 2 || agg.Phase != taskauthority.PhaseWorking || agg.CleanupClaim != nil {
+		t.Fatalf("stale retry disturbed the reopened generation: %+v", agg)
 	}
+}
 
-	// The distinct explicit request retires generation 2.
+// The distinct explicit request retires generation 2 and only generation 2.
+func explicitGenerationAllow(t *testing.T) {
+	auth, homeDir, taskID := staleRetryFixture(t)
 	target := taskauthority.Generation(2)
 	fresh := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target}
 	second := &recordingTeardown{alive: true}
@@ -1733,12 +1734,12 @@ func TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration(t
 	if len(second.disposed) != 1 || second.disposed[0].Handle != "@2" {
 		t.Fatalf("disposed=%+v, want the reopened generation's own endpoint @2", second.disposed)
 	}
-	agg2, err := auth.Get(mustTaskID(t, taskID))
+	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg2.Generation != 2 || agg2.Phase != taskauthority.PhaseRetired || agg2.CleanupClaim == nil || agg2.CleanupClaim.Generation != 2 || agg2.CleanupClaim.Status != taskauthority.CleanupCompleted {
-		t.Fatalf("current aggregate = %+v, want generation 2 retired with its own completed claim", agg2)
+	if agg.Generation != 2 || agg.Phase != taskauthority.PhaseRetired || agg.CleanupClaim == nil || agg.CleanupClaim.Generation != 2 || agg.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("current aggregate = %+v, want generation 2 retired with its own completed claim", agg)
 	}
 	hist, err := auth.GetGeneration(mustTaskID(t, taskID), taskauthority.Generation(1))
 	if err != nil {

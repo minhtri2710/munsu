@@ -1917,42 +1917,58 @@ func TestHookMergeReinstallKeepsOneMunsuEntry(t *testing.T) {
 	}
 }
 
-// TestHookMergeRefusesInvalidExistingJSON leaves a hooks file that is not
-// valid JSON byte-identical and names it in the install error.
+// TestHookMergeRefusesInvalidExistingJSON leaves a hooks file that is not a JSON
+// object byte-identical and names it in the install error. All four harnesses
+// merge through mergeHookEventArrays, so one harness stands for them; an empty
+// object is the nearest file the install accepts.
 func TestHookMergeRefusesInvalidExistingJSON(t *testing.T) {
-	for _, name := range []string{"claude", "codex", "grok", "agy"} {
-		for _, content := range []string{"{not json", "null"} {
-			t.Run(name+"/"+content, func(t *testing.T) {
-				dir := t.TempDir()
-				homeDir := filepath.Join(dir, "home")
-				projectDir := filepath.Join(dir, "project")
-				SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(dir, "munsu")})
-				defer ResetMunsuPathResolver()
+	const name = "claude"
+	cases := []struct {
+		content string
+		want    string
+	}{
+		{"{not json", "existing content is not valid JSON"},
+		{"null", "existing content is not a JSON object"},
+		{"{}", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.content, func(t *testing.T) {
+			dir := t.TempDir()
+			homeDir := filepath.Join(dir, "home")
+			projectDir := filepath.Join(dir, "project")
+			SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(dir, "munsu")})
+			defer ResetMunsuPathResolver()
 
-				target := filepath.Join(projectDir, hookFileTargets[name])
-				if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(target, []byte(content), 0644); err != nil {
-					t.Fatal(err)
-				}
+			target := filepath.Join(projectDir, hookFileTargets[name])
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tc.content), 0644); err != nil {
+				t.Fatal(err)
+			}
 
-				_, err := Install(homeDir, projectDir, name, ScopeProject, false)
-				if err == nil || !strings.Contains(err.Error(), filepath.Base(target)) {
-					t.Fatalf("Install error = %v, want a refusal naming %s", err, target)
+			_, err := Install(homeDir, projectDir, name, ScopeProject, false)
+			_, statErr := os.Stat(ManifestPath(homeDir, name, ScopeProject, projectDir))
+			if tc.want == "" {
+				if err != nil || statErr != nil {
+					t.Fatalf("Install error = %v, manifest stat = %v, want both nil", err, statErr)
 				}
-				data, readErr := os.ReadFile(target)
-				if readErr != nil {
-					t.Fatal(readErr)
-				}
-				if string(data) != content {
-					t.Fatalf("hooks file changed to %q, want it untouched", data)
-				}
-				if _, statErr := os.Stat(ManifestPath(homeDir, name, ScopeProject, projectDir)); !os.IsNotExist(statErr) {
-					t.Fatalf("manifest written after refusal: %v", statErr)
-				}
-			})
-		}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), target) {
+				t.Fatalf("Install error = %v, want a refusal for %s containing %q", err, target, tc.want)
+			}
+			data, readErr := os.ReadFile(target)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(data) != tc.content {
+				t.Fatalf("hooks file changed to %q, want it untouched", data)
+			}
+			if !os.IsNotExist(statErr) {
+				t.Fatalf("manifest written after refusal: %v", statErr)
+			}
+		})
 	}
 }
 

@@ -164,15 +164,34 @@ func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) 
 	}
 }
 
-func TestBuildLaunchArgs_UnverifiedCaptainHarnesses(t *testing.T) {
-	for _, name := range []string{harness.Claude, harness.Codex, harness.Opencode, harness.Grok, harness.Agy} {
-		t.Run(name, func(t *testing.T) {
-			_, _, err := buildLaunchArgs(t.TempDir(), name, config.CaptainProfile{}, t.TempDir())
-			if err == nil {
-				t.Fatal("expected unverified captain contract error")
+// A captain launches only through a harness with a verified captain contract.
+func TestBuildLaunchArgsCaptainHarnessRefusals(t *testing.T) {
+	cases := []struct {
+		name    string
+		harness string
+		want    string // refusal text; empty means allowed
+	}{
+		{name: "unknown harness refused", harness: "unknown_harness", want: "is not a verified harness"},
+		{name: "harness without a captain contract refused", harness: harness.Claude, want: "does not have a verified captain launch contract"},
+		{name: "verified harness allowed", harness: harness.Pi},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captainHome := t.TempDir()
+			if err := os.WriteFile(filepath.Join(captainHome, CaptainCharterName), []byte("# charter\n"), 0644); err != nil {
+				t.Fatal(err)
 			}
-			if !strings.Contains(err.Error(), "does not have a verified captain launch contract") {
-				t.Fatalf("error = %v", err)
+			writeCanonicalPiIntegration(t, captainHome)
+
+			_, _, err := buildLaunchArgs(captainHome, tc.harness, config.CaptainProfile{}, t.TempDir())
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("buildLaunchArgs: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("buildLaunchArgs error = %v, want %q", err, tc.want)
 			}
 		})
 	}
@@ -185,16 +204,6 @@ func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "reading captain charter") {
 		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestCaptainBuildLaunchArgs_UnknownHarness(t *testing.T) {
-	_, _, err := buildLaunchArgs("/tmp", "unknown_harness", config.CaptainProfile{}, "/tmp")
-	if err == nil {
-		t.Fatal("expected error for unknown harness")
-	}
-	if !strings.Contains(err.Error(), "not a verified harness") {
-		t.Errorf("error should mention unverified harness, got: %v", err)
 	}
 }
 
@@ -659,55 +668,6 @@ func TestProvenance_WrongVersion(t *testing.T) {
 }
 
 // --- Validate / Migrate tests ---
-
-func TestValidate_PassesForSeededHome(t *testing.T) {
-	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "captains", "test-sm")
-	seedTest(t, "test-sm", smHome, "# charter")
-
-	err := Validate(smHome, tmp)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-}
-
-func TestValidate_RefusesFakeName(t *testing.T) {
-	tmp := t.TempDir()
-	fakeHome := filepath.Join(tmp, "fake")
-	seedTest(t, "fake-sm", fakeHome, "# charter")
-
-	err := Validate(fakeHome, tmp)
-	if err == nil {
-		t.Fatal("expected error for reserved name 'fake'")
-	}
-	if !strings.Contains(err.Error(), "reserved name") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-func TestValidate_RefusesPrimaryName(t *testing.T) {
-	tmp := t.TempDir()
-	primaryHome := filepath.Join(tmp, "primary")
-	seedTest(t, "primary-sm", primaryHome, "# charter")
-
-	err := Validate(primaryHome, tmp)
-	if err == nil {
-		t.Fatal("expected error for reserved name 'primary'")
-	}
-}
-
-func TestValidate_RefusesSelfParent(t *testing.T) {
-	tmp := t.TempDir()
-	seedTest(t, "test-sm", tmp, "# charter")
-
-	err := Validate(tmp, tmp)
-	if err == nil {
-		t.Fatal("expected error for being parent home itself")
-	}
-	if !strings.Contains(err.Error(), "is the parent home itself") {
-		t.Errorf("error = %v", err)
-	}
-}
 
 func TestValidate_RefusesMissingDirs(t *testing.T) {
 	tmp := t.TempDir()
@@ -1596,6 +1556,136 @@ func TestSha256Content_Empty(t *testing.T) {
 	}
 }
 
+// --- Captain identity ---
+
+// A captain home is a structurally valid, distinct identity; a captain never
+// launches or spawns beyond its own home. Every refusal here has the nearest
+// valid case beside it, so the refusal text is what separates the two.
+func TestCaptainIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T) error
+		want string // refusal text; empty means allowed
+	}{
+		{
+			name: "validate refuses the parent home itself",
+			run: func(t *testing.T) error {
+				tmp := t.TempDir()
+				seedTest(t, "test-sm", tmp, "# charter")
+				return Validate(tmp, tmp)
+			},
+			want: "is the parent home itself",
+		},
+		{
+			name: "validate accepts a seeded home",
+			run: func(t *testing.T) error {
+				tmp := t.TempDir()
+				smHome := filepath.Join(tmp, "captains", "test-sm")
+				seedTest(t, "test-sm", smHome, "# charter")
+				return Validate(smHome, tmp)
+			},
+		},
+		{
+			name: "validate accepts homes named fake, project and primary",
+			run: func(t *testing.T) error {
+				tmp := t.TempDir()
+				for _, name := range []string{"fake", "project", "primary"} {
+					smHome := filepath.Join(tmp, name)
+					seedTest(t, name+"-sm", smHome, "# charter")
+					if err := Validate(smHome, tmp); err != nil {
+						return fmt.Errorf("home named %q: %w", name, err)
+					}
+				}
+				return nil
+			},
+		},
+		{
+			name: "spawn refuses a captain outside its home",
+			run: func(t *testing.T) error {
+				homeDir := t.TempDir()
+				if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {
+					t.Fatal(err)
+				}
+				return authorizeSpawn("captain", homeDir, t.TempDir())
+			},
+			want: "must spawn from its home",
+		},
+		{
+			name: "spawn allows a captain inside its home",
+			run: func(t *testing.T) error {
+				homeDir := t.TempDir()
+				if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {
+					t.Fatal(err)
+				}
+				return authorizeSpawn("captain", homeDir, homeDir)
+			},
+		},
+		{
+			name: "launch refuses a captain role",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchableCaptain(t)
+				t.Setenv("MUNSU_ROLE", "captain")
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+			},
+			want: "cannot launch other captains",
+		},
+		{
+			name: "launch refuses from a captain parent home",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchableCaptain(t)
+				if err := home.SeedCaptainProvenance(parent, "parent-sm"); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("MUNSU_ROLE", "")
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+			},
+			want: "cannot launch another captain",
+		},
+		{
+			name: "launch allows a general launching a captain",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchableCaptain(t)
+				t.Setenv("MUNSU_ROLE", "")
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "handoff refuses the parent home itself",
+			run: func(t *testing.T) error {
+				parent := t.TempDir()
+				if _, err := home.Init(parent); err != nil {
+					t.Fatal(err)
+				}
+				home.SeedCaptainProvenance(parent, "parent-sm")
+				return Handoff(parent, parent, []string{"TASK-1"})
+			},
+			want: "destination is parent home itself",
+		},
+		{
+			name: "handoff allows a captain home distinct from the parent",
+			run: func(t *testing.T) error {
+				parent, captain := seedHandoffPair(t)
+				seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
+				return Handoff(parent, captain, []string{"TASK-1"})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run(t)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // --- Launch tests using capability fakes ---
 func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	tmp := t.TempDir()
@@ -1612,15 +1702,18 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	}
 }
 
-func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
+// launchableCaptain builds a registered worktree captain with a published
+// snapshot that Launch accepts, and returns its parent and captain homes.
+func launchableCaptain(t *testing.T) (parent, captainHome string) {
+	t.Helper()
 	oldLookPath := captainLookPath
 	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
 	t.Cleanup(func() { captainLookPath = oldLookPath })
-	parent := t.TempDir()
+	parent = t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	captainHome := filepath.Join(parent, "captains", "home-basename")
+	captainHome = filepath.Join(parent, "captains", "home-basename")
 	worktreeCaptainHome(t, captainHome, "registered-id")
 	setupTypedParentHome(t, parent, "registered-id")
 	if err := Register(parent, "registered-id", captainHome, "captain", "registered-id"); err != nil {
@@ -1630,6 +1723,11 @@ func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeCanonicalPiIntegration(t, captainHome)
+	return parent, captainHome
+}
+
+func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
+	parent, captainHome := launchableCaptain(t)
 
 	var request LaunchRequest
 	endpoint := launchCaptureEndpoint{launch: func(req LaunchRequest) { request = req }}
@@ -1656,31 +1754,6 @@ func (e launchCaptureEndpoint) Launch(_ string, req LaunchRequest) (LaunchResult
 	return LaunchResult{Backend: "test", Window: "test-window"}, nil
 }
 func (launchCaptureEndpoint) Cleanup(string, LaunchResult) error { return nil }
-
-func TestLaunch_RefusesCaptainRole(t *testing.T) {
-	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "captains", "test-sm")
-	seedTest(t, "test-sm", smHome, "# charter")
-	t.Setenv("MUNSU_ROLE", "captain")
-	err := Launch(smHome, tmp, testLaunchEndpoint{}, fakeIntegrationPort{})
-	if err == nil || !strings.Contains(err.Error(), "cannot launch other captains") {
-		t.Fatalf("Launch() error = %v, want nested-captain refusal", err)
-	}
-}
-
-func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
-	parent := t.TempDir()
-	if err := home.SeedCaptainProvenance(parent, "parent-sm"); err != nil {
-		t.Fatal(err)
-	}
-	smHome := filepath.Join(t.TempDir(), "child-sm")
-	seedTest(t, "child-sm", smHome, "# charter")
-	t.Setenv("MUNSU_ROLE", "")
-	err := Launch(smHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
-	if err == nil || !strings.Contains(err.Error(), "cannot launch another captain") {
-		t.Fatalf("Launch() error = %v, want parent-captain refusal", err)
-	}
-}
 
 func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
 	oldLookPath := captainLookPath
@@ -1719,22 +1792,6 @@ func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *tes
 	err := Launch(captainHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
 	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
 		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot despite flat captain-harness pin", err)
-	}
-}
-
-func TestHandoff_RefusesSelfParent(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	home.SeedCaptainProvenance(parent, "parent-sm")
-
-	err := Handoff(parent, parent, []string{"TASK-1"})
-	if err == nil {
-		t.Fatal("expected error for same home")
-	}
-	if !strings.Contains(err.Error(), "destination is parent home itself") {
-		t.Errorf("error should mention parent home, got: %v", err)
 	}
 }
 
@@ -2081,109 +2138,11 @@ func TestReadNudgeMarker_Nonexistent(t *testing.T) {
 
 // --- safeFF tests (real git repos) ---
 
-type safeFFFixture struct {
-	parent  string
-	captain string
-	before  string
-	after   string
-}
-
-func newSafeFFFixture(t *testing.T) safeFFFixture {
-	t.Helper()
-	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
-	parent := filepath.Join(root, "parent")
-	captain := filepath.Join(root, "captain")
-	for _, dst := range []string{parent, captain} {
-		if out, err := exec.Command("git", "clone", remote, dst).CombinedOutput(); err != nil {
-			t.Fatalf("git clone: %v\n%s", err, out)
-		}
-		gitTestRun(t, dst, "config", "user.name", "Munsu Test")
-		gitTestRun(t, dst, "config", "user.email", "munsu@example.invalid")
-	}
-	gitTestRun(t, parent, "checkout", "-b", "main")
-	if err := os.WriteFile(filepath.Join(parent, ".gitignore"), []byte("state/ignored\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("old\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	gitTestRun(t, parent, "add", ".gitignore", "AGENTS.md")
-	gitTestRun(t, parent, "commit", "-m", "initial")
-	before := gitTestRun(t, parent, "rev-parse", "HEAD")
-	gitTestRun(t, parent, "push", "-u", "origin", "main")
-	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	gitTestRun(t, captain, "fetch", "origin", "main")
-	gitTestRun(t, captain, "checkout", "-B", "main", before)
-	gitTestRun(t, captain, "remote", "set-head", "origin", "main")
-	gitTestRun(t, parent, "remote", "set-head", "origin", "main")
-
-	if err := os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("new\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	gitTestRun(t, parent, "commit", "-am", "advance instructions")
-	after := gitTestRun(t, parent, "rev-parse", "HEAD")
-	gitTestRun(t, parent, "push", "origin", "main")
-	// Seed the already-local object without changing the general checkout.
-	gitTestRun(t, captain, "fetch", "origin", "main")
-	gitTestRun(t, captain, "reset", "--hard", before)
-	return safeFFFixture{parent: parent, captain: captain, before: before, after: after}
-}
-
-func TestSafeFF_OffBranchRefused(t *testing.T) {
-	f := newSafeFFFixture(t)
-	gitTestRun(t, f.captain, "checkout", "-b", "feature")
-	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "expected \"main\"") {
-		t.Fatalf("safeFF error = %v, want off-default-branch refusal", err)
-	}
-}
-
 func TestSafeFF_MissingOriginHEADRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
 	gitTestRun(t, f.parent, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
 	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "origin/HEAD") {
 		t.Fatalf("safeFF error = %v, want missing origin/HEAD refusal", err)
-	}
-}
-
-func TestSafeFF_TrackedChangesRefused(t *testing.T) {
-	f := newSafeFFFixture(t)
-	if err := os.WriteFile(filepath.Join(f.captain, "AGENTS.md"), []byte("dirty\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "tracked changes") {
-		t.Fatalf("safeFF error = %v, want tracked-change refusal", err)
-	}
-}
-
-func TestSafeFF_UnignoredUntrackedRefused(t *testing.T) {
-	f := newSafeFFFixture(t)
-	if err := os.WriteFile(filepath.Join(f.captain, "rogue.txt"), []byte("rogue\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "unignored untracked") {
-		t.Fatalf("safeFF error = %v, want unignored-file refusal", err)
-	}
-}
-
-func TestSafeFF_GitignoredArtifactAllowed(t *testing.T) {
-	f := newSafeFFFixture(t)
-	if err := os.MkdirAll(filepath.Join(f.captain, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.captain, "state", "ignored"), []byte("local\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	before, after, _, err := safeFF(f.captain, f.parent)
-	if err != nil {
-		t.Fatalf("safeFF: %v", err)
-	}
-	if before != f.before || after != f.after {
-		t.Fatalf("safeFF = (%s, %s), want (%s, %s)", before, after, f.before, f.after)
 	}
 }
 
@@ -2457,7 +2416,7 @@ func TestRetire_UnregistersFromRegistry(t *testing.T) {
 	}
 }
 
-func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
+func captainInFlightBlock(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
@@ -2489,7 +2448,7 @@ func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
 	}
 }
 
-func TestRetire_ForceAllowsInFlight(t *testing.T) {
+func captainInFlightForceAllow(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)

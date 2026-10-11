@@ -892,11 +892,92 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// deliveryStateBlocker refuses a task that is not working with its worktree and
+// endpoint bound: the task-state conditions of a delivery authorization.
+func deliveryStateBlocker(cur Aggregate) error {
+	if cur.Phase != PhaseWorking {
+		return preconditionError("delivery authorization requires a working task; task %s is %s", cur.TaskID, cur.Phase)
+	}
+	if cur.Worktree == nil || cur.Endpoint == nil {
+		return preconditionError("delivery authorization requires the bound worktree and endpoint of task %s", cur.TaskID)
+	}
+	return nil
+}
+
+// deliveryIndexBlocker refuses a task whose delivery is held, already terminal,
+// or already covered by an unrevoked authorization: the hold and index
+// conditions of a delivery authorization.
+func (c *Canonical) deliveryIndexBlocker(cur Aggregate, index DeliveryIndex, holds []DispatchHold) error {
+	if holdsBlockAction(holds, DispatchActionDelivery, cur) {
+		return conflictError(ErrDispatchHeld, "%s: delivery is held for task %s", ErrDispatchHeld, cur.TaskID)
+	}
+	if index.Terminal {
+		return conflictError(ErrConflict, "task %s already committed a terminal delivery outcome; a new delivery authorization conflicts", cur.TaskID)
+	}
+	if index.AuthorizationOpID != "" {
+		revoked, err := c.deliveryRevoked(cur.TaskID, index)
+		if err != nil {
+			return err
+		}
+		if !revoked {
+			return conflictError(ErrConflict, "task %s already has an active delivery authorization; revoke it before issuing a new one", cur.TaskID)
+		}
+	}
+	return nil
+}
+
+// DeliveryAuthorizationBlocker reports why AuthorizeDelivery would refuse the
+// task now for any reason other than the review verdict and the caller's
+// precondition, with the errors AuthorizeDelivery returns: nil when the task is
+// the current generation, working with its worktree and endpoint bound, has no
+// matching delivery hold, no terminal delivery outcome and no unrevoked
+// authorization. It is a read; it writes nothing and records no receipt.
+//
+// It reads under the task scope lock with pending-journal recovery, so it can
+// block behind an in-flight same-task commit and must not be called while
+// already holding the same task's scope. Transfer-reservation and cleanup-claim
+// fences are not checked; AuthorizeDelivery re-fences both at issuance.
+func (c *Canonical) DeliveryAuthorizationBlocker(taskID domain.TaskID) error {
+	if err := taskID.Validate(); err != nil {
+		return err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
+	if err := c.h.RecoverPending(lk); err != nil {
+		return err
+	}
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return conflictError(ErrNotFound, "task %s not found", taskID.Value())
+	}
+	if err := c.checkMutableCurrent(doc.Aggregate); err != nil {
+		return err
+	}
+	if err := deliveryStateBlocker(doc.Aggregate); err != nil {
+		return err
+	}
+	holds, err := c.listHolds()
+	if err != nil {
+		return err
+	}
+	index, _, err := c.readDeliveryIndex(taskID.Value())
+	if err != nil {
+		return err
+	}
+	return c.deliveryIndexBlocker(doc.Aggregate, index, holds)
+}
+
 // AuthorizeDelivery issues one canonical delivery authorization for the exact
 // #414 irreversible operation kind, committing an immutable issuance evidence
 // document keyed by Task ID + authorization Operation ID and updating the
-// bounded index pointer. Issuance requires a current working task with owner
-// and the exact endpoint/worktree bindings, no matching active delivery hold,
+// bounded index pointer. Issuance requires a current working task with the
+// exact endpoint/worktree bindings, no matching active delivery hold,
 // no active transfer reservation, no terminal committed outcome, no
 // already-active authorization, a valid typed identity, a PASS review verdict
 // bound to exactly the identity head (ReviewVerdict.Approves) from a review task
@@ -914,14 +995,8 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 	}
 	var committed DeliveryAuthorization
 	_, replayed, err := c.mutateDeliveryWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
-		if cur.Phase != PhaseWorking {
-			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a working task; task %s is %s", cur.TaskID, cur.Phase)
-		}
-		if strings.TrimSpace(cur.Definition.Owner) == "" {
-			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires an owner for task %s", cur.TaskID)
-		}
-		if cur.Worktree == nil || cur.Endpoint == nil {
-			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires the bound worktree and endpoint of task %s", cur.TaskID)
+		if err := deliveryStateBlocker(cur); err != nil {
+			return Aggregate{}, DeliveryIndex{}, nil, err
 		}
 		if cur.ReviewVerdict == nil {
 			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a review verdict for head %q of task %s", req.Identity.HeadSHA, cur.TaskID)
@@ -933,20 +1008,8 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 		if err != nil {
 			return Aggregate{}, DeliveryIndex{}, nil, err
 		}
-		if holdsBlockAction(holds, DispatchActionDelivery, cur) {
-			return Aggregate{}, DeliveryIndex{}, nil, conflictError(ErrDispatchHeld, "%s: delivery is held for task %s", ErrDispatchHeld, cur.TaskID)
-		}
-		if index.Terminal {
-			return Aggregate{}, DeliveryIndex{}, nil, conflictError(ErrConflict, "task %s already committed a terminal delivery outcome; a new delivery authorization conflicts", cur.TaskID)
-		}
-		if index.AuthorizationOpID != "" {
-			revoked, err := c.deliveryRevoked(cur.TaskID, index)
-			if err != nil {
-				return Aggregate{}, DeliveryIndex{}, nil, err
-			}
-			if !revoked {
-				return Aggregate{}, DeliveryIndex{}, nil, conflictError(ErrConflict, "task %s already has an active delivery authorization; revoke it before issuing a new one", cur.TaskID)
-			}
+		if err := c.deliveryIndexBlocker(cur, index, holds); err != nil {
+			return Aggregate{}, DeliveryIndex{}, nil, err
 		}
 		next := cur.clone()
 		next.Revision++

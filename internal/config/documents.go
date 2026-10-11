@@ -244,7 +244,7 @@ func validateResolvedStep(name string, step ResolvedStep) error {
 	var supported bool
 	switch name {
 	case "review":
-		supported = step.Adapter == "no-mistakes"
+		supported = step.Adapter == noMistakesAdapter
 	case "forge":
 		supported = step.Adapter == "github" || step.Adapter == "gitlab"
 	}
@@ -397,13 +397,21 @@ func cloneProfiles(src []DispatchProfile) []DispatchProfile {
 	return result
 }
 func ValidateProjectTools(overlay ProjectOverlay) error {
-	if err := validateToolEntry("review", overlay.Review, map[string]bool{"no-mistakes": true}); err != nil {
+	if err := validateToolEntry("review", overlay.Review, map[string]bool{noMistakesAdapter: true}); err != nil {
 		return err
 	}
 	if err := validateToolEntry("forge", overlay.Forge, map[string]bool{"github": true, "gitlab": true}); err != nil {
 		return err
 	}
-	if overlay.Review != nil && overlay.Review.Adapter == "no-mistakes" && overlay.Forge == nil {
+	return requireForgeForReview(overlay.Review, overlay.Forge)
+}
+
+const noMistakesAdapter = "no-mistakes"
+
+// requireForgeForReview is the one statement of the rule shared by overlays and
+// resolved steps; a nil entry is an unconfigured (baseline) step.
+func requireForgeForReview(review, forge *ToolEntry) error {
+	if review != nil && review.Adapter == noMistakesAdapter && forge == nil {
 		return fmt.Errorf("review adapter no-mistakes requires a configured forge tool")
 	}
 	return nil

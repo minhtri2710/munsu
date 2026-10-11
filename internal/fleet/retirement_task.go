@@ -337,15 +337,8 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 		if partial {
 			return taskauthority.Outcome{}, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
 		}
-		out, oerr := authority.DeliveryOutcome(taskID)
-		if oerr != nil {
-			if errors.Is(oerr, taskauthority.ErrNotFound) {
-				return taskauthority.Outcome{}, fmt.Errorf("task %s has no canonical delivery outcome; retirement requires a committed completed delivery outcome", opts.ID)
-			}
-			return taskauthority.Outcome{}, fmt.Errorf("resolving canonical delivery outcome for %s: %w", opts.ID, oerr)
-		}
-		if out.Status != taskauthority.DeliveryOutcomeCompleted {
-			return taskauthority.Outcome{}, fmt.Errorf("task %s has canonical delivery outcome %q; retirement requires a committed completed delivery outcome", opts.ID, out.Status)
+		if err := requireCanonicalCompletedOutcome(authority, opts.ID); err != nil {
+			return taskauthority.Outcome{}, err
 		}
 	}
 	req := taskauthority.CanonicalRetireRequest{
@@ -654,6 +647,13 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	taskID, err := domain.NewTaskID(opts.ID)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: resolving task identity: %w", opts.ID, err)
+	}
+
+	// A review owns no worktree; --force does not override this check.
+	if kind == taskauthority.KindReview {
+		if err := reviewSafetyCheck(opts, meta); err != nil {
+			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
+		}
 	}
 
 	partialLaunch := false
@@ -1196,7 +1196,7 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 		}
 		return nil, nil
 	case taskauthority.KindReview:
-		return reviewSafetyCheck(opts, meta)
+		return nil, nil
 	default:
 		return shipSafetyCheck(opts, meta, backend, authority, binding, partialLaunch)
 	}
@@ -1206,11 +1206,15 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 // manifest or merge, so there is nothing to land and no proof to emit. The
 // reviewed worktree belongs to the reviewed ship task; retirement releases
 // only evidence.Worktree, which a review never has, so it cannot release it.
-func reviewSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
-	if meta["worktree"] != "" || meta["branch"] != "" {
-		return nil, fmt.Errorf("review task %s meta names a worktree or branch; a review owns neither (use --force to override)", opts.ID)
+// A worktree in the meta is refused even with --force; a branch only without.
+func reviewSafetyCheck(opts Options, meta map[string]string) error {
+	if meta["worktree"] != "" {
+		return fmt.Errorf("review task %s meta names a worktree; a review owns none", opts.ID)
 	}
-	return nil, nil
+	if !opts.Force && meta["branch"] != "" {
+		return fmt.Errorf("review task %s meta names a branch; a review owns none (use --force to override)", opts.ID)
+	}
+	return nil
 }
 
 // safetyCheckGeneration resolves the generation whose report a scout safety

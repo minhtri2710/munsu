@@ -132,33 +132,50 @@ func TestPiInstallRejectsEmptyUserExtensionDirectory(t *testing.T) {
 	}
 }
 
-func TestPiInstallRejectsUnownedTarget(t *testing.T) {
-	dir := t.TempDir()
-	extDir := ProjectExtensionsDir(dir)
-	if err := os.MkdirAll(extDir, 0755); err != nil {
-		t.Fatal(err)
+func TestPiInstallOwnership(t *testing.T) {
+	cases := []struct {
+		name    string
+		content func(munsuBin string) string
+		want    string
+	}{
+		{"file without the ownership marker", func(string) string { return "// user-owned\n" }, "exists and is not owned by munsu"},
+		{"file carrying the ownership marker", PiExtensionTemplate, ""},
 	}
-	target := filepath.Join(extDir, harness.CanonicalPiIntegrationName)
-	if err := os.WriteFile(target, []byte("// user-owned\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			extDir := ProjectExtensionsDir(dir)
+			if err := os.MkdirAll(extDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			bin := testutil.WriteFakeExecutable(t, filepath.Join(dir, "munsu"), "#!/bin/sh\n")
+			target := filepath.Join(extDir, harness.CanonicalPiIntegrationName)
+			if err := os.WriteFile(target, []byte(tc.content(bin)), 0644); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFakeExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
+			t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+			SetMunsuPathResolver(testMunsuResolver{path: bin})
+			defer ResetMunsuPathResolver()
+			callCount := 0
+			defer SetCapabilityCommandRunner(func(_ string, _ []string, _ string, _ time.Duration) (string, error) {
+				callCount++
+				if callCount == 1 {
+					return "0.79.0\n", nil
+				}
+				return "API probe passed\n", nil
+			})()
 
-	bin := testutil.WriteFakeExecutable(t, filepath.Join(dir, "munsu"), "#!/bin/sh\n")
-	testutil.WriteFakeExecutable(t, filepath.Join(dir, "pi"), "#!/bin/sh\necho 0.79.0\n")
-	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
-	SetMunsuPathResolver(testMunsuResolver{path: bin})
-	defer ResetMunsuPathResolver()
-	callCount := 0
-	defer SetCapabilityCommandRunner(func(_ string, _ []string, _ string, _ time.Duration) (string, error) {
-		callCount++
-		if callCount == 1 {
-			return "0.79.0\n", nil
-		}
-		return "API probe passed\n", nil
-	})()
-
-	_, _, _, err := (&PiAdapter{Cwd: dir, Scope: string(ScopeProject), DryRun: true}).InstallPiExtension()
-	if err == nil || !strings.Contains(err.Error(), "exists and is not owned by munsu") {
-		t.Fatalf("InstallPiExtension error = %v, want unowned-target refusal", err)
+			got, _, _, err := (&PiAdapter{Cwd: dir, Scope: string(ScopeProject), DryRun: true}).InstallPiExtension()
+			if tc.want == "" {
+				if err != nil || got != target {
+					t.Fatalf("InstallPiExtension = %q, %v, want %q and no error", got, err, target)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("InstallPiExtension error = %v, want refusal containing %q", err, tc.want)
+			}
+		})
 	}
 }

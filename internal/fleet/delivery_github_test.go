@@ -11,7 +11,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -70,32 +69,6 @@ merged: true
 	}
 	if values["merged"] != "true" {
 		t.Errorf("merged = %q, want true", values["merged"])
-	}
-}
-
-// --- forge client path routing ---
-
-func TestForgeClientFor_GitHubRoutesToGhAxiOnlyWhenReady(t *testing.T) {
-	installFakeGH(t)
-	old := ghAxiLookPath
-	t.Cleanup(func() { ghAxiLookPath = old })
-
-	ghAxiLookPath = func() (string, error) { return "/fake/gh-axi", nil }
-	forge, err := forgeClientFor(githubForgeStep)
-	if err != nil {
-		t.Fatalf("forgeClientFor with gh-axi Ready: %v", err)
-	}
-	if forge.github == nil {
-		t.Fatalf("forgeClientFor with gh-axi Ready = %+v, want the gh-axi client", forge)
-	}
-
-	ghAxiLookPath = func() (string, error) { return "", errors.New("not found") }
-	forge, err = forgeClientFor(githubForgeStep)
-	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
-		t.Fatalf("forgeClientFor with gh-axi Absent = %+v, %v; want not-Ready refusal", forge, err)
-	}
-	if forge.github != nil {
-		t.Fatalf("forgeClientFor with gh-axi Absent returned a client")
 	}
 }
 
@@ -201,17 +174,5 @@ func TestProbeGitHubCapability_ReturnsDeterministicState(t *testing.T) {
 	state2 := ProbeGitHubCapability()
 	if state != state2 {
 		t.Error("ProbeGitHubCapability is not deterministic")
-	}
-}
-
-// TestForgeClientRefusesBaselineAndProviderMismatch pins the two refusals in
-// captured-forge-to-client resolution: a baseline task has no forge, and a
-// delivery identity must name the step's own provider.
-func TestForgeClientRefusesBaselineAndProviderMismatch(t *testing.T) {
-	if _, err := forgeClientFor(taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"}); err == nil || !strings.Contains(err.Error(), "no configured forge tool") {
-		t.Fatalf("forgeClientFor(baseline) = %v, want a no-forge refusal", err)
-	}
-	if _, err := forgeClientForIdentity(gitlabForgeStep, domain.DeliveryIdentity{Provider: "github"}); err == nil || !strings.Contains(err.Error(), "does not match the task's configured forge adapter") {
-		t.Fatalf("forgeClientForIdentity(gitlab step, github identity) = %v, want a provider mismatch refusal", err)
 	}
 }

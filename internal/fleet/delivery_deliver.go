@@ -143,6 +143,16 @@ type DeliveryMergeRequest struct {
 	BaseRef string
 }
 
+// validateMergeConstraints refuses a merge request whose pinned head or base is
+// empty or differs from the delivery identity. Both providers share it, so the
+// pin is one rule.
+func validateMergeConstraints(provider string, ident domain.DeliveryIdentity, request DeliveryMergeRequest) error {
+	if request.HeadSHA == "" || request.HeadSHA != ident.HeadSHA || request.BaseRef == "" || request.BaseRef != ident.BaseRef {
+		return fmt.Errorf("%s merge constraints do not match the delivery identity", provider)
+	}
+	return nil
+}
+
 // DeliveryProvider is the one narrow typed Fleet capability consumed by
 // Deliver, with separate observation and irreversible mutation methods.
 // The GitHub (gh) and GitLab (glab) adapters implement the supported provider
@@ -298,27 +308,23 @@ func validateDeliverRequest(req DeliverRequest, method string) error {
 	return nil
 }
 
-// prevalidateDeliveryTask mirrors the canonical authorization gates so a
-// journal intent is never written for a task that cannot be authorized:
-// current working task with owner and the exact bindings, no matching active
-// delivery hold, no terminal committed outcome, and no already-active
-// (unrevoked) delivery authorization. The canonical issuance re-fences each of
-// those inside its transaction; this pass only avoids writing intent that must
-// abort. The head refusal is Fleet-only and has no canonical twin: the identity
-// head must equal the head git reads at the bound worktree now. The verdict
-// head equals the identity head at authorization (ReviewVerdict.Approves).
+// prevalidateDeliveryTask refuses a task that cannot be authorized before a
+// journal intent is written: the canonical authorization blocker owns the task
+// state, hold and delivery-index conditions, and the canonical issuance
+// re-fences them inside its transaction. The head refusal is Fleet-only and has
+// no canonical twin: the identity head must equal the head git reads at the
+// bound worktree now. The verdict head equals the identity head at
+// authorization (ReviewVerdict.Approves).
 func prevalidateDeliveryTask(c *taskauthority.Canonical, agg taskauthority.Aggregate, req DeliverRequest) error {
-	if !agg.Current {
-		return fmt.Errorf("task %s is not the current generation", agg.TaskID)
+	tid, err := domain.NewTaskID(agg.TaskID)
+	if err != nil {
+		return err
 	}
-	if agg.Phase != taskauthority.PhaseWorking {
-		return fmt.Errorf("delivery requires a working task; task %s is %s", agg.TaskID, agg.Phase)
+	if err := c.DeliveryAuthorizationBlocker(tid); err != nil {
+		return err
 	}
-	if strings.TrimSpace(agg.Definition.Owner) == "" {
-		return fmt.Errorf("delivery requires an owner for task %s", agg.TaskID)
-	}
-	if agg.Worktree == nil || agg.Endpoint == nil {
-		return fmt.Errorf("delivery requires the bound worktree and endpoint of task %s", agg.TaskID)
+	if agg.Worktree == nil {
+		return fmt.Errorf("delivery requires the bound worktree of task %s", agg.TaskID)
 	}
 	observed, err := observeTree(agg.Worktree.Path)
 	if err != nil {
@@ -326,34 +332,6 @@ func prevalidateDeliveryTask(c *taskauthority.Canonical, agg taskauthority.Aggre
 	}
 	if observed.Head != req.Identity.HeadSHA {
 		return fmt.Errorf("delivery identity head %q does not match the head %q the bound worktree holds now", req.Identity.HeadSHA, observed.Head)
-	}
-	holds, err := c.ListHolds()
-	if err != nil {
-		return err
-	}
-	for _, hold := range holds {
-		if hold.Matches(taskauthority.DispatchActionDelivery, agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID) {
-			return fmt.Errorf("delivery is held for task %s: %s (%s)", agg.TaskID, hold.ID, hold.Reason)
-		}
-	}
-	tid, err := domain.NewTaskID(agg.TaskID)
-	if err != nil {
-		return err
-	}
-	out, err := c.DeliveryOutcome(tid)
-	if err == nil {
-		if deliveryOutcomeTerminal(out.Status) {
-			return fmt.Errorf("task %s already committed terminal delivery outcome %q; a new delivery authorization conflicts", agg.TaskID, out.Status)
-		}
-	} else if !errors.Is(err, taskauthority.ErrNotFound) {
-		return err
-	}
-	cur, err := c.DeliveryCurrency(tid)
-	if err != nil {
-		return err
-	}
-	if cur.Authorization != nil && !isRevokedCurrency(cur) {
-		return fmt.Errorf("task %s already has an active delivery authorization %s; release it before a new delivery", agg.TaskID, cur.Authorization.OperationID)
 	}
 	return nil
 }
@@ -515,11 +493,7 @@ func resumeDeliveryJournal(h *home.Home, lk *home.Lock, c *taskauthority.Canonic
 		var mergeErr error
 		if !alreadyMutating {
 			request := DeliveryMergeRequest{Method: journal.Method, HeadSHA: journal.Identity.HeadSHA, BaseRef: journal.Identity.BaseRef}
-			if err := provider.ValidateMergeRequest(journal.Identity, request); err != nil {
-				mergeErr = err
-			} else {
-				mergeErr = provider.Merge(journal.Identity, request)
-			}
+			mergeErr = provider.Merge(journal.Identity, request)
 		}
 		obs, obsErr := provider.Observe(journal.Identity)
 		if obsErr == nil {
@@ -900,12 +874,6 @@ func releaseDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJ
 		return fmt.Errorf("releasing delivery authorization: %w", err)
 	}
 	return nil
-}
-
-// deliveryOutcomeTerminal reports whether the closed-set status is an end
-// state of the delivery record.
-func deliveryOutcomeTerminal(status taskauthority.DeliveryOutcomeStatus) bool {
-	return status == taskauthority.DeliveryOutcomeCompleted || status == taskauthority.DeliveryOutcomePartial || status == taskauthority.DeliveryOutcomeRemoteUnknown
 }
 
 // equalDeliveryPreconditions reports whether two closed-set precondition

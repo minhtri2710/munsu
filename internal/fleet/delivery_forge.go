@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -17,6 +16,16 @@ type forgeClient struct {
 	gitlab *glabClient
 }
 
+// requireReadyForge re-probes the captured forge step and refuses unless it is
+// Ready. Every delivery path through the forge shares it, so the refusal is one
+// rule.
+func requireReadyForge(step taskauthority.DeliveryStep) error {
+	if state := probeConfiguredForge(toolEntryOf(step)); state != backend.Ready {
+		return fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", step.Adapter, state)
+	}
+	return nil
+}
+
 // forgeClientFor resolves a task generation's captured forge step to its
 // provider client. The step's adapter names the provider, and its captured
 // path and args drive the glab runner. Every call re-probes the configured tool
@@ -26,15 +35,14 @@ func forgeClientFor(step taskauthority.DeliveryStep) (forgeClient, error) {
 	if step.Baseline {
 		return forgeClient{}, fmt.Errorf("the task has no configured forge tool; delivery needs a Ready forge step")
 	}
-	entry := toolEntryOf(step)
-	if state := probeConfiguredForge(entry); state != backend.Ready {
-		return forgeClient{}, fmt.Errorf("forge adapter %s probe %s: configured forge is not Ready", step.Adapter, strings.ToLower(state.String()))
+	if err := requireReadyForge(step); err != nil {
+		return forgeClient{}, err
 	}
 	switch step.Adapter {
 	case "github":
 		return forgeClient{github: &ghAxiClient{}}, nil
 	case "gitlab":
-		return forgeClient{gitlab: &glabClient{runner: glabRunnerFor(entry)}}, nil
+		return forgeClient{gitlab: &glabClient{runner: glabRunnerFor(toolEntryOf(step))}}, nil
 	}
 	return forgeClient{}, fmt.Errorf("forge adapter %q is not compiled in", step.Adapter)
 }

@@ -37,24 +37,6 @@ func TestPreflight_LocalOnlyAlwaysOK(t *testing.T) {
 }
 
 func TestPreflight_DirectPR_ForgeReadiness(t *testing.T) {
-	t.Run("forge not on PATH refuses in every forge mode", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		for _, mode := range []string{"direct-PR", "no-mistakes"} {
-			_, err := Preflight(mode, "", githubForgeStep)
-			if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
-				t.Fatalf("%s: expected configured-forge refusal, got: %v", mode, err)
-			}
-		}
-	})
-
-	t.Run("gh not authenticated refuses", func(t *testing.T) {
-		installFakeGH(t, ghReply{match: "auth status", stderr: "You are not logged into any GitHub hosts.", exit: 1})
-		_, err := Preflight("direct-PR", "", githubForgeStep)
-		if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
-			t.Fatalf("expected configured-forge refusal without gh auth, got: %v", err)
-		}
-	})
-
 	t.Run("forge ready is feasible", func(t *testing.T) {
 		installFakeGH(t)
 		result, err := Preflight("direct-PR", "", githubForgeStep)

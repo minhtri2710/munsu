@@ -3,6 +3,7 @@ package taskauthority
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -180,73 +181,121 @@ func TestCanonicalBindEndpoint(t *testing.T) {
 	}
 }
 
-func TestCanonicalBindEndpointRequiresWorktree(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-no-wt", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("bind endpoint without worktree = %v, want ErrConflict", err)
-	}
-}
-
-func TestCanonicalBindEndpointRequiresQueued(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustBindWorktree(t, c, "t1")
-
-	// Move to working first via Start (no endpoint), then bind endpoint fails.
-	start := startWithRev(c, "t1", 2)
-	if _, err := c.Start(mustOperation(t, "op-start-before-bind", start), start); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 3))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-working", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("bind endpoint on working = %v, want ErrConflict", err)
-	}
-}
-
-func TestCanonicalBindEndpointAlreadyBound(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustBindWorktree(t, c, "t1")
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-1", req), req); err != nil {
-		t.Fatalf("BindEndpoint: %v", err)
-	}
-	// Second bind with next revision fails: already bound.
-	again := bindEndpointRequest(c, "t1", preconditionOf(1, 3))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-2", again), again); !errors.Is(err, ErrConflict) {
-		t.Fatalf("re-bind endpoint = %v, want ErrConflict", err)
-	}
-}
-
-func TestCanonicalBindEndpointBlockedBySpawnHold(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustBindWorktree(t, c, "t1")
-
+// stepAddHold adds a hold on one dispatch action of task t1.
+func stepAddHold(t *testing.T, c *Canonical, action DispatchAction) {
+	t.Helper()
 	hold := CanonicalAddHoldRequest{
-		HomeID:  c.HomeID(),
-		HoldID:  "spawn-hold",
-		Scope:   DispatchHoldScope{TaskIDs: []string{"t1"}},
-		Actions: []DispatchAction{DispatchActionSpawn},
-		Reason:  "freeze spawn",
+		HomeID: c.HomeID(), HoldID: "hold-1", Scope: DispatchHoldScope{TaskIDs: []string{"t1"}},
+		Actions: []DispatchAction{action}, Reason: "freeze",
 	}
-	if _, err := c.AddHold(mustOperation(t, "op-hold-spawn", hold), hold); err != nil {
-		t.Fatalf("AddHold: %v", err)
+	_, err := c.AddHold(mustOperation(t, "op-hold-1", hold), hold)
+	mustStep(t, err)
+}
+
+// stepReleaseHold releases the hold stepAddHold added.
+func stepReleaseHold(t *testing.T, c *Canonical) {
+	t.Helper()
+	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "hold-1", Reason: "resume", Words: testWords()}
+	_, err := c.ReleaseHold(mustOperation(t, "op-release-1", release), release)
+	mustStep(t, err)
+}
+
+// The binding and dispatch rules: the phase each launch step requires, and the
+// durable holds that stop a dispatch action.
+func TestTaskBindingAndDispatchRefusals(t *testing.T) {
+	bindEndpoint := func(t *testing.T, c *Canonical, rev uint64) error {
+		req := bindEndpointRequest(c, "t1", preconditionOf(1, rev))
+		_, err := c.BindEndpoint(mustOperation(t, fmt.Sprintf("op-bind-ep-%d", rev), req), req)
+		return err
+	}
+	beginSpawn := func(t *testing.T, c *Canonical, rev uint64) error {
+		req := launchRequest(c, "t1", preconditionOf(1, rev))
+		_, err := c.BeginSpawn(mustOperation(t, fmt.Sprintf("op-begin-%d", rev), req), req)
+		return err
+	}
+	authorize := func(t *testing.T, c *Canonical) error {
+		req := authorizeRequest(c, "t1", preconditionOf(1, deliveryReadyRev))
+		_, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-1", req), req)
+		return err
 	}
 
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-held", req), req); !errors.Is(err, ErrDispatchHeld) {
-		t.Fatalf("bind endpoint held = %v, want ErrDispatchHeld", err)
-	}
+	runRefusalRows(t, []refusalRow{
+		{name: "bind endpoint refuses a working task", class: ErrConflict, want: "bind endpoint requires queued", run: func(t *testing.T, c *Canonical) error {
+			mustBindWorktree(t, c, "t1")
+			mustStep(t, stepStart(t, c, "t1", 2))
+			return bindEndpoint(t, c, 3)
+		}},
+		{name: "bind endpoint refuses a queued task that kept its endpoint", class: ErrConflict, want: "already has an endpoint binding", run: func(t *testing.T, c *Canonical) error {
+			mustBindWorktree(t, c, "t1")
+			mustStep(t, bindEndpoint(t, c, 2))
+			mustStep(t, stepBlock(t, c, "t1", 3))
+			mustStep(t, stepUnblock(t, c, "t1", 4))
+			return bindEndpoint(t, c, 5)
+		}},
+		{name: "bind endpoint refuses a task with no worktree", class: ErrConflict, want: "bind endpoint requires a bound worktree", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return bindEndpoint(t, c, 1)
+		}},
+		{name: "bind endpoint allows a queued task with a worktree and no endpoint", run: func(t *testing.T, c *Canonical) error {
+			mustBindWorktree(t, c, "t1")
+			return bindEndpoint(t, c, 2)
+		}},
 
-	// Releasing the hold allows the spawn.
-	release := CanonicalReleaseHoldRequest{HomeID: c.HomeID(), HoldID: "spawn-hold", Reason: "resume", Words: testWords()}
-	if _, err := c.ReleaseHold(mustOperation(t, "op-release-spawn", release), release); err != nil {
-		t.Fatalf("ReleaseHold: %v", err)
-	}
-	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-after", req), req); err != nil {
-		t.Fatalf("bind endpoint after release: %v", err)
-	}
+		{name: "begin spawn refuses a working task", class: ErrConflict, want: "begin spawn requires queued", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepStart(t, c, "t1", 1))
+			return beginSpawn(t, c, 2)
+		}},
+		{name: "begin spawn allows a queued task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return beginSpawn(t, c, 1)
+		}},
+
+		{name: "start refuses a task under a start hold", class: ErrDispatchHeld, want: "dispatch is held for t1", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			stepAddHold(t, c, DispatchActionStart)
+			return stepStart(t, c, "t1", 1)
+		}},
+		{name: "start allows a task once its start hold is released", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			stepAddHold(t, c, DispatchActionStart)
+			stepReleaseHold(t, c)
+			return stepStart(t, c, "t1", 1)
+		}},
+		{name: "bind endpoint refuses a task under a spawn hold", class: ErrDispatchHeld, want: "dispatch is held for t1", run: func(t *testing.T, c *Canonical) error {
+			mustBindWorktree(t, c, "t1")
+			stepAddHold(t, c, DispatchActionSpawn)
+			return bindEndpoint(t, c, 2)
+		}},
+		{name: "bind endpoint allows a task once its spawn hold is released", run: func(t *testing.T, c *Canonical) error {
+			mustBindWorktree(t, c, "t1")
+			stepAddHold(t, c, DispatchActionSpawn)
+			stepReleaseHold(t, c)
+			return bindEndpoint(t, c, 2)
+		}},
+		{name: "begin spawn refuses a task under a spawn hold", class: ErrDispatchHeld, want: "dispatch is held for t1", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			stepAddHold(t, c, DispatchActionSpawn)
+			return beginSpawn(t, c, 1)
+		}},
+		{name: "begin spawn allows a task once its spawn hold is released", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			stepAddHold(t, c, DispatchActionSpawn)
+			stepReleaseHold(t, c)
+			return beginSpawn(t, c, 1)
+		}},
+		{name: "authorize delivery refuses a task under a delivery hold", class: ErrDispatchHeld, want: "delivery is held for task t1", run: func(t *testing.T, c *Canonical) error {
+			mustDeliveryTask(t, c, "t1")
+			stepAddHold(t, c, DispatchActionDelivery)
+			return authorize(t, c)
+		}},
+		{name: "authorize delivery allows a task once its delivery hold is released", run: func(t *testing.T, c *Canonical) error {
+			mustDeliveryTask(t, c, "t1")
+			stepAddHold(t, c, DispatchActionDelivery)
+			stepReleaseHold(t, c)
+			return authorize(t, c)
+		}},
+	})
 }
 
 func TestCanonicalBindEndpointIdempotentReplay(t *testing.T) {

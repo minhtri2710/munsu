@@ -3,6 +3,7 @@ package taskauthority
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -45,6 +46,88 @@ func wantErrSubstring(t *testing.T, err error, sub, what string) {
 // used verbatim.
 func opIDFor(prefix, name string) string {
 	return prefix + "-" + strings.ReplaceAll(name, " ", "-")
+}
+
+// refusalRow is one side of a policy refusal. run builds the state on a fresh
+// canonical and returns the error of the operation under test. A blocking row
+// names the sentinel class and the message of the guard it pins; a row with no
+// message is the nearest valid input and must be accepted. Pairing a blocking
+// row with its allowing row is what makes a guard widened or deleted show up as
+// a red row on one side or the other.
+type refusalRow struct {
+	name  string
+	class error
+	want  string
+	run   func(t *testing.T, c *Canonical) error
+}
+
+// runRefusalRows runs every row on its own fresh canonical.
+func runRefusalRows(t *testing.T, rows []refusalRow) {
+	t.Helper()
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			c, _, _ := newTestCanonical(t)
+			err := row.run(t, c)
+			if row.want == "" {
+				if err != nil {
+					t.Fatalf("%s = %v, want it accepted", row.name, err)
+				}
+				return
+			}
+			if !errors.Is(err, row.class) {
+				t.Fatalf("%s = %v, want class %v", row.name, err, row.class)
+			}
+			wantErrSubstring(t, err, row.want, row.name)
+		})
+	}
+}
+
+// Lifecycle steps for the refusal tables. Each runs against t1 (unless told
+// otherwise) at the given revision and returns the operation's error; the
+// operation identity is derived from the step and revision, which is unique
+// within one row's fresh canonical.
+func stepStart(t *testing.T, c *Canonical, taskID string, rev uint64) error {
+	t.Helper()
+	req := startWithRev(c, taskID, rev)
+	_, err := c.Start(mustOperation(t, fmt.Sprintf("op-start-%s-%d", taskID, rev), req), req)
+	return err
+}
+
+func stepBlock(t *testing.T, c *Canonical, taskID string, rev uint64) error {
+	t.Helper()
+	req := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev), Detail: "waiting", Reason: "block"}
+	_, err := c.Block(mustOperation(t, fmt.Sprintf("op-block-%s-%d", taskID, rev), req), req)
+	return err
+}
+
+func stepUnblock(t *testing.T, c *Canonical, taskID string, rev uint64) error {
+	t.Helper()
+	req := CanonicalUnblockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev), Reason: "unblock"}
+	_, err := c.Unblock(mustOperation(t, fmt.Sprintf("op-unblock-%s-%d", taskID, rev), req), req)
+	return err
+}
+
+func stepComplete(t *testing.T, c *Canonical, taskID string, rev uint64, to Phase) error {
+	t.Helper()
+	req := CanonicalCompleteRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev), To: to, Reason: "complete"}
+	_, err := c.Complete(mustOperation(t, fmt.Sprintf("op-complete-%s-%d", taskID, rev), req), req)
+	return err
+}
+
+func stepReopen(t *testing.T, c *Canonical, taskID string, rev uint64) error {
+	t.Helper()
+	req := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev), Reason: "reopen"}
+	_, err := c.Reopen(mustOperation(t, fmt.Sprintf("op-reopen-%s-%d", taskID, rev), req), req)
+	return err
+}
+
+// mustStep fails the test when a setup step of a row is refused, so a fixture
+// that stopped being accepted is a failed setup and not a passing refusal.
+func mustStep(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("setup step: %v", err)
+	}
 }
 
 // --- dispatch.go: the durable hold record --------------------------------
@@ -133,112 +216,147 @@ func TestGuardCreateRefusesTaskWithoutOwner(t *testing.T) {
 	wantErrSubstring(t, err, "create requires an owner", "Create without an owner")
 }
 
-// Start is the queued -> working transition. Starting a task that is already
-// working would issue a second start against a live soldier.
-func TestGuardStartRefusesNonQueuedTask(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	first := startWithRev(c, "t1", 1)
-	if _, err := c.Start(mustOperation(t, "op-start-1", first), first); err != nil {
-		t.Fatalf("Start on a queued task: %v", err)
-	}
-	second := startWithRev(c, "t1", 2)
-	_, err := c.Start(mustOperation(t, "op-start-2", second), second)
-	wantErrSubstring(t, err, "start requires queued task", "Start on a working task")
-}
-
-// Block moves a live task out of dispatch. A terminal task is not live:
-// blocking it would resurrect a completed generation into a blocked one.
-func TestGuardBlockRefusesTerminalTask(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	// Control: the same call against the queued task is accepted, so the
-	// refusal below is the phase and not the request.
-	blockQueued := CanonicalBlockRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 1), Detail: "waiting", Reason: "block",
-	}
-	if _, err := c.Block(mustOperation(t, "op-block-control", blockQueued), blockQueued); err != nil {
-		t.Fatalf("Block on a queued task: %v", err)
-	}
-
-	mustCreate(t, c, "t2")
-	done := CanonicalCompleteRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t2"),
-		Precondition: preconditionOf(1, 1), To: PhaseDone, Reason: "done",
-	}
-	if _, err := c.Complete(mustOperation(t, "op-complete-t2", done), done); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	blockDone := CanonicalBlockRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t2"),
-		Precondition: preconditionOf(1, 2), Detail: "waiting", Reason: "block",
-	}
-	_, err := c.Block(mustOperation(t, "op-block-done", blockDone), blockDone)
-	wantErrSubstring(t, err, "block requires queued or working task", "Block on a done task")
-}
-
-// Complete is the transition INTO a terminal phase, and only into done or
-// resolved: it is neither a way back out of one nor a generic phase setter.
-func TestGuardCompleteRefusesTerminalSourceAndNonTerminalTarget(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-
-	first := CanonicalCompleteRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 1), To: PhaseDone, Reason: "done",
-	}
-	if _, err := c.Complete(mustOperation(t, "op-complete-1", first), first); err != nil {
-		t.Fatalf("Complete on a queued task: %v", err)
-	}
-
-	t.Run("a task that is already terminal", func(t *testing.T) {
-		again := CanonicalCompleteRequest{
-			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-			Precondition: preconditionOf(1, 2), To: PhaseResolved, Reason: "done again",
-		}
-		_, err := c.Complete(mustOperation(t, "op-complete-2", again), again)
-		wantErrSubstring(t, err, "complete requires a non-terminal task", "Complete on a done task")
-	})
-
-	t.Run("a target phase that is not terminal", func(t *testing.T) {
-		mustCreate(t, c, "t2")
-		toQueued := CanonicalCompleteRequest{
-			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t2"),
-			Precondition: preconditionOf(1, 1), To: PhaseQueued, Reason: "complete",
-		}
-		_, err := c.Complete(mustOperation(t, "op-complete-queued", toQueued), toQueued)
-		wantErrSubstring(t, err, "is not a terminal phase", "Complete into queued")
-	})
-}
-
-// Reopen creates the next Generation of a finished task. A task that never
-// existed has no generation to succeed, and a live one is not finished.
-func TestGuardReopenRefusesMissingAndNonTerminalTasks(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-
-	t.Run("a task that does not exist", func(t *testing.T) {
-		req := CanonicalReopenRequest{
-			HomeID: c.HomeID(), TaskID: mustTaskID(t, "never-created"),
-			Precondition: preconditionOf(1, 1), Reason: "reopen",
-		}
-		_, err := c.Reopen(mustOperation(t, "op-reopen-missing", req), req)
-		if !errors.Is(err, ErrNotFound) {
-			t.Fatalf("Reopen of a missing task = %v, want ErrNotFound", err)
-		}
-		wantErrSubstring(t, err, "not found", "Reopen of a missing task")
-	})
-
-	t.Run("a task that is still live", func(t *testing.T) {
+// The task lifecycle phase, kind and currentness rules. Every refusal is a pair:
+// the row that blocks it and the row for the nearest valid input.
+func TestTaskLifecycleRefusals(t *testing.T) {
+	supersededSource := func(t *testing.T, c *Canonical) domain.Precondition {
 		mustCreate(t, c, "t1")
-		req := CanonicalReopenRequest{
-			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
-			Precondition: preconditionOf(1, 1), Reason: "reopen",
+		mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
+		commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-t1", "dest-home")
+		if _, err := c.CommitTransfer(mustOperation(t, "op-commit-t1", commit), commit); err != nil {
+			t.Fatalf("CommitTransfer: %v", err)
 		}
-		_, err := c.Reopen(mustOperation(t, "op-reopen-queued", req), req)
-		wantErrSubstring(t, err, "reopen requires terminal task", "Reopen of a queued task")
+		hist, err := c.GetGeneration(mustTaskID(t, "t1"), Generation(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return preconditionOf(uint64(hist.Generation), uint64(hist.Revision))
+	}
+	promote := func(t *testing.T, c *Canonical, taskID string, prec domain.Precondition, mutate func(*CanonicalPromoteRequest)) error {
+		req := promoteRequest(t, c, taskID, prec)
+		mutate(&req)
+		_, err := c.Promote(mustOperation(t, "op-promote-"+taskID, req), req)
+		return err
+	}
+	noChange := func(*CanonicalPromoteRequest) {}
+
+	runRefusalRows(t, []refusalRow{
+		{name: "start refuses a working task", class: ErrPrecondition, want: "start requires queued task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepStart(t, c, "t1", 1))
+			return stepStart(t, c, "t1", 2)
+		}},
+		{name: "start allows a queued task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return stepStart(t, c, "t1", 1)
+		}},
+
+		{name: "block refuses a done task", class: ErrPrecondition, want: "block requires queued or working task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			return stepBlock(t, c, "t1", 2)
+		}},
+		{name: "block allows a working task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepStart(t, c, "t1", 1))
+			return stepBlock(t, c, "t1", 2)
+		}},
+
+		{name: "unblock refuses a queued task", class: ErrPrecondition, want: "unblock requires blocked task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return stepUnblock(t, c, "t1", 1)
+		}},
+		{name: "unblock allows a blocked task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepBlock(t, c, "t1", 1))
+			return stepUnblock(t, c, "t1", 2)
+		}},
+
+		{name: "complete refuses a terminal task", class: ErrPrecondition, want: "complete requires a non-terminal task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			return stepComplete(t, c, "t1", 2, PhaseResolved)
+		}},
+		{name: "complete allows a queued task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return stepComplete(t, c, "t1", 1, PhaseDone)
+		}},
+		{name: "complete refuses a target that is not terminal", class: ErrInvalidInput, want: "is not a terminal phase", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return stepComplete(t, c, "t1", 1, PhaseQueued)
+		}},
+		{name: "complete allows a resolved target", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return stepComplete(t, c, "t1", 1, PhaseResolved)
+		}},
+
+		{name: "reopen refuses a task that does not exist", class: ErrNotFound, want: "not found", run: func(t *testing.T, c *Canonical) error {
+			return stepReopen(t, c, "never-created", 1)
+		}},
+		{name: "reopen refuses a live task", class: ErrPrecondition, want: "reopen requires terminal task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			return stepReopen(t, c, "t1", 1)
+		}},
+		{name: "reopen allows a terminal task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			return stepReopen(t, c, "t1", 2)
+		}},
+		{name: "reopen refuses a superseded generation", class: ErrConflict, want: "is not current; it is superseded and cannot be mutated", run: func(t *testing.T, c *Canonical) error {
+			prec := supersededSource(t, c)
+			req := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, Reason: "reopen"}
+			_, err := c.Reopen(mustOperation(t, "op-reopen-superseded", req), req)
+			return err
+		}},
+		{name: "reopen refuses a task reserved for transfer", class: ErrConflict, want: "is reserved for transfer; unrelated mutations fail closed", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			mustReserveTransfer(t, c, "t1", preconditionOf(1, 2), "dest-home")
+			return stepReopen(t, c, "t1", 3)
+		}},
+
+		{name: "promote refuses a current kind that is not scout", class: ErrInvalidInput, want: "promotion requires scout -> ship kind promotion", run: func(t *testing.T, c *Canonical) error {
+			return promote(t, c, "t1", mustDoneScout(t, c, "t1"), func(r *CanonicalPromoteRequest) { r.CurrentKind = "ship" })
+		}},
+		{name: "promote refuses a target kind that is not ship", class: ErrInvalidInput, want: "promotion requires scout -> ship kind promotion", run: func(t *testing.T, c *Canonical) error {
+			return promote(t, c, "t1", mustDoneScout(t, c, "t1"), func(r *CanonicalPromoteRequest) { r.TargetKind = "scout" })
+		}},
+		{name: "promote allows a done scout", run: func(t *testing.T, c *Canonical) error {
+			return promote(t, c, "t1", mustDoneScout(t, c, "t1"), noChange)
+		}},
+		{name: "promote refuses a done ship task", class: ErrPrecondition, want: "only scout tasks promote to ship", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			return promote(t, c, "t1", preconditionOf(1, 2), noChange)
+		}},
+		{name: "promote refuses a live scout", class: ErrPrecondition, want: "promotion requires a done or resolved scout", run: func(t *testing.T, c *Canonical) error {
+			create := scoutCreateRequest(c, "t1")
+			_, err := c.Create(mustOperation(t, "op-create-t1", create), create)
+			mustStep(t, err)
+			return promote(t, c, "t1", preconditionOf(1, 1), noChange)
+		}},
+		{name: "promote allows a resolved scout", run: func(t *testing.T, c *Canonical) error {
+			create := scoutCreateRequest(c, "t1")
+			_, err := c.Create(mustOperation(t, "op-create-t1", create), create)
+			mustStep(t, err)
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseResolved))
+			return promote(t, c, "t1", preconditionOf(1, 2), noChange)
+		}},
+
+		{name: "a superseded generation refuses a mutation", class: ErrConflict, want: "is not current; it is superseded and cannot be mutated", run: func(t *testing.T, c *Canonical) error {
+			prec := supersededSource(t, c)
+			req := CanonicalStartRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, Reason: "start"}
+			_, err := c.Start(mustOperation(t, "op-start-superseded", req), req)
+			return err
+		}},
+		{name: "the current generation allows the same mutation", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			mustStep(t, stepReopen(t, c, "t1", 2))
+			req := CanonicalStartRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(2, 1), Reason: "start"}
+			_, err := c.Start(mustOperation(t, "op-start-gen2", req), req)
+			return err
+		}},
 	})
 }
 
@@ -536,37 +654,6 @@ func TestGuardRecordLaunchRefusesWorkingTask(t *testing.T) {
 	req.CommandDigest = digestOf("a second submission")
 	_, err := c.RecordLaunch(mustOperation(t, "op-record-working", req), req)
 	wantErrSubstring(t, err, "record launch requires queued", "RecordLaunch on a working task")
-}
-
-// --- canonical_promote.go ------------------------------------------------
-
-// Promote is the named scout -> ship transition, not a generic kind setter:
-// any other pair of kinds is refused before the task is even read.
-func TestGuardPromoteRefusesAnyOtherKindPair(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	prec := mustDoneScout(t, c, "t1")
-
-	for _, tc := range []struct {
-		name   string
-		mutate func(*CanonicalPromoteRequest)
-	}{
-		{"a current kind that is not scout", func(r *CanonicalPromoteRequest) { r.CurrentKind = "ship" }},
-		{"a target kind that is not ship", func(r *CanonicalPromoteRequest) { r.TargetKind = "scout" }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := promoteRequest(t, c, "t1", prec)
-			tc.mutate(&req)
-			_, err := c.Promote(mustOperation(t, opIDFor("op-promote", tc.name), req), req)
-			wantErrSubstring(t, err, "promotion requires scout -> ship kind promotion", "Promote with "+tc.name)
-		})
-	}
-
-	// Control: the scout -> ship pair on the same task is accepted, so the
-	// refusals above are the kind pair and not the task's state.
-	ok := promoteRequest(t, c, "t1", prec)
-	if _, err := c.Promote(mustOperation(t, "op-promote-control", ok), ok); err != nil {
-		t.Fatalf("Promote scout -> ship: %v", err)
-	}
 }
 
 // --- canonical_retirement.go ---------------------------------------------

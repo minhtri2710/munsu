@@ -63,11 +63,9 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	writeRawTaskMeta(t, tmpDir, "test-task", "window=@0\nbackend=tmux\nkind=ship\n")
 	writeTaskStatus(t, tmpDir, "test-task", "working: spawned\n")
 
-	// Remove both tmux and herdr from PATH so whichever backend is attempted will fail
+	// Leave only git on PATH so whichever backend is attempted will fail
 	// and tell us which one it tried.
-	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", "/dev/null")
-	defer os.Setenv("PATH", oldPath)
+	gitOnlyPath(t)
 
 	root := NewRootCommand()
 	root.SetArgs([]string{"send", "test-task", "echo hello", "--home", tmpDir})
@@ -105,10 +103,8 @@ func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 	metaContent := "window=@0\nbackend=nonexistent\nkind=ship\n"
 	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
 
-	// Set PATH to nothing so backend resolution fails
-	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", "/dev/null")
-	defer os.Setenv("PATH", oldPath)
+	// Leave only git on PATH so backend resolution fails
+	gitOnlyPath(t)
 
 	root := NewRootCommand()
 	root.SetArgs([]string{"send", "test-task", "echo hello", "--home", tmpDir})
@@ -760,4 +756,19 @@ func TestPromoteRefusesAbsentTask(t *testing.T) {
 	if _, err := home.ReadMeta(homeDir, "scout-absent"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("meta written for absent task: %v", err)
 	}
+}
+
+// gitOnlyPath restricts PATH to git alone: the gate-agent check refuses when git
+// cannot run, and the backend lookups under test must still find no tmux or herdr.
+func gitOnlyPath(t *testing.T) {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(git, filepath.Join(dir, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
 }

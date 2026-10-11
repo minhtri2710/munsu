@@ -100,8 +100,8 @@ func resolveVerdictTask(homeDir, taskID string) (*taskauthority.Canonical, taska
 	if err != nil {
 		return nil, taskauthority.Aggregate{}, fmt.Errorf("review verdict %s: resolving task: %w", taskID, err)
 	}
-	if agg.Worktree == nil || agg.Endpoint == nil {
-		return nil, taskauthority.Aggregate{}, fmt.Errorf("review verdict requires the bound worktree and endpoint of task %s", taskID)
+	if err := agg.VerdictBindingBlocker(); err != nil {
+		return nil, taskauthority.Aggregate{}, err
 	}
 	return c, agg, nil
 }
@@ -252,8 +252,8 @@ func RecordReviewVerdict(homeDir, reviewTaskID string, generation uint64, wantDi
 	if err != nil {
 		return "", fmt.Errorf("review verdict: resolving reviewed task %s: %w", shipID, err)
 	}
-	if ship.Worktree == nil || ship.Endpoint == nil {
-		return "", fmt.Errorf("review verdict requires the bound worktree and endpoint of task %s", shipID)
+	if err := ship.VerdictBindingBlocker(); err != nil {
+		return "", err
 	}
 	after, err := observeTree(ship.Worktree.Path)
 	if err != nil {

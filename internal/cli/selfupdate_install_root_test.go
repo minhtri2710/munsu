@@ -54,18 +54,6 @@ func mkDir(t *testing.T, root, name string) {
 	}
 }
 
-// initRemote creates a bare repo and sets it as origin on the given repo,
-// then pushes main and sets origin/HEAD.
-func initRemote(t *testing.T, localRoot string) string {
-	t.Helper()
-	bare := t.TempDir()
-	runInstallRootCmd(t, bare, "git", "init", "--bare")
-	runInstallRootCmd(t, localRoot, "git", "remote", "add", "origin", bare)
-	runInstallRootCmd(t, localRoot, "git", "push", "-u", "origin", "main")
-	runInstallRootCmd(t, bare, "git", "symbolic-ref", "HEAD", "refs/heads/main")
-	return bare
-}
-
 // --- TestResolveInstallRoot_Precedence ---
 
 // TestResolveInstallRoot_Tier1_RepoOpt verifies that --repo is checked first
@@ -353,85 +341,28 @@ func TestVerifyMunsuModule_NoGoMod(t *testing.T) {
 
 // --- TestUpdateIn_Safety ---
 
-// TestUpdateIn_DirtyRefuses verifies that a dirty worktree is rejected.
-func TestUpdateIn_DirtyRefuses(t *testing.T) {
-	repo := t.TempDir()
-	initMunsuRepo(t, repo, "main")
-
-	// Write a tracked file and commit it, then modify without staging.
-	writeFile(t, repo, "foo.go", "package foo\n")
-	runInstallRootCmd(t, repo, "git", "add", "foo.go")
-	runInstallRootCmd(t, repo, "git", "commit", "-m", "add foo")
-	writeFile(t, repo, "foo.go", "package foo\n// dirty\n")
-
-	err := UpdateIn(repo)
-	if err == nil {
-		t.Fatal("expected error for dirty worktree")
-	}
-	if !strings.Contains(err.Error(), "uncommitted changes") {
-		t.Errorf("error should mention uncommitted changes, got: %v", err)
-	}
-}
-
-// TestUpdateIn_DetachedHeadRefuses verifies that a detached HEAD is rejected.
-func TestUpdateIn_DetachedHeadRefuses(t *testing.T) {
-	repo := t.TempDir()
-	initMunsuRepo(t, repo, "main")
-
-	writeFile(t, repo, "a.go", "package a\n")
-	runInstallRootCmd(t, repo, "git", "add", "a.go")
-	runInstallRootCmd(t, repo, "git", "commit", "-m", "add a")
-
-	// Add remote so UpdateIn can reach the detached-HEAD checks.
-	initRemote(t, repo)
-
-	runInstallRootCmd(t, repo, "git", "checkout", "--detach")
-
-	err := UpdateIn(repo)
-	if err == nil {
-		t.Fatal("expected error for detached HEAD")
-	}
-	if !strings.Contains(err.Error(), "detached HEAD") {
-		t.Errorf("error should mention detached HEAD, got: %v", err)
-	}
-}
-
-// TestUpdateIn_NonDefaultBranchRefuses verifies that non-default branches are
-// rejected (not just detached HEAD).
-func TestUpdateIn_NonDefaultBranchRefuses(t *testing.T) {
-	repo := t.TempDir()
-	initMunsuRepo(t, repo, "main")
-
-	// Add remote so UpdateIn can resolve default branch.
-	initRemote(t, repo)
-
-	runInstallRootCmd(t, repo, "git", "branch", "develop", "main")
-	runInstallRootCmd(t, repo, "git", "checkout", "develop")
-
-	err := UpdateIn(repo)
-	if err == nil {
-		t.Fatal("expected error for non-default branch")
-	}
-	if !strings.Contains(err.Error(), "does not match default branch") {
-		t.Errorf("error should mention does not match default branch, got: %v", err)
-	}
-}
-
-// TestUpdateIn_DefaultBranch is the table for how self-update takes its default
-// branch when origin/HEAD is unset (followRemoteHEAD=never keeps fetch from
-// creating it): from local or origin main/master only, never from the current
-// branch. Each refusal has its blocking row and its nearest allowing row.
+// TestUpdateIn_DefaultBranch is the table for what self-update accepts: a clean
+// checkout on the default branch, which it takes from local or origin
+// main/master only, never from the current branch, when origin/HEAD is unset
+// (followRemoteHEAD=never keeps fetch from creating it). Each refusal has its
+// blocking row and the nearest allowing row.
 func TestUpdateIn_DefaultBranch(t *testing.T) {
 	tests := []struct {
 		name     string
 		initial  string // branch the repo starts on and pushes
 		checkout string // branch to switch to before updating, if any
 		head     string // origin/HEAD target to plant, if any
+		dirty    bool   // modify a tracked file before updating
+		untrack  bool   // add an unignored untracked file before updating
+		detach   bool   // detach HEAD before updating
 		wantErr  string // empty: the update succeeds
 	}{
 		{name: "refuses when no main or master names a default", initial: "develop", wantErr: "cannot resolve default branch"},
 		{name: "refuses a checkout on another branch", initial: "main", checkout: "develop", wantErr: "does not match default branch"},
 		{name: "refuses an origin/HEAD outside refs/remotes/origin/", initial: "main", head: "refs/remotes/upstream/main", wantErr: "unexpected origin/HEAD symbolic ref format"},
+		{name: "refuses a checkout with uncommitted changes", initial: "main", dirty: true, wantErr: "uncommitted changes"},
+		{name: "refuses a checkout with an unignored untracked file", initial: "main", untrack: true, wantErr: "uncommitted changes"},
+		{name: "refuses a detached HEAD", initial: "main", detach: true, wantErr: "detached HEAD"},
 		{name: "updates a checkout on the resolved default", initial: "main"},
 	}
 	for _, tt := range tests {
@@ -459,6 +390,15 @@ func TestUpdateIn_DefaultBranch(t *testing.T) {
 			runInstallRootCmd(t, repo, "git", "commit", "-m", "ahead")
 			runInstallRootCmd(t, repo, "git", "push", "origin", "HEAD:refs/heads/"+tt.initial)
 			runInstallRootCmd(t, repo, "git", "reset", "--hard", "HEAD~1")
+			if tt.dirty {
+				writeFile(t, repo, "cmd/munsu/main.go", "package main\n\nfunc main() { /* dirty */ }\n")
+			}
+			if tt.untrack {
+				writeFile(t, repo, "scratch.txt", "x\n")
+			}
+			if tt.detach {
+				runInstallRootCmd(t, repo, "git", "checkout", "--detach")
+			}
 
 			realPath := filepath.Join(t.TempDir(), "munsu")
 			if err := os.WriteFile(realPath, []byte("old"), 0o755); err != nil {

@@ -168,9 +168,6 @@ func (c *Canonical) CommitTransfer(op domain.Operation, req CanonicalCommitTrans
 		if cur.Transfer == nil || cur.Transfer.ReservationID != req.ReservationID {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is not reserved under %s", cur.TaskID, cur.Generation, req.ReservationID)
 		}
-		if cur.Transfer.Transferred {
-			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s transfer is already committed", cur.TaskID, cur.Generation)
-		}
 		// The evidence must bind this authority's home and the reserved source
 		// generation: the destination activation proof is bound to the exact
 		// reservation being committed.

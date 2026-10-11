@@ -569,7 +569,7 @@ func requireRetirementIdentity(homeDir, id string) (*domain.DeliveryIdentity, er
 
 // requireCanonicalCompletedOutcome fails closed unless the task's canonical
 // committed delivery outcome is completed. It is the single merged-truth
-// derivation for poll retirement: no .meta projection
+// derivation for poll and task retirement: no .meta projection
 // authorizes merged truth.
 func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID string) error {
 	if auth == nil {

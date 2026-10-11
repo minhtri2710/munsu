@@ -47,8 +47,9 @@ func (s ResolvedSnapshot) WithSteps(review, forge ResolvedStep) (ResolvedSnapsho
 	if err := validateResolvedStep("forge", forge); err != nil {
 		return ResolvedSnapshot{}, err
 	}
-	if !review.Baseline && review.Adapter == "no-mistakes" && forge.Baseline {
-		return ResolvedSnapshot{}, fmt.Errorf("review adapter no-mistakes requires a configured forge tool")
+	reviewEntry, forgeEntry := toolEntryFromStep(review), toolEntryFromStep(forge)
+	if err := requireForgeForReview(reviewEntry, forgeEntry); err != nil {
+		return ResolvedSnapshot{}, err
 	}
 	resolved.ReviewStep = cloneResolvedStep(review)
 	resolved.ForgeStep = cloneResolvedStep(forge)
@@ -57,7 +58,7 @@ func (s ResolvedSnapshot) WithSteps(review, forge ResolvedStep) (ResolvedSnapsho
 		DispatchAutonomy: resolved.DispatchAutonomy, Backend: resolved.Backend,
 		TamperCheck:      resolved.TamperCheck,
 		DispatchProfiles: cloneProfiles(resolved.DispatchProfiles),
-		Review:           toolEntryFromStep(review), Forge: toolEntryFromStep(forge),
+		Review:           reviewEntry, Forge: forgeEntry,
 		FenceWritableRoots: resolved.FenceWritableRoots, FenceUnsupported: resolved.FenceUnsupported,
 	}
 	digest, err := projectDigest(config, review, forge)

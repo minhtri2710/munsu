@@ -144,67 +144,96 @@ func TestBeginLaunchIntentRefusesWithoutSnapshotIdentity(t *testing.T) {
 	}
 }
 
-// A first launch is only allowed out of the queued phase: a task already
-// working (or done) with no committed intent means another live spawn owns it.
-func TestBeginLaunchIntentRefusesNonQueuedPhaseWithoutIntent(t *testing.T) {
-	f := newLaunchFixture(t, "not-queued")
-	tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) {
-		agg.Phase = taskauthority.PhaseWorking
-	})
-	if agg := f.aggregate(); agg.Launch != nil {
-		t.Fatal("fixture invalid: a launch intent exists, so this is the re-entry branch, not the first-launch one")
+// A committed launch intent is re-entered only while the task is still queued
+// or when the launch is complete under that identity; a task past queued
+// without launch evidence is another live spawn's. BeginSpawn is not called on
+// this path, so this refusal is the only one guarding the re-entry.
+func TestBeginLaunchIntentReentryPhase(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase taskauthority.Phase
+		want  string // refusal text; empty means the intent is re-entered
+	}{
+		{name: "working without launch evidence refused", phase: taskauthority.PhaseWorking, want: "spawn requires queued; duplicate or stale live spawn refused"},
+		{name: "queued re-enters the committed intent", phase: taskauthority.PhaseQueued},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchFixture(t, "reentry")
+			if err := f.runner.beginLaunchIntent(); err != nil {
+				t.Fatalf("first beginLaunchIntent: %v", err)
+			}
+			tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) {
+				agg.Phase = tc.phase
+			})
+			f.runner.launchReentry = false
 
-	err := f.runner.beginLaunchIntent()
-	if err == nil {
-		t.Fatal("beginLaunchIntent minted an intent for a non-queued task")
-	}
-	if !strings.Contains(err.Error(), "spawn requires queued; duplicate live spawn refused") {
-		t.Fatalf("error = %v, want the first-launch non-queued refusal", err)
-	}
-
-	// Control: the same fixture with the phase left queued commits the intent,
-	// so the phase is what the refusal above came from.
-	queued := newLaunchFixture(t, "still-queued")
-	if err := queued.runner.beginLaunchIntent(); err != nil {
-		t.Fatalf("queued task refused: %v", err)
+			err := f.runner.beginLaunchIntent()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("re-entry refused: %v", err)
+				}
+				if !f.runner.launchReentry {
+					t.Fatal("a queued task holding the intent did not re-enter it")
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
-// A Captain may not spawn over a task that already has a live soldier
-// endpoint. The pane projection is the herdr-side proof of that, and is a
-// separate refusal from the tmux window one.
-func TestCaptainBacklogAuthorityRefusesLivePaneSession(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatalf("home.Init: %v", err)
+// A second live execution of a task is refused when its meta records a window
+// or a herdr pane id, on both the general and the captain path.
+func TestBacklogAuthorityRefusesRecordedLiveSession(t *testing.T) {
+	cases := []struct {
+		name    string
+		captain bool
+		phase   taskauthority.Phase
+		meta    map[string]string
+		want    string // refusal text; empty means allowed
+	}{
+		{name: "general working task with a window", phase: taskauthority.PhaseWorking, meta: map[string]string{"window": "@1"}, want: "already in-flight with a live session"},
+		{name: "general queued task with a herdr pane", phase: taskauthority.PhaseQueued, meta: map[string]string{"herdr_pane_id": "%42"}, want: "already has a live soldier session"},
+		{name: "general queued task with kind-only meta", phase: taskauthority.PhaseQueued, meta: map[string]string{"kind": "ship"}},
+		{name: "captain task with a window", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"window": "default:w1:p1"}, want: "already has a live soldier session (window=default:w1:p1)"},
+		{name: "captain task with a herdr pane", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"herdr_pane_id": "%42"}, want: "already has a live soldier session (pane=%42)"},
+		{name: "captain queued task with kind-only meta", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"kind": "ship"}},
 	}
-	auth := canonicalAtHome(t, homeDir)
-	canonicalCreateTask(t, auth, "live-pane", "ship", "test-proj")
-	if err := home.WriteMeta(homeDir, "live-pane", map[string]string{"herdr_pane_id": "%42"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-	r := &Runner{
-		homeDir:   homeDir,
-		args:      Args{ID: "live-pane", Authority: auth},
-		spawnRole: "captain",
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			if _, err := home.Init(homeDir); err != nil {
+				t.Fatalf("home.Init: %v", err)
+			}
+			auth := canonicalAtHome(t, homeDir)
+			canonicalCreateTask(t, auth, "live-task", "ship", "test-proj")
+			if tc.phase != taskauthority.PhaseQueued {
+				tamperTaskAggregate(t, homeDir, "live-task", func(agg *taskauthority.Aggregate) { agg.Phase = tc.phase })
+			}
+			if err := home.WriteMeta(homeDir, "live-task", tc.meta); err != nil {
+				t.Fatal(err)
+			}
+			r := &Runner{args: Args{ID: "live-task", Authority: auth}, homeDir: homeDir}
+			check := r.checkBacklogAuthority
+			if tc.captain {
+				r.spawnRole = "captain"
+				check = r.checkCaptainBacklogAuthority
+			}
 
-	err := r.checkCaptainBacklogAuthority()
-	if err == nil {
-		t.Fatal("captain spawn allowed over a live pane session")
-	}
-	if !strings.Contains(err.Error(), "already has a live soldier session (pane=%42)") {
-		t.Fatalf("error = %v, want the live-pane refusal", err)
-	}
-
-	// Control: the same queued task with no pane projection is allowed, so
-	// the refusal came from the pane branch and not from the phase check.
-	if err := home.WriteMeta(homeDir, "live-pane", map[string]string{}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("queued task with no live session refused: %v", err)
+			err := check()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("task without a recorded live session refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

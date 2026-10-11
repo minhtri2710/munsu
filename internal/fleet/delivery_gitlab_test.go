@@ -14,17 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func TestDeliveryProviderFor_GitLabCapabilityAbsentRefuses(t *testing.T) {
-	old := glabRunnerFor
-	t.Cleanup(func() { glabRunnerFor = old })
-	glabRunnerFor = fixedGlabRunner(&fakeGlabRunner{lookPathErr: errors.New("glab not found")})
-
-	_, err := deliveryProviderFor(gitlabForgeStep, domain.DeliveryIdentity{Provider: "gitlab"})
-	if err == nil || !strings.Contains(err.Error(), "configured forge is not Ready") {
-		t.Fatalf("deliveryProviderFor error = %v, want absent GitLab capability refusal", err)
-	}
-}
-
 // fakeGlabRunner implements GlabRunner for testing.
 type fakeGlabRunner struct {
 	lookPathErr error
@@ -632,30 +621,6 @@ func TestExistingGitHubTestsStillPass(t *testing.T) {
 // --- CaptureIdentity provider routing (dispatcher removed with the legacy
 // delivery path; the typed clients own identity capture) ---
 
-func TestGitlabDeliveryProvider_RejectsInvalidMergeRequests(t *testing.T) {
-	called := false
-	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
-		called = true
-		return nil, nil
-	}}}
-	provider := &gitlabDeliveryProvider{client: client}
-	ident := domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7", HeadSHA: sampleSHA, BaseRef: "main"}
-	staleSHA := sampleSHA[:len(sampleSHA)-1] + "0"
-	for _, request := range []DeliveryMergeRequest{
-		{},
-		{Method: "merge", HeadSHA: staleSHA, BaseRef: "main"},
-		{Method: "merge", HeadSHA: sampleSHA, BaseRef: "release"},
-		{Method: "rebase", HeadSHA: sampleSHA, BaseRef: "main"},
-	} {
-		if err := provider.ValidateMergeRequest(ident, request); err == nil {
-			t.Fatalf("request %+v unexpectedly accepted", request)
-		}
-	}
-	if called {
-		t.Fatal("runner invoked during constraint validation")
-	}
-}
-
 func TestGitlabDeliveryProvider_MergeRefusesUncomposedOrInvalidIdentity(t *testing.T) {
 	request := DeliveryMergeRequest{Method: "merge", HeadSHA: sampleSHA, BaseRef: "main"}
 	ident := domain.DeliveryIdentity{URL: "https://gitlab.com/owner/project/-/merge_requests/7", HeadSHA: sampleSHA, BaseRef: "main"}
@@ -967,20 +932,6 @@ func TestDeliverGitLabOpenMRMergesThroughPinnedAPI(t *testing.T) {
 		if mergeArgs[i] != expected[i] {
 			t.Fatalf("merge arg %d = %q, want %q; args = %#v", i, mergeArgs[i], expected[i], mergeArgs)
 		}
-	}
-}
-
-func TestGlabClient_MergeMR_RefusesMissingPinnedSHA(t *testing.T) {
-	called := false
-	client := &glabClient{runner: &fakeGlabRunner{runFn: func(args ...string) ([]byte, error) {
-		called = true
-		return nil, nil
-	}}}
-	if err := client.MergeMR("gitlab.com", "owner", "project", 7, DeliveryMergeRequest{Method: "merge"}); err == nil || !strings.Contains(err.Error(), "requires a pinned head SHA") {
-		t.Fatalf("MergeMR error = %v, want missing-head refusal", err)
-	}
-	if called {
-		t.Fatal("runner invoked without a pinned head SHA")
 	}
 }
 

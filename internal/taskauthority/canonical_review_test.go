@@ -138,11 +138,6 @@ func workingShip(t *testing.T, c *Canonical, taskID string) {
 func TestCanonicalCreateReviewRequiresAWorkingShipTarget(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	workingShip(t, c, "ship1")
-	mustCreate(t, c, "queued-ship")
-	scout := scoutCreateRequest(c, "scout1")
-	if _, err := c.Create(mustOperation(t, "op-create-scout1", scout), scout); err != nil {
-		t.Fatal(err)
-	}
 
 	cases := []struct {
 		name         string
@@ -153,8 +148,6 @@ func TestCanonicalCreateReviewRequiresAWorkingShipTarget(t *testing.T) {
 		{"no reviewed head", "rev-a", "ship1", "", ErrInvalidInput, "review task requires the reviewed head"},
 		{"no reviewed task id", "rev-b", "", deliveryHead, ErrInvalidInput, "review task requires the reviewed task id"},
 		{"reviewed task does not exist", "rev-c", "nope", deliveryHead, ErrNotFound, ""},
-		{"reviewed task is queued", "rev-d", "queued-ship", deliveryHead, ErrPrecondition, "must be working with its worktree and endpoint bound"},
-		{"reviewed task is a scout", "rev-e", "scout1", deliveryHead, ErrPrecondition, "only a ship task is reviewed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,51 +178,145 @@ func TestCanonicalCreateReviewRequiresAWorkingShipTarget(t *testing.T) {
 	}
 }
 
-func TestCanonicalReviewOwnsNoWorktreeAndLaunchesOnlyAsReview(t *testing.T) {
-	c, _, _ := newTestCanonical(t)
-	workingShip(t, c, "ship1")
-	if err := createReview(t, c, "rev1", "ship1", deliveryHead); err != nil {
-		t.Fatal(err)
+// The review rules: what a review may read, the worktree and launch manifest it
+// never owns, and the verdict delivery authorization requires.
+func TestReviewRefusals(t *testing.T) {
+	create := func(t *testing.T, c *Canonical, target string) error {
+		return createReview(t, c, "rev1", target, deliveryHead)
+	}
+	beginSpawn := func(t *testing.T, c *Canonical, taskID string, mutate func(*CanonicalBeginSpawnRequest), asReview bool) error {
+		req := launchRequest(c, taskID, preconditionOf(1, 1))
+		if asReview {
+			req = reviewLaunchRequest(c, taskID, preconditionOf(1, 1))
+		}
+		mutate(&req)
+		_, err := c.BeginSpawn(mustOperation(t, "op-begin-"+taskID, req), req)
+		return err
+	}
+	noChange := func(*CanonicalBeginSpawnRequest) {}
+	recordManifest := func(t *testing.T, c *Canonical, taskID string, rev uint64, intent CanonicalBeginSpawnRequest) error {
+		req := CanonicalRecordLaunchManifestRequest{
+			HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev),
+			LaunchID: intent.LaunchID, WorktreeLeaseID: intent.WorktreeReservationID, WorktreeFenceToken: intent.WorktreeFenceToken,
+			ManifestSHA256: digestOf("manifest:" + taskID), Reason: "manifest prepared",
+		}
+		_, err := c.RecordLaunchManifest(mustOperation(t, "op-manifest-"+taskID, req), req)
+		return err
+	}
+	authorize := func(t *testing.T, c *Canonical, rev uint64) error {
+		req := authorizeRequest(c, "ship1", preconditionOf(1, rev))
+		_, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-1", req), req)
+		return err
 	}
 
-	bind := bindWorktreeRequest(c, "rev1", preconditionOf(1, 1))
-	_, err := c.BindWorktree(mustOperation(t, "op-bind-wt-rev", bind), bind)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("BindWorktree on a review = %v, want ErrConflict", err)
-	}
-	wantErrSubstring(t, err, "is a review task; it reads the reviewed worktree and owns none", "BindWorktree on a review")
+	runRefusalRows(t, []refusalRow{
+		{name: "create review refuses a queued target", class: ErrPrecondition, want: "must be working with its worktree and endpoint bound", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "ship1")
+			return create(t, c, "ship1")
+		}},
+		{name: "create review refuses a scout target", class: ErrPrecondition, want: "only a ship task is reviewed", run: func(t *testing.T, c *Canonical) error {
+			scout := scoutCreateRequest(c, "scout1")
+			_, err := c.Create(mustOperation(t, "op-create-scout1", scout), scout)
+			mustStep(t, err)
+			return create(t, c, "scout1")
+		}},
+		{name: "create review allows a working ship target", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			return create(t, c, "ship1")
+		}},
 
-	ep := bindEndpointRequest(c, "rev1", preconditionOf(1, 1))
-	_, err = c.BindEndpoint(mustOperation(t, "op-bind-ep-rev", ep), ep)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("BindEndpoint before a launch intent = %v, want ErrConflict", err)
-	}
-	wantErrSubstring(t, err, "bind endpoint requires its committed launch intent", "BindEndpoint on a review with no launch intent")
+		{name: "bind worktree refuses a review task", class: ErrConflict, want: "is a review task; it reads the reviewed worktree and owns none", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			mustStep(t, create(t, c, "ship1"))
+			req := bindWorktreeRequest(c, "rev1", preconditionOf(1, 1))
+			_, err := c.BindWorktree(mustOperation(t, "op-bind-wt-rev", req), req)
+			return err
+		}},
+		{name: "bind worktree allows a ship task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "ship1")
+			req := bindWorktreeRequest(c, "ship1", preconditionOf(1, 1))
+			_, err := c.BindWorktree(mustOperation(t, "op-bind-wt-ship", req), req)
+			return err
+		}},
 
-	asShip := launchRequest(c, "rev1", preconditionOf(1, 1))
-	_, err = c.BeginSpawn(mustOperation(t, "op-begin-rev-ship", asShip), asShip)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("BeginSpawn kind ship on a review = %v, want ErrConflict", err)
-	}
-	wantErrSubstring(t, err, "its launch intent kind", "BeginSpawn kind ship on a review task")
+		{name: "bind endpoint refuses a review task with no launch intent", class: ErrConflict, want: "bind endpoint requires its committed launch intent", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			mustStep(t, create(t, c, "ship1"))
+			req := bindEndpointRequest(c, "rev1", preconditionOf(1, 1))
+			_, err := c.BindEndpoint(mustOperation(t, "op-bind-ep-rev", req), req)
+			return err
+		}},
+		{name: "bind endpoint allows a review task with its launch intent", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			workingReview(t, c, "rev1", "ship1", deliveryHead)
+			return nil
+		}},
 
-	withWorktree := reviewLaunchRequest(c, "rev1", preconditionOf(1, 1))
-	withWorktree.WorktreeReservationID, withWorktree.WorktreeFenceToken = "wt-res-rev1", "wt-fence-rev1"
-	_, err = c.BeginSpawn(mustOperation(t, "op-begin-rev-wt", withWorktree), withWorktree)
-	wantErrSubstring(t, err, "a review launch reserves no worktree", "BeginSpawn of a review reserving a worktree")
+		{name: "begin spawn refuses a ship launch on a review task", class: ErrConflict, want: "its launch intent kind", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			mustStep(t, create(t, c, "ship1"))
+			return beginSpawn(t, c, "rev1", noChange, false)
+		}},
+		{name: "begin spawn refuses a review launch on a ship task", class: ErrConflict, want: "its launch intent kind", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "ship3")
+			return beginSpawn(t, c, "ship3", noChange, true)
+		}},
+		{name: "begin spawn refuses a review launch that reserves a worktree", class: ErrInvalidInput, want: "a review launch reserves no worktree", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			mustStep(t, create(t, c, "ship1"))
+			return beginSpawn(t, c, "rev1", func(r *CanonicalBeginSpawnRequest) {
+				r.WorktreeReservationID, r.WorktreeFenceToken = "wt-res-rev1", "wt-fence-rev1"
+			}, true)
+		}},
+		{name: "begin spawn allows a review launch on a review task", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			mustStep(t, create(t, c, "ship1"))
+			return beginSpawn(t, c, "rev1", noChange, true)
+		}},
+		{name: "begin spawn allows a ship launch on a ship task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "ship3")
+			return beginSpawn(t, c, "ship3", noChange, false)
+		}},
 
-	mustCreate(t, c, "ship3")
-	asReview := reviewLaunchRequest(c, "ship3", preconditionOf(1, 1))
-	_, err = c.BeginSpawn(mustOperation(t, "op-begin-ship-as-rev", asReview), asReview)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("BeginSpawn kind review on a ship = %v, want ErrConflict", err)
-	}
-	wantErrSubstring(t, err, "its launch intent kind", "BeginSpawn kind review on a ship task")
+		{name: "record launch manifest refuses a review task", class: ErrConflict, want: "it owns no launch manifest", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			mustStep(t, create(t, c, "ship1"))
+			return recordManifest(t, c, "rev1", 1, launchRequest(c, "rev1", preconditionOf(1, 1)))
+		}},
+		{name: "record launch manifest allows a ship task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "ship1")
+			intent, rev := mustBeginSpawn(t, c, "ship1", preconditionOf(1, 1))
+			bind := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "ship1"), Precondition: preconditionOf(1, rev), Binding: launchWorktreeBinding(intent), Reason: "bind"}
+			_, err := c.BindWorktree(mustOperation(t, "op-bind-wt-ship", bind), bind)
+			mustStep(t, err)
+			return recordManifest(t, c, "ship1", rev+1, intent)
+		}},
 
-	review := reviewLaunchRequest(c, "rev1", preconditionOf(1, 1))
-	if _, err := c.BeginSpawn(mustOperation(t, "op-begin-rev", review), review); err != nil {
-		t.Fatalf("BeginSpawn of a review with no worktree: %v", err)
-	}
+		{name: "record verdict refuses a task without a bound worktree and endpoint", class: ErrPrecondition, want: "review verdict requires the bound worktree and endpoint of task rev1", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			workingReview(t, c, "rev1", "ship1", deliveryHead)
+			req := CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "rev1"), Precondition: preconditionOf(1, 5), Verdict: reviewVerdict("rev1", deliveryHead)}
+			_, err := c.RecordReviewVerdict(mustOperation(t, "op-verdict-on-review", req), req)
+			return err
+		}},
+		{name: "record verdict allows a task with its worktree and endpoint bound", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			workingReview(t, c, "rev1", "ship1", deliveryHead)
+			mustRecordVerdict(t, c, "ship1", "rev1", deliveryHead, 3)
+			return nil
+		}},
+
+		{name: "authorize delivery refuses a task with no recorded verdict", class: ErrPrecondition, want: "delivery authorization requires a review verdict for head", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			return authorize(t, c, 3)
+		}},
+		{name: "authorize delivery allows a task with a passing verdict", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			workingReview(t, c, "rev1", "ship1", deliveryHead)
+			rev := mustRecordVerdict(t, c, "ship1", "rev1", deliveryHead, 3)
+			return authorize(t, c, rev)
+		}},
+	})
 }
 
 // A review generation carries the tree observed before submit, and no other
@@ -476,13 +563,6 @@ func TestCanonicalRecordReviewVerdictRefusals(t *testing.T) {
 		_, err := recordVerdict(t, c, "op-verdict-queued", 1, good)
 		wantErrSubstring(t, err, "review verdict requires a working task", "RecordReviewVerdict on a queued task")
 	})
-
-	t.Run("task has no bound worktree", func(t *testing.T) {
-		c := verdictScene(t)
-		req := CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "rev1"), Precondition: preconditionOf(1, 5), Verdict: good}
-		_, err := c.RecordReviewVerdict(mustOperation(t, "op-verdict-on-review", req), req)
-		wantErrSubstring(t, err, "requires the bound worktree and endpoint", "RecordReviewVerdict on a review task that owns no worktree")
-	})
 }
 
 // AuthorizeDelivery relies on the recorded verdict, never on the request: it
@@ -496,13 +576,6 @@ func TestCanonicalAuthorizeDeliveryReliesOnTheHeadBoundVerdictAndRecordsTheWords
 		}
 		return c.AuthorizeDelivery(mustOperation(t, opID, req), req)
 	}
-
-	t.Run("no verdict recorded", func(t *testing.T) {
-		c, _, _ := newTestCanonical(t)
-		workingShip(t, c, "ship1")
-		_, err := authorize(c, 3, "op-auth-no-verdict", nil)
-		wantErrSubstring(t, err, "delivery authorization requires a review verdict for head", "AuthorizeDelivery with no verdict recorded")
-	})
 
 	t.Run("verdict does not pass", func(t *testing.T) {
 		c := verdictScene(t)

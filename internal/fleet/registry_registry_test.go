@@ -260,27 +260,56 @@ func TestRegistryBindUnknownFailsClosed(t *testing.T) {
 	}
 }
 
+// A project with a bound captain cannot be retired; unbound it can.
+func TestRegistryRetireProject(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		bound   bool
+		wantErr error
+	}{
+		{"a project with a bound captain is refused", true, ErrConflict},
+		{"an unbound project retires", false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, _ := newTestRegistry(t)
+			mustRegisterProject(t, r, "alpha")
+			if tc.bound {
+				mustRegisterCaptain(t, r, "c1")
+				mustBind(t, r, "c1", "alpha")
+			}
+			rev, _ := r.ProjectRevision()
+			req := RetireProjectRequest{
+				HomeID:       r.HomeID(),
+				ProjectID:    mustProjectID(t, "alpha"),
+				Precondition: preconditionOf(rev),
+				Reason:       "retire",
+			}
+			_, err := r.RetireProject(mustOp(t, "op-retire-proj", req), req)
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("RetireProject: %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("RetireProject = %v, want %v", err, tc.wantErr)
+			}
+			_, getErr := r.GetProject(mustProjectID(t, "alpha"))
+			if tc.wantErr == nil && !errors.Is(getErr, ErrNotFound) {
+				t.Fatalf("GetProject(retired) = %v, want ErrNotFound", getErr)
+			}
+			if tc.wantErr != nil && getErr != nil {
+				t.Fatalf("GetProject(refused retire) = %v, want the project kept", getErr)
+			}
+		})
+	}
+}
+
 func TestRegistryRetire(t *testing.T) {
 	r, _, _ := newTestRegistry(t)
 	mustRegisterProject(t, r, "alpha")
 	mustRegisterCaptain(t, r, "c1")
 	mustBind(t, r, "c1", "alpha")
 
-	// A bound project cannot be retired.
-	rev, _ := r.ProjectRevision()
-	reject := RetireProjectRequest{
-		HomeID:       r.HomeID(),
-		ProjectID:    mustProjectID(t, "alpha"),
-		Precondition: preconditionOf(rev),
-		Reason:       "retire",
-	}
-	if _, err := r.RetireProject(mustOp(t, "op-retire-bound", reject), reject); !errors.Is(err, ErrConflict) {
-		t.Fatalf("retire bound project = %v, want ErrConflict", err)
-	}
-
-	// Retiring the captain clears the binding; the project becomes unowned and
-	// can then be retired.
-	rev, _ = r.CaptainRevision()
+	// Retiring the captain clears the binding; the project becomes unowned.
+	rev, _ := r.CaptainRevision()
 	capRetire := RetireCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "c1"),
@@ -296,20 +325,6 @@ func TestRegistryRetire(t *testing.T) {
 	}
 	if owner != "" {
 		t.Fatalf("alpha should be unowned after captain retire, got %s", owner)
-	}
-
-	rev, _ = r.ProjectRevision()
-	projRetire := RetireProjectRequest{
-		HomeID:       r.HomeID(),
-		ProjectID:    mustProjectID(t, "alpha"),
-		Precondition: preconditionOf(rev),
-		Reason:       "retire",
-	}
-	if _, err := r.RetireProject(mustOp(t, "op-retire-proj", projRetire), projRetire); err != nil {
-		t.Fatalf("RetireProject: %v", err)
-	}
-	if _, err := r.GetProject(mustProjectID(t, "alpha")); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetProject(retired) = %v, want ErrNotFound", err)
 	}
 
 	// Retiring a missing entity fails closed.

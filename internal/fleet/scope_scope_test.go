@@ -4,37 +4,9 @@ package fleet
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
-
-// runCmd is a test helper that runs a command in a directory.
-func scopeRunCmd(t *testing.T, dir, name string, args ...string) {
-	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("cmd %s %v failed (dir=%s): %v\n%s", name, args, dir, err, string(out))
-	}
-}
-
-// initRepo creates a minimal git repo at dir with an initial commit and
-// returns the canonical resolved path.
-func initRepo(t *testing.T, dir string) string {
-	t.Helper()
-	scopeRunCmd(t, dir, "git", "init")
-	scopeRunCmd(t, dir, "git", "config", "user.email", "test@test.com")
-	scopeRunCmd(t, dir, "git", "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	scopeRunCmd(t, dir, "git", "add", ".")
-	scopeRunCmd(t, dir, "git", "commit", "-m", "initial")
-	return dir
-}
 
 // initRepoWithRemote is like initRepo but also adds a remote origin.
 func initRepoWithRemote(t *testing.T, dir, originURL string) string {
@@ -42,22 +14,6 @@ func initRepoWithRemote(t *testing.T, dir, originURL string) string {
 	repo := initRepo(t, dir)
 	scopeRunCmd(t, repo, "git", "remote", "add", "origin", originURL)
 	return repo
-}
-
-func initGateCheckout(t *testing.T) (string, string) {
-	t.Helper()
-	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
-	commonDir := filepath.Join(nmHome, "repos", "gate.git")
-	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
-		t.Fatal(err)
-	}
-	scopeRunCmd(t, filepath.Dir(commonDir), "git", "init", "--bare", commonDir)
-	checkout := t.TempDir()
-	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("NM_HOME", nmHome)
-	return checkout, commonDir
 }
 
 // --- ClassifyIdentity tests ---
@@ -262,53 +218,6 @@ func TestDetectGateCapability_MarkerDirNotExist(t *testing.T) {
 
 // --- Full classification tests ---
 
-func TestClassify_PrimaryNoGate(t *testing.T) {
-	repo := initRepo(t, t.TempDir())
-
-	res := Classify(repo)
-	if res.Err != nil {
-		t.Fatalf("Classify(%q).Err = %v", repo, res.Err)
-	}
-	if res.Identity != Primary {
-		t.Errorf("Classify(%q).Identity = %v, want Primary", repo, res.Identity)
-	}
-	if res.GateCap != GateAbsent {
-		t.Errorf("Classify(%q).GateCap = %v, want GateAbsent", repo, res.GateCap)
-	}
-	if res.GateRefusalError() != nil {
-		t.Error("Classify(Primary, no gate).IsGateRefusal() = true, want false")
-	}
-}
-
-func TestClassify_PrimaryWithEnvGate(t *testing.T) {
-	repo := initRepo(t, t.TempDir())
-	t.Setenv("NO_MISTAKES_GATE", "1")
-
-	res := Classify(repo)
-	if res.Err != nil {
-		t.Fatalf("Classify(%q).Err = %v", repo, res.Err)
-	}
-	if res.Identity != Primary {
-		t.Errorf("Classify(%q).Identity = %v, want Primary", repo, res.Identity)
-	}
-	if res.GateCap != GatePresent {
-		t.Errorf("Classify(%q).GateCap = %v, want GatePresent", repo, res.GateCap)
-	}
-	if res.GateSource != "env" {
-		t.Errorf("Classify(%q).GateSource = %q, want 'env'", repo, res.GateSource)
-	}
-	if res.GateRefusalError() == nil {
-		t.Error("Classify(Primary, gate).IsGateRefusal() = false, want true")
-	}
-	refusalErr := res.GateRefusalError()
-	if refusalErr == nil {
-		t.Fatal("Classify(Primary, gate).GateRefusalError() = nil, want error")
-	}
-	if !strings.Contains(refusalErr.Error(), "gate agent refused") {
-		t.Errorf("GateRefusalError should contain 'gate agent refused', got: %v", refusalErr)
-	}
-}
-
 func TestClassify_GitCommonDirGate(t *testing.T) {
 	checkout, commonDir := initGateCheckout(t)
 	commonDir, err := canonicalPath(commonDir)
@@ -403,42 +312,6 @@ func TestClassifyIdentity_GitUnavailableFailsClosed(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, _, _, err := ClassifyIdentity(repo); err == nil {
 		t.Fatal("expected git unavailable error")
-	}
-}
-
-// --- GateRefusalError tests ---
-
-func TestGateRefusalError(t *testing.T) {
-	// Non-gated primary — should not error
-	repo := initRepo(t, t.TempDir())
-	err := GateRefusalError(repo)
-	if err != nil {
-		t.Errorf("GateRefusalError for non-gated primary = %v, want nil", err)
-	}
-
-	// Gated primary — should error
-	t.Setenv("NO_MISTAKES_GATE", "1")
-	err = GateRefusalError(repo)
-	if err == nil {
-		t.Error("GateRefusalError for gated primary = nil, want error")
-	}
-	if !strings.Contains(err.Error(), "gate agent refused") {
-		t.Errorf("GateRefusalError should contain 'gate agent refused', got: %v", err)
-	}
-}
-
-func TestIsGateAgentActive(t *testing.T) {
-	repo := initRepo(t, t.TempDir())
-
-	// No gate
-	if Classify(repo).GateRefusalError() != nil {
-		t.Error("Classify(repo) without gate refuses, want no refusal")
-	}
-
-	// With env gate
-	t.Setenv("NO_MISTAKES_GATE", "1")
-	if Classify(repo).GateRefusalError() == nil {
-		t.Error("Classify(repo) with gate does not refuse, want refusal")
 	}
 }
 

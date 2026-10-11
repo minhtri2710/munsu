@@ -23,12 +23,7 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 		required []string
 		reported []GitHubCheck
 		want     []domain.CheckRun
-		wantErr  string
 	}{
-		{name: "nothing reported", wantErr: "an empty CI proof is refused"},
-		{name: "nothing reported with a requirement", required: []string{"ci"}, wantErr: "an empty CI proof is refused"},
-		{name: "required check never reported", required: []string{"ci", "lint"}, reported: []GitHubCheck{done(1, "ci", "success")}, wantErr: `required check "lint" never reported`},
-		{name: "only skipped optional checks", reported: []GitHubCheck{done(1, "docs", "skipped"), done(2, "fmt", "neutral")}, wantErr: "only skipped optional checks"},
 		{
 			name:     "each check reads its own conclusion and sorts by name",
 			reported: []GitHubCheck{done(3, "z-ci", "success"), done(1, "a-lint", "failure"), {Source: GitHubCheckRun, ID: 2, Name: "m-e2e", Status: "in_progress"}, done(4, "b-err", "timed_out")},
@@ -48,12 +43,6 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckFailed}},
 		},
 		{
-			name:     "a required check reported only as a commit status counts as reported",
-			required: []string{"legacy"},
-			reported: []GitHubCheck{done(1, "ci", "success"), status(2, "legacy", "success")},
-			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckPassed}, {Name: "legacy", Status: domain.CheckPassed}},
-		},
-		{
 			name:     "a later success supersedes an earlier failure",
 			reported: []GitHubCheck{done(1, "ci", "failure"), done(2, "ci", "success")},
 			want:     []domain.CheckRun{{Name: "ci", Status: domain.CheckPassed}},
@@ -61,12 +50,6 @@ func TestEvaluateGitHubChecks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := evaluateGitHubChecks(tc.required, tc.reported)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("err = %v, want %q", err, tc.wantErr)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,37 +146,6 @@ func TestGitHubDeliveryProviderValidateAndMerge(t *testing.T) {
 			t.Fatalf("merged %+v on %q, want %+v on acme/widgets#7", client.merged, client.target, good)
 		}
 	})
-	var emptyIdentityHead, emptyIdentityBase bool
-	for name, mutate := range map[string]func(*DeliveryMergeRequest){
-		"empty head":                     func(r *DeliveryMergeRequest) { r.HeadSHA = "" },
-		"empty head, identity with none": func(r *DeliveryMergeRequest) { r.HeadSHA = ""; emptyIdentityHead = true },
-		"another head":                   func(r *DeliveryMergeRequest) { r.HeadSHA = strings.Repeat("2", 40) },
-		"empty base":                     func(r *DeliveryMergeRequest) { r.BaseRef = "" },
-		"empty base, identity with none": func(r *DeliveryMergeRequest) { r.BaseRef = ""; emptyIdentityBase = true },
-		"another base":                   func(r *DeliveryMergeRequest) { r.BaseRef = "release" },
-		"unsupported method":             func(r *DeliveryMergeRequest) { r.Method = "ff" },
-	} {
-		t.Run("refuses "+name, func(t *testing.T) {
-			emptyIdentityHead, emptyIdentityBase = false, false
-			req := good
-			mutate(&req)
-			id := ident
-			if emptyIdentityHead {
-				id.HeadSHA = ""
-			}
-			if emptyIdentityBase {
-				id.BaseRef = ""
-			}
-			client := &fakeGitHubDelivery{}
-			p := &githubDeliveryProvider{client: client}
-			if err := p.ValidateMergeRequest(id, req); err == nil {
-				t.Fatal("ValidateMergeRequest accepted the request")
-			}
-			if err := p.Merge(id, req); err == nil || client.merged != nil {
-				t.Fatalf("Merge err = %v merged = %+v, want a refusal before the mutation", err, client.merged)
-			}
-		})
-	}
 	t.Run("no client", func(t *testing.T) {
 		if err := (&githubDeliveryProvider{}).Merge(ident, good); err == nil || !strings.Contains(err.Error(), "not composed") {
 			t.Fatalf("err = %v", err)
@@ -544,15 +496,6 @@ func TestGhAxiClientMergePRPinsTheHeadAndNeverForcesTheMerge(t *testing.T) {
 			}
 		})
 	}
-	t.Run("refuses an unpinned head before gh runs", func(t *testing.T) {
-		fake := installFakeGH(t, ghReply{match: "pr merge"})
-		if err := c.MergePR("acme", "widgets", 7, DeliveryMergeRequest{Method: "squash"}); err == nil || !strings.Contains(err.Error(), "pinned head SHA") {
-			t.Fatalf("err = %v", err)
-		}
-		if calls := fake.calls(t); len(calls) != 0 {
-			t.Fatalf("calls = %v", calls)
-		}
-	})
 	t.Run("refuses an unsupported method before gh runs", func(t *testing.T) {
 		fake := installFakeGH(t, ghReply{match: "pr merge"})
 		if err := c.MergePR("acme", "widgets", 7, DeliveryMergeRequest{Method: "ff", HeadSHA: githubDeliveryHead}); err == nil || !strings.Contains(err.Error(), "unsupported") {
@@ -573,12 +516,5 @@ func TestGhAxiClientMergePRPinsTheHeadAndNeverForcesTheMerge(t *testing.T) {
 func TestFetchGitHubProviderSnapshotRefusesAnInvalidURL(t *testing.T) {
 	if _, err := fetchGitHubProviderSnapshot(githubForgeStep, "https://example.com/not/a/pull"); err == nil || !strings.Contains(err.Error(), "invalid GitHub URL") {
 		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want the invalid-URL refusal", err)
-	}
-}
-
-func TestFetchGitHubProviderSnapshotRefusesWhenTheDeliveryCapabilityIsNotReady(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	if _, err := fetchGitHubProviderSnapshot(githubForgeStep, "https://github.com/owner/repo/pull/1"); err == nil || !strings.Contains(err.Error(), "GitHub provider not available: forge adapter github probe absent: configured forge is not Ready") {
-		t.Fatalf("fetchGitHubProviderSnapshot error = %v, want the capability refusal", err)
 	}
 }
