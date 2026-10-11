@@ -196,11 +196,12 @@ func TestAFKReturnWithOnlyAnUnacceptedRoutineReportIsActionable(t *testing.T) {
 // The digest is the only copy of the refs, so it is removed after they are
 // accepted, never before. A removal that fails after acceptance is not a failed
 // return: the acks are written and the file stays, the report names the file and
-// the error and is actionable, and the re-run replays the idempotent ack and
-// finishes clean.
+// the error and is actionable on its own (the digest is routine-only, so nothing
+// else makes the report actionable), and the re-run replays the idempotent ack
+// and finishes clean.
 func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
-	ids := reportDuringAFK(t, generalHome, identity, "failed")
+	ids := reportDuringAFK(t, generalHome, identity, "done")
 	digestPath := filepath.Join(generalHome, digestFile)
 
 	real := removeDigestFile
@@ -213,10 +214,13 @@ func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	if !strings.Contains(failed.DigestNotRemoved, digestPath) || !strings.Contains(failed.DigestNotRemoved, "injected removal failure") {
 		t.Fatalf("DigestNotRemoved = %q, want the path and the error", failed.DigestNotRemoved)
 	}
+	if len(failed.Escalations)+len(failed.WedgeAlarms)+len(failed.BlockedItems) != 0 || len(failed.UnacceptedReports) != 0 || failed.LossyStop {
+		t.Fatalf("report = %+v, want the leftover digest to be the only actionable item", failed)
+	}
 	if !failed.HasActionable() || !strings.Contains(failed.String(), "digest not removed") {
 		t.Fatalf("a leftover digest must be actionable and printed:\n%s", failed.String())
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", ids["failed"]); err != nil || ack == nil || ack.Outcome != OutcomeAccepted {
+	if ack, err := NewStore(generalHome).ReadAck("direct-task", ids["done"]); err != nil || ack == nil || ack.Outcome != OutcomeAccepted {
 		t.Fatalf("ack = %+v err = %v, want the report accepted before the removal was attempted", ack, err)
 	}
 	if _, err := os.Stat(digestPath); err != nil {
