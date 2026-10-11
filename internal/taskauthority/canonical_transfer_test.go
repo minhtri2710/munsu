@@ -626,9 +626,10 @@ type pendingCommitRun struct {
 }
 
 // A retry of the same operation over its own interrupted commit replays the
-// receipt the commit carries instead of refusing it. Each row is one call site
-// of the receipt-before-recovery order; a retry with a different intent over
-// the same pending commit is still refused.
+// receipt the commit carries instead of refusing it, and a retry of a committed
+// operation over a journal record recovery cannot read still replays. Each row
+// is one call site of the receipt, recover, receipt order; a retry with a
+// different intent over the same pending commit is still refused.
 func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
 	startReq := func(c *Canonical, reason string) CanonicalStartRequest {
 		return CanonicalStartRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1), Reason: reason}
@@ -696,8 +697,17 @@ func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
 			auth := mustAuthorize(t, c, "t1", mustDeliveryTask(t, c, "t1"), "op-auth-gate")
 			req := gateRequest(t, c, auth)
 			op := mustOperation(t, "op-gate-1", req)
-			calls := 0 // RecordGate reports no replay flag; the second call is the retry
-			return pendingCommitRun{run: func() (bool, error) { calls++; _, err := c.RecordGate(op, req); return calls > 1, err }}
+			// RecordGate reports no replay flag: a replay returns the first
+			// call's record, a second commit stamps a new RecordedAt.
+			var first *GateRecord
+			return pendingCommitRun{run: func() (bool, error) {
+				g, err := c.RecordGate(op, req)
+				if first == nil {
+					first = &g
+					return false, err
+				}
+				return g == *first, err
+			}}
 		}},
 		{"activate transfer", taskScope("t1"), func(t *testing.T, c *Canonical) pendingCommitRun {
 			recv := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
@@ -710,7 +720,7 @@ func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
 		}},
 	}
 	for _, tt := range rows {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name+"/pending", func(t *testing.T) {
 			c, _, root := newTestCanonical(t)
 			staged := tt.stage(t, c)
 			interruptedCommit(t, root, tt.scope, "pending-txn", func() {
@@ -727,42 +737,23 @@ func TestCanonicalRetryOverPendingCommitReplays(t *testing.T) {
 				t.Fatalf("retry: replayed=%v err=%v; want a replay", replayed, err)
 			}
 		})
+		// A committed operation replays even when its scope holds a journal
+		// record recovery cannot read: the receipt is read before the journal.
+		t.Run(tt.name+"/unrecoverable", func(t *testing.T) {
+			c, _, root := newTestCanonical(t)
+			staged := tt.stage(t, c)
+			if replayed, err := staged.run(); err != nil || replayed {
+				t.Fatalf("first run: replayed=%v err=%v", replayed, err)
+			}
+			junk := filepath.Join(root, home.JournalDirName, tt.scope+".junk.json")
+			if err := os.WriteFile(junk, []byte("{not json"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if replayed, err := staged.run(); err != nil || !replayed {
+				t.Fatalf("retry over an unrecoverable journal: replayed=%v err=%v; want a replay", replayed, err)
+			}
+		})
 	}
-}
-
-// A committed operation replays even when its scope holds a journal record
-// recovery cannot read: the receipt is checked before the journal is touched.
-func TestCanonicalReplayOverUnrecoverableJournal(t *testing.T) {
-	plant := func(t *testing.T, root string) {
-		path := filepath.Join(root, home.JournalDirName, taskScope("t1")+".junk.json")
-		if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Run("create", func(t *testing.T) {
-		c, _, root := newTestCanonical(t)
-		req := createRequest(c, "t1")
-		op := mustOperation(t, "op-create-t1", req)
-		if _, err := c.Create(op, req); err != nil {
-			t.Fatal(err)
-		}
-		plant(t, root)
-		if out, err := c.Create(op, req); err != nil || !out.Replayed {
-			t.Fatalf("Create retry = %+v, %v; want a replay", out, err)
-		}
-	})
-	t.Run("receive", func(t *testing.T) {
-		c, _, root := newTestCanonical(t)
-		req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
-		op := mustOperation(t, "op-receive-1", req)
-		if _, err := c.ReceiveTransfer(op, req); err != nil {
-			t.Fatal(err)
-		}
-		plant(t, root)
-		if out, err := c.ReceiveTransfer(op, req); err != nil || !out.Replayed {
-			t.Fatalf("ReceiveTransfer retry = %+v, %v; want a replay", out, err)
-		}
-	})
 }
 
 // A removed record leaves its scope revision behind. Receive reuses the id at
