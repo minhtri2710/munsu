@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type sessionSoldierEndpoints struct {
@@ -19,20 +19,8 @@ func (s sessionSoldierEndpoints) backend(home string, meta map[string]string) (b
 	if home == "" || meta["window"] == "" {
 		return nil, fmt.Errorf("soldier endpoint identity is incomplete")
 	}
-	bk, name, err := s.resolve(home, meta)
-	if err != nil {
-		return nil, err
-	}
-	if expected := meta["backend"]; expected != "" && name != expected {
-		return nil, fmt.Errorf("bound backend resolved as %q", name)
-	}
-	if name == "herdr" && meta["herdr_session"] != "" {
-		sessionID, _ := backend.ParseWindow(meta["window"])
-		if sessionID != "" && sessionID != meta["herdr_session"] {
-			return nil, fmt.Errorf("herdr session ownership mismatch")
-		}
-	}
-	return bk, nil
+	bk, _, err := boundBackend(home, meta, s.resolve)
+	return bk, err
 }
 
 func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool, error) {
@@ -57,11 +45,11 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	return false, nil
 }
 
-func (s sessionSoldierEndpoints) Send(home string, meta map[string]string, payload string) orchestrator.BoundSendResult {
+func (s sessionSoldierEndpoints) Send(home string, meta map[string]string, payload string) mhome.BoundSendResult {
 	bk, err := s.backend(home, meta)
 	if err != nil {
-		return orchestrator.BoundSendResult{Status: "backend-failed", Err: err}
+		return mhome.BoundSendResult{Status: "backend-failed", Err: err}
 	}
 	result := backend.SubmitPrompt(bk, meta["window"], payload)
-	return orchestrator.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
+	return mhome.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
 }

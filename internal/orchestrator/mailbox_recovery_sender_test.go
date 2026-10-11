@@ -8,39 +8,41 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type recoverySender struct {
 	alive    bool
-	result   BoundSendResult
+	result   mhome.BoundSendResult
 	payloads []string
 }
 
 func (s *recoverySender) Alive(string, map[string]string) (bool, error) { return s.alive, nil }
-func (s *recoverySender) Send(_ string, _ map[string]string, payload string) BoundSendResult {
+func (s *recoverySender) Send(_ string, _ map[string]string, payload string) mhome.BoundSendResult {
 	s.payloads = append(s.payloads, payload)
 	return s.result
 }
 
-func recoveryEnvelope(kind string) *Envelope {
-	return &Envelope{
-		SchemaVersion:  SchemaVersion,
+func recoveryEnvelope(kind string) *mhome.Envelope {
+	return &mhome.Envelope{
+		SchemaVersion:  mhome.SchemaVersion,
 		MessageID:      "recovery-message",
-		SenderRank:     RankGeneral,
+		SenderRank:     mhome.RankGeneral,
 		SenderIdentity: "general",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Kind:           kind,
 		TaskID:         "task-1",
 		Payload:        "recover me",
-		PayloadHash:    PayloadHashHex("recover me"),
+		PayloadHash:    mhome.PayloadHashHex("recover me"),
 		CreatedAt:      1,
 	}
 }
 
-func writeRecoveryEnvelope(t *testing.T, home string, env *Envelope) {
+func writeRecoveryEnvelope(t *testing.T, home string, env *mhome.Envelope) {
 	t.Helper()
-	if err := NewStore(home).WriteEnvelope(env); err != nil {
+	if err := mhome.NewStore(home).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "state", "task-1.meta"), []byte("backend=tmux\nwindow=pane-1\n"), 0600); err != nil {
@@ -79,7 +81,7 @@ func TestRecoverAllInboxesRejectsNonDirectoryRegardlessOfReadDirResult(t *testin
 	} {
 		t.Run(readDirResult.name, func(t *testing.T) {
 			home := t.TempDir()
-			inboxRoot := filepath.Join(home, "state", InboxDir)
+			inboxRoot := filepath.Join(home, "state", mhome.InboxDir)
 			if err := os.MkdirAll(filepath.Dir(inboxRoot), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -101,7 +103,7 @@ func TestRecoverAllInboxesPropagatesReadDirFailureForDirectory(t *testing.T) {
 	for _, readDirErr := range []error{errors.New("read directory failed"), fs.ErrNotExist} {
 		t.Run(readDirErr.Error(), func(t *testing.T) {
 			home := t.TempDir()
-			inboxRoot := filepath.Join(home, "state", InboxDir)
+			inboxRoot := filepath.Join(home, "state", mhome.InboxDir)
 			if err := os.MkdirAll(inboxRoot, 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -124,7 +126,7 @@ func TestRecoverAllInboxesRejectsNonDirectoryStateRoot(t *testing.T) {
 	}
 	readDirCalled := false
 	stat := func(path string) (os.FileInfo, error) {
-		if path == filepath.Join(stateRoot, InboxDir) {
+		if path == filepath.Join(stateRoot, mhome.InboxDir) {
 			return nil, fs.ErrNotExist
 		}
 		return os.Stat(path)
@@ -146,7 +148,7 @@ func TestRecoverAllInboxesWithSenderUsesExplicitCapability(t *testing.T) {
 	home := t.TempDir()
 	env := recoveryEnvelope("command")
 	writeRecoveryEnvelope(t, home, env)
-	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "submitted", Acknowledged: true}}
+	sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Status: "submitted", Acknowledged: true}}
 
 	attempts, err := RecoverAllInboxesWithSender(sender, home)
 	if err != nil {
@@ -167,7 +169,7 @@ func TestRecoverAllInboxesWithSenderSkipsUplinkReport(t *testing.T) {
 	home := t.TempDir()
 	env := recoveryEnvelope("uplink-report")
 	writeRecoveryEnvelope(t, home, env)
-	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "submitted", Acknowledged: true}}
+	sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Status: "submitted", Acknowledged: true}}
 
 	attempts, err := RecoverAllInboxesWithSender(sender, home)
 	if err != nil {
@@ -195,12 +197,12 @@ func TestRecoverAllInboxesWithSenderDeliversOnlyValidatedInboxRecords(t *testing
 	if err != nil {
 		t.Fatalf("marshal forged envelope: %v", err)
 	}
-	path := filepath.Join(home, "state", InboxDir, forged.SenderIdentity, forged.MessageID+".json")
+	path := filepath.Join(home, "state", mhome.InboxDir, forged.SenderIdentity, forged.MessageID+".json")
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatalf("write forged envelope: %v", err)
 	}
 
-	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "submitted", Acknowledged: true}}
+	sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Status: "submitted", Acknowledged: true}}
 	attempts, err := RecoverAllInboxesWithSender(sender, home)
 	if err != nil {
 		t.Fatal(err)
@@ -217,8 +219,8 @@ func TestRecoverAllInboxesWithSenderSkipsAckOnlyInboxRecord(t *testing.T) {
 	home := t.TempDir()
 	env := recoveryEnvelope("command")
 	writeRecoveryEnvelope(t, home, env)
-	store := NewStore(home)
-	ack := &ProcessingAck{
+	store := mhome.NewStore(home)
+	ack := &mhome.ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,
 		SenderIdentity: env.SenderIdentity,
@@ -227,17 +229,17 @@ func TestRecoverAllInboxesWithSenderSkipsAckOnlyInboxRecord(t *testing.T) {
 		TaskID:         env.TaskID,
 		PayloadHash:    env.PayloadHash,
 		ProcessedAt:    2,
-		Outcome:        OutcomeAccepted,
+		Outcome:        mhome.OutcomeAccepted,
 	}
 	if err := store.WriteAck(ack); err != nil {
 		t.Fatalf("WriteAck: %v", err)
 	}
-	payloadPath := filepath.Join(home, "state", InboxDir, env.SenderIdentity, env.MessageID+".json")
+	payloadPath := filepath.Join(home, "state", mhome.InboxDir, env.SenderIdentity, env.MessageID+".json")
 	if err := os.Remove(payloadPath); err != nil {
 		t.Fatalf("remove payload: %v", err)
 	}
 
-	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "submitted", Acknowledged: true}}
+	sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Status: "submitted", Acknowledged: true}}
 	attempts, err := RecoverAllInboxesWithSender(sender, home)
 	if err != nil {
 		t.Fatal(err)
@@ -257,7 +259,7 @@ func TestRecoverAllInboxesWithSenderFailureLeavesEnvelopeAndMarkerAbsent(t *test
 	home := t.TempDir()
 	env := recoveryEnvelope("command")
 	writeRecoveryEnvelope(t, home, env)
-	sender := &recoverySender{alive: true, result: BoundSendResult{Status: "backend-failed", Err: os.ErrPermission}}
+	sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Status: "backend-failed", Err: os.ErrPermission}}
 
 	attempts, err := RecoverAllInboxesWithSender(sender, home)
 	if err != nil {
@@ -266,7 +268,7 @@ func TestRecoverAllInboxesWithSenderFailureLeavesEnvelopeAndMarkerAbsent(t *test
 	if len(attempts) != 1 || attempts[0].Err == nil || attempts[0].Delivered {
 		t.Fatalf("attempts = %+v", attempts)
 	}
-	if _, err := NewStore(home).ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil {
+	if _, err := mhome.NewStore(home).ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil {
 		t.Fatalf("envelope missing after failed recovery: %v", err)
 	}
 	if _, err := os.Stat(RecoveryMarkerPath(home, env.MessageID)); !os.IsNotExist(err) {

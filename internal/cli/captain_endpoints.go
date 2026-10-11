@@ -67,23 +67,6 @@ func newSessionProbeEndpoint() sessionProbeEndpoint {
 	return sessionProbeEndpoint{resolve: backend.BackendForTask}
 }
 
-func ownedCaptainBackend(home string, meta map[string]string, resolve func(string, map[string]string) (backend.Backend, string, error)) (backend.Backend, error) {
-	bk, name, err := resolve(home, meta)
-	if err != nil {
-		return nil, err
-	}
-	if expected := meta["backend"]; expected != "" && name != expected {
-		return nil, errors.New("captain backend ownership mismatch")
-	}
-	if name == "herdr" && meta["herdr_session"] != "" {
-		sessionID, _ := backend.ParseWindow(meta["window"])
-		if sessionID != "" && sessionID != meta["herdr_session"] {
-			return nil, errors.New("herdr session ownership mismatch")
-		}
-	}
-	return bk, nil
-}
-
 func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.CaptainProbeResult, error) {
 	window := meta["window"]
 	if aware, ok := bk.(backend.AgentAwareBackend); ok {
@@ -124,7 +107,7 @@ func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.Capt
 }
 
 func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (fleet.CaptainProbeResult, error) {
-	bk, err := ownedCaptainBackend(home, meta, e.resolve)
+	bk, _, err := boundBackend(home, meta, e.resolve)
 	if err != nil {
 		return fleet.CaptainProbeResult{}, err
 	}
@@ -140,7 +123,7 @@ func newSessionNudgeEndpoint() sessionNudgeEndpoint {
 }
 
 func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload string) (fleet.NudgeResult, error) {
-	bk, err := ownedCaptainBackend(home, meta, e.resolve)
+	bk, _, err := boundBackend(home, meta, e.resolve)
 	if err != nil {
 		return fleet.NudgeResult{}, err
 	}
@@ -168,7 +151,7 @@ func newSessionRetireEndpoint() sessionRetireEndpoint {
 }
 
 func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error {
-	bk, err := ownedCaptainBackend(home, meta, e.resolve)
+	bk, _, err := boundBackend(home, meta, e.resolve)
 	if err != nil {
 		return err
 	}

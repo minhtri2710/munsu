@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult, args ...string) (string, string, Response[MessageResult]) {
+func runUplinkReport(t *testing.T, notify func(string, string, home.NotificationRef) orchestrator.UplinkNotifyResult, args ...string) (string, string, Response[MessageResult]) {
 	t.Helper()
 	senderHome, receiverHome := t.TempDir(), t.TempDir()
 	t.Setenv("MUNSU_HOME", senderHome)
@@ -40,11 +40,11 @@ func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.Noti
 }
 
 func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
-	senderHome, receiverHome, resp := runUplinkReport(t, func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+	senderHome, receiverHome, resp := runUplinkReport(t, func(string, string, home.NotificationRef) orchestrator.UplinkNotifyResult {
 		t.Fatal("no-ring must not notify")
 		return orchestrator.QueuedNotification()
 	}, "--ring", "no-ring", "done", "complete")
-	pending, err := orchestrator.NewStore(receiverHome).ListPending("task_with_colon")
+	pending, err := home.NewStore(receiverHome).ListPending("task_with_colon")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
@@ -64,7 +64,7 @@ func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
 }
 
 func TestReportCmdNotificationFailureReturnsQueued(t *testing.T) {
-	_, _, resp := runUplinkReport(t, func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+	_, _, resp := runUplinkReport(t, func(string, string, home.NotificationRef) orchestrator.UplinkNotifyResult {
 		return orchestrator.QueuedNotification()
 	}, "--ring", "ring", "failed", "failed")
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {
@@ -88,7 +88,7 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 			}}, "tmux", nil
 		},
 	}
-	cmd := newReportCmdWithNotifier(func(sender, _ string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+	cmd := newReportCmdWithNotifier(func(sender, _ string, ref home.NotificationRef) orchestrator.UplinkNotifyResult {
 		return transport.Notify(sender, orchestrator.TargetResult{
 			Source: orchestrator.RuntimeSource,
 			Handle: "pane",
@@ -115,11 +115,11 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 	}
 	// Soldier reports use the owning parent home as the sender home, which is
 	// the same durable home as this direct-dispatch receiver.
-	pending, pendingErr := orchestrator.NewStore(receiverHome).ListAllPending()
+	pending, pendingErr := home.NewStore(receiverHome).ListAllPending()
 	if pendingErr != nil || len(pending) != 1 {
 		t.Fatalf("sender pending records = %d, err = %v; want one durable retry record", len(pending), pendingErr)
 	}
-	envelope, envelopeErr := orchestrator.NewStore(receiverHome).ReadEnvelope(pending[0].SenderIdentity, pending[0].MessageID)
+	envelope, envelopeErr := home.NewStore(receiverHome).ReadEnvelope(pending[0].SenderIdentity, pending[0].MessageID)
 	if envelopeErr != nil || envelope == nil {
 		t.Fatalf("receiver envelope = %v, err = %v; want durable committed report", envelope, envelopeErr)
 	}
@@ -132,15 +132,15 @@ func TestReportCmdTransportFailureFailsLoud(t *testing.T) {
 }
 
 func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
-	var got orchestrator.NotificationRef
-	_, receiverHome, resp := runUplinkReport(t, func(_, _ string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+	var got home.NotificationRef
+	_, receiverHome, resp := runUplinkReport(t, func(_, _ string, ref home.NotificationRef) orchestrator.UplinkNotifyResult {
 		got = ref
 		return orchestrator.AcknowledgedNotification()
 	}, "--ring", "ring", "blocked", "waiting")
 	if got.MessageID == "" || got.SenderIdentity != "task_with_colon" {
 		t.Fatalf("ref=%+v", got)
 	}
-	env, err := orchestrator.NewStore(receiverHome).ReadEnvelope(got.SenderIdentity, got.MessageID)
+	env, err := home.NewStore(receiverHome).ReadEnvelope(got.SenderIdentity, got.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("env=%+v err=%v", env, err)
 	}
@@ -157,27 +157,27 @@ func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
 // artifact stamped receiver_rank "captain" in a topology with no captain,
 // which the receiving General's own inbox then refused.
 func TestReportCmdStampsReceiverRankFromTheReceivingHome(t *testing.T) {
-	var ref orchestrator.NotificationRef
-	_, receiverHome, _ := runUplinkReport(t, func(_, _ string, got orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+	var ref home.NotificationRef
+	_, receiverHome, _ := runUplinkReport(t, func(_, _ string, got home.NotificationRef) orchestrator.UplinkNotifyResult {
 		ref = got
 		return orchestrator.AcknowledgedNotification()
 	}, "--ring", "ring", "failed", "direct dispatch failure")
 
-	_, homeRank, err := orchestrator.ReadHomeIdentity(receiverHome)
+	_, homeRank, err := home.ReadHomeIdentity(receiverHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if homeRank != orchestrator.RankGeneral {
-		t.Fatalf("fixture receiver home rank = %q, want %q", homeRank, orchestrator.RankGeneral)
+	if homeRank != home.RankGeneral {
+		t.Fatalf("fixture receiver home rank = %q, want %q", homeRank, home.RankGeneral)
 	}
-	env, err := orchestrator.NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
+	env, err := home.NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("env=%+v err=%v", env, err)
 	}
-	if env.ReceiverRank != orchestrator.RankGeneral {
-		t.Fatalf("receiver_rank = %q, want %q for a home of rank %q", env.ReceiverRank, orchestrator.RankGeneral, homeRank)
+	if env.ReceiverRank != home.RankGeneral {
+		t.Fatalf("receiver_rank = %q, want %q for a home of rank %q", env.ReceiverRank, home.RankGeneral, homeRank)
 	}
-	if _, err := orchestrator.NewReceiver(receiverHome); err != nil {
+	if _, err := home.NewReceiver(receiverHome); err != nil {
 		t.Fatal(err)
 	}
 }

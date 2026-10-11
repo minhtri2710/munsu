@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -267,16 +266,7 @@ func newSoldierStateCmd() *cobra.Command {
 			}
 			state, err := fleet.ReadWithProbe(ctx.Home, id, runtimeTaskEndpointProbe())
 			if err != nil {
-				if errors.Is(err, taskauthority.ErrNotFound) {
-					if _, metaErr := home.ReadMeta(ctx.Home, id); metaErr == nil {
-						return operationError("invalid_state", "munsu cannot repair a projection with no canonical record; remove state/"+id+".meta by hand or discard the home",
-							fmt.Sprintf("Task %q in home %s has no canonical Task Authority record; observation refuses the legacy projection", id, ctx.Home))
-					}
-					return operationError("not_found", "Run `munsu task list` to find a task ID",
-						fmt.Sprintf("Task %q was not found in home %s", id, ctx.Home))
-				}
-				return operationError("invalid_state", "munsu cannot repair an unreadable canonical record; fix or remove state/task-authority/tasks/"+id+" by hand or discard the home",
-					fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s: %v", id, ctx.Home, err))
+				return observeReadError(ctx.Home, id, err)
 			}
 			return writeContract(cmd, Response[TaskObserve]{
 				SchemaVersion: SchemaVersion,

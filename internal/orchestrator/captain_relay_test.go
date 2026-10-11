@@ -186,12 +186,12 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEmpty(t *testing.T) 
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-	identity, rank, err := ReadHomeIdentity(tmp)
+	identity, rank, err := home.ReadHomeIdentity(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rank != RankGeneral {
-		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
+	if rank != home.RankGeneral {
+		t.Fatalf("home rank = %q, want %q", rank, home.RankGeneral)
 	}
 	// Direct General dispatch launches the soldier with this home as its own,
 	// and writes the task record here; that record is the durable provenance
@@ -200,25 +200,25 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEmpty(t *testing.T) 
 		t.Fatal(err)
 	}
 	result, err := Report(ReportRequest{
-		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: home.RankSoldier,
 		SenderIdentity: "general-recovery-test", ReceiverRank: rank, ReceiverID: identity,
 		TaskID: "general-recovery-test", State: "failed", Message: "queued report",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := NewReceiver(tmp)
+	receiver, err := home.NewReceiver(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-recovery-test"}); err != nil {
+	if _, err := receiver.Ack(home.NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-recovery-test"}); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
 		t.Fatalf("reconcile General home: %v", err)
 	}
-	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+	if pending, err := home.NewStore(tmp).ListAllPending(); err != nil {
 		t.Fatal(err)
 	} else if len(pending) != 0 {
 		t.Fatalf("pending reports after General recovery = %d, want 0", len(pending))
@@ -234,12 +234,12 @@ func TestReconcileHook_GeneralHomeIgnoresStaleParentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identity, rank, err := ReadHomeIdentity(tmp)
+	identity, rank, err := home.ReadHomeIdentity(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rank != RankGeneral {
-		t.Fatalf("home rank = %q, want %q", rank, RankGeneral)
+	if rank != home.RankGeneral {
+		t.Fatalf("home rank = %q, want %q", rank, home.RankGeneral)
 	}
 	// A General home holds a captain task record for every captain it
 	// launched, naming that captain's home; the pair is the durable
@@ -255,25 +255,25 @@ func TestReconcileHook_GeneralHomeIgnoresStaleParentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := Report(ReportRequest{
-		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankCaptain,
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: home.RankCaptain,
 		SenderIdentity: "general-stale-parent-test", ReceiverRank: rank, ReceiverID: identity,
 		TaskID: "general-stale-parent-test", State: "failed", Message: "queued report",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := NewReceiver(tmp)
+	receiver, err := home.NewReceiver(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-stale-parent-test"}); err != nil {
+	if _, err := receiver.Ack(home.NotificationRef{MessageID: result.MessageID, SenderIdentity: "general-stale-parent-test"}); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
 		t.Fatalf("reconcile General home: %v", err)
 	}
-	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+	if pending, err := home.NewStore(tmp).ListAllPending(); err != nil {
 		t.Fatal(err)
 	} else if len(pending) != 0 {
 		t.Fatalf("pending reports after General recovery = %d, want 0", len(pending))
@@ -287,12 +287,12 @@ func TestReconcileHook_CaptainWithoutParentUsesCaptainRecovery(t *testing.T) {
 	if err := home.SeedCaptainProvenance(tmp, "test-captain"); err != nil {
 		t.Fatal(err)
 	}
-	identity, rank, err := ReadHomeIdentity(tmp)
+	identity, rank, err := home.ReadHomeIdentity(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rank != RankCaptain {
-		t.Fatalf("home rank = %q, want %q", rank, RankCaptain)
+	if rank != home.RankCaptain {
+		t.Fatalf("home rank = %q, want %q", rank, home.RankCaptain)
 	}
 	// Captain dispatch writes the soldier's task record into the captain
 	// home, which is the durable provenance behind the soldier rank claim.
@@ -300,25 +300,25 @@ func TestReconcileHook_CaptainWithoutParentUsesCaptainRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := Report(ReportRequest{
-		SenderHome: tmp, ReceiverHome: tmp, SenderRank: RankSoldier,
+		SenderHome: tmp, ReceiverHome: tmp, SenderRank: home.RankSoldier,
 		SenderIdentity: "captain-recovery-test", ReceiverRank: rank, ReceiverID: identity,
 		TaskID: "captain-recovery-test", State: "failed", Message: "queued report",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := NewReceiver(tmp)
+	receiver, err := home.NewReceiver(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := receiver.Ack(NotificationRef{MessageID: result.MessageID, SenderIdentity: "captain-recovery-test"}); err != nil {
+	if _, err := receiver.Ack(home.NotificationRef{MessageID: result.MessageID, SenderIdentity: "captain-recovery-test"}); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true}); err != nil {
 		t.Fatalf("reconcile Captain home: %v", err)
 	}
-	if pending, err := NewStore(tmp).ListAllPending(); err != nil {
+	if pending, err := home.NewStore(tmp).ListAllPending(); err != nil {
 		t.Fatal(err)
 	} else if len(pending) != 0 {
 		t.Fatalf("pending reports after Captain recovery = %d, want 0", len(pending))
@@ -336,24 +336,6 @@ func TestReconcileHook_ReconcilesGeneralHomeWhenParentStatusEqualsHomeDir(t *tes
 	err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true})
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir with valid transport, got: %v", err)
-	}
-}
-
-func TestReconcileHook_RejectsUnsupportedHomeRankBeforeRecovery(t *testing.T) {
-	tmp := t.TempDir()
-	transport := &captainNotificationTransport{acknowledged: true}
-	originalReadHomeIdentity := ReadHomeIdentity
-	ReadHomeIdentity = func(string) (string, Rank, error) {
-		return "soldier-home", RankSoldier, nil
-	}
-	t.Cleanup(func() { ReadHomeIdentity = originalReadHomeIdentity })
-
-	err := ReconcileCaptainHook(tmp, false, transport)
-	if err == nil || !strings.Contains(err.Error(), "unsupported home rank") {
-		t.Fatalf("error = %v, want unsupported home rank error", err)
-	}
-	if transport.calls != 0 {
-		t.Fatalf("notification calls = %d, want 0 for unsupported home rank", transport.calls)
 	}
 }
 

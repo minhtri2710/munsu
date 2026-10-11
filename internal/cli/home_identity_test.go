@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,14 +63,15 @@ func TestHomeIdentity(t *testing.T) {
 			t.Fatalf("identity = %q %q %v", id, rank, err)
 		}
 	})
-	t.Run("a copied captain home keeps the marker id", func(t *testing.T) {
+	t.Run("a copied captain home refuses and does not offer seed", func(t *testing.T) {
 		dir := seededCaptainHome(t, nil)
 		copied := "munsu-v2\ncaptain-1\n" + filepath.Join(t.TempDir(), "elsewhere") + "\n"
 		if err := os.WriteFile(filepath.Join(dir, home.CaptainProvenanceMarkerName), []byte(copied), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if id, rank, err := homeIdentity(dir); err != nil || id != "captain-1" || rank != home.RankCaptain {
-			t.Fatalf("identity = %q %q %v, want today's marker id for a copied home", id, rank, err)
+		_, _, err := homeIdentity(dir)
+		if err == nil || !errors.Is(err, home.ErrCaptainHomeMismatch) || !strings.Contains(err.Error(), "may have been copied/moved") || strings.Contains(err.Error(), "munsu captain seed") {
+			t.Fatalf("err = %v, want the copied-home refusal without the seed hint", err)
 		}
 	})
 	t.Run("the General's markerless home is still named by its directory", func(t *testing.T) {
@@ -81,64 +83,71 @@ func TestHomeIdentity(t *testing.T) {
 	})
 }
 
-// TestCaptainHomeCommandsRefuseAnUnusableMarker runs one command of each family
-// that derived a sender or owner identity from the home's basename.
-func TestCaptainHomeCommandsRefuseAnUnusableMarker(t *testing.T) {
-	invocations := []struct {
+// TestCaptainHomeCommandsIdentityGuard runs one command of each family that
+// derives a sender or owner identity from the home: a captain home with a
+// missing or malformed marker refuses at that derivation, and one with a valid
+// marker passes it.
+func TestCaptainHomeCommandsIdentityGuard(t *testing.T) {
+	commands := []struct {
 		family string
+		wrap   string
 		env    map[string]string
 		args   []string
 		meta   bool
 	}{
-		{"task", map[string]string{"MUNSU_ROLE": "general"}, []string{"task", "add", "t1", "desc"}, false},
-		{"consume-ready", map[string]string{"MUNSU_ROLE": "general"}, []string{"consume-ready", "t1"}, false},
-		{"report", map[string]string{"MUNSU_ROLE": "soldier", "MUNSU_TASK_ID": "t1"}, []string{"report", "review-ready", "ready", "--ring", "no-ring"}, false},
-		{"send", map[string]string{"MUNSU_ROLE": "general"}, []string{"send", "t1", "line"}, true},
-		{"soldier-flush", map[string]string{"MUNSU_ROLE": "general"}, []string{"soldier-flush", "t1"}, false},
+		{"task", "resolving task owner", map[string]string{"MUNSU_ROLE": "general"}, []string{"task", "add", "t1", "desc"}, false},
+		{"consume-ready", "consume-ready: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"consume-ready", "t1"}, false},
+		{"soldier report", "report: deriving sender identity", map[string]string{"MUNSU_ROLE": "soldier", "MUNSU_TASK_ID": "t1"}, []string{"report", "review-ready", "ready", "--ring", "no-ring"}, false},
+		{"captain report", "report: deriving sender identity", map[string]string{"MUNSU_ROLE": "captain", "MUNSU_TASK_ID": "t1"}, []string{"report", "done", "finished", "--ring", "no-ring"}, false},
+		{"send", "send: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"send", "t1", "line"}, true},
+		{"soldier-flush", "soldier-flush: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"soldier-flush", "t1"}, false},
 	}
-	run := func(t *testing.T, homeDir string, tc int) error {
-		inv := invocations[tc]
-		t.Setenv("MUNSU_HOME", homeDir)
-		t.Setenv("MUNSU_GUARD_SKIP", "1")
-		for k, v := range inv.env {
-			t.Setenv(k, v)
-		}
-		if inv.meta {
-			if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "soldier"}); err != nil {
+	malformed := "munsu-v2\ncaptain-1\n"
+	markers := []struct {
+		name    string
+		home    func(t *testing.T) string
+		refused string
+	}{
+		{"block: missing marker", func(t *testing.T) string { return seededCaptainHome(t, nil) }, "has no " + home.CaptainProvenanceMarkerName + " marker"},
+		{"block: malformed marker", func(t *testing.T) string { return seededCaptainHome(t, &malformed) }, "is malformed"},
+		{"allow: valid marker", func(t *testing.T) string {
+			dir := seededCaptainHome(t, nil)
+			if err := home.SeedCaptainProvenance(dir, "captain-1"); err != nil {
 				t.Fatal(err)
 			}
+			return dir
+		}, ""},
+	}
+	for _, cmd := range commands {
+		for _, marker := range markers {
+			t.Run(cmd.family+"/"+marker.name, func(t *testing.T) {
+				homeDir := marker.home(t)
+				t.Setenv("MUNSU_HOME", homeDir)
+				t.Setenv("MUNSU_GUARD_SKIP", "1")
+				for k, v := range cmd.env {
+					t.Setenv(k, v)
+				}
+				if cmd.env["MUNSU_ROLE"] == "captain" {
+					general := filepath.Join(t.TempDir(), "general-home")
+					initCLITestHome(t, general)
+					t.Setenv("MUNSU_PARENT_STATUS", general)
+				}
+				if cmd.meta {
+					if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "soldier"}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				_, err := runRoot(t, cmd.args...)
+				if marker.refused == "" {
+					if err != nil && (strings.Contains(err.Error(), cmd.wrap) || strings.Contains(err.Error(), "munsu captain seed")) {
+						t.Fatalf("err = %v, a captain home with a valid marker must pass the identity derivation", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), cmd.wrap) || !strings.Contains(err.Error(), marker.refused) || !strings.Contains(err.Error(), "munsu captain seed <id> <home> --repo <repo>") {
+					t.Fatalf("err = %v, want %q refusing with %q naming munsu captain seed", err, cmd.wrap, marker.refused)
+				}
+			})
 		}
-		_, err := runRoot(t, inv.args...)
-		return err
-	}
-	for i, inv := range invocations {
-		t.Run(inv.family+" refuses a captain home with no marker", func(t *testing.T) {
-			err := run(t, seededCaptainHome(t, nil), i)
-			if err == nil || !strings.Contains(err.Error(), "munsu captain seed <id> <home> --repo <repo>") {
-				t.Fatalf("err = %v, want the unusable-marker refusal", err)
-			}
-		})
-		t.Run(inv.family+" still runs in the General's home", func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "general-home")
-			initCLITestHome(t, dir)
-			err := run(t, dir, i)
-			if err != nil && (strings.Contains(err.Error(), "deriving sender identity") || strings.Contains(err.Error(), "resolving task owner")) {
-				t.Fatalf("err = %v, the General's home must not be refused for a missing marker", err)
-			}
-		})
-	}
-}
-
-func TestCaptainReportRefusesAnUnusableMarker(t *testing.T) {
-	general := filepath.Join(t.TempDir(), "general-home")
-	initCLITestHome(t, general)
-	t.Setenv("MUNSU_HOME", seededCaptainHome(t, nil))
-	t.Setenv("MUNSU_GUARD_SKIP", "1")
-	t.Setenv("MUNSU_ROLE", "captain")
-	t.Setenv("MUNSU_TASK_ID", "t1")
-	t.Setenv("MUNSU_PARENT_STATUS", general)
-	_, err := runRoot(t, "report", "done", "finished", "--ring", "no-ring")
-	if err == nil || !strings.Contains(err.Error(), "report: deriving sender identity") || !strings.Contains(err.Error(), "munsu captain seed <id> <home> --repo <repo>") {
-		t.Fatalf("err = %v, want the captain report refused for its unusable marker", err)
 	}
 }

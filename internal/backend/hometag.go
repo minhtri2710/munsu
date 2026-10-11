@@ -5,9 +5,8 @@ package backend
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -32,19 +31,11 @@ func Hometag(homeDir string) string {
 func WorkspaceTag(homeDir string) string {
 	canon := Canonical(homeDir)
 	tag := Hometag(canon)
-	data, err := os.ReadFile(filepath.Join(canon, ".munsu-captain-home"))
-	if err != nil {
-		// Fall back to the caller path when the home is not yet fully resolvable.
-		data, err = os.ReadFile(filepath.Join(homeDir, ".munsu-captain-home"))
-		if err != nil {
-			return tag
-		}
-	}
-	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 4)
-	if len(lines) != 3 || strings.TrimSpace(lines[0]) != "munsu-v2" {
+	id, err := home.ValidateCaptainProvenance(canon)
+	if err != nil && !errors.Is(err, home.ErrCaptainHomeMismatch) {
 		return tag
 	}
-	id := labelComponent(lines[1])
+	id = labelComponent(id)
 	if id == "" {
 		return tag
 	}

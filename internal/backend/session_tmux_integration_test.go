@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+// hasTmux reports whether tmux is available on PATH.
+func hasTmux() bool {
+	_, err := exec.LookPath("tmux")
+	return err == nil
+}
+
 // tmuxSetupTimeout bounds the harness's own tmux calls so a hung server fails
 // the test instead of hanging until the job timeout.
 const tmuxSetupTimeout = 10 * time.Second

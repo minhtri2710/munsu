@@ -114,22 +114,38 @@ func TestResolveTargetWithSource_EmptyConfigIsUnsupported(t *testing.T) {
 	}
 }
 
-func TestValidateTargetOwnership_RejectsForeignHerdrSession(t *testing.T) {
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_SESSION", "general")
-	t.Setenv("HERDR_PANE_ID", "w1:p1")
-	result := TargetResult{Source: ConfigSource, Handle: "foreign:w2:p2", Session: "foreign"}
-	if err := ValidateTargetOwnership(&result); err == nil {
-		t.Fatal("expected foreign session rejection")
-	}
-}
-
-func TestValidateTargetOwnership_RejectsBareHerdrHandle(t *testing.T) {
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_SESSION", "general")
-	t.Setenv("HERDR_PANE_ID", "w1:p1")
-	result := TargetResult{Source: ConfigSource, Handle: "w2:p2"}
-	if err := ValidateTargetOwnership(&result); err == nil {
-		t.Fatal("expected bare herdr handle rejection")
+func TestValidateTargetOwnership_HerdrSession(t *testing.T) {
+	const mismatch = "does not match active herdr session"
+	for _, tc := range []struct {
+		name       string
+		tmuxPane   string
+		envSession string
+		session    string
+		wantErr    string
+	}{
+		{name: "foreign session", envSession: "general", session: "foreign", wantErr: mismatch},
+		{name: "bare handle with no session", envSession: "general", session: "", wantErr: mismatch},
+		{name: "bare handle against the default session", envSession: "", session: "", wantErr: mismatch},
+		{name: "session other than the default", envSession: "", session: "x", wantErr: mismatch},
+		{name: "matching session", envSession: "general", session: "general"},
+		{name: "default session", envSession: "", session: "default"},
+		{name: "tmux pane ignores the herdr session", tmuxPane: "%1", envSession: "general", session: "foreign"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TMUX_PANE", tc.tmuxPane)
+			t.Setenv("HERDR_ENV", "1")
+			t.Setenv("HERDR_SESSION", tc.envSession)
+			t.Setenv("HERDR_PANE_ID", "w1:p1")
+			err := ValidateTargetOwnership(&TargetResult{Source: ConfigSource, Handle: "h:w2:p2", Session: tc.session})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateTargetOwnership = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ValidateTargetOwnership = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }

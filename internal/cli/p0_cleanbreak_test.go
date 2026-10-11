@@ -146,10 +146,10 @@ func TestBackendCapabilitiesOnlyTmuxHerdr(t *testing.T) {
 	}
 }
 
-// TestTaskObserveMetaOnlyFailsClosed proves `task observe` on an ordinary
-// meta-only task (no canonical record) returns a structured invalid_state with
-// task/home context, never a projection fallback.
-func TestTaskObserveMetaOnlyFailsClosed(t *testing.T) {
+// TestTaskObserveRequiresCanonicalRecord proves `task observe` answers from the
+// canonical record alone: a task with only a legacy .meta projection is not
+// found, and a canonical task with no .meta is observed.
+func TestTaskObserveRequiresCanonicalRecord(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
@@ -161,42 +161,28 @@ func TestTaskObserveMetaOnlyFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homeDir, "state", "legacy-task.meta"), []byte("kind=ship\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	cliSeedCanonicalTaskPhase(t, homeDir, "no-meta", "ship", taskauthority.PhaseQueued)
 
-	out, err := runContract(t, []string{"task", "observe", "legacy-task", "--output=json"})
+	out, err := runContract(t, []string{"task", "observe", "no-meta", "--output", "json"})
+	if err != nil {
+		t.Fatalf("task observe canonical without meta: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"status": "queued"`) {
+		t.Errorf("task observe must report canonical queued phase, got:\n%s", out)
+	}
+
+	out, err = runContract(t, []string{"task", "observe", "legacy-task", "--output=json"})
 	if err == nil {
-		t.Fatalf("task observe over a meta-only task = nil error, want fail-closed; output:\n%s", out)
-	}
-	response := decodeContractError(t, out)
-	if response.Error.ErrorCode != "invalid_state" {
-		t.Errorf("meta-only task observe error_code = %q, want invalid_state; output:\n%s", response.Error.ErrorCode, out)
-	}
-	assertCarriesContext(t, response, "legacy-task", homeDir)
-	if !strings.Contains(response.Error.Action, "munsu cannot repair a projection with no canonical record") {
-		t.Errorf("meta-only task observe action = %q, want the no-repair instruction", response.Error.Action)
-	}
-	if response.Kind != "error" {
-		t.Errorf("meta-only task observe must not emit a success envelope, got kind %q:\n%s", response.Kind, out)
-	}
-}
-
-// TestTaskObserveMissingTaskNotFound proves `task observe` on a completely
-// missing task returns a structured not_found with task/home context.
-func TestTaskObserveMissingTaskNotFound(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("MUNSU_HOME", homeDir)
-
-	out, err := runContract(t, []string{"task", "observe", "does-not-exist", "--output=json"})
-	if err == nil {
-		t.Fatalf("task observe over a missing task = nil error, want not_found; output:\n%s", out)
+		t.Fatalf("task observe over a meta-only task = nil error, want not_found; output:\n%s", out)
 	}
 	response := decodeContractError(t, out)
 	if response.Error.ErrorCode != "not_found" {
-		t.Errorf("missing task observe error_code = %q, want not_found; output:\n%s", response.Error.ErrorCode, out)
+		t.Errorf("meta-only task observe error_code = %q, want not_found; output:\n%s", response.Error.ErrorCode, out)
 	}
-	assertCarriesContext(t, response, "does-not-exist", homeDir)
+	assertCarriesContext(t, response, "legacy-task", homeDir)
+	if response.Kind != "error" {
+		t.Errorf("meta-only task observe must not emit a success envelope, got kind %q:\n%s", response.Kind, out)
+	}
 }
 
 // TestTaskObserveCorruptCanonicalFailsClosed proves a corrupt canonical record
@@ -292,25 +278,6 @@ func TestTaskObserveCanonicalDoneBeatsStaleStatus(t *testing.T) {
 	}
 }
 
-// TestTaskObserveCanonicalWithoutMetaSucceeds proves a canonical task with no
-// .meta projection is still observable from its authoritative phase.
-func TestTaskObserveCanonicalWithoutMetaSucceeds(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("MUNSU_HOME", homeDir)
-	cliSeedCanonicalTaskPhase(t, homeDir, "no-meta", "ship", taskauthority.PhaseQueued)
-
-	out, err := runContract(t, []string{"task", "observe", "no-meta", "--output", "json"})
-	if err != nil {
-		t.Fatalf("task observe canonical without meta: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, `"status": "queued"`) {
-		t.Errorf("task observe must report canonical queued phase, got:\n%s", out)
-	}
-}
-
 // cliSeedCanonicalTaskPhase creates one canonical task at the given phase.
 func cliSeedCanonicalTaskPhase(t *testing.T, homeDir, id, kind string, phase taskauthority.Phase) {
 	t.Helper()
@@ -378,9 +345,9 @@ func mustOpIDFor(t *testing.T, value string) domain.OperationID {
 	return id
 }
 
-// TestSoldierStateRefusalsStateThatMunsuCannotRepair proves soldier-state names
-// what is wrong with a meta-only or corrupt task and does not point at a
-// command that repairs it.
+// TestSoldierStateRefusalsStateThatMunsuCannotRepair proves soldier-state
+// reports a meta-only task as not found and a corrupt task as invalid state
+// without pointing at a command that repairs it.
 func TestSoldierStateRefusalsStateThatMunsuCannotRepair(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
@@ -398,16 +365,17 @@ func TestSoldierStateRefusalsStateThatMunsuCannotRepair(t *testing.T) {
 	if err := os.WriteFile(cur, []byte("{not-json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[string]string{
-		"meta-only": "munsu cannot repair a projection with no canonical record",
-		"corrupt":   "munsu cannot repair an unreadable canonical record",
+	for id, want := range map[string][2]string{
+		"meta-only": {"not_found", "Run `munsu task list` to find a task ID"},
+		"corrupt":   {"invalid_state", "munsu cannot repair an unreadable canonical record"},
 	} {
 		out, err := runContract(t, []string{"soldier-state", id, "--output=json"})
 		if err == nil {
 			t.Fatalf("soldier-state %s = nil error; output:\n%s", id, out)
 		}
-		if got := decodeContractError(t, out).Error.Action; !strings.Contains(got, want) {
-			t.Errorf("soldier-state %s action = %q, want %q", id, got, want)
+		got := decodeContractError(t, out).Error
+		if got.ErrorCode != want[0] || !strings.Contains(got.Action, want[1]) {
+			t.Errorf("soldier-state %s = (%q, %q), want (%q, %q)", id, got.ErrorCode, got.Action, want[0], want[1])
 		}
 	}
 }

@@ -20,23 +20,10 @@ func newSessionBoundTeardown() fleet.BoundTeardown {
 func (s sessionBoundTeardown) RefuseGate() error { return fleet.GateRefuseFromCWD() }
 
 func (s sessionBoundTeardown) resolveBound(home string, meta map[string]string) (backend.Backend, string, error) {
-	if home == "" || meta["backend"] == "" || meta["window"] == "" {
+	if home == "" || meta["window"] == "" {
 		return nil, "", fmt.Errorf("bound teardown identity is incomplete")
 	}
-	bk, name, err := s.resolve(home, meta)
-	if err != nil {
-		return nil, "", err
-	}
-	if name != meta["backend"] {
-		return nil, "", fmt.Errorf("bound backend resolved as %q", name)
-	}
-	if name == "herdr" && meta["herdr_session"] != "" {
-		hs, _ := backend.ParseWindow(meta["window"])
-		if hs != "" && hs != meta["herdr_session"] {
-			return nil, "", fmt.Errorf("herdr session ownership mismatch")
-		}
-	}
-	return bk, name, nil
+	return boundBackend(home, meta, s.resolve)
 }
 
 func (s sessionBoundTeardown) Probe(home string, meta map[string]string) (fleet.RetirementEndpointStatus, error) {

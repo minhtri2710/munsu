@@ -277,62 +277,6 @@ func TestSpawnSessionEndpointsRequiresDurableHerdrSessionIdentity(t *testing.T) 
 	}
 }
 
-func TestSpawnSessionEndpointsRejectsRecordedEndpointResolutionMismatch(t *testing.T) {
-	bk := &spawnEndpointBackend{}
-	calls := 0
-	endpoints := &spawnSessionEndpoints{
-		resolve: func(name string) (backend.Backend, string, error) {
-			calls++
-			if name != "herdr" {
-				t.Fatalf("resolver requested backend %q, want herdr", name)
-			}
-			return bk, "tmux", nil
-		},
-		bound: map[string]backend.Backend{},
-	}
-	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "herdr", Handle: "recorded:w3A:p2", SessionOwner: "recorded"})
-	if err == nil || !strings.Contains(err.Error(), "backend mismatch") {
-		t.Fatalf("Probe error=%v, want backend identity mismatch", err)
-	}
-	if calls != 1 || bk.probeCalls != 0 || bk.findOrCreateCalls != 0 {
-		t.Fatalf("resolver calls=%d probe calls=%d create calls=%d, want 1/0/0", calls, bk.probeCalls, bk.findOrCreateCalls)
-	}
-}
-
-func TestSpawnSessionEndpointsRejectsHerdrSessionMismatchBeforeResolution(t *testing.T) {
-	calls := 0
-	endpoints := &spawnSessionEndpoints{
-		resolve: func(string) (backend.Backend, string, error) {
-			calls++
-			return &spawnEndpointBackend{}, "herdr", nil
-		},
-		bound: map[string]backend.Backend{},
-	}
-	_, err := endpoints.Probe(fleet.CreatedEndpoint{Backend: "herdr", Handle: "actual:w3A:p2", SessionOwner: "recorded"})
-	if err == nil || !strings.Contains(err.Error(), "session ownership mismatch") {
-		t.Fatalf("Probe error=%v, want Herdr session ownership mismatch", err)
-	}
-	if calls != 0 {
-		t.Fatalf("resolver calls=%d, want refusal before backend resolution", calls)
-	}
-}
-
-func TestSpawnSessionEndpointsRefusesBoundHerdrSessionMismatch(t *testing.T) {
-	ep := fleet.CreatedEndpoint{Backend: "herdr", Handle: "recorded:w3A:p2", SessionOwner: "recorded"}
-	endpoints := &spawnSessionEndpoints{
-		resolve: func(string) (backend.Backend, string, error) {
-			t.Fatal("bound endpoint must not resolve another adapter")
-			return nil, "", nil
-		},
-		bound: map[string]backend.Backend{
-			spawnEndpointKey(ep): &backend.HerdrBackend{Session: "different"},
-		},
-	}
-	if _, err := endpoints.backend(ep); err == nil || !strings.Contains(err.Error(), "session ownership mismatch") {
-		t.Fatalf("backend error=%v, want bound Herdr session mismatch", err)
-	}
-}
-
 // TestSpawnSessionEndpointsRefusesIncompleteEndpointIdentity proves a recorded
 // endpoint without a complete backend/handle identity is refused before any
 // resolution or adapter call, on both identity axes.

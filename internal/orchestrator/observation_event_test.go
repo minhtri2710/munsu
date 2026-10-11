@@ -1350,8 +1350,8 @@ func (p countingProbe) Probe(homeDir string, meta map[string]string) (bool, erro
 type raceCycleSender struct{}
 
 func (raceCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (raceCycleSender) Send(string, map[string]string, string) BoundSendResult {
-	return BoundSendResult{}
+func (raceCycleSender) Send(string, map[string]string, string) home.BoundSendResult {
+	return home.BoundSendResult{}
 }
 
 // raceTestHooks is a no-op WatcherHooks for the race lane.

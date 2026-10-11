@@ -4,14 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type testMailboxSender struct{ payloads []string }
 
 func (*testMailboxSender) Alive(string, map[string]string) (bool, error) { return true, nil }
-func (s *testMailboxSender) Send(_ string, _ map[string]string, payload string) BoundSendResult {
+func (s *testMailboxSender) Send(_ string, _ map[string]string, payload string) mhome.BoundSendResult {
 	s.payloads = append(s.payloads, payload)
-	return BoundSendResult{Status: "submitted", Acknowledged: true}
+	return mhome.BoundSendResult{Status: "submitted", Acknowledged: true}
 }
 
 func TestRunCycleWithProbeAndSenderRejectsNilHooksWithoutMarkingRecoveryDone(t *testing.T) {
@@ -42,7 +44,7 @@ func TestRunCycleWithProbeAndSenderRejectsNilSenderWithoutMarkingRecoveryDone(t 
 func TestRunCycleRecoveryScanFailureCanRetry(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
-	inboxRoot := filepath.Join(home, "state", InboxDir)
+	inboxRoot := filepath.Join(home, "state", mhome.InboxDir)
 	if err := os.MkdirAll(filepath.Dir(inboxRoot), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -66,12 +68,12 @@ func TestRunCycleRecoveryScanFailureCanRetry(t *testing.T) {
 func TestRunCycleRecoveryUsesExplicitSenderAndWritesMarker(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
-	env := &Envelope{
-		SchemaVersion: SchemaVersion, MessageID: "watcher-recovery", SenderRank: RankGeneral,
-		SenderIdentity: "general", ReceiverRank: RankCaptain, ReceiverID: "captain-1",
-		Kind: "command", TaskID: "task-1", Payload: "wake", PayloadHash: PayloadHashHex("wake"), CreatedAt: 1,
+	env := &mhome.Envelope{
+		SchemaVersion: mhome.SchemaVersion, MessageID: "watcher-recovery", SenderRank: mhome.RankGeneral,
+		SenderIdentity: "general", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
+		Kind: "command", TaskID: "task-1", Payload: "wake", PayloadHash: mhome.PayloadHashHex("wake"), CreatedAt: 1,
 	}
-	if err := NewStore(home).WriteEnvelope(env); err != nil {
+	if err := mhome.NewStore(home).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "state", "task-1.meta"), []byte("backend=tmux\nwindow=pane-1\n"), 0600); err != nil {

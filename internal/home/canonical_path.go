@@ -10,7 +10,7 @@ import (
 // joinContained returns the native path for a logical key within root. Logical
 // keys use slash separators and reject traversal, empty/current components,
 // native backslashes, absolute aliases, and volume-qualified forms before
-// native-path conversion. The comparison is purely lexical and does not follow
+// native-path conversion. The join is purely lexical and does not follow
 // symlinks.
 func joinContained(root, key string) (string, error) {
 	if key == "" {
@@ -29,9 +29,7 @@ func joinContained(root, key string) (string, error) {
 			return "", ErrKeyEscapes
 		}
 	}
-	clean := filepath.Clean(filepath.FromSlash(key))
-	joined := filepath.Join(root, clean)
-	return containedJoin(joined, withinRoot(root, joined))
+	return filepath.Join(root, filepath.Clean(filepath.FromSlash(key))), nil
 }
 
 func isWindowsDeviceName(component string) bool {
@@ -47,18 +45,6 @@ func isWindowsDeviceName(component string) bool {
 		return true
 	}
 	return false
-}
-
-// containedJoin returns the joined path when inside is true, otherwise it
-// refuses with ErrKeyEscapes. Isolating the refusal decision keeps the branch
-// reachable by a direct unit test even though joinContained's caller-facing
-// contract guarantees inside is always true for an accepted key (the component
-// loop above rejects every "", "." and ".." component before Clean/Join run).
-func containedJoin(joined string, inside bool) (string, error) {
-	if !inside {
-		return "", ErrKeyEscapes
-	}
-	return joined, nil
 }
 
 // verifyNoFollow ensures that the deepest existing ancestor of target stays

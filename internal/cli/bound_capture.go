@@ -11,31 +11,22 @@ type sessionBoundCapture struct {
 }
 
 func (c sessionBoundCapture) Capture(homeDir string, meta map[string]string, lines int) (string, error) {
-	backendName, handle := meta["backend"], meta["window"]
-	if homeDir == "" || backendName == "" || handle == "" {
+	handle := meta["window"]
+	if homeDir == "" || handle == "" {
 		return "", fmt.Errorf("bound capture identity is incomplete")
-	}
-	switch backendName {
-	case "tmux", "herdr", "zellij", "cmux", "orca":
-	default:
-		return "", fmt.Errorf("unsupported bound backend %q", backendName)
-	}
-	if backendName == "herdr" && meta["herdr_session"] != "" {
-		handleSession, _ := backend.ParseWindow(handle)
-		if handleSession != "" && handleSession != meta["herdr_session"] {
-			return "", fmt.Errorf("herdr session ownership mismatch")
-		}
 	}
 	resolve := c.resolve
 	if resolve == nil {
 		resolve = backend.BackendForTask
 	}
-	bk, resolved, err := resolve(homeDir, meta)
+	bk, name, err := boundBackend(homeDir, meta, resolve)
 	if err != nil {
 		return "", err
 	}
-	if resolved != backendName {
-		return "", fmt.Errorf("bound backend resolved as %q", resolved)
+	switch name {
+	case "tmux", "herdr", "zellij", "cmux", "orca":
+	default:
+		return "", fmt.Errorf("unsupported bound backend %q", name)
 	}
 	return bk.Capture(handle, lines)
 }

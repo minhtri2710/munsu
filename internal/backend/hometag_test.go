@@ -3,7 +3,6 @@ package backend
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -80,29 +79,41 @@ func TestWorkspaceTagPrimaryKeepsLegacyHometag(t *testing.T) {
 	}
 }
 
-func TestWorkspaceTagCaptainIsReadableAndScoped(t *testing.T) {
-	homeDir := t.TempDir()
-	marker := "munsu-v2\nAPI Supervisor\n" + homeDir + "\n"
-	if err := os.WriteFile(filepath.Join(homeDir, ".munsu-captain-home"), []byte(marker), 0644); err != nil {
-		t.Fatal(err)
+// TestWorkspaceTagMarkerShapes pins the label for every shape of captain
+// marker: only a marker ValidateCaptainProvenance reads as naming a captain, or
+// one naming another home (a copied captain), changes the hash-only label.
+func TestWorkspaceTagMarkerShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		marker func(home string) string // "" writes no marker
+		prefix string                   // "" keeps the hash-only label
+	}{
+		{"valid", func(h string) string { return "munsu-v2\nAPI Supervisor\n" + h + "\n" }, "captain-api-supervisor-"},
+		{"copied home", func(h string) string { return "munsu-v2\napi-sup\n/elsewhere/home\n" }, "captain-api-sup-"},
+		{"two lines", func(h string) string { return "munsu-v2\napi-sup\n" }, ""},
+		{"four lines", func(h string) string { return "munsu-v2\napi-sup\n" + h + "\nextra\n" }, ""},
+		{"wrong version", func(h string) string { return "munsu-v1\napi-sup\n" + h + "\n" }, ""},
+		{"blank id", func(h string) string { return "munsu-v2\n  \n" + h + "\n" }, ""},
+		{"id with no label characters", func(h string) string { return "munsu-v2\n!!!\n" + h + "\n" }, ""},
+		{"malformed", func(h string) string { return "broken\n" }, ""},
+		{"no marker", func(h string) string { return "" }, ""},
 	}
-	got := WorkspaceTag(homeDir)
-	wantPrefix := "captain-api-supervisor-"
-	if !strings.HasPrefix(got, wantPrefix) {
-		t.Fatalf("WorkspaceTag() = %q, want prefix %q", got, wantPrefix)
-	}
-	if !strings.HasSuffix(got, Hometag(homeDir)) {
-		t.Fatalf("WorkspaceTag() = %q, want hash suffix %q", got, Hometag(homeDir))
-	}
-}
-
-func TestWorkspaceTagIgnoresMalformedCaptainMarker(t *testing.T) {
-	homeDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(homeDir, ".munsu-captain-home"), []byte("broken\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := WorkspaceTag(homeDir), Hometag(homeDir); got != want {
-		t.Fatalf("WorkspaceTag() = %q, want legacy tag %q for malformed marker", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			if marker := tt.marker(Canonical(homeDir)); marker != "" {
+				if err := os.WriteFile(filepath.Join(homeDir, ".munsu-captain-home"), []byte(marker), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := Hometag(homeDir)
+			if tt.prefix != "" {
+				want = tt.prefix + want
+			}
+			if got := WorkspaceTag(homeDir); got != want {
+				t.Fatalf("WorkspaceTag() = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

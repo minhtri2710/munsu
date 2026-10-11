@@ -36,24 +36,32 @@ func TestSessionBoundCapturePreservesBoundRequest(t *testing.T) {
 		t.Fatalf("out=%q err=%v backend=%+v", out, err, b)
 	}
 }
-func TestSessionBoundCaptureRejectsIdentityAndMismatch(t *testing.T) {
-	c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return &captureBackend{}, "tmux", nil
-	}}
-	cases := []map[string]string{{}, {"backend": "unknown", "window": "p"}, {"backend": "herdr", "window": "session-a:p", "herdr_session": "session-b"}, {"backend": "herdr", "window": "session:p"}}
-	for i, meta := range cases {
-		if _, err := c.Capture("/home", meta, 1); err == nil {
-			t.Fatalf("case %d expected error", i)
-		}
-	}
-}
-func TestSessionBoundCaptureRejectsResolvedBackendMismatch(t *testing.T) {
-	c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return &captureBackend{}, "tmux", nil
-	}}
-	_, err := c.Capture("/home", map[string]string{"backend": "herdr", "window": "session:p"}, 1)
-	if err == nil {
-		t.Fatal("expected mismatch")
+func TestSessionBoundCaptureRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		home     string
+		meta     map[string]string
+		resolved string
+		want     string
+	}{
+		{"no home", "", map[string]string{"backend": "tmux", "window": "p"}, "tmux", "bound capture identity is incomplete"},
+		{"no window", "/home", map[string]string{"backend": "tmux"}, "tmux", "bound capture identity is incomplete"},
+		{"backend outside the supported set", "/home", map[string]string{"backend": "unknown", "window": "p"}, "unknown", `unsupported bound backend "unknown"`},
+		{"supported backend", "/home", map[string]string{"backend": "orca", "window": "p"}, "orca", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+				return &captureBackend{output: "captured"}, tc.resolved, nil
+			}}
+			out, err := c.Capture(tc.home, tc.meta, 1)
+			if tc.want == "" {
+				if err != nil || out != "captured" {
+					t.Fatalf("Capture = %q, %v, want acceptance", out, err)
+				}
+				return
+			}
+			wantErrContains(t, err, tc.want, "Capture with "+tc.name)
+		})
 	}
 }
 func TestSessionBoundCaptureReturnsAdapterError(t *testing.T) {

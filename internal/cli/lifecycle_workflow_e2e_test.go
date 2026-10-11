@@ -502,15 +502,15 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 
 	if tc.relayed > 0 {
 		env := pending[0]
-		if env.ReceiverRank != orchestrator.RankGeneral {
-			t.Fatalf("relayed uplink receiver rank = %q, want %q", env.ReceiverRank, orchestrator.RankGeneral)
+		if env.ReceiverRank != home.RankGeneral {
+			t.Fatalf("relayed uplink receiver rank = %q, want %q", env.ReceiverRank, home.RankGeneral)
 		}
 		// General acknowledges the exact ref, then the next cycle retires it.
-		recv, err := orchestrator.NewReceiver(generalHome)
+		recv, err := home.NewReceiver(generalHome)
 		if err != nil {
 			t.Fatalf("NewReceiver(general): %v", err)
 		}
-		ref := orchestrator.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+		ref := home.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
 		if got, err := recv.Receive(ref); err != nil || got == nil {
 			t.Fatalf("General receive of relayed report: %v", err)
 		}
@@ -518,7 +518,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		if err != nil {
 			t.Fatalf("General ack of relayed report: %v", err)
 		}
-		if ack.Outcome != orchestrator.OutcomeAccepted {
+		if ack.Outcome != home.OutcomeAccepted {
 			t.Fatalf("ack outcome = %q, want accepted", ack.Outcome)
 		}
 		workflowSupervisionCycle(t, spawnHome, uplink, activation)
@@ -714,9 +714,9 @@ func workflowRunCLI(t *testing.T, homeDir string, env map[string]string, args ..
 
 // workflowPendingUplinks lists the durable uplink reports the home has written
 // and not yet had accepted.
-func workflowPendingUplinks(t *testing.T, homeDir string) []*orchestrator.Envelope {
+func workflowPendingUplinks(t *testing.T, homeDir string) []*home.Envelope {
 	t.Helper()
-	pending, err := orchestrator.NewStore(homeDir).ListAllPending()
+	pending, err := home.NewStore(homeDir).ListAllPending()
 	if err != nil {
 		t.Fatalf("list pending uplinks in %s: %v", homeDir, err)
 	}

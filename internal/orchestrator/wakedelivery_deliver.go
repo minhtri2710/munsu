@@ -296,24 +296,12 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResul
 		return TargetResult{}, fmt.Errorf("reading captain meta %s: %w", taskID, err)
 	}
 
-	paneID := strings.TrimSpace(meta["herdr_pane_id"])
-	if paneID == "" {
-		return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+	target, err := captainMetaTarget(meta)
+	if err != nil {
+		return TargetResult{}, err
 	}
-
-	session := strings.TrimSpace(meta["herdr_session"])
-	if session == "" {
-		session = "default"
-	}
-
-	handle := session + ":" + paneID
-
-	return TargetResult{
-		Source:       RuntimeSource,
-		Handle:       handle,
-		Session:      session,
-		SourceDetail: "captain task meta: " + taskID,
-	}, nil
+	target.SourceDetail = "captain task meta: " + taskID
+	return target, nil
 }
 
 // listAllReceipts scans the receipts directory and returns ALL receipt files

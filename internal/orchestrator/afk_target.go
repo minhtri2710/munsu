@@ -63,14 +63,25 @@ func ValidateTargetOwnership(result *TargetResult) error {
 		if expected == "" {
 			expected = "default"
 		}
-		if result.Session == "" {
-			return fmt.Errorf("target %q has no herdr session; expected %q", result.Handle, expected)
-		}
 		if result.Session != expected {
 			return fmt.Errorf("target session %q does not match active herdr session %q", result.Session, expected)
 		}
 	}
 	return nil
+}
+
+// captainMetaTarget names a captain's pane from its task meta in the parent
+// General home.
+func captainMetaTarget(meta map[string]string) (TargetResult, error) {
+	paneID := strings.TrimSpace(meta["herdr_pane_id"])
+	if paneID == "" {
+		return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+	}
+	session := strings.TrimSpace(meta["herdr_session"])
+	if session == "" {
+		session = "default"
+	}
+	return TargetResult{Source: RuntimeSource, Handle: session + ":" + paneID, Session: session}, nil
 }
 
 // ResolveTargetWithSource resolves the general pane handle with source diagnostics.
