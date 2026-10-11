@@ -838,7 +838,10 @@ func (r *Runner) checkBacklogAuthority() error {
 	meta, metaErr := home.ReadMeta(r.homeDir, r.args.ID)
 	metaExists := metaErr == nil && meta["window"] != ""
 
-	// State-based checks. Working without live meta is start→spawn — allow.
+	// State-based checks. Running `munsu task start` first is refused: spawn
+	// needs a queued task. A working task without live meta passes this check
+	// only so beginLaunchIntent can resume a launch that already holds its
+	// endpoint; it refuses any other working task.
 	switch agg.Phase {
 	case taskauthority.PhaseBlocked:
 		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", r.args.ID, r.args.ID)

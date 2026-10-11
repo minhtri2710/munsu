@@ -32,7 +32,7 @@ const (
 
 // WakeReason describes an actionable watcher condition.
 type WakeReason struct {
-	Kind                 string // signal, stale, check, heartbeat
+	Kind                 string // signal, stale, check
 	TaskIDs              []string
 	Message              string
 	DemandDeepInspection bool // set after stale-by-idle-seconds threshold for same task

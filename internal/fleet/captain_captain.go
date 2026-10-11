@@ -332,7 +332,7 @@ Use %[6]smunsu send%[6]s to relay commands to Soldiers:
 
 The canonical Task Authority is the authoritative task source:
 - Use %[6]smunsu task list%[6]s to list tasks; queued (unblocked) items are ready.
-- Only ready items may be started. Never start a blocked or in-flight item.
+- Only ready items may be dispatched. Never dispatch a blocked or in-flight item. %[6]smunsu spawn%[6]s takes a queued task to working, so do not run %[6]smunsu task start%[6]s before it.
 - Dependencies are resolved by the Task Authority: blocked tasks are withheld until unblocked.
 - De-duplication is enforced by the Task Authority (one record per task ID) — never edit task state files directly.
 - When a task completes, update its state via %[6]smunsu task done <id>%[6]s.
@@ -432,7 +432,7 @@ You MUST NOT:
 | Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
 | Stuck soldier | %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → ... |
 | View tasks | %[6]smunsu task list%[6]s |
-| Start task | %[6]smunsu task start <id>%[6]s |
+| Mark a queued task working without spawning | %[6]smunsu task start <id>%[6]s |
 | Complete task | %[6]smunsu task done <id>%[6]s |
 
 `, id, CaptainCharterVersion, home.FromGeneralLabel, "[mu-system:captain-bootstrap]", shQuote(statusFile), bt), nil
@@ -1665,6 +1665,7 @@ func removeNudgeMarker(parentHome, smID string) {
 	os.Remove(nudgeMarkerPath(parentHome, smID))
 }
 
+// ConvergeCapabilities are the ports Converge calls for each captain.
 type ConvergeCapabilities struct {
 	Notification any
 	Continuity   CaptainContinuityPort

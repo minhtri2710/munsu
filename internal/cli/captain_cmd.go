@@ -215,8 +215,11 @@ wrong-branch, invalid-provenance, or unsupported-home (no git worktree).`,
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",
-		Long: `Locked convergence sweep: validate registry/provenance, retry pending nudges, safe local fast-forward, instruction surface tracking, inheritance push, charter refresh, liveness check, and
-pending config-reread, continuity and mailbox reconciliation. State changes tracked in parent state/.captain-converge.lock`,
+		Long: `Locked convergence sweep. For each registered captain it validates registry and
+provenance, retries pending nudges, fast-forwards safely and tracks the
+instruction surface, pushes inherited config, refreshes the charter, checks
+liveness, and reconciles pending config-reread, continuity and mailbox records.
+The sweep lock is parent state/.captain-converge.lock.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {

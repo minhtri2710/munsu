@@ -40,9 +40,9 @@ import (
 // provider merge; speculative capability tiers are deliberately absent. A new
 // external write adds a kind here: Valid is the single check that authorization
 // issuance and GateRecord.Operation both apply, so a kind absent from this set
-// can neither be authorized nor recorded at a gate. That the gate record also
-// carries the Human's words (GateRecord.Words) is a convention for each kind;
-// no code requires a gate record before authorization.
+// can neither be authorized nor recorded at a gate. A gate record's Words are
+// validated (validateGateRecord), but that each kind gets a gate record is a
+// convention; no code requires one before authorization.
 type DeliveryAuthorizationKind string
 
 const (

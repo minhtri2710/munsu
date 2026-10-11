@@ -204,7 +204,7 @@ When implementation is separately authorized, promote: `munsu promote <id>`.
 ## 8. Supervision protocol
 
 Whenever work is in flight, keep exactly one live supervision cycle.
-`munsu watch ensure` returns within the beacon timeout (3s) with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue. Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
+`munsu watch ensure` returns within the beacon timeout (3s), plus up to 2s to stop a holder on `--restart` or a stalled holder, with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue. Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
 
 Fundamental loop:
 
@@ -274,13 +274,14 @@ Do not surface automatic fixes, retries, routine progress, or internal mechanics
 
 ### Captain converge
 
-When send-outbox messages accumulate (e.g. after a captain pane was dead and has been relaunched),
-flush them with `munsu captain converge`. This:
-- Validates registry and provenance for all registered captains
-- Flushes the send outbox (`state/.captain-send-outbox/<id>/`)
+After a captain pane was dead and has been relaunched, or after a captain home
+changed, reconcile with `munsu captain converge`. For each registered captain it:
+- Validates registry and provenance
 - Retries pending nudges
-- Performs safe local fast-forward and inheritance push
-- Checks liveness and updates instruction surface tracking
+- Performs a safe local fast-forward and tracks the instruction surface
+- Pushes inherited config and refreshes the charter
+- Checks liveness, relaunching only when absence is proven
+- Reconciles pending config-reread, continuity and mailbox records
 
 ```
 munsu captain converge
@@ -329,7 +330,7 @@ munsu task reopen <id>
 ```
 
 Update task state on every dispatch, completion, and decision for a work item.
-Re-evaluate queued work after every teardown and heartbeat.
+Re-evaluate queued work after every teardown.
 
 Unresolved decisions follow the `decision-hold-lifecycle` policy, which owns
 their mandatory lifecycle. See `munsu skill show decision-hold-lifecycle`.
@@ -445,7 +446,7 @@ Run: `munsu skill show <name>` to read any skill.
 8. munsu wake claim --consumer <id>; munsu soldier-state <id> # on wake from watcher
 9. munsu delivery pr-merge <id> <url> # merge while the task is working
 10. munsu task done <id>              # record completion before standalone retirement
-11. munsu captain converge           # flush send outbox after captain lifecycle
+11. munsu captain converge           # reconcile captains after lifecycle changes
 12. munsu teardown <id>              # clean up after standalone merge
 ```
 
