@@ -70,7 +70,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			var flushSender string
 			if role == "soldier" && state == "review-ready" {
 				var identErr error
-				if flushSender, _, identErr = homeIdentity(homeDir); identErr != nil {
+				if flushSender, _, identErr = home.ReadHomeIdentity(homeDir); identErr != nil {
 					return fmt.Errorf("report: deriving sender identity: %w", identErr)
 				}
 			}
@@ -142,7 +142,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				senderIdentity := home.ReceiverIDForTask(taskID)
 				senderRank := home.Rank(role)
 				if role == "captain" {
-					identity, idErr := captainHomeID(homeDir)
+					identity, idErr := home.ValidateCaptainProvenance(homeDir)
 					if idErr != nil {
 						return fmt.Errorf("report: deriving sender identity: %w", idErr)
 					}

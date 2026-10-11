@@ -12,7 +12,7 @@ import (
 // mutation from the exact home: captain identity for captain homes, otherwise
 // the home identity (basename for a general home).
 func resolveTaskOwner(homeDir string) (string, error) {
-	identity, rank, err := homeIdentity(homeDir)
+	identity, rank, err := home.ReadHomeIdentity(homeDir)
 	if err != nil {
 		return "", fmt.Errorf("resolving task owner: %w", err)
 	}

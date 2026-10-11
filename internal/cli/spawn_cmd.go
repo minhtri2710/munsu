@@ -167,7 +167,7 @@ func newSendCmd() *cobra.Command {
 
 			// Non-captain: mailbox-based send with busy-queueing for soldier tasks.
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := homeIdentity(ctx.Home)
+			senderIdentity, _, identErr := home.ReadHomeIdentity(ctx.Home)
 			if identErr != nil {
 				return fmt.Errorf("send: deriving sender identity: %w", identErr)
 			}
@@ -473,7 +473,7 @@ Calling when the soldier is busy returns with "still busy".
 			id := args[0]
 
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := homeIdentity(ctx.Home)
+			senderIdentity, _, identErr := home.ReadHomeIdentity(ctx.Home)
 			if identErr != nil {
 				return fmt.Errorf("soldier-flush: deriving sender identity: %w", identErr)
 			}

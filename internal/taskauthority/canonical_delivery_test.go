@@ -606,6 +606,37 @@ func TestDeliveryRefusals(t *testing.T) {
 			holdDelivery(t, c)
 			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)
 		}},
+		{name: "gate refuses an authorization issued at an earlier revision", class: ErrPrecondition, want: "delivery authorization is not current for task t1: [revision-mismatch]", run: func(t *testing.T, c *Canonical) error {
+			auth := authorized(t, c)
+			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate { agg.Revision++; return agg })
+			return gate(t, c, auth, deliveryReadyRev+2, noGateChange)
+		}},
+		{name: "gate refuses an authorization once the task left its phase", class: ErrPrecondition, want: "delivery authorization is not current for task t1: [phase-mismatch]", run: func(t *testing.T, c *Canonical) error {
+			auth := authorized(t, c)
+			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate { agg.Phase = PhaseBlocked; return agg })
+			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)
+		}},
+		{name: "gate refuses an authorization once the task owner changed", class: ErrPrecondition, want: "delivery authorization is not current for task t1: [missing-owner]", run: func(t *testing.T, c *Canonical) error {
+			auth := authorized(t, c)
+			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate { agg.Definition.Owner = "someone-else"; return agg })
+			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)
+		}},
+		{name: "gate refuses an authorization once the task lost its bindings", class: ErrPrecondition, want: "delivery authorization is not current for task t1: [missing-bindings]", run: func(t *testing.T, c *Canonical) error {
+			auth := authorized(t, c)
+			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate { agg.Endpoint = nil; return agg })
+			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)
+		}},
+		{name: "gate refuses an authorization once the endpoint binding changed", class: ErrPrecondition, want: "delivery authorization is not current for task t1: [binding-digest]", run: func(t *testing.T, c *Canonical) error {
+			auth := authorized(t, c)
+			rewriteTaskDocForTest(t, c, "t1", func(agg Aggregate) Aggregate { agg.Endpoint.LeaseID = "lease-changed"; return agg })
+			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)
+		}},
+		{name: "gate refuses an authorization after a delivery hold came and went", class: ErrPrecondition, want: "delivery authorization is not current for task t1: [holds-digest]", run: func(t *testing.T, c *Canonical) error {
+			auth := authorized(t, c)
+			holdDelivery(t, c)
+			stepReleaseHold(t, c)
+			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)
+		}},
 		{name: "gate allows the current authorization at its authorized head", run: func(t *testing.T, c *Canonical) error {
 			auth := authorized(t, c)
 			return gate(t, c, auth, deliveryReadyRev+1, noGateChange)

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +34,7 @@ Flags:
 			senderIdentity, _ := cmd.Flags().GetString("sender")
 			if senderIdentity == "" {
 				var identErr error
-				if senderIdentity, _, identErr = homeIdentity(ctx.Home); identErr != nil {
+				if senderIdentity, _, identErr = home.ReadHomeIdentity(ctx.Home); identErr != nil {
 					return fmt.Errorf("consume-ready: deriving sender identity: %w", identErr)
 				}
 			}
