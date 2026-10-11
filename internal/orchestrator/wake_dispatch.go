@@ -4,9 +4,21 @@ package orchestrator
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"sync"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
+
+// wakeDispatchLeaseSeconds is how long a dispatched Wake stays leased to
+// munsu:herdr: the MaterialWakeAgeThreshold, so a General still working on the
+// prompt is not re-prompted with the same Wake.
+const wakeDispatchLeaseSeconds = 300
+
+// wakeDispatchComposerAgent is the only agent whose composer the gate can read.
+const wakeDispatchComposerAgent = "claude"
 
 // DispatchWakeOutcome enumerates the typed outcomes from a Wake dispatch attempt.
 type DispatchWakeOutcome string
@@ -68,6 +80,15 @@ type BusyPort interface {
 	Read(obs backend.EndpointObservation) string
 }
 
+// ComposerPort reads the target pane for the composer gate.
+type ComposerPort interface {
+	// Agent returns the agent name the latest Probe of window read from the
+	// backend; empty when none was read.
+	Agent(window string) string
+	// Capture returns the bottom lines rows of the pane.
+	Capture(window string, lines int) (string, error)
+}
+
 // DispatchWakeRequest carries all inputs and adapter ports for a Wake dispatch.
 type DispatchWakeRequest struct {
 	HomeDir string
@@ -79,6 +100,9 @@ type DispatchWakeRequest struct {
 	Probe  ProbePort
 	Submit SubmitPort
 	Busy   BusyPort
+
+	// Composer is required once a Wake is queued and the endpoint is idle.
+	Composer ComposerPort
 }
 
 // DispatchWake owns the complete Wake dispatch workflow.
@@ -92,13 +116,28 @@ type DispatchWakeRequest struct {
 //     unresolved skip safely without claiming (NOT collapsed to dead)
 //  5. Busy gate (alive only): idle proceeds; held/blocked hold; unknown is
 //     refused (never dispatched as idle); dead skips; unrecognized fails closed
-//  6. Wake claim: max 1 Wake, after all gates pass
-//  7. Empty queue after claim -> Skipped
-//  8. Prompt construction with exact claim_id, event_id, payload, resolve instruction
-//  9. Prompt submission -> Submitted or Deferred
+//  6. Queue gate: nothing queued -> Skipped
+//  7. AFK gate and composer gate (claude, bare prompt glyph between two rules):
+//     either refusal is Deferred, logged, and leaves the Wake queued
+//  8. Wake claim: max 1 Wake, after all gates pass
+//  9. Empty queue after claim -> Skipped
+//  10. Prompt construction with exact claim_id, event_id, payload, resolve instruction
+//  11. Prompt submission -> Submitted or Deferred
+//
+// Submitted and Deferred outcomes are appended to the event log
+// (wake.dispatch.submitted, wake.dispatch.deferred); Skipped ones are not.
 //
 // Errors only for invalid invariants, unsafe ownership, corrupt state.
 func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
+	result, err := dispatchWake(req)
+	if err != nil {
+		return result, err
+	}
+	auditWakeDispatch(req, result)
+	return result, nil
+}
+
+func dispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 	// Step 1: Delivery-mode gate
 	if req.Mode != WakeDeliveryHerdr {
 		return SkippedResult("delivery-mode", "mode "+string(req.Mode)+" is not herdr"), nil
@@ -163,8 +202,35 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 		return SkippedResult("invalid-observation", "unrecognized endpoint observation state"), nil
 	}
 
-	// Step 5: Claim Wake (max 1, after all gates pass)
-	claim, err := ClaimWakes(req.HomeDir, "munsu:herdr", 60, 1)
+	// Step 5: nothing queued means nothing to gate or log.
+	if !HasQueuedWakes(req.HomeDir) {
+		return SkippedResult("empty-queue", "no wakes to dispatch"), nil
+	}
+
+	// Step 6: AFK and composer gates; a refusal leaves the Wake queued.
+	if IsActive(req.HomeDir) {
+		return DeferredResult("afk", "afk is active"), nil
+	}
+	if req.Composer == nil {
+		return DispatchWakeResult{}, fmt.Errorf("composer port is nil")
+	}
+	if agent := req.Composer.Agent(req.Target.Handle); agent != wakeDispatchComposerAgent {
+		return DeferredResult("composer-harness", fmt.Sprintf("agent %q is not %s", agent, wakeDispatchComposerAgent)), nil
+	}
+	capture, err := req.Composer.Capture(req.Target.Handle, domain.ClaudeComposerRows)
+	if err != nil {
+		return DeferredResult("composer-capture-error", err.Error()), nil
+	}
+	switch domain.ClassifyClaudeComposer(capture) {
+	case domain.Empty:
+	case domain.Pending:
+		return DeferredResult("composer-pending", "composer holds input"), nil
+	default:
+		return DeferredResult("composer-unrecognized", "composer layout not recognized"), nil
+	}
+
+	// Step 7: Claim Wake (max 1, after all gates pass)
+	claim, err := ClaimWakes(req.HomeDir, "munsu:herdr", wakeDispatchLeaseSeconds, 1)
 	if err != nil {
 		return SkippedResult("claim-error", err.Error()), nil
 	}
@@ -172,7 +238,7 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 		return SkippedResult("empty-queue", "no wakes to dispatch"), nil
 	}
 
-	// Step 6: Build the exact prompt
+	// Step 8: Build the exact prompt
 	wake := claim.Wakes[0]
 	eventID := wake.Epoch + ":" + wake.Seq
 	prompt := fmt.Sprintf(
@@ -180,7 +246,7 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 		eventID, claim.LeaseID, eventID, wake.Payload, claim.LeaseID, eventID, "<non-empty summary>",
 	)
 
-	// Step 7: Submit prompt
+	// Step 9: Submit prompt
 	if req.Submit == nil {
 		return DispatchWakeResult{}, fmt.Errorf("submit port is nil")
 	}
@@ -193,4 +259,35 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 	}
 
 	return SubmittedResult("acknowledged", "event="+eventID+" claim="+claim.LeaseID), nil
+}
+
+// deferredLogged holds, per home, the gate refusal of the previous dispatch
+// ("" when it was anything else), so a refusal that lasts many watcher cycles
+// is logged once.
+var deferredLogged sync.Map
+
+// auditWakeDispatch appends the event-log line for a Submitted or Deferred
+// result. A gate refusal that repeats the previous dispatch's is not logged
+// again.
+func auditWakeDispatch(req DispatchWakeRequest, result DispatchWakeResult) {
+	refusal := ""
+	if result.Outcome == WakeDeferred && (result.Reason == "afk" || strings.HasPrefix(result.Reason, "composer-")) {
+		refusal = result.Reason
+	}
+	if prev, _ := deferredLogged.Swap(req.HomeDir, refusal); refusal != "" && prev == refusal {
+		return
+	}
+	var eventType string
+	switch result.Outcome {
+	case WakeSubmitted:
+		eventType = "wake.dispatch.submitted"
+	case WakeDeferred:
+		eventType = "wake.dispatch.deferred"
+	default:
+		return
+	}
+	payload := strings.Join(strings.Fields(result.Reason+" "+result.Detail), " ")
+	if _, err := Append(req.HomeDir, eventType, "munsu:herdr", req.Target.Handle, payload); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: wake dispatch audit: %v\n", err)
+	}
 }

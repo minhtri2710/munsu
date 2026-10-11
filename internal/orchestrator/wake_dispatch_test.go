@@ -98,6 +98,33 @@ type mockBusyPort struct{ reading string }
 
 func (m *mockBusyPort) Read(_ backend.EndpointObservation) string { return m.reading }
 
+// mockComposerPort serves a fixed agent name and capture. captured records the
+// number of rows the gate asked for; -1 means it never captured.
+type mockComposerPort struct {
+	agent    string
+	capture  string
+	err      error
+	captured int
+}
+
+func (m *mockComposerPort) Agent(string) string { return m.agent }
+
+func (m *mockComposerPort) Capture(_ string, lines int) (string, error) {
+	m.captured = lines
+	return m.capture, m.err
+}
+
+// claudeIdleComposer serves a real 12-row capture of an idle Claude Code pane
+// (shared with the domain composer tests).
+func claudeIdleComposer(t *testing.T) *mockComposerPort {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "domain", "testdata", "claude_composer_w34p74.capture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &mockComposerPort{agent: "claude", capture: string(data), captured: -1}
+}
+
 func aliveProbe() *mockProbePort {
 	return &mockProbePort{obs: obsFor(backend.EndpointAlive, "")}
 }
@@ -125,12 +152,13 @@ func setupMockRequest(t *testing.T, mode WakeDeliveryMode, alive bool) (Dispatch
 	}
 
 	return DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    mode,
-		Target:  target,
-		Probe:   &mockProbePort{obs: obs},
-		Submit:  &mockSubmitPort{acknowledged: true},
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     mode,
+		Target:   target,
+		Probe:    &mockProbePort{obs: obs},
+		Submit:   &mockSubmitPort{acknowledged: true},
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}, home
 }
 
@@ -463,12 +491,13 @@ func busyGateRequest(t *testing.T, reading string) (DispatchWakeRequest, string)
 		t.Fatal(err)
 	}
 	return DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  &mockSubmitPort{acknowledged: true},
-		Busy:    &mockBusyPort{reading: reading},
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   &mockSubmitPort{acknowledged: true},
+		Busy:     &mockBusyPort{reading: reading},
+		Composer: claudeIdleComposer(t),
 	}, home
 }
 
@@ -542,12 +571,13 @@ func TestDispatchWake_EmptyQueueSkipped(t *testing.T) {
 	// No EnqueueWake call — queue is empty
 
 	req := DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  &mockSubmitPort{acknowledged: true},
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   &mockSubmitPort{acknowledged: true},
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}
 
 	result, err := DispatchWake(req)
@@ -662,12 +692,13 @@ func TestDispatchWake_ClaimBeforeSubmitOrdering(t *testing.T) {
 	submitPort := &mockSubmitPort{acknowledged: true}
 
 	req := DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  submitPort,
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   submitPort,
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}
 
 	// First call: should claim one wake and submit
@@ -712,12 +743,13 @@ func TestDispatchWake_OneWakeMax(t *testing.T) {
 	}
 
 	req := DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  &mockSubmitPort{acknowledged: true},
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   &mockSubmitPort{acknowledged: true},
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}
 
 	// First dispatch: claims one wake, submits it
@@ -909,12 +941,13 @@ func TestDispatchWake_NilSubmitPortErrors(t *testing.T) {
 	}
 
 	req := DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  nil,
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   nil,
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}
 
 	_, err := DispatchWake(req)
@@ -1174,12 +1207,13 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 	// Deferred dispatch for wake 1
 	submit1 := &mockSubmitPort{acknowledged: false, status: "rejected", detail: "backend busy"}
 	req1 := DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  submit1,
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   submit1,
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}
 	result, err := DispatchWake(req1)
 	if err != nil || result.Outcome != WakeDeferred {
@@ -1189,15 +1223,198 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 	// Submitted dispatch for wake 2 — should work normally
 	submit2 := &mockSubmitPort{acknowledged: true}
 	req2 := DispatchWakeRequest{
-		HomeDir: home,
-		Mode:    WakeDeliveryHerdr,
-		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe:   aliveProbe(),
-		Submit:  submit2,
-		Busy:    idleBusy(),
+		HomeDir:  home,
+		Mode:     WakeDeliveryHerdr,
+		Target:   TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:    aliveProbe(),
+		Submit:   submit2,
+		Busy:     idleBusy(),
+		Composer: claudeIdleComposer(t),
 	}
 	result2, err2 := DispatchWake(req2)
 	if err2 != nil || result2.Outcome != WakeSubmitted {
 		t.Fatalf("wake 2: expected Submitted, got outcome=%q err=%v", result2.Outcome, err2)
+	}
+}
+
+// --- Test: AFK and composer gates, lease, audit ---
+
+func dispatchEvents(t *testing.T, home string) []Record {
+	t.Helper()
+	records, _, err := EventsAfter(home, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return records
+}
+
+func assertWakeStillQueued(t *testing.T, home string) {
+	t.Helper()
+	if !HasQueuedWakes(home) {
+		t.Error("refused wake must stay queued")
+	}
+	leases, err := mhome.ListClaimedLeases(home)
+	if err != nil || len(leases) != 0 {
+		t.Errorf("refused wake must hold no lease, got %d (err %v)", len(leases), err)
+	}
+}
+
+func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
+	const rule = "──────────────────────────────"
+	cases := []struct {
+		name       string
+		afk        bool
+		composer   func(c *mockComposerPort)
+		wantReason string
+		wantCapt   bool
+	}{
+		{"afk active", true, func(*mockComposerPort) {}, "afk", false},
+		{"agent is not claude", false, func(c *mockComposerPort) { c.agent = "codex" }, "composer-harness", false},
+		{"agent name unknown", false, func(c *mockComposerPort) { c.agent = "" }, "composer-harness", false},
+		{"capture error", false, func(c *mockComposerPort) { c.err = fmt.Errorf("pane read failed") }, "composer-capture-error", true},
+		{"glyph followed by text", false, func(c *mockComposerPort) { c.capture = rule + "\n❯ half typed\n" + rule + "\nfooter\n" }, "composer-pending", true},
+		{"layout not recognized", false, func(c *mockComposerPort) { c.capture = "›\n  gpt-6 high\n" }, "composer-unrecognized", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+			composer := req.Composer.(*mockComposerPort)
+			tc.composer(composer)
+			if tc.afk {
+				if err := os.MkdirAll(filepath.Join(home, "state"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(home, "state", ".afk"), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			submit := req.Submit.(*mockSubmitPort)
+
+			result, err := DispatchWake(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Outcome != WakeDeferred || result.Reason != tc.wantReason {
+				t.Fatalf("got outcome=%q reason=%q, want deferred %q", result.Outcome, result.Reason, tc.wantReason)
+			}
+			if submit.prompt != "" {
+				t.Error("nothing may be submitted")
+			}
+			if (composer.captured != -1) != tc.wantCapt {
+				t.Errorf("captured rows = %d, want a capture: %v", composer.captured, tc.wantCapt)
+			}
+			assertWakeStillQueued(t, home)
+			events := dispatchEvents(t, home)
+			if len(events) != 1 || events[0].Type != "wake.dispatch.deferred" || !strings.HasPrefix(events[0].Payload, tc.wantReason) {
+				t.Errorf("want one deferred event for %q, got %+v", tc.wantReason, events)
+			}
+		})
+	}
+}
+
+func TestDispatchWake_CapturesTheBottomTwelveRowsOfAnIdleClaudePane(t *testing.T) {
+	req, _ := setupMockRequest(t, WakeDeliveryHerdr, true)
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSubmitted {
+		t.Fatalf("got outcome=%q err=%v, want submitted", result.Outcome, err)
+	}
+	if got := req.Composer.(*mockComposerPort).captured; got != 12 {
+		t.Errorf("captured %d rows, want 12", got)
+	}
+}
+
+func TestDispatchWake_NilComposerPortErrors(t *testing.T) {
+	req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+	req.Composer = nil
+	if _, err := DispatchWake(req); err == nil || !strings.Contains(err.Error(), "composer port is nil") {
+		t.Fatalf("got %v, want the composer port error", err)
+	}
+	assertWakeStillQueued(t, home)
+}
+
+func TestDispatchWake_EmptyQueueNeitherCapturesNorLogs(t *testing.T) {
+	req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+	if claim, err := ClaimWakes(home, "other", 60, 10); err != nil || len(claim.Wakes) != 1 {
+		t.Fatalf("drain queue: %v", err)
+	}
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped || result.Reason != "empty-queue" {
+		t.Fatalf("got outcome=%q reason=%q err=%v, want skipped empty-queue", result.Outcome, result.Reason, err)
+	}
+	if got := req.Composer.(*mockComposerPort).captured; got != -1 {
+		t.Errorf("captured %d rows with nothing queued", got)
+	}
+	if events := dispatchEvents(t, home); len(events) != 0 {
+		t.Errorf("a skip must not be logged, got %+v", events)
+	}
+}
+
+func TestDispatchWake_LeasesFor300SecondsAndLogsSubmitted(t *testing.T) {
+	req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSubmitted {
+		t.Fatalf("got outcome=%q err=%v, want submitted", result.Outcome, err)
+	}
+	leases, err := mhome.ListClaimedLeases(home)
+	if err != nil || len(leases) != 1 {
+		t.Fatalf("want one lease, got %d (err %v)", len(leases), err)
+	}
+	if got := leases[0].ExpiresAt - leases[0].ClaimedAt; got != 300 {
+		t.Errorf("lease lasts %d s, want 300", got)
+	}
+	events := dispatchEvents(t, home)
+	if len(events) != 1 || events[0].Type != "wake.dispatch.submitted" || events[0].Key != "default:w1:p1" || !strings.Contains(events[0].Payload, "claim="+leases[0].LeaseID) {
+		t.Errorf("want one submitted event naming the claim, got %+v", events)
+	}
+}
+
+func TestDispatchWake_LogsAPostClaimDeferralWithItsReason(t *testing.T) {
+	req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+	req.Submit = &mockSubmitPort{status: "stalled", detail: "text sat in composer"}
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeDeferred {
+		t.Fatalf("got outcome=%q err=%v, want deferred", result.Outcome, err)
+	}
+	events := dispatchEvents(t, home)
+	if len(events) != 1 || events[0].Type != "wake.dispatch.deferred" || events[0].Payload != "stalled text sat in composer" {
+		t.Errorf("want one deferred event with the submit status, got %+v", events)
+	}
+}
+
+func TestDispatchWake_LogsAnUnchangedRefusalOnce(t *testing.T) {
+	req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+	composer := req.Composer.(*mockComposerPort)
+	composer.agent = "codex"
+	for i := 0; i < 3; i++ {
+		if _, err := DispatchWake(req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(dispatchEvents(t, home)); got != 1 {
+		t.Fatalf("an unchanged refusal logged %d times, want once", got)
+	}
+	composer.err = fmt.Errorf("pane read failed")
+	composer.agent = "claude"
+	if _, err := DispatchWake(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(dispatchEvents(t, home)); got != 2 {
+		t.Fatalf("a changed refusal logged %d events in total, want 2", got)
+	}
+
+	// The same refusal after a dispatch that was not a refusal is new again.
+	composer.err = nil
+	if result, err := DispatchWake(req); err != nil || result.Outcome != WakeSubmitted {
+		t.Fatalf("got outcome=%q err=%v, want submitted", result.Outcome, err)
+	}
+	if err := EnqueueWake(home, "signal", "task-2", "second payload"); err != nil {
+		t.Fatal(err)
+	}
+	composer.err = fmt.Errorf("pane read failed")
+	if _, err := DispatchWake(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(dispatchEvents(t, home)); got != 4 {
+		t.Fatalf("the refusal after a submit left %d events in total, want 4 (refusal, refusal, submitted, refusal)", got)
 	}
 }

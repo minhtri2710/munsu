@@ -1,0 +1,12 @@
+  - Decisions for the Lead to veto: pre-claim refusals are returned as Deferred so they get logged. An unchanged refusal is logged once per home, which I
+    added so the event log doesn't grow every 5 s cycle. The queue check now runs before the AFK and composer gates.
+  - Scratch and processes: the scratch dir is removed. I left a go test -tags integration ./internal/cli (pid 34195) running because it isn't mine.
+
+  Everything is in report-engineer-f31-s2b.md in the run dir.
+
+✻ Churned for 10m 30s · done 2:16 PM
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 3 agents

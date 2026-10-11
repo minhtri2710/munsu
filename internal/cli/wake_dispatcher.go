@@ -42,6 +42,24 @@ func (busyAdapter) Read(obs backend.EndpointObservation) string {
 	return fleet.ReadBusy(obs).String()
 }
 
+// composerAdapter wraps a backend.Backend into an orchestrator.ComposerPort.
+// A backend that keeps no observed agent name reads as no agent, which the
+// composer gate refuses.
+type composerAdapter struct {
+	bk backend.Backend
+}
+
+func (a *composerAdapter) Agent(window string) string {
+	if o, ok := a.bk.(interface{ ObservedAgent(string) string }); ok {
+		return o.ObservedAgent(window)
+	}
+	return ""
+}
+
+func (a *composerAdapter) Capture(window string, lines int) (string, error) {
+	return a.bk.Capture(window, lines)
+}
+
 type wakeDispatchHooks struct {
 	orchestrator.WatcherHooks
 }
@@ -77,12 +95,13 @@ func dispatchHerdrWake(homeDir string) error {
 	}
 
 	req := orchestrator.DispatchWakeRequest{
-		HomeDir: homeDir,
-		Mode:    mode,
-		Target:  target,
-		Probe:   &probeAdapter{bk: bk},
-		Submit:  &submitAdapter{bk: bk},
-		Busy:    busyAdapter{},
+		HomeDir:  homeDir,
+		Mode:     mode,
+		Target:   target,
+		Probe:    &probeAdapter{bk: bk},
+		Submit:   &submitAdapter{bk: bk},
+		Busy:     busyAdapter{},
+		Composer: &composerAdapter{bk: bk},
 	}
 
 	result, err := orchestrator.DispatchWake(req)

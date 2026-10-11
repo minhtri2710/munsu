@@ -15,15 +15,18 @@ import (
 // herdrDispatchFixture is one isolated end-to-end fixture for the shipped wake
 // dispatch path: an isolated munsu home configured for herdr wake delivery,
 // a queued wake, and a fake herdr CLI on PATH that answers `pane get`,
-// `agent get`, `api schema` and `agent prompt` while appending every
+// `agent get`, `pane read`, `api schema` and `agent prompt` while appending every
 // invocation to a transcript. Nothing is stubbed inside munsu: the fixture
 // drives dispatchHerdrWake, which composes the real probeAdapter,
 // busyAdapter, submitAdapter, HerdrBackend, fleet busy authority and durable
 // wake queue.
 type herdrDispatchFixture struct {
-	home       string
-	logPath    string
-	promptPath string
+	home        string
+	logPath     string
+	promptPath  string
+	agentPath   string
+	capturePath string
+	paneReadArg string
 }
 
 // newHerdrDispatchFixture installs the fake herdr, configures the home for
@@ -38,6 +41,18 @@ func newHerdrDispatchFixture(t *testing.T, agentStatus, payload string, paneAbse
 	logPath := filepath.Join(fakeDir, "herdr-invocations.log")
 	promptPath := filepath.Join(fakeDir, "delivered-prompt.txt")
 	statusPath := filepath.Join(fakeDir, "agent-status")
+	agentPath := filepath.Join(fakeDir, "agent-name")
+	capturePath := filepath.Join(fakeDir, "pane-capture")
+	paneReadArg := filepath.Join(fakeDir, "pane-read-args")
+	idleCapture, err := os.ReadFile(filepath.Join("..", "domain", "testdata", "claude_composer_w34p74.capture"))
+	if err != nil {
+		t.Fatalf("reading the idle claude capture: %v", err)
+	}
+	for path, content := range map[string]string{agentPath: "claude", capturePath: string(idleCapture)} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
 	if err := os.WriteFile(statusPath, []byte(agentStatus), 0o644); err != nil {
 		t.Fatalf("writing agent status: %v", err)
 	}
@@ -51,6 +66,9 @@ LOG=%[1]q
 STATUS_FILE=%[2]q
 PROMPT_FILE=%[3]q
 PANE_STATE=%[4]q
+AGENT_FILE=%[5]q
+CAPTURE_FILE=%[6]q
+PANE_READ_ARGS=%[7]q
 if [ "$1" = "--session" ]; then shift 2; fi
 echo "herdr $1 $2" >> "$LOG"
 case "$1 $2" in
@@ -70,7 +88,11 @@ case "$1 $2" in
       echo '{"error":{"code":"agent_not_found"}}'
       exit 1
     fi
-    printf '{"result":{"agent":{"agent_status":"%%s"}}}\n' "$status"
+    printf '{"result":{"agent":{"agent":"%%s","agent_status":"%%s"}}}\n' "$(cat "$AGENT_FILE")" "$status"
+    exit 0 ;;
+  "pane read")
+    echo "$*" > "$PANE_READ_ARGS"
+    cat "$CAPTURE_FILE"
     exit 0 ;;
   "agent prompt")
     shift 3
@@ -80,7 +102,7 @@ case "$1 $2" in
 esac
 echo "unsupported fake herdr command: $*" >&2
 exit 1
-`, logPath, statusPath, promptPath, paneState)
+`, logPath, statusPath, promptPath, paneState, agentPath, capturePath, paneReadArg)
 
 	testutil.WriteFakeExecutable(t, filepath.Join(fakeDir, "herdr"), script)
 	testutil.PrependPath(t, fakeDir)
@@ -103,7 +125,7 @@ exit 1
 		t.Fatalf("queued wakes before dispatch = %d, want 1", got)
 	}
 
-	return &herdrDispatchFixture{home: home, logPath: logPath, promptPath: promptPath}
+	return &herdrDispatchFixture{home: home, logPath: logPath, promptPath: promptPath, agentPath: agentPath, capturePath: capturePath, paneReadArg: paneReadArg}
 }
 
 // transcript returns the fake herdr invocation transcript.
@@ -227,5 +249,45 @@ func TestDispatchHerdrWake_DeliversWakeWhenActivityReadsIdle(t *testing.T) {
 	}
 	if got := countQueuedWakes(f.home); got != 0 {
 		t.Fatalf("queued wakes after delivery = %d, want 0 (the wake was claimed and delivered)", got)
+	}
+}
+
+// TestDispatchHerdrWake_HoldsWakeForAnAgentThatIsNotClaude drives the composer
+// gate's harness check through the shipped adapters: the agent name rides the
+// single `agent get` of the liveness probe (no second herdr process), and a
+// refusal leaves the prompt undelivered and the wake queued.
+func TestDispatchHerdrWake_HoldsWakeForAnAgentThatIsNotClaude(t *testing.T) {
+	f := newHerdrDispatchFixture(t, "idle", "soldier task-1 reported done", false)
+	if err := os.WriteFile(f.agentPath, []byte("codex"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := dispatchHerdrWake(f.home); err != nil {
+		t.Fatalf("dispatchHerdrWake: %v", err)
+	}
+
+	transcript := f.transcript(t)
+	if prompt := f.deliveredPrompt(t); prompt != "" {
+		t.Fatalf("wake prompt was injected into a non-claude agent:\n%s", prompt)
+	}
+	if got := countLines(transcript, "herdr agent get"); got != 1 {
+		t.Fatalf("herdr agent get invoked %d times, want 1 (the agent name rides the liveness probe): %s", got, transcript)
+	}
+	if got := countQueuedWakes(f.home); got != 1 {
+		t.Fatalf("queued wakes after refused dispatch = %d, want 1", got)
+	}
+}
+
+func TestDispatchHerdrWake_ReadsTheBottomTwelveRowsOfTheGeneralPane(t *testing.T) {
+	f := newHerdrDispatchFixture(t, "idle", "soldier task-1 reported done", false)
+	if err := dispatchHerdrWake(f.home); err != nil {
+		t.Fatalf("dispatchHerdrWake: %v", err)
+	}
+	args, err := os.ReadFile(f.paneReadArg)
+	if err != nil {
+		t.Fatalf("composer gate never read the pane: %v", err)
+	}
+	if !strings.Contains(string(args), "--source recent --lines 12") {
+		t.Errorf("pane read args = %q, want --source recent --lines 12", args)
 	}
 }

@@ -98,6 +98,14 @@ func TestProbeAdapter_PlainBackendProducesUnknown(t *testing.T) {
 	}
 }
 
+// --- composerAdapter tests ---
+
+func TestComposerAdapter_BackendWithoutAnObservedAgentReadsAsNoAgent(t *testing.T) {
+	if got := (&composerAdapter{bk: &plainBackend{alive: true}}).Agent("pane-1"); got != "" {
+		t.Errorf("Agent = %q, want empty", got)
+	}
+}
+
 // --- busyAdapter tests ---
 
 func TestBusyAdapter_MapsActivityThroughFleetBusyAuthority(t *testing.T) {
