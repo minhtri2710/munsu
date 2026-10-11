@@ -394,14 +394,14 @@ jobs:
       # structural, not a gap in the test suite: no measurement taken *inside* a
       # function can see that production never calls it. `EnsureNotPrimary` had
       # four tests and coverage count 2 on its refusal branch while having zero
-      # production call sites (since deleted -- ADR-0009). Reachability is the
+      # production call sites (since deleted). Reachability is the
       # only lane that sees that shape of guard, and it found two more open
-      # holes (BEO-64) on its first run here.
+      # holes on its first run here.
       #
       # The root is `./cmd/munsu` and `-test` is deliberately absent: a guard
       # only its own test calls is unreachable from the shipped binary, which is
       # precisely the finding. `-test` would relabel it "reachable" and silence
-      # the case this lane exists for. See ADR-0009 and the script header.
+      # the case this lane exists for. See the script header.
       #
       # The script runs one analysis per GOOS in .github/build-tags.manifest and
       # unions them, for the same reason the cross-target vet above exists: a
@@ -418,67 +418,6 @@ jobs:
           go install golang.org/x/tools/cmd/deadcode@v0.49.0
           PATH="$(go env GOPATH)/bin:$PATH" .github/scripts/deadcode.sh selftest
           PATH="$(go env GOPATH)/bin:$PATH" .github/scripts/deadcode.sh check
-      # Two ADRs landed as 0010 (BEO-93): #468 and #469 both reserved the number
-      # while it was free, #469 rebased onto main without renumbering, and every
-      # lane stayed green because nothing reads the ADR filenames. References by
-      # number then point at whichever file the reader opens first -- ADR-0004 §5
-      # cited "ADR-0010" and resolved to the wrong decision for a day.
-      #
-      # ADR numbers are assigned by hand, so the collision is only visible in the
-      # tree: the check is that no two files under docs/adr/ share the leading
-      # NNNN. Gaps are fine and one exists (no 0006) -- a missing number costs a
-      # reader nothing, a duplicate one costs them the decision.
-      - name: ADR numbers must be unique
-        run: |
-          set -eu
-          dupes=$(find docs/adr -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.md' | sed 's|^docs/adr/||' | cut -c1-4 | sort | uniq -d)
-          if [ -n "$dupes" ]; then
-            echo "::error::Duplicate ADR numbers under docs/adr/ -- renumber the one that landed second:" >&2
-            printf '%s\n' "$dupes" | while IFS= read -r n; do
-              for f in docs/adr/"$n"-*.md; do printf '  %s\n' "$f" >&2; done
-            done
-            exit 1
-          fi
-          echo "ADR numbers: unique"
-      # The rule above cares that two files do not share a number; this one
-      # cares that a number cited as a path has a file at all. That is the
-      # adjacent hole it left open (BEO-94): ADR-0006 was deleted in #418 as
-      # migration-era doctrine the ADR-0008 reset removed, and two plan docs
-      # kept linking to its filename for ten days. Both lanes stayed green,
-      # because nothing in this repo reads a link -- the same reason the
-      # duplicate above survived.
-      #
-      # References are extracted by basename, so `docs/adr/NNNN-x.md` and the
-      # `../adr/NNNN-x.md` form the plan docs use are the same check. The limit
-      # that follows from that: this proves the target exists, not that the
-      # relative depth is right, so a link written from the wrong directory
-      # still passes here and fails in a browser. Basenames are unique under a
-      # flat docs/adr/, so the weaker check is the whole of the deleted-target
-      # class and none of the wrong-prefix one.
-      #
-      # Text only, no network, like the rules around it -- it reads tracked
-      # files and the ADR directory and nothing else. An empty extraction is a
-      # failure rather than a pass: this repo has ADR links today, so finding
-      # none means the pattern stopped matching, and a guard that silently
-      # matches nothing is the shape this job exists to refuse.
-      - name: ADR references must point at a file that exists
-        run: |
-          set -eu
-          refs="$(mktemp)"
-          git grep -hIoE 'adr/[0-9]{4}-[A-Za-z0-9._-]+\.md' -- . | sed 's|.*/||' | sort -u > "$refs"
-          if [ ! -s "$refs" ]; then
-            echo "::error::No ADR references found anywhere in the tree -- the extraction pattern no longer matches, so this check proves nothing" >&2
-            exit 1
-          fi
-          broken=0
-          while IFS= read -r ref; do
-            [ -f "docs/adr/$ref" ] && continue
-            broken=1
-            echo "::error::ADR reference has no file -- point it at a real ADR or drop the link: docs/adr/$ref" >&2
-            git grep -nI -F -- "$ref" | while IFS= read -r hit; do printf '  %s\n' "$hit" >&2; done
-          done < "$refs"
-          [ "$broken" = 0 ] || exit 1
-          echo "ADR references: $(wc -l < "$refs" | tr -d ' ') distinct, all resolve"
       # A flaky test has no owner. Every other red in this repo does -- whoever
       # wrote the change that caused it -- which is why every other lane can end
       # at "it is red, someone will fix it" and this one cannot. Four pushes to
@@ -504,7 +443,7 @@ jobs:
       # The selftest runs first, and it is here rather than in the sweep's own
       # workflow for the reason the step below exists at all: this script is the
       # half that runs on every PR, so it is the half a PR can break. Ten of its
-      # rules were deleted one at a time (BEO-103) and every lane in this repo
+      # rules were deleted one at a time and every lane in this repo
       # stayed green -- the same shape as the unreachable guards the deadcode
       # lane above was built for. It is hermetic and takes under a second.
       - name: Flake ledger rules must agree with their fixtures
@@ -631,8 +570,7 @@ jobs:
       # checks the classified paths and symbols in the covered set against the
       # tree. It compares both ways against .github/citations.allow, so a
       # citation that resolves again cannot leave its waiver behind. The set of
-      # covered documents and citations is derived from the tree, except
-      # docs/plans/, which is excluded as a dated document class; docFiles in
+      # covered documents and citations is derived from the tree; docFiles in
       # .github/scripts/citations/main.go owns that boundary.
       #
       # Text only, no network: the stdlib-only Go program parses the tree with

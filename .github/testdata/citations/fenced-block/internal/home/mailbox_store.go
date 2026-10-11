@@ -12,7 +12,8 @@ func AfterListThenQuoteFence() {}
 func AfterQuoteThenListFence() {}
 
 type Store struct {
-	ParentHome string
+	ParentHome        string
+	ParentHomeOrdered string
 }
 
 // WriteEnvelope appends a message.

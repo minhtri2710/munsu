@@ -58,8 +58,8 @@ on the next main run. Once that evidence has aged out of the window, nothing
 can re-derive the row, so once the fix has landed (`state` reads `fixed:<sha>`)
 a person can remove the row and it will not come back.
 
-A row is **never** closed because "we have not seen it fail in a while". BEO-82
-re-ran a red lane 14 times on the red SHA and saw zero failures; a run of greens
+A row is **never** closed because "we have not seen it fail in a while". A red
+lane re-run 14 times on the red SHA showed zero failures; a run of greens
 is not evidence of a fix. The ledger only ever accuses -- absence from it proves
 nothing about a test, and a green streak proves nothing about an entry.
 
@@ -87,7 +87,7 @@ commit reachable from `main`. `fixed:i-never-fixed-it` used to read as `0 open,
 admits to, and permanent.
 
 `.github/scripts/flake-ledger.sh check` enforces the shape and the deadlines
-with no network access at all, next to the ADR-number and gofmt rules, and
+with no network access at all, next to the gofmt and build-tag rules, and
 `flake-ledger.sh selftest` runs beside it with one fixture per rule -- the rules
 themselves are guards, and a guard nothing tests stops protecting silently.
 `flake-sweep.sh selftest` runs in that same job for the same reason: it is
@@ -126,7 +126,7 @@ it on the next `main` run.
 
 `owner_issue` is on that list because one `sync --owner` gives *every* row it files
 the same issue, and re-running `sync` with a different one changes nothing -- the
-preserve-on-re-run rule that protects `BEO-79` from being clobbered is the same
+preserve-on-re-run rule that protects a hand-moved owner from being clobbered is the same
 rule that refuses to move a row. So when a sweep files two flakes that belong to
 two issues, the second one is moved here, by hand, and stays moved.
 

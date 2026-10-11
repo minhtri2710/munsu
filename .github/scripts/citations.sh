@@ -4,8 +4,8 @@
 # against the tree it cites, or be waived in .github/citations.allow.
 #
 # munsu's documents carry `file:line` and symbol citations as their primary
-# evidence -- docs/port-mapping.md, docs/architecture.md, the ADRs and CLAUDE.md
-# are all written to be checkable by reading the cited code -- and until this
+# evidence -- README.md and AGENTS.md (CLAUDE.md is its symlink)
+# are written to be checkable by reading the cited code -- and until this
 # lane nothing checked that any of them resolved. A hand-written workflow
 # topology document was written, reviewed, corrected and reviewed again, and still shipped to its second review citing
 # `home.WriteMailboxEnvelope` and `home.ReadMailboxEnvelope`, two names that
@@ -114,7 +114,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TOOL="$ROOT/.github/scripts/citations"
 # Overridable so the selftest can drive both halves from a fixture tree rather
 # than from the real repo: these fixtures pin the rules, and they must not change
-# their verdict because somebody added a document to docs/.
+# their verdict because somebody edited a root document.
 SCAN_ROOT="${SCAN_ROOT:-$ROOT}"
 WAIVER="${WAIVER:-$ROOT/.github/citations.allow}"
 FIXTURES="$ROOT/.github/testdata/citations"
@@ -204,7 +204,7 @@ waiver_format_errors() {
 # debt, reprinted on every run so a citation known to be wrong stays visible
 # until it is corrected. Same mechanism, and same argument, as deadcode.sh's:
 # an annotation on every single run is the difference between a waiver and a
-# silent line. (ADR-0017 §5.)
+# silent line. A waiver reason that starts with OPEN-BUG marks such an entry.
 announce_open_bugs() {
 	awk -F '\t' '
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
@@ -251,7 +251,7 @@ check() {
 		done
 		echo "  A path citation must name a file that exists; a symbol citation must name a func," >&2
 		echo "  method, type, const, var or struct field this tree declares. Correct the citation," >&2
-		echo "  or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say." >&2
+		echo "  or add a line to that file with a reason: say what the document claims that makes the citation deliberate, and what would make it wrong." >&2
 		failed=1
 	fi
 
@@ -297,15 +297,15 @@ check() {
 # ---------------------------------------------------------------------------
 #
 # The enforcing half runs on every PR, so it is the half a PR can break, and a
-# guard nothing tests stops protecting silently -- BEO-103 is the precedent: ten
-# rules of flake-ledger.sh were deleted one at a time and every lane in this repo
+# guard nothing tests stops protecting silently -- ten
+# rules of flake-ledger.sh were once deleted one at a time and every lane in this repo
 # stayed green. For this lane the argument is sharper than usual, because the
 # thing being enforced is a classifier: loosening one rule does not fail, it just
 # stops seeing a shape, and a classifier nobody can see failing is the defect
 # #573 is about.
 #
 # Each fixture is a directory that IS the tree it is scanned against -- its own
-# CLAUDE.md, README.md, docs/ and .go files -- plus a `waiver` and a `want` that
+# CLAUDE.md, README.md and .go files -- plus a `waiver` and a `want` that
 # pins stdout, stderr and the exit status together, so a deleted rule changes one
 # file and says which.
 #
@@ -362,8 +362,6 @@ check() {
 #                             characters a path may contain, so a brace path
 #                             vanishes -- or delete codeChars, so shell and jq
 #                             fragments fill the register. Both directions.
-#   plans-excluded            re-include docs/plans/, whose citations are dated
-#                             and whose correct state is unchanged
 #   no-citations              accept an empty extraction as "everything resolves"
 #   no-go-files               accept an empty declaration index
 #   waived                    stop reading the waiver file, so a citation
@@ -401,7 +399,7 @@ exit $rc"
 	done
 
 	local unknown_call
-	if unknown_call="$(SCAN_ROOT="$ROOT/.github/testdata/citations/unknown-qualifier" WAIVER="$ROOT/.github/testdata/citations/unknown-qualifier/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unknown_call" | grep -Fxq $'docs/doc.md\tmailbox.WriteEnvelope(ctx, envelope)'; then
+	if unknown_call="$(SCAN_ROOT="$ROOT/.github/testdata/citations/unknown-qualifier" WAIVER="$ROOT/.github/testdata/citations/unknown-qualifier/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unknown_call" | grep -Fxq $'README.md\tmailbox.WriteEnvelope(ctx, envelope)'; then
 		echo "  ok   unknown-qualifier-call"
 	else
 		echo "::error::citations did not disclose the complete unknown-qualifier call:" >&2
@@ -410,7 +408,7 @@ exit $rc"
 	fi
 
 	local unknown_generic
-	if unknown_generic="$(SCAN_ROOT="$ROOT/.github/testdata/citations/generic-reference" WAIVER="$ROOT/.github/testdata/citations/generic-reference/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unknown_generic" | grep -Fxq $'docs/doc.md\tunknown.GenericNow[int]'; then
+	if unknown_generic="$(SCAN_ROOT="$ROOT/.github/testdata/citations/generic-reference" WAIVER="$ROOT/.github/testdata/citations/generic-reference/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unknown_generic" | grep -Fxq $'README.md\tunknown.GenericNow[int]'; then
 		echo "  ok   unknown-generic-reference"
 	else
 		echo "::error::citations did not disclose the complete unknown generic reference:" >&2
@@ -424,7 +422,7 @@ exit $rc"
 	# committed fixture because it cannot be one: an unparseable .go file in the
 	# tree makes `gofmt -l .` exit 2, which turns the gofmt step of this same job
 	# red for a reason that is not this rule. Built in a scratch tree instead.
-	local scratch escape tabbed rootdoc outside ambiguous callresult nested coverage invalidfence container rootrelative ignoredgo escapedbacktick controlchars unsafe_doc_path broken_docs multiline_blocks
+	local scratch escape tabbed rootdoc outside ambiguous callresult nested invalidfence container rootrelative ignoredgo escapedbacktick controlchars multiline_blocks
 	scratch=""
 	escape=""
 	tabbed=""
@@ -433,23 +431,18 @@ exit $rc"
 	ambiguous=""
 	callresult=""
 	nested=""
-	coverage=""
 	invalidfence=""
 	container=""
 	rootrelative=""
 	ignoredgo=""
 	escapedbacktick=""
 	controlchars=""
-	unsafe_doc_path=""
-	broken_docs=""
 	multiline_blocks=""
-	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${coverage:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${unsafe_doc_path:-}" "${broken_docs:-}" "${multiline_blocks:-}"' RETURN
+	trap 'rm -rf "${scratch:-}" "${escape:-}" "${tabbed:-}" "${rootdoc:-}" "${outside:-}" "${ambiguous:-}" "${callresult:-}" "${nested:-}" "${invalidfence:-}" "${container:-}" "${rootrelative:-}" "${ignoredgo:-}" "${escapedbacktick:-}" "${controlchars:-}" "${multiline_blocks:-}"' RETURN
 	scratch="$(mktemp -d)"
-	mkdir -p "$scratch/docs"
-	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/docs/doc.md"
+	printf 'A citation of `SomethingDeclared`.\n' >"$scratch/README.md"
 	: >"$scratch/AGENTS.md"
 	: >"$scratch/CLAUDE.md"
-	: >"$scratch/README.md"
 	# A parseable file declaring the cited symbol, so that skipping the broken
 	# one instead of failing on it would leave the run GREEN. Without this the
 	# scratch tree has no declarations at all and the empty-index rule catches
@@ -467,19 +460,17 @@ exit $rc"
 	fi
 
 	ignoredgo="$(mktemp -d)"
-	mkdir -p "$ignoredgo/docs"
 	: >"$ignoredgo/AGENTS.md"
 	: >"$ignoredgo/CLAUDE.md"
-	: >"$ignoredgo/README.md"
 	printf 'package x\nfunc RealDeclaration() {}\n' >"$ignoredgo/good.go"
 	printf 'package x\nfunc IgnoredDeclaration() {}\n' >"$ignoredgo/_fixture.go"
 	printf 'package x\nfunc DotIgnoredDeclaration() {}\n' >"$ignoredgo/.fixture.go"
 	mkdir -p "$ignoredgo/_fixtures"
 	printf 'package x\nfunc IgnoredDirectoryDeclaration() {}\n' >"$ignoredgo/_fixtures/source.go"
-	printf 'The real declaration is `RealDeclaration`; ignored declarations are `IgnoredDeclaration`, `DotIgnoredDeclaration`, and `IgnoredDirectoryDeclaration`.\n' >"$ignoredgo/docs/doc.md"
+	printf 'The real declaration is `RealDeclaration`; ignored declarations are `IgnoredDeclaration`, `DotIgnoredDeclaration`, and `IgnoredDirectoryDeclaration`.\n' >"$ignoredgo/README.md"
 	: >"$ignoredgo/waiver"
 	if got="$(cd "$TOOL" && go run . "$ignoredgo" 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tDotIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tdocs/doc.md\tsymbol\tIgnoredDirectoryDeclaration' && printf '%s\n' "$got" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRealDeclaration'; then
+	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'unresolved\tREADME.md\tsymbol\tIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tREADME.md\tsymbol\tDotIgnoredDeclaration' && printf '%s\n' "$got" | grep -Fq $'unresolved\tREADME.md\tsymbol\tIgnoredDirectoryDeclaration' && printf '%s\n' "$got" | grep -Fq $'resolved\tREADME.md\tsymbol\tRealDeclaration'; then
 		echo "  ok   ignored-go-sources"
 	else
 		echo "::error::citations indexed Go-ignored basenames:" >&2
@@ -488,15 +479,13 @@ exit $rc"
 	fi
 
 	escapedbacktick="$(mktemp -d)"
-	mkdir -p "$escapedbacktick/docs"
 	: >"$escapedbacktick/AGENTS.md"
 	: >"$escapedbacktick/CLAUDE.md"
-	: >"$escapedbacktick/README.md"
 	printf 'package x\nfunc RealDeclaration() {}\n' >"$escapedbacktick/good.go"
-	printf 'An escaped delimiter \\\`MissingSymbol\\\` is literal; a real span is `RealDeclaration`.\n' >"$escapedbacktick/docs/doc.md"
+	printf 'An escaped delimiter \\\`MissingSymbol\\\` is literal; a real span is `RealDeclaration`.\n' >"$escapedbacktick/README.md"
 	: >"$escapedbacktick/waiver"
 	if got="$(cd "$TOOL" && go run . "$escapedbacktick" 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRealDeclaration' && ! printf '%s\n' "$got" | grep -Fq 'MissingSymbol'; then
+	if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -Fq $'resolved\tREADME.md\tsymbol\tRealDeclaration' && ! printf '%s\n' "$got" | grep -Fq 'MissingSymbol'; then
 		echo "  ok   escaped-backtick"
 	else
 		echo "::error::citations treated an escaped backtick as an inline span:" >&2
@@ -505,15 +494,14 @@ exit $rc"
 	fi
 
 	escape="$(mktemp -d)"
-	mkdir -p "$escape/docs"
+	mkdir -p "$escape/internal"
 	: >"$escape/AGENTS.md"
 	: >"$escape/CLAUDE.md"
-	: >"$escape/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$escape/good.go"
-	printf 'A traversal citation is `docs/../../../../etc/passwd`.\n' >"$escape/docs/doc.md"
+	printf 'A traversal citation is `internal/../../../../etc/passwd`.\n' >"$escape/README.md"
 	: >"$escape/waiver"
 	if got="$(SCAN_ROOT="$escape" WAIVER="$escape/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path docs/../../../../etc/passwd'; then
+	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path internal/../../../../etc/passwd'; then
 		echo "::error::citations resolved a path that traverses outside the repository:" >&2
 		printf '%s\n' "$got" >&2
 		failed=1
@@ -522,7 +510,7 @@ exit $rc"
 	fi
 
 	ln -s /etc "$escape/outside"
-	printf 'A symlink citation is `outside/passwd`.\n' >"$escape/docs/doc.md"
+	printf 'A symlink citation is `outside/passwd`.\n' >"$escape/README.md"
 	if got="$(SCAN_ROOT="$escape" WAIVER="$escape/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path outside/passwd'; then
 		echo "::error::citations resolved a symlink that escapes the repository:" >&2
@@ -534,12 +522,10 @@ exit $rc"
 
 	tabbed="$(mktemp -d)"
 	outside="$(mktemp -d)"
-	mkdir -p "$tabbed/docs"
 	: >"$tabbed/AGENTS.md"
 	: >"$tabbed/CLAUDE.md"
-	: >"$tabbed/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$tabbed/good.go"
-	printf '\t```\nA missing citation is `MissingTabCitation`.\n    ```\nA second missing citation is `MissingSpaceCitation`.\n-\t```go\n\tA fenced citation is `MissingListTabCitation`.\n\t```\nA citation after a tab-indented list fence is `MissingAfterListFence`.\n' >"$tabbed/docs/doc.md"
+	printf '\t```\nA missing citation is `MissingTabCitation`.\n    ```\nA second missing citation is `MissingSpaceCitation`.\n-\t```go\n\tA fenced citation is `MissingListTabCitation`.\n\t```\nA citation after a tab-indented list fence is `MissingAfterListFence`.\n' >"$tabbed/README.md"
 	: >"$tabbed/waiver"
 	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'symbol MissingTabCitation' || ! printf '%s\n' "$got" | grep -q 'symbol MissingSpaceCitation' || ! printf '%s\n' "$got" | grep -q 'symbol MissingAfterListFence' || printf '%s\n' "$got" | grep -q 'MissingListTabCitation'; then
@@ -550,54 +536,13 @@ exit $rc"
 		echo "  ok   tab-indented-fence"
 	fi
 
-	printf 'External document.\n' >"$outside/doc.md"
-	ln -s "$outside/doc.md" "$tabbed/docs/external.md"
-	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'docs/external.md resolves outside repository root'; then
-		echo "::error::citations scanned a docs symlink outside the repository:" >&2
-		printf '%s\n' "$got" >&2
-		failed=1
-	else
-		echo "  ok   docs-symlink-escape"
-	fi
-
-	mv "$tabbed/docs" "$tabbed/docs-real"
-	ln -s "$tabbed/docs-real" "$tabbed/docs"
-	if got="$(SCAN_ROOT="$tabbed" WAIVER="$tabbed/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'covered directory docs/ is missing or symlinked'; then
-		echo "::error::citations accepted a symlinked docs root:" >&2
-		printf '%s\n' "$got" >&2
-		failed=1
-	else
-		echo "  ok   docs-root-symlink"
-	fi
-
-	broken_docs="$(mktemp -d)"
-	mkdir -p "$broken_docs/docs"
-	: >"$broken_docs/AGENTS.md"
-	: >"$broken_docs/CLAUDE.md"
-	: >"$broken_docs/README.md"
-	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$broken_docs/good.go"
-	printf 'A citation is `SomethingDeclared`.\n' >"$broken_docs/docs/doc.md"
-	ln -s "$broken_docs/missing-docs" "$broken_docs/docs/shared"
-	: >"$broken_docs/waiver"
-	if got="$(SCAN_ROOT="$broken_docs" WAIVER="$broken_docs/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'covered documentation symlink docs/shared'; then
-		echo "::error::citations silently skipped a broken docs symlink:" >&2
-		printf '%s\n' "$got" >&2
-		failed=1
-	else
-		echo "  ok   broken-doc-symlink"
-	fi
-
 	rootdoc="$(mktemp -d)"
-	mkdir -p "$rootdoc/docs"
 	: >"$rootdoc/AGENTS.md"
 	: >"$rootdoc/CLAUDE.md"
 	printf 'External content.\n' >"$outside/README.md"
 	ln -s "$outside/README.md" "$rootdoc/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$rootdoc/good.go"
-	printf 'A citation is `SomethingDeclared`.\n' >"$rootdoc/docs/doc.md"
+	printf 'A citation is `SomethingDeclared`.\n' >"$rootdoc/README.md"
 	: >"$rootdoc/waiver"
 	if got="$(SCAN_ROOT="$rootdoc" WAIVER="$rootdoc/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'README.md resolves outside repository root'; then
@@ -610,7 +555,7 @@ exit $rc"
 
 	printf 'package outside\n\nfunc ExternalOnly() {}\n' >"$outside/external.go"
 	ln -s "$outside/external.go" "$escape/external.go"
-	printf 'A file citation is `external.go` and a symbol citation is `ExternalOnly`.\n' >"$escape/docs/doc.md"
+	printf 'A file citation is `external.go` and a symbol citation is `ExternalOnly`.\n' >"$escape/README.md"
 	if got="$(SCAN_ROOT="$escape" WAIVER="$escape/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -eq 0 ] || ! printf '%s\n' "$got" | grep -q 'path external.go' || ! printf '%s\n' "$got" | grep -q 'symbol ExternalOnly'; then
 		echo "::error::citations resolved declarations or files through an external Go symlink:" >&2
@@ -623,8 +568,8 @@ exit $rc"
 	mkdir -p "$escape/.github/testdata/citations"
 	printf 'package fixture\n\nfunc FixtureOnly() {}\n' >"$escape/.github/testdata/citations/source.go"
 	ln -s "$escape/.github/testdata/citations/source.go" "$escape/fixture.go"
-	printf 'A fixture citation is `FixtureOnly`.\n' >"$escape/docs/doc.md"
-	if rows="$(cd "$TOOL" && go run . "$escape" 2>&1)" && printf '%s\n' "$rows" | grep -q $'unresolved\tdocs/doc.md\tsymbol\tFixtureOnly'; then
+	printf 'A fixture citation is `FixtureOnly`.\n' >"$escape/README.md"
+	if rows="$(cd "$TOOL" && go run . "$escape" 2>&1)" && printf '%s\n' "$rows" | grep -q $'unresolved\tREADME.md\tsymbol\tFixtureOnly'; then
 		echo "  ok   excluded-go-symlink"
 	else
 		echo "::error::citations indexed a symlinked excluded fixture:" >&2
@@ -633,10 +578,9 @@ exit $rc"
 	fi
 
 	ambiguous="$(mktemp -d)"
-	mkdir -p "$ambiguous/docs" "$ambiguous/one" "$ambiguous/two"
+	mkdir -p "$ambiguous/one" "$ambiguous/two"
 	: >"$ambiguous/AGENTS.md"
 	: >"$ambiguous/CLAUDE.md"
-	: >"$ambiguous/README.md"
 	cat >"$ambiguous/one/one.go" <<'EOF'
 package home
 
@@ -653,7 +597,7 @@ func Other() {}
 type PR struct{}
 type Store struct{}
 EOF
-	printf 'Ambiguous citations are `home.Run`, `PR.CanMerge`, and `(*Store).WriteEnvelope`.\n' >"$ambiguous/docs/doc.md"
+	printf 'Ambiguous citations are `home.Run`, `PR.CanMerge`, and `(*Store).WriteEnvelope`.\n' >"$ambiguous/README.md"
 	: >"$ambiguous/waiver"
 	if got="$(SCAN_ROOT="$ambiguous" WAIVER="$ambiguous/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -ne 0 ] || ! printf '%s\n' "$got" | grep -q '3 unchecked'; then
@@ -672,15 +616,13 @@ EOF
 	fi
 
 	callresult="$(mktemp -d)"
-	mkdir -p "$callresult/docs"
 	: >"$callresult/AGENTS.md"
 	: >"$callresult/CLAUDE.md"
-	: >"$callresult/README.md"
 	printf 'package x\n\ntype Store struct{}\nfunc (Store) WriteEnvelope(any) {}\nfunc RecoverNow(any) {}\nfunc GenericNow[T any]() {}\n' >"$callresult/good.go"
-	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `newFoo().(Reader).Read()`, `newFoo()[:].Read()`, `(*newFoo()).Read()`, `(<-newReader()).Read()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()`, `GenericNow[int]:12`, `Store[string].WriteEnvelope(context.Background())`, `(*Store[string]).WriteEnvelope(context.Background())`, and stale `MissingStore[string]`.\n' >"$callresult/docs/doc.md"
+	printf 'Call-result citations are `newCaptainRecoverTransaction().Recover`, `newFoo(ctx, option()).Recover()`, `newFoo().(Reader).Read()`, `newFoo()[:].Read()`, `(*newFoo()).Read()`, `(<-newReader()).Read()`, `mailbox.WriteEnvelope(ctx, envelope).`, `newPunctuatedFoo(ctx).Recover().`, `RecoverNow(context.Background())`, `GenericNow[int]()`, `GenericNow[int]:12`, `Store[string].WriteEnvelope(context.Background())`, `(*Store[string]).WriteEnvelope(context.Background())`, and stale `MissingStore[string]`.\n' >"$callresult/README.md"
 	: >"$callresult/waiver"
 	if unchecked="$(SCAN_ROOT="$callresult" WAIVER="$callresult/waiver" "$0" unchecked 2>&1)" && printf '%s\n' "$unchecked" | grep -Fq 'newCaptainRecoverTransaction().Recover' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo(ctx, option()).Recover()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo().(Reader).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'newFoo()[:].Read()' && printf '%s\n' "$unchecked" | grep -Fq '(*newFoo()).Read()' && printf '%s\n' "$unchecked" | grep -Fq '(<-newReader()).Read()' && printf '%s\n' "$unchecked" | grep -Fq 'mailbox.WriteEnvelope(ctx, envelope)' && printf '%s\n' "$unchecked" | grep -Fq 'newPunctuatedFoo(ctx).Recover()'; then
-		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fxq $'resolved\tdocs/doc.md\tsymbol\tGenericNow[int]' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tStore[string].WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\t(*Store[string]).WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'unchecked\tdocs/doc.md\ttoken\tMissingStore[string]'; then
+		if rows="$(cd "$TOOL" && go run . "$callresult" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tsymbol\tRecoverNow(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tsymbol\tGenericNow[int]()' && printf '%s\n' "$rows" | grep -Fxq $'resolved\tREADME.md\tsymbol\tGenericNow[int]' && printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tsymbol\tStore[string].WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tsymbol\t(*Store[string]).WriteEnvelope(context.Background())' && printf '%s\n' "$rows" | grep -Fq $'unchecked\tREADME.md\ttoken\tMissingStore[string]'; then
 			echo "  ok   call-result-selector"
 		else
 			echo "::error::citations failed to resolve ordinary or generic calls:" >&2
@@ -694,12 +636,10 @@ EOF
 	fi
 
 	controlchars="$(mktemp -d)"
-	mkdir -p "$controlchars/docs"
 	: >"$controlchars/AGENTS.md"
 	: >"$controlchars/CLAUDE.md"
-	: >"$controlchars/README.md"
 	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$controlchars/good.go"
-	printf 'A malformed citation is `MissingNow(ctx,\tone)`.\n' >"$controlchars/docs/doc.md"
+	printf 'A malformed citation is `MissingNow(ctx,\tone)`.\n' >"$controlchars/README.md"
 	: >"$controlchars/waiver"
 	if rows="$(cd "$TOOL" && go run . "$controlchars" 2>&1)"; then rc=0; else rc=$?; fi
 	if [ "$rc" -ne 0 ] && ! printf '%s\n' "$rows" | grep -Fq $'\tunchecked\t'; then
@@ -710,28 +650,9 @@ EOF
 		failed=1
 	fi
 
-	unsafe_doc_path="$(mktemp -d)"
-	mkdir -p "$unsafe_doc_path/docs"
-	: >"$unsafe_doc_path/AGENTS.md"
-	: >"$unsafe_doc_path/CLAUDE.md"
-	: >"$unsafe_doc_path/README.md"
-	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$unsafe_doc_path/good.go"
-	printf 'A citation is `SomethingDeclared`.\n' >"$unsafe_doc_path/docs/a$(printf '\t')b.md"
-	: >"$unsafe_doc_path/waiver"
-	if rows="$(cd "$TOOL" && go run . "$unsafe_doc_path" 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -ne 0 ] && printf '%s\n' "$rows" | grep -Fq 'contains a control character'; then
-		echo "  ok   control-character-document-path"
-	else
-		echo "::error::citations emitted or accepted a control-character document path:" >&2
-		printf '%s\n' "${rows:-(no output)}" >&2
-		failed=1
-	fi
-
 	nested="$(mktemp -d)"
-	mkdir -p "$nested/docs"
 	: >"$nested/AGENTS.md"
 	: >"$nested/CLAUDE.md"
-	: >"$nested/README.md"
 	cat >"$nested/good.go" <<'EOF'
 package x
 
@@ -741,9 +662,9 @@ type Outer struct {
 	}
 }
 EOF
-	printf 'A nested declaration is `DeepField`.\n' >"$nested/docs/doc.md"
+	printf 'A nested declaration is `DeepField`.\n' >"$nested/README.md"
 	: >"$nested/waiver"
-	if rows="$(cd "$TOOL" && go run . "$nested" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tDeepField'; then
+	if rows="$(cd "$TOOL" && go run . "$nested" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tREADME.md\tsymbol\tDeepField'; then
 		echo "  ok   nested-field"
 	else
 		echo "::error::citations failed to index a nested field:" >&2
@@ -751,51 +672,13 @@ EOF
 		failed=1
 	fi
 
-	coverage="$(mktemp -d)"
-	mkdir -p "$coverage/docs/guides/plans" "$coverage/plans-target"
-	ln -s "$coverage/plans-target" "$coverage/docs/plans"
-	: >"$coverage/AGENTS.md"
-	: >"$coverage/CLAUDE.md"
-	: >"$coverage/README.md"
-	printf 'package x\n\nfunc SomethingDeclared() {}\n' >"$coverage/good.go"
-	printf 'Nested plan cites `missing_nested.go`.\n' >"$coverage/docs/guides/plans/doc.md"
-	printf 'Top plan cites `missing_top.go`.\n' >"$coverage/plans-target/doc.md"
-	: >"$coverage/waiver"
-	if listed="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" list 2>&1)" && printf '%s\n' "$listed" | grep -q 'docs/guides/plans/doc.md' && ! printf '%s\n' "$listed" | grep -q 'docs/plans/doc.md'; then
-		echo "  ok   nested-plans-coverage"
-	else
-		echo "::error::citations excluded nested plans or scanned top-level plans:" >&2
-		printf '%s\n' "${listed:-(no output)}" >&2
-		failed=1
-	fi
-
-	if listed="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" list 2>&1)" && ! printf '%s\n' "$listed" | grep -q 'docs/plans-target'; then
-		echo "  ok   symlinked-plans-exclusion"
-	else
-		echo "::error::citations rejected or scanned excluded symlinked plans:" >&2
-		printf '%s\n' "${listed:-(no output)}" >&2
-		failed=1
-	fi
-
-	ln -s "$coverage/docs/guides" "$coverage/docs/shared"
-	if got="$(SCAN_ROOT="$coverage" WAIVER="$coverage/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -ne 0 ] && printf '%s\n' "$got" | grep -q 'covered documentation directory docs/shared is symlinked'; then
-		echo "  ok   docs-directory-symlink"
-	else
-		echo "::error::citations silently skipped a symlinked docs directory:" >&2
-		printf '%s\n' "$got" >&2
-		failed=1
-	fi
-
 	invalidfence="$(mktemp -d)"
-	mkdir -p "$invalidfence/docs"
 	: >"$invalidfence/AGENTS.md"
 	: >"$invalidfence/CLAUDE.md"
-	: >"$invalidfence/README.md"
 	printf 'package x\n\nfunc InvalidFenceCitation() {}\n' >"$invalidfence/good.go"
-	printf '`````lang `example`\nThe citation is `InvalidFenceCitation`.\n' >"$invalidfence/docs/doc.md"
+	printf '`````lang `example`\nThe citation is `InvalidFenceCitation`.\n' >"$invalidfence/README.md"
 	: >"$invalidfence/waiver"
-	if rows="$(cd "$TOOL" && go run . "$invalidfence" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tInvalidFenceCitation'; then
+	if rows="$(cd "$TOOL" && go run . "$invalidfence" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tREADME.md\tsymbol\tInvalidFenceCitation'; then
 		echo "  ok   invalid-backtick-fence"
 	else
 		echo "::error::citations treated an invalid backtick opener as a fence:" >&2
@@ -804,30 +687,28 @@ EOF
 	fi
 
 	container="$(mktemp -d)"
-	mkdir -p "$container/docs"
 	: >"$container/AGENTS.md"
 	: >"$container/CLAUDE.md"
-	: >"$container/README.md"
 	printf 'package x\n\nfunc FenceAfterList() {}\n' >"$container/good.go"
-	printf '```go\n- ```\n```\nA citation after the fence is `FenceAfterList`.\n' >"$container/docs/doc.md"
+	printf '```go\n- ```\n```\nA citation after the fence is `FenceAfterList`.\n' >"$container/README.md"
 	: >"$container/waiver"
-	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tFenceAfterList'; then
+	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tREADME.md\tsymbol\tFenceAfterList'; then
 		echo "  ok   top-level-fence-container"
 	else
 		echo "::error::citations let a list marker close a top-level fence:" >&2
 		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
-	printf '%s\n' '- - ```go' '- ```' '  A nested fenced citation is `NestedFenceCitation`.' '  ```' 'A citation after the nested fence is `AfterNestedFence`.' >"$container/docs/doc.md"
-	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tdocs/doc.md\tsymbol\tAfterNestedFence' && ! printf '%s\n' "$rows" | grep -q 'NestedFenceCitation'; then
+	printf '%s\n' '- - ```go' '- ```' '  A nested fenced citation is `NestedFenceCitation`.' '  ```' 'A citation after the nested fence is `AfterNestedFence`.' >"$container/README.md"
+	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'resolved\tREADME.md\tsymbol\tAfterNestedFence' && ! printf '%s\n' "$rows" | grep -q 'NestedFenceCitation'; then
 		echo "  ok   nested-list-fence-container"
 	else
 		echo "::error::citations accepted a shallower list marker for a nested fence:" >&2
 		printf '%s\n' "${rows:-(no output)}" >&2
 		failed=1
 	fi
-	printf '%s\n' '- ```go' '      ```' '  ```' 'A citation after the fence is `AfterOverIndentedFence`.' >"$container/docs/doc.md"
-	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'unresolved\tdocs/doc.md\tsymbol\tAfterOverIndentedFence'; then
+	printf '%s\n' '- ```go' '      ```' '  ```' 'A citation after the fence is `AfterOverIndentedFence`.' >"$container/README.md"
+	if rows="$(cd "$TOOL" && go run . "$container" 2>&1)" && printf '%s\n' "$rows" | grep -q $'unresolved\tREADME.md\tsymbol\tAfterOverIndentedFence'; then
 		echo "  ok   overindented-list-fence-closer"
 	else
 		echo "::error::citations accepted an over-indented list fence closer:" >&2
@@ -836,15 +717,14 @@ EOF
 	fi
 
 	rootrelative="$(mktemp -d)"
-	mkdir -p "$rootrelative/docs" "$rootrelative/nested"
+	mkdir -p "$rootrelative/nested"
 	: >"$rootrelative/AGENTS.md"
 	: >"$rootrelative/CLAUDE.md"
-	: >"$rootrelative/README.md"
 	printf 'package x\n\nfunc RootRelativeSentinel() {}\n' >"$rootrelative/nested/foo.go"
-	printf 'A path citation is `./foo.go`.\n' >"$rootrelative/docs/doc.md"
+	printf 'A path citation is `./foo.go`.\n' >"$rootrelative/README.md"
 	: >"$rootrelative/waiver"
 	if rows="$(SCAN_ROOT="$rootrelative" WAIVER="$rootrelative/waiver" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
-	if [ "$rc" -ne 0 ] && printf '%s\n' "$rows" | grep -Fq 'path ./foo.go' && ! printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tpath\t./foo.go'; then
+	if [ "$rc" -ne 0 ] && printf '%s\n' "$rows" | grep -Fq 'path ./foo.go' && ! printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tpath\t./foo.go'; then
 		echo "  ok   explicit-root-relative-path"
 	else
 		echo "::error::citations weakened an explicit root-relative path:" >&2
@@ -853,14 +733,12 @@ EOF
 	fi
 
 	multiline_blocks="$(mktemp -d)"
-	mkdir -p "$multiline_blocks/docs"
 	: >"$multiline_blocks/AGENTS.md"
 	: >"$multiline_blocks/CLAUDE.md"
-	: >"$multiline_blocks/README.md"
 	printf 'package x\n\nfunc ListCitation() {}\nfunc IndependentCitation() {}\n' >"$multiline_blocks/good.go"
-	printf '%s\n' '- A multiline citation starts `ListCitation(' '  )`' 'A `StaleEquals' '=' 'and closes `StaleEqualsAgain' '==' 'and closes `StaleDash' '-' 'and closes `StaleDashAgain' '--' 'and closes here.' 'A valid citation is `IndependentCitation`.' >"$multiline_blocks/docs/doc.md"
+	printf '%s\n' '- A multiline citation starts `ListCitation(' '  )`' 'A `StaleEquals' '=' 'and closes `StaleEqualsAgain' '==' 'and closes `StaleDash' '-' 'and closes `StaleDashAgain' '--' 'and closes here.' 'A valid citation is `IndependentCitation`.' >"$multiline_blocks/README.md"
 	: >"$multiline_blocks/waiver"
-	if rows="$(cd "$TOOL" && go run . "$multiline_blocks" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tListCitation( )' && printf '%s\n' "$rows" | grep -Fq $'resolved\tdocs/doc.md\tsymbol\tIndependentCitation' && ! printf '%s\n' "$rows" | grep -Eq 'StaleEquals|StaleDash'; then
+	if rows="$(cd "$TOOL" && go run . "$multiline_blocks" 2>&1)" && printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tsymbol\tListCitation( )' && printf '%s\n' "$rows" | grep -Fq $'resolved\tREADME.md\tsymbol\tIndependentCitation' && ! printf '%s\n' "$rows" | grep -Eq 'StaleEquals|StaleDash'; then
 		echo "  ok   multiline-list-and-setext-boundary"
 	else
 		echo "::error::citations lost a list continuation or crossed a setext boundary:" >&2

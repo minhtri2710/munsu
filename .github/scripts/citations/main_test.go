@@ -104,10 +104,7 @@ func TestScanRawHTMLClosingTagAllowsHorizontalWhitespace(t *testing.T) {
 		}
 	}
 	doc := "<script>\n</script bogus\nAn unmatched `` run inside HTML.\n</script >\nThen `home.MissingAfterSpace` then ``.\n\n<SCRIPT>\nAn unmatched `` run inside HTML.\n</SCRIPT\t>\nThen `home.MissingAfterTab` then ``.\n"
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,8 +113,8 @@ func TestScanRawHTMLClosingTagAllowsHorizontalWhitespace(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	want := map[string]bool{
-		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterSpace": true,
-		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterTab":   true,
+		"resolved\tREADME.md\tsymbol\thome.MissingAfterSpace": true,
+		"resolved\tREADME.md\tsymbol\thome.MissingAfterTab":   true,
 	}
 	for _, row := range rows {
 		delete(want, row)
@@ -137,11 +134,8 @@ func TestScanRecoversCitationAfterInlineTripleBackticks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "An unmatched `` run\n-```example``` and `home.MissingAfterInlineTriple`\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -149,7 +143,7 @@ func TestScanRecoversCitationAfterInlineTripleBackticks(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineTriple" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterInlineTriple" {
 			return
 		}
 	}
@@ -166,11 +160,8 @@ func TestScanRecoversCitationAfterBlankNonOneOrderedMarker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "- An unmatched `` run\n2. \ninner`` and `home.MissingAfterBlankMarker` then ``\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -178,7 +169,7 @@ func TestScanRecoversCitationAfterBlankNonOneOrderedMarker(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterBlankMarker" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterBlankMarker" {
 			return
 		}
 	}
@@ -195,11 +186,8 @@ func TestScanRecoversCitationAfterBlockquoteNonOneOrderedMarker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "> An unmatched `` run\n2. inner`` and `home.MissingAfterBlockquoteOrdered` then ``\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -207,7 +195,7 @@ func TestScanRecoversCitationAfterBlockquoteNonOneOrderedMarker(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterBlockquoteOrdered" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterBlockquoteOrdered" {
 			return
 		}
 	}
@@ -224,11 +212,8 @@ func TestScanRecoversCitationAfterNestedNonOneOrderedMarker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "> > An unmatched `` run\n2. inner`` and `home.MissingAfterNested` then ```\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -236,7 +221,7 @@ func TestScanRecoversCitationAfterNestedNonOneOrderedMarker(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterNested" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterNested" {
 			return
 		}
 	}
@@ -253,11 +238,8 @@ func TestScanRecoversCitationAfterSiblingListItemDoubleBacktick(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "- An unmatched `` run\n- `home.MissingAfterSiblingItem` then ``\n1. An unmatched `` run\n2. `home.MissingAfterOrderedItem` then ``\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -265,8 +247,8 @@ func TestScanRecoversCitationAfterSiblingListItemDoubleBacktick(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	want := map[string]bool{
-		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterSiblingItem": true,
-		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterOrderedItem": true,
+		"resolved\tREADME.md\tsymbol\thome.MissingAfterSiblingItem": true,
+		"resolved\tREADME.md\tsymbol\thome.MissingAfterOrderedItem": true,
 	}
 	for _, row := range rows {
 		delete(want, row)
@@ -286,11 +268,8 @@ func TestScanRecoversCitationAfterOrderedListItemReplacement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "1. An unmatched `` run\n2. `home.MissingAfterItemReplacement` then ```\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -298,7 +277,7 @@ func TestScanRecoversCitationAfterOrderedListItemReplacement(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterItemReplacement" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterItemReplacement" {
 			return
 		}
 	}
@@ -315,11 +294,8 @@ func TestScanRecoversCitationAfterNonOneOrderedListFenceLikeLine(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "An unmatched `` run\n2. ```\n    `home.MissingAfterNonInterruptingFence`\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -327,7 +303,7 @@ func TestScanRecoversCitationAfterNonOneOrderedListFenceLikeLine(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterNonInterruptingFence" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterNonInterruptingFence" {
 			return
 		}
 	}
@@ -344,11 +320,8 @@ func TestScanRecoversCitationAfterNonOneOrderedListHTMLLine(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "An unmatched `` run\n2. <script>\n    `home.MissingAfterNonInterruptingHTML`\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -356,7 +329,7 @@ func TestScanRecoversCitationAfterNonOneOrderedListHTMLLine(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterNonInterruptingHTML" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterNonInterruptingHTML" {
 			return
 		}
 	}
@@ -373,11 +346,8 @@ func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "- An unmatched ``` then ``outer\n2. inner`` and `home.MissingAfterOrdered`\nThen `home.MissingAfterFollowing`\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -385,8 +355,8 @@ func TestScanRecoversCitationAfterNonOneOrderedListMarker(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	want := map[string]bool{
-		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterOrdered":   true,
-		"resolved\tdocs/doc.md\tsymbol\thome.MissingAfterFollowing": true,
+		"resolved\tREADME.md\tsymbol\thome.MissingAfterOrdered":   true,
+		"resolved\tREADME.md\tsymbol\thome.MissingAfterFollowing": true,
 	}
 	for _, row := range rows {
 		delete(want, row)
@@ -406,11 +376,8 @@ func TestScanTypeSixHTMLInterruptsParagraph(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(root, "docs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	doc := "An unmatched `` run\n<div>`` and `home.MissingAfterTag`\n\n`home.MissingAfterBlock`\n"
-	if err := os.WriteFile(filepath.Join(root, "docs", "doc.md"), []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := scan(root)
@@ -418,11 +385,11 @@ func TestScanTypeSixHTMLInterruptsParagraph(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	for _, row := range rows {
-		if row == "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterTag" {
+		if row == "resolved\tREADME.md\tsymbol\thome.MissingAfterTag" {
 			t.Fatalf("type-six HTML block did not interrupt paragraph: %#v", rows)
 		}
 	}
-	want := "resolved\tdocs/doc.md\tsymbol\thome.MissingAfterBlock"
+	want := "resolved\tREADME.md\tsymbol\thome.MissingAfterBlock"
 	for _, row := range rows {
 		if row == want {
 			return
@@ -438,18 +405,18 @@ func TestScanRecoversUnmatchedRunsAcrossBoundaries(t *testing.T) {
 		t.Fatalf("scan(%q): %v", root, err)
 	}
 	want := map[string]bool{
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterQuote":         true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterRuns":          true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterItem":          true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazy":          true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterLazyItem":      true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTML":          true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterRawHTML":       true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterInlineHTML":    true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterMultilineHTML": true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterListHTML":      true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterIndented":      true,
-		"unresolved\tdocs/doc.md\tsymbol\thome.MissingAfterHTMLBlank":     true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterQuote":         true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterRuns":          true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterItem":          true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterLazy":          true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterLazyItem":      true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterHTML":          true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterRawHTML":       true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterInlineHTML":    true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterMultilineHTML": true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterListHTML":      true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterIndented":      true,
+		"unresolved\tREADME.md\tsymbol\thome.MissingAfterHTMLBlank":     true,
 	}
 	for _, row := range rows {
 		if want[row] {

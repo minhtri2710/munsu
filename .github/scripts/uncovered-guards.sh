@@ -36,7 +36,7 @@
 #
 # Coverage lowers "no test reaches this branch". It does NOT lower "a test runs
 # through it and asserts nothing" -- that is mutation testing's question, and
-# the design record on BEO-63 prices it at ~80 hours of suite for this repo,
+# a design estimate priced it at ~80 hours of suite for this repo,
 # while still missing three of the five recorded cases. Stronger than the status
 # quo, weaker than mutation, and the gap is stated here rather than discovered
 # later.
@@ -54,6 +54,48 @@
 # catches that, exactly as .github/build-tags.manifest writes about itself. This
 # lane catches the accident, not the intent, and must not be sold as more.
 #
+# --- Rules this script enforces ------------------------------------------------
+#
+# Identity ratchet. A baseline row's identity is exactly (file, func, nth,
+# predicate); the fifth column and comments are metadata, except for the reserved
+# growth acknowledgment. Against the base baseline: equal identity sets pass,
+# reason and comment edits pass, pure shrink passes, and pure growth passes only
+# when every added row's reason begins with `growth(#<issue>): <reason>` (a
+# positive issue number; the reason after it keeps the substantive explanation).
+# The run still lists every added identity, so a green result cannot hide the
+# scope of the growth. Undisclosed growth fails and enumerates the additions. Any
+# mixed removal and addition fails, including an equal-count replacement even
+# when the added rows carry acknowledgments: replacement is a separately
+# reviewable shrink followed by growth. Missing or malformed current or base data
+# fails closed; every data row has exactly five tab-separated columns, none
+# empty, with a positive decimal `nth`. Growth disclosure exists so a genuinely
+# new guard class can land through this same check instead of being blocked by it.
+# The base is the exact ref in GUARDS_BASE_REF, which CI sets to the pull request
+# base SHA or, for a push, the predecessor commit, so a stacked change compares
+# against its immediate parent. GUARDS_BASELINE_BASE supplies a base file to the
+# selftest fixtures only and is not a production input.
+#
+# Premise citations. A reason that says `Premise pinned by <TestName>` must name a
+# top-level Test declaration in a tracked test file, or the run is red; deleting,
+# renaming or making ambiguous the cited test fails the check. A citation
+# containing a slash is rejected, because subtests are registered at runtime and
+# cannot be resolved from the tree. No row is required to carry the phrase, and
+# the check does not judge whether the cited test is valid or runnable: the
+# required Build and test check owns that. Only this baseline is read;
+# .github/deadcode.allow carries no such citation. A complete waiver states the
+# premise ("unreachable because X"), the condition that invalidates it ("wrong
+# the moment X stops holding"), and the pinning test; the first two are
+# self-declared and reading the diff is what catches their omission.
+#
+# Open bugs. A reason that starts with OPEN-BUG marks a refusal branch that is
+# uncovered because of a production bug. `announce_open_bugs` reprints it as a
+# ::warning on every run, so it cannot be waived as though it were debt.
+#
+# Unmeasured files. A guard in a file no lane compiles is counted and warned about
+# on every run and excluded from both comparison directions, as described above.
+# A claim about such code states its limit next to the code, in the form "no lane
+# runs this; X is what covers it", and never in a form that reads like proof.
+#
 # Usage:
 #   uncovered-guards.sh sites      derived refusal sites, tab-separated
 #   uncovered-guards.sh merge      merged profile, block range and max count
@@ -69,7 +111,7 @@ BASELINE_REL="${BASELINE#"$ROOT"/}"
 PROFILES="${PROFILES:-$ROOT/.github/coverage}"
 FIXTURES="$ROOT/.github/testdata/uncovered-guards"
 # Overridable so the selftest can pin a summary line without depending on the
-# real file, which BEO-67 is actively burning down: fixtures that moved every
+# real file, which is actively burned down: fixtures that moved every
 # time somebody deleted a dead function would be fixtures nobody trusts.
 ALLOW="${GUARDS_DEADCODE_ALLOW:-$ROOT/.github/deadcode.allow}"
 
@@ -452,8 +494,8 @@ baseline_format_errors() {
 	' "$file"
 }
 
-# Part (c) of a waiver line (ADR-0017 section 4): the name of a test that pins
-# the premise. Until this check the link was prose -- deleting
+# Part (c) of a waiver line: the name of a test that pins the premise.
+# Until this check the link was prose -- deleting
 # TestPremiseNoAggregateWithABlankOwnerReachesApply left three rows citing it
 # and every lane green, which is the fail-open shape the whole file exists to
 # refuse: the waiver keeps its authority and nothing holds its premise.
@@ -790,7 +832,7 @@ generate() {
 #
 # The enforcing half runs on every PR, which makes it the half a PR can break --
 # and a guard nothing tests stops protecting silently, which is the sentence this
-# whole lane exists to enforce on everybody else. BEO-103 is the precedent: ten
+# whole lane exists to enforce on everybody else. Precedent: ten
 # rules of flake-ledger.sh were deleted one at a time and every lane in this repo
 # stayed green. So: one fixture per rule, each breaking exactly that rule, and
 # the .want pins stdout, stderr and the exit status together, so a deleted rule

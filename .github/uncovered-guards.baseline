@@ -10,8 +10,7 @@
 # Nothing declares which branches are guards. The set comes out of the tree, and
 # this file lists only the waivers, so a new guard with no test cannot land
 # quietly: there is no register to forget to update. That inversion is the whole
-# point -- see the design record on BEO-63, "guard enforcement: derived, not
-# declared". A register OF guards fails open at exactly the moment it has to
+# point: derived, not declared. A register OF guards fails open at exactly the moment it has to
 # fail closed.
 #
 # Equal identity sets and pure shrink pass as guards gain coverage or leave the
@@ -22,7 +21,7 @@
 # would accept keeps this green -- reading the diff is what catches that, not the
 # script. One part of it is not self-declared: a reason that says
 # `Premise pinned by <TestName>` has to name a test some `_test.go` in this tree
-# declares, or the run is red (ADR-0017 section 4). Carrying the phrase is not
+# declares, or the run is red. Carrying the phrase is not
 # required; meaning it, once written, is. Missing or malformed current or
 # exact-base data fails closed.
 #

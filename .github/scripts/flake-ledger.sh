@@ -4,8 +4,8 @@
 # as a file, and fail the run when an entry is past its deadline.
 #
 # This half calls no API and reads nothing but a committed file, on purpose. It
-# runs inside the `invariants` job next to the ADR-number, gofmt and build-tag
-# rules, and those five steps are worth trusting precisely because they cannot
+# runs inside the `invariants` job next to the gofmt and build-tag
+# rules, and those steps are worth trusting precisely because they cannot
 # be affected by anything outside the checkout. A deadline that needed the
 # Actions API to be judged would put a network dependency in the one job that
 # has none. The half that does need the API lives in flake-sweep.sh and runs in
@@ -235,7 +235,7 @@ check() {
 # selftest
 # ---------------------------------------------------------------------------
 #
-# This is the half that runs on every PR, and until BEO-103 it was the only
+# This is the half that runs on every PR, and it was once the only
 # guard in `invariants` with nothing watching it: ten of its rules were deleted
 # one at a time and every lane in the repo stayed green, because removing a rule
 # does not change the happy path by a single bit. That is the same shape the
