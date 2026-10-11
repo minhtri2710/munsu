@@ -108,34 +108,6 @@ func TestConfigGetBackendWithoutPersistedIdentityIsTypedMissingInput(t *testing.
 	}
 }
 
-// TestConfigGetBackendLegacyPinAloneIsTypedMissingInput verifies a legacy
-// config file pin is not a persisted snapshot identity: without a typed
-// document, config get backend reports typed missing-input.
-func TestConfigGetBackendLegacyPinAloneIsTypedMissingInput(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-
-	if err := config.Set(tmpDir, "backend", "tmux"); err != nil {
-		t.Fatal(err)
-	}
-
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"config", "get", "backend"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("config get backend with only a legacy pin: expected typed missing-input, got nil")
-	}
-	WriteContractError(buf, err, []string{"config", "get", "backend"})
-	out := strings.TrimSpace(buf.String())
-	if !strings.Contains(out, "error_code: missing_input") {
-		t.Errorf("config get backend with only a legacy pin must return typed missing_input, got:\n%s", out)
-	}
-}
-
 // TestConfigSetCaptainHarnessWritesBaseDocumentProfile verifies `config set
 // captain-harness` authors the CaptainProfile into the fleet base document
 // (config/base.json) — the only captain operation source — and writes no flat

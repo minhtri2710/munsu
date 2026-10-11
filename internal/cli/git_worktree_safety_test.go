@@ -152,21 +152,56 @@ func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationAndHead(t *
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-2")
 
+	if err := os.Mkdir(filepath.Join(worktree, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// movedWorktree moves the bound worktree away and puts another worktree of
+	// the same repository at the bound path, so the target keeps the bound
+	// git-dir while its toplevel is no longer the bound path.
+	movedWorktree := func(t *testing.T) string {
+		moved := filepath.Join(filepath.Dir(worktree), "wt-moved")
+		runGitForSafety(t, primary, "worktree", "move", worktree, moved)
+		runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+		t.Cleanup(func() {
+			runGitForSafety(t, primary, "worktree", "remove", "--force", worktree)
+			runGitForSafety(t, primary, "worktree", "move", moved, worktree)
+		})
+		return moved
+	}
+
+	// An empty want is the nearest valid case: the gate allows it.
 	cases := []struct {
 		name    string
 		path    string
 		command string
 		want    string
+		setup   func(t *testing.T) string
 	}{
-		{"primary", primary, "git checkout -b mu/ship-2", "primary checkout"},
-		{"wrong repo", otherWorktree, "git checkout -b mu/ship-2", "wrong repository"},
+		{"primary", primary, "git checkout -b mu/ship-2", "primary checkout", nil},
+		{"wrong repo", otherWorktree, "git checkout -b mu/ship-2", "wrong repository", nil},
 		// A target outside any repository classifies as unrelated, which the
 		// worktree whitelist refuses just as firmly as a primary checkout.
-		{"non-git target", t.TempDir(), "git checkout -b mu/ship-2", "not the bound worktree"},
+		{"non-git target", t.TempDir(), "git checkout -b mu/ship-2", "not the bound worktree", nil},
+		{"--git-dir of another repository", worktree, "git --git-dir " + shellPathForSafety(t, filepath.Join(otherPrimary, ".git")) + " checkout -b mu/ship-2", "wrong repository: --git-dir does not match binding", nil},
+		{"--git-dir of the bound worktree", worktree, "git --git-dir " + shellPathForSafety(t, gitDirPathForSafety(t, worktree)) + " checkout -b mu/ship-2", "", nil},
+		{"--work-tree of a subdirectory", worktree, "git --work-tree sub checkout -b mu/ship-2", "git mutation --work-tree does not match bound worktree path", nil},
+		{"--work-tree of the bound worktree", worktree, "git --work-tree . checkout -b mu/ship-2", "", nil},
+		{"bound git-dir away from the bound path", "", "git checkout -b mu/ship-2", "git mutation target does not match bound worktree path", movedWorktree},
+		{"bound git-dir at the bound path", worktree, "git checkout -b mu/ship-2", "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			block, reason := runPiSafetyForGit(t, tc.path, tc.command)
+			path := tc.path
+			if tc.setup != nil {
+				path = tc.setup(t)
+			}
+			block, reason := runPiSafetyForGit(t, path, tc.command)
+			if tc.want == "" {
+				if block {
+					t.Fatalf("blocked: %s", reason)
+				}
+				return
+			}
 			if !block || !strings.Contains(reason, tc.want) {
 				t.Fatalf("block=%v reason=%q want %q", block, reason, tc.want)
 			}
