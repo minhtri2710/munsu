@@ -135,28 +135,25 @@ func (fakeRetirementJournals) FinalizeRetirementJournals(string, string) ([]stri
 	return nil, nil
 }
 
-func TestRetireTaskReportsTaskProcessesWithoutFailingTeardown(t *testing.T) {
+func TestRetireTaskReportsSurvivingTaskProcessWithoutFailingTeardown(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		inventory func(homeDir string) fakeMarkerInventory
-		want      string
+		name string
+		auth func(t *testing.T, homeDir string) *taskauthority.Canonical
 	}{
-		{"a surviving process is reported", func(homeDir string) fakeMarkerInventory {
-			return fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(800, "task", homeDir)}}}
-		}, "task process 800 still running: /usr/bin/node (cwd unknown, listening unknown)"},
-		{"an inventory failure is reported", func(string) fakeMarkerInventory {
-			return fakeMarkerInventory{err: errors.New("table unreadable")}
-		}, "could not list task processes: table unreadable"},
+		{"with worktree evidence", func(t *testing.T, homeDir string) *taskauthority.Canonical { return mergeTestAuth(t, homeDir, "task") }},
+		{"without worktree evidence", func(t *testing.T, homeDir string) *taskauthority.Canonical {
+			return canonicalMergeTestAuth(t, homeDir, "task")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts, _ := teardownFixture(t)
-			useTaskProcessFakes(t, tc.inventory(opts.HomeDir), func([]int) map[int]processDetail { return nil })
-			res, err := RetireTask(opts, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, opts.HomeDir, "task"))
+			useTaskProcessFakes(t, fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(800, "task", opts.HomeDir)}}}, func([]int) map[int]processDetail { return nil })
+			res, err := RetireTask(opts, fakeTeardown{}, fakeRetirementJournals{}, tc.auth(t, opts.HomeDir))
 			if err != nil {
 				t.Fatalf("teardown failed: %v", err)
 			}
-			if !strings.Contains(strings.Join(res.Steps, "\n"), tc.want) {
-				t.Fatalf("steps = %q, want one containing %q", res.Steps, tc.want)
+			if want := "task process 800 still running: /usr/bin/node (cwd unknown, listening unknown)"; !strings.Contains(strings.Join(res.Steps, "\n"), want) {
+				t.Fatalf("steps = %q, want one containing %q", res.Steps, want)
 			}
 		})
 	}

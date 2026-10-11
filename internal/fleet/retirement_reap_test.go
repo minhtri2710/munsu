@@ -165,3 +165,26 @@ func TestReapWorktreeHolders(t *testing.T) {
 		}
 	})
 }
+
+func TestRetireTaskDoesNotReportTheHolderItJustReaped(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "reap-report"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	pid := startMarkedSleeper(t, taskID, homeDir)
+	useTaskProcessFakes(t, fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(pid, taskID, homeDir)}}}, func([]int) map[int]processDetail { return nil })
+	fakeFuser(t, "if kill -0 "+strconv.Itoa(pid)+" 2>/dev/null; then echo "+strconv.Itoa(pid)+"; else exit 1; fi")
+	res, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, &recordingTeardown{alive: false}, fakeRetirementJournals{}, auth)
+	if err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, "killed 1 residual process(es) on worktree") || strings.Contains(steps, "still running") {
+		t.Fatalf("steps = %q, want the reap reported once and no survivor line", res.Steps)
+	}
+}

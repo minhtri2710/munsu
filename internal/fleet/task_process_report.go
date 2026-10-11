@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Teardown REPORTS the processes that still carry the task's launch markers
@@ -24,6 +26,22 @@ var (
 )
 
 const unknownProcessField = "unknown"
+
+// taskProcessExecTimeout bounds each ps and lsof run: a stuck one (a stale
+// network mount) must not hold a report-only step, and so teardown, hostage.
+var taskProcessExecTimeout = 5 * time.Second
+
+// runBounded runs a read-only tool for at most taskProcessExecTimeout.
+func runBounded(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), taskProcessExecTimeout)
+	defer cancel()
+	var stdout bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = &stdout
+	cmd.WaitDelay = time.Second
+	err := cmd.Run()
+	return stdout.Bytes(), err
+}
 
 // processDetail holds display strings: a field the reader could not read is
 // unknownProcessField, never empty.
@@ -70,11 +88,20 @@ func survivingTaskProcessSteps(homeDir, taskID string, reaped map[int]bool) []st
 	if err != nil {
 		return []string{fmt.Sprintf("could not list task processes: %v", err)}
 	}
+	var candidates []MarkedProcess
+	for _, process := range processes {
+		if !reaped[process.PID] {
+			candidates = append(candidates, process)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
 	lineage := teardownLineage()
 	var survivors []MarkedProcess
 	var pids []int
-	for _, process := range processes {
-		if reaped[process.PID] || lineage[process.PID] {
+	for _, process := range candidates {
+		if lineage[process.PID] {
 			continue
 		}
 		survivors = append(survivors, process)
@@ -100,11 +127,11 @@ func survivingTaskProcessSteps(homeDir, taskID string, reaped map[int]bool) []st
 }
 
 // teardownLineage is the teardown process and its ancestors, read from one ps
-// table. A ps failure leaves the process and its parent, the part of the chain
+// table. A ps failure, or a table without the teardown pid, leaves the process and its parent, the part of the chain
 // every host can name.
 func teardownLineage() map[int]bool {
 	lineage := map[int]bool{os.Getpid(): true}
-	out, err := exec.Command("ps", "-axo", "pid=,ppid=").Output()
+	out, err := runBounded("ps", "-axo", "pid=,ppid=")
 	if err != nil {
 		lineage[os.Getppid()] = true
 		return lineage
@@ -120,6 +147,10 @@ func teardownLineage() map[int]bool {
 		if pidErr == nil && ppidErr == nil {
 			parent[pid] = ppid
 		}
+	}
+	if _, ok := parent[os.Getpid()]; !ok {
+		lineage[os.Getppid()] = true
+		return lineage
 	}
 	for pid := parent[os.Getpid()]; pid > 0 && !lineage[pid]; pid = parent[pid] {
 		lineage[pid] = true
@@ -173,10 +204,8 @@ func lsofProcessDetails(pids []int) map[int]processDetail {
 // lsof exits 1 when it finds nothing for the selection, which is an answer.
 func lsofNames(selection ...string) (map[int][]string, error) {
 	args := append([]string{"-nP", "-w", "-a", "-Fpn"}, selection...)
-	var stdout bytes.Buffer
-	cmd := exec.Command("lsof", args...)
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	stdout, err := runBounded("lsof", args...)
+	if err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 			return nil, err
@@ -184,7 +213,7 @@ func lsofNames(selection ...string) (map[int][]string, error) {
 	}
 	names := map[int][]string{}
 	pid := 0
-	for _, line := range strings.Split(stdout.String(), "\n") {
+	for _, line := range strings.Split(string(stdout), "\n") {
 		if line == "" {
 			continue
 		}
