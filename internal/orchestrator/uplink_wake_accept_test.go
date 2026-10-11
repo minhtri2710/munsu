@@ -217,8 +217,9 @@ func TestSettlingTheWakeOfASupersededReportSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, w := range claim.Wakes {
-		if _, err := ResolveWake(generalHome, claim.LeaseID, wakeEventID(w), "seen"); err != nil {
-			t.Fatalf("resolving %s: %v", wakeEventID(w), err)
+		unaccepted, err := ResolveWake(generalHome, claim.LeaseID, wakeEventID(w), "seen")
+		if err != nil || len(unaccepted) != 0 {
+			t.Fatalf("resolving %s: unaccepted = %v err = %v, want a superseded report skipped, not listed", wakeEventID(w), unaccepted, err)
 		}
 	}
 	if ack, err := NewStore(generalHome).ReadAck("direct-task", second.MessageID); err != nil || ack == nil {

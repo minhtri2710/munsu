@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,12 @@ type ReturnReport struct {
 	// digest is already drained, so it carries the only remaining copy of the ref.
 	UnacceptedReports []UnacceptedReport `json:"unaccepted_reports"`
 
+	// DigestNotRemoved names the digest file Return could not remove after
+	// accepting its reports, with the error. It is not a failed return: the
+	// reports are accepted and the file still holds their refs, so a re-run
+	// replays the idempotent acks and removes it.
+	DigestNotRemoved string `json:"digest_not_removed,omitempty"`
+
 	// LossyStop records that the daemon was stopped by a mechanism that can
 	// skip its final digest flush (stopProcessIsLossy, afk_process_windows.go):
 	// the drained digest may be missing up to one window of entries that never
@@ -64,7 +71,7 @@ type ReturnReport struct {
 // rather than a clean bill. Re-running Return clears the flag -- there is
 // nothing left to stop or drain -- but cannot recover the lost window.
 func (r *ReturnReport) HasActionable() bool {
-	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.LossyStop
+	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.DigestNotRemoved != "" || r.LossyStop
 }
 
 // String returns a human-readable summary of the report.
@@ -105,6 +112,9 @@ func (r *ReturnReport) String() string {
 		for _, u := range r.UnacceptedReports {
 			b.WriteString(fmt.Sprintf("    - %s\n", u))
 		}
+	}
+	if r.DigestNotRemoved != "" {
+		b.WriteString(fmt.Sprintf("  digest not removed: %s; its reports are accepted, run `munsu afk return` again once the cause is fixed to remove it\n", r.DigestNotRemoved))
 	}
 	if r.LossyStop {
 		b.WriteString("\nLossy stop: the daemon was killed without its final digest flush, so up to one batch window of entries never reached the digest and cannot be drained. Treat the record above as a lower bound, not the full window. Uplink reports in that window were never accepted and stay pending: ack one with `munsu inbox ack '<ref>'` if you hold its ref, otherwise retire its task with `munsu teardown <id> --force`.\n")
@@ -263,7 +273,10 @@ func Return(homeDir string) (*ReturnReport, error) {
 			}
 		}
 	})
-	if err != nil {
+	var notRemoved *digestRemovalError
+	if errors.As(err, &notRemoved) {
+		report.DigestNotRemoved = notRemoved.Error()
+	} else if err != nil {
 		return report, fmt.Errorf("draining digest: %w", err)
 	}
 
@@ -331,7 +344,9 @@ var removeDigestFile = os.Remove
 // drainDigest reads the durable digest file, hands it to accept, and only then
 // removes it: the digest is the only copy of the refs its entries carry, so it
 // must outlive their acceptance. If the removal fails the file stays and a
-// re-run accepts again (the ack is idempotent). An unparseable file holds no ref
+// re-run accepts again (the ack is idempotent); the digest is still returned,
+// with a *digestRemovalError, because by then it is fully accepted and the
+// caller reports the leftover file instead of failing. An unparseable file holds no ref
 // this code can read and is removed, so one corrupt digest cannot wedge every
 // later return. Returns nil, nil when no digest exists.
 func drainDigest(homeDir string, accept func(*BatchedEscalation)) (*BatchedEscalation, error) {
@@ -350,7 +365,16 @@ func drainDigest(homeDir string, accept func(*BatchedEscalation)) (*BatchedEscal
 	}
 	accept(&be)
 	if err := removeDigestFile(path); err != nil && !os.IsNotExist(err) {
-		return &be, fmt.Errorf("removing digest after accepting its reports: %w", err)
+		return &be, &digestRemovalError{path: path, err: err}
 	}
 	return &be, nil
 }
+
+// digestRemovalError is a digest file that outlived its acceptance.
+type digestRemovalError struct {
+	path string
+	err  error
+}
+
+func (e *digestRemovalError) Error() string { return fmt.Sprintf("%s: %v", e.path, e.err) }
+func (e *digestRemovalError) Unwrap() error { return e.err }

@@ -194,8 +194,10 @@ func TestAFKReturnWithOnlyAnUnacceptedRoutineReportIsActionable(t *testing.T) {
 }
 
 // The digest is the only copy of the refs, so it is removed after they are
-// accepted, never before: a removal that fails leaves the acks written and the
-// file on disk, and the re-run replays the idempotent ack and finishes clean.
+// accepted, never before. A removal that fails after acceptance is not a failed
+// return: the acks are written and the file stays, the report names the file and
+// the error and is actionable, and the re-run replays the idempotent ack and
+// finishes clean.
 func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
 	ids := reportDuringAFK(t, generalHome, identity, "failed")
@@ -204,8 +206,15 @@ func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	real := removeDigestFile
 	t.Cleanup(func() { removeDigestFile = real })
 	removeDigestFile = func(string) error { return errors.New("injected removal failure") }
-	if _, err := Return(generalHome); err == nil || !strings.Contains(err.Error(), "injected removal failure") {
-		t.Fatalf("Return err = %v, want the removal failure", err)
+	failed, err := Return(generalHome)
+	if err != nil {
+		t.Fatalf("a digest that cannot be removed after acceptance must not fail the return: %v", err)
+	}
+	if !strings.Contains(failed.DigestNotRemoved, digestPath) || !strings.Contains(failed.DigestNotRemoved, "injected removal failure") {
+		t.Fatalf("DigestNotRemoved = %q, want the path and the error", failed.DigestNotRemoved)
+	}
+	if !failed.HasActionable() || !strings.Contains(failed.String(), "digest not removed") {
+		t.Fatalf("a leftover digest must be actionable and printed:\n%s", failed.String())
 	}
 	if ack, err := NewStore(generalHome).ReadAck("direct-task", ids["failed"]); err != nil || ack == nil || ack.Outcome != OutcomeAccepted {
 		t.Fatalf("ack = %+v err = %v, want the report accepted before the removal was attempted", ack, err)
@@ -216,7 +225,7 @@ func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 
 	removeDigestFile = real
 	report, err := Return(generalHome)
-	if err != nil || len(report.UnacceptedReports) != 0 {
+	if err != nil || len(report.UnacceptedReports) != 0 || report.DigestNotRemoved != "" {
 		t.Fatalf("re-run = %+v err = %v, want a clean replay", report, err)
 	}
 	if _, err := os.Stat(digestPath); !os.IsNotExist(err) {
