@@ -853,7 +853,7 @@ func TestRecoverPendingRetirement_IncompleteSequence(t *testing.T) {
 	}
 }
 
-func TestRecoverPendingRetirement_ReadStatusScannerErrorReturnsError(t *testing.T) {
+func TestRecoverPendingRetirement_ReadStatusErrorReturnsError(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 
@@ -865,8 +865,8 @@ func TestRecoverPendingRetirement_ReadStatusScannerErrorReturnsError(t *testing.
 	if err != nil {
 		t.Fatalf("StatusFilePath: %v", err)
 	}
-	if err := os.WriteFile(statusPath, []byte(strings.Repeat("x", 70*1024)+"\n"), 0600); err != nil {
-		t.Fatalf("WriteFile status: %v", err)
+	if err := os.Mkdir(statusPath, 0700); err != nil {
+		t.Fatalf("Mkdir status: %v", err)
 	}
 
 	resolved, err := recoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID), pollContentDigest)
