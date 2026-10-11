@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -18,7 +16,7 @@ func seededCaptainHome(t *testing.T, marker *string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "captain-dir-name")
 	initCLITestHome(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, fleet.CaptainProvenanceName), []byte("source-repo\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, home.CaptainProvenanceName), []byte("source-repo\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if marker != nil {
@@ -27,60 +25,6 @@ func seededCaptainHome(t *testing.T, marker *string) string {
 		}
 	}
 	return dir
-}
-
-func TestHomeIdentity(t *testing.T) {
-	malformed := "munsu-v2\ncaptain-1\n"
-	t.Run("a captain home with a missing marker refuses", func(t *testing.T) {
-		_, _, err := homeIdentity(seededCaptainHome(t, nil))
-		if err == nil || !strings.Contains(err.Error(), "munsu captain seed <id> <home> --repo <repo>") {
-			t.Fatalf("err = %v, want the refusal naming munsu captain seed", err)
-		}
-	})
-	t.Run("a captain home with a malformed marker refuses and names the fix", func(t *testing.T) {
-		_, _, err := homeIdentity(seededCaptainHome(t, &malformed))
-		if err == nil || !strings.Contains(err.Error(), "is malformed") || !strings.Contains(err.Error(), "munsu captain seed <id> <home> --repo <repo>") {
-			t.Fatalf("err = %v", err)
-		}
-	})
-	t.Run("an unreadable marker refuses, says it cannot be read and does not offer seed", func(t *testing.T) {
-		dir := seededCaptainHome(t, nil)
-		marker := filepath.Join(dir, home.CaptainProvenanceMarkerName)
-		if err := os.Mkdir(marker, 0o700); err != nil { // reading a directory fails with EISDIR
-			t.Fatal(err)
-		}
-		_, _, err := homeIdentity(dir)
-		if err == nil || !strings.Contains(err.Error(), "captain provenance marker "+marker+" cannot be read") || strings.Contains(err.Error(), "munsu captain seed") {
-			t.Fatalf("err = %v, want the unreadable-marker refusal naming %s without the seed hint", err, marker)
-		}
-	})
-	t.Run("a seeded captain home names its marker id", func(t *testing.T) {
-		dir := seededCaptainHome(t, nil)
-		if err := home.SeedCaptainProvenance(dir, "captain-1"); err != nil {
-			t.Fatal(err)
-		}
-		if id, rank, err := homeIdentity(dir); err != nil || id != "captain-1" || rank != home.RankCaptain {
-			t.Fatalf("identity = %q %q %v", id, rank, err)
-		}
-	})
-	t.Run("a copied captain home refuses and does not offer seed", func(t *testing.T) {
-		dir := seededCaptainHome(t, nil)
-		copied := "munsu-v2\ncaptain-1\n" + filepath.Join(t.TempDir(), "elsewhere") + "\n"
-		if err := os.WriteFile(filepath.Join(dir, home.CaptainProvenanceMarkerName), []byte(copied), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		_, _, err := homeIdentity(dir)
-		if err == nil || !errors.Is(err, home.ErrCaptainHomeMismatch) || !strings.Contains(err.Error(), "may have been copied/moved") || strings.Contains(err.Error(), "munsu captain seed") {
-			t.Fatalf("err = %v, want the copied-home refusal without the seed hint", err)
-		}
-	})
-	t.Run("the General's markerless home is still named by its directory", func(t *testing.T) {
-		dir := filepath.Join(t.TempDir(), "general-home")
-		initCLITestHome(t, dir)
-		if id, rank, err := homeIdentity(dir); err != nil || id != "general-home" || rank != home.RankGeneral {
-			t.Fatalf("identity = %q %q %v", id, rank, err)
-		}
-	})
 }
 
 // TestCaptainHomeCommandsIdentityGuard runs one command of each family that

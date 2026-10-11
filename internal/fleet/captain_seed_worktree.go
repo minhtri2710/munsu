@@ -13,10 +13,6 @@ import (
 )
 
 const (
-	// CaptainProvenanceName is the provenance metadata file for managed
-	// worktree captain homes.
-	CaptainProvenanceName = ".captain-provenance"
-
 	// CaptainCharterName is the untracked captain charter file written in a
 	// managed worktree captain home. It is excluded via the worktree-scoped excludes
 	// file so the worktree stays git-clean without modifying the tracked AGENTS.md.
@@ -269,7 +265,7 @@ func isManagedWorktree(homePath string) (bool, error) {
 	}
 
 	// Check provenance file.
-	if _, err := os.Stat(filepath.Join(homePath, CaptainProvenanceName)); err != nil {
+	if _, err := os.Stat(filepath.Join(homePath, home.CaptainProvenanceName)); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
@@ -368,14 +364,14 @@ func writeCaptainProvenance(homePath, repoPath string) error {
 		content += fmt.Sprintf("origin: %s\n", origin)
 	}
 
-	return os.WriteFile(filepath.Join(homePath, CaptainProvenanceName), []byte(content), 0644)
+	return os.WriteFile(filepath.Join(homePath, home.CaptainProvenanceName), []byte(content), 0644)
 }
 
 // readCaptainProvenance parses the .captain-provenance file and returns the
 // source-repo path (the git repo the managed worktree was created from).
 // Returns empty string if the file does not exist or source-repo is missing.
 func readCaptainProvenance(homePath string) string {
-	data, err := os.ReadFile(filepath.Join(homePath, CaptainProvenanceName))
+	data, err := os.ReadFile(filepath.Join(homePath, home.CaptainProvenanceName))
 	if err != nil {
 		return ""
 	}

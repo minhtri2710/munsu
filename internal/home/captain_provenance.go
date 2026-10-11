@@ -11,6 +11,10 @@ import (
 const CaptainProvenanceMarkerName = ".munsu-captain-home"
 const CaptainProvenanceVersion = "munsu-v2"
 
+// CaptainProvenanceName is the provenance metadata file of a managed
+// worktree captain home. Either it or the marker makes a home a captain home.
+const CaptainProvenanceName = ".captain-provenance"
+
 // ErrCaptainMarkerUnusable marks a provenance marker that is missing or cannot
 // name a captain (malformed, wrong version, blank id). A marker that names
 // another home is not unusable in this sense: that is the copy/move check.
@@ -42,12 +46,23 @@ func SeedCaptainProvenance(homePath, id string) error {
 	return AtomicWrite(filepath.Join(homePath, CaptainProvenanceMarkerName), []byte(content), 0600)
 }
 
+// ValidateCaptainProvenance returns the captain id the marker in homePath
+// names. A refusal that wraps ErrCaptainMarkerUnusable names the seed command
+// that rewrites the marker.
 func ValidateCaptainProvenance(homePath string) (string, error) {
+	id, err := validateCaptainProvenance(homePath)
+	if errors.Is(err, ErrCaptainMarkerUnusable) {
+		err = fmt.Errorf("%w; fix: run 'munsu captain seed <id> <home> --repo <repo>'", err)
+	}
+	return id, err
+}
+
+func validateCaptainProvenance(homePath string) (string, error) {
 	markerPath := filepath.Join(homePath, CaptainProvenanceMarkerName)
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed <id> <home> --repo <repo>' (it rewrites the marker while .captain-provenance exists): %w", homePath, CaptainProvenanceMarkerName, ErrCaptainMarkerUnusable)
+			return "", fmt.Errorf("captain home %s has no %s marker: %w", homePath, CaptainProvenanceMarkerName, ErrCaptainMarkerUnusable)
 		}
 		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
 	}

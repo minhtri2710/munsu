@@ -615,8 +615,8 @@ func TestSeedWorktree_GitignoreContent(t *testing.T) {
 	if !strings.Contains(content, "state/") {
 		t.Error("captain excludes missing state/ entry")
 	}
-	if !strings.Contains(content, CaptainProvenanceName) {
-		t.Errorf("captain excludes missing %s entry", CaptainProvenanceName)
+	if !strings.Contains(content, home.CaptainProvenanceName) {
+		t.Errorf("captain excludes missing %s entry", home.CaptainProvenanceName)
 	}
 }
 
@@ -2706,7 +2706,7 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 	}
 
 	// .captain-provenance exists.
-	provPath := filepath.Join(homePath, CaptainProvenanceName)
+	provPath := filepath.Join(homePath, home.CaptainProvenanceName)
 	if _, err := os.Stat(provPath); err != nil {
 		t.Fatal("provenance file missing:", err)
 	}

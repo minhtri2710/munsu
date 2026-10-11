@@ -2,6 +2,7 @@ package home
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -454,6 +455,12 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 		// marker returns the marker file content for a home whose canonical
 		// path is canonical; nil leaves the home without a marker.
 		marker func(canonical string) string
+		// provenance also writes the .captain-provenance file; unreadable
+		// makes the marker a directory; dangling makes it a symlink to nothing.
+		provenance, unreadable, dangling bool
+		// unusable marks a refusal that wraps ErrCaptainMarkerUnusable and so
+		// names the seed command; the others are not fixed by reseeding.
+		unusable bool
 		// wantSub is the refusal both readers must carry. Empty marks an allow
 		// row: ReadHomeIdentity returns wantID and wantRank.
 		wantSub  string
@@ -464,15 +471,35 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 		validateSub string
 	}{
 		{name: "a seeded captain marker", marker: func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\n" }, wantID: "captain-1", wantRank: RankCaptain},
+		{name: "a seeded captain home that also carries .captain-provenance", provenance: true, marker: func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\n" }, wantID: "captain-1", wantRank: RankCaptain},
 		{name: "a home with no marker is the General's", wantRank: RankGeneral, validateSub: "has no " + CaptainProvenanceMarkerName + " marker"},
-		{name: "a marker with fewer than three lines", marker: func(string) string { return "munsu-v2\ncaptain-1\n" }, wantSub: "expected exactly 3 lines"},
-		{name: "a marker with extra content", marker: func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\nextra\n" }, wantSub: "has extra content"},
-		{name: "a marker from an unsupported version", marker: func(c string) string { return "munsu-v1\ncaptain-1\n" + c + "\n" }, wantSub: "unsupported version"},
-		{name: "a marker with a blank identity line", marker: func(c string) string { return "munsu-v2\n \n" + c + "\n" }, wantSub: "empty id"},
+		{name: "a .captain-provenance file with no marker", unusable: true, provenance: true, wantSub: "has no " + CaptainProvenanceMarkerName + " marker"},
+		{name: "a marker that is a dangling symlink", unusable: true, dangling: true, wantSub: "has no " + CaptainProvenanceMarkerName + " marker"},
+		{name: "a marker that cannot be read", unreadable: true, wantSub: "reading provenance marker"},
+		{name: "a marker with fewer than three lines", unusable: true, marker: func(string) string { return "munsu-v2\ncaptain-1\n" }, wantSub: "expected exactly 3 lines"},
+		{name: "a marker with extra content", unusable: true, marker: func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\nextra\n" }, wantSub: "has extra content"},
+		{name: "a marker from an unsupported version", unusable: true, marker: func(c string) string { return "munsu-v1\ncaptain-1\n" + c + "\n" }, wantSub: "unsupported version"},
+		{name: "a marker with a blank identity line", unusable: true, marker: func(c string) string { return "munsu-v2\n \n" + c + "\n" }, wantSub: "empty id"},
 		{name: "a marker recording a different canonical home", marker: func(string) string { return "munsu-v2\ncaptain-1\n/somewhere/else\n" }, wantSub: "may have been copied/moved"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
+			if tc.provenance {
+				if err := os.WriteFile(filepath.Join(dir, CaptainProvenanceName), []byte("source-repo\n"), 0644); err != nil {
+					t.Fatalf("write provenance: %v", err)
+				}
+			}
+			markerPath := filepath.Join(dir, CaptainProvenanceMarkerName)
+			if tc.unreadable {
+				if err := os.Mkdir(markerPath, 0700); err != nil { // reading a directory fails with EISDIR
+					t.Fatalf("mkdir marker: %v", err)
+				}
+			}
+			if tc.dangling {
+				if err := os.Symlink(filepath.Join(dir, "nowhere"), markerPath); err != nil {
+					t.Skipf("symlink unsupported: %v", err)
+				}
+			}
 			if tc.marker != nil {
 				canonical, err := CanonicalCaptainHome(dir)
 				if err != nil {
@@ -490,6 +517,8 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 						t.Fatalf("%s accepted %s", name, tc.name)
 					} else if !strings.Contains(err.Error(), tc.wantSub) {
 						t.Fatalf("%s error = %v, want the %q refusal", name, err, tc.wantSub)
+					} else if hints := strings.Count(err.Error(), "munsu captain seed <id> <home> --repo <repo>"); hints != map[bool]int{true: 1, false: 0}[tc.unusable] || errors.Is(err, ErrCaptainMarkerUnusable) != tc.unusable {
+						t.Fatalf("%s error = %v: seed hints = %d, want exactly one when unusable = %v and none otherwise", name, err, hints, tc.unusable)
 					}
 				}
 				return

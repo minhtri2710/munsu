@@ -133,22 +133,25 @@ func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
 }
 
 // ReadHomeIdentity reads the identity and rank from durable files in the
-// given home directory. A home with a .munsu-captain-home marker is a captain
-// home: the identity comes from the strict provenance check, rank is
-// RankCaptain, and a marker that check refuses (including one naming another
-// home) is an error. A home without a marker is the General's: the identity
-// is the directory basename and rank is RankGeneral (parent/orchestrator home).
+// given home directory. A home with a .munsu-captain-home marker or a
+// .captain-provenance file is a captain home: the identity comes from the
+// strict provenance check, rank is RankCaptain, and a missing marker or one
+// that check refuses (including one naming another home) is an error. Only a
+// home with neither file is the General's: the identity is the directory
+// basename and rank is RankGeneral (parent/orchestrator home).
 func ReadHomeIdentity(homeDir string) (identity string, rank Rank, err error) {
-	_, statErr := os.Stat(filepath.Join(homeDir, CaptainProvenanceMarkerName))
-	if statErr == nil {
-		id, err := ValidateCaptainProvenance(homeDir)
-		if err != nil {
-			return "", "", fmt.Errorf("reading home identity marker: %w", err)
+	for _, name := range []string{CaptainProvenanceMarkerName, CaptainProvenanceName} {
+		_, statErr := os.Lstat(filepath.Join(homeDir, name))
+		if statErr == nil {
+			id, err := ValidateCaptainProvenance(homeDir)
+			if err != nil {
+				return "", "", fmt.Errorf("reading home identity marker: %w", err)
+			}
+			return id, RankCaptain, nil
 		}
-		return id, RankCaptain, nil
-	}
-	if !os.IsNotExist(statErr) {
-		return "", "", fmt.Errorf("reading home identity marker: %w", statErr)
+		if !os.IsNotExist(statErr) {
+			return "", "", fmt.Errorf("reading home identity marker: %w", statErr)
+		}
 	}
 	info, err := os.Stat(homeDir)
 	if err != nil {
