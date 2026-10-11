@@ -2027,6 +2027,8 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	if r.projectConfigLoaded {
 		cfg = r.projectConfig.Frozen.Config()
 	}
+	// no lane runs this: TestProbeFenceRecordsTheProjectsWritableRoots (darwin)
+	// covers it, and fence.New refuses reviewer roots anyway.
 	if r.review == nil && len(cfg.FenceWritableRoots) > 0 {
 		launch.WritableRoots = cfg.FenceWritableRoots
 		if launch.Checkouts, err = registeredCheckouts(r.homeDir); err != nil {

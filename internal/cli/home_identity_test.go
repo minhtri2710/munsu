@@ -42,6 +42,17 @@ func TestHomeIdentity(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("an unreadable marker refuses, says it cannot be read and does not offer seed", func(t *testing.T) {
+		dir := seededCaptainHome(t, nil)
+		marker := filepath.Join(dir, home.CaptainProvenanceMarkerName)
+		if err := os.Mkdir(marker, 0o700); err != nil { // reading a directory fails with EISDIR
+			t.Fatal(err)
+		}
+		_, _, err := homeIdentity(dir)
+		if err == nil || !strings.Contains(err.Error(), "captain provenance marker "+marker+" cannot be read") || strings.Contains(err.Error(), "munsu captain seed") {
+			t.Fatalf("err = %v, want the unreadable-marker refusal naming %s without the seed hint", err, marker)
+		}
+	})
 	t.Run("a seeded captain home names its marker id", func(t *testing.T) {
 		dir := seededCaptainHome(t, nil)
 		if err := home.SeedCaptainProvenance(dir, "captain-1"); err != nil {

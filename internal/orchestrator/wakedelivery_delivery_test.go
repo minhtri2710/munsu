@@ -649,10 +649,11 @@ func TestDeliverWake_EmptyParams(t *testing.T) {
 	}
 }
 
-func initProvenance(t *testing.T, home, captainID string) {
+func initProvenance(t *testing.T, captainHome, captainID string) {
 	t.Helper()
-	os.WriteFile(filepath.Join(home, ProvenanceMarkerName),
-		[]byte("munsu-v2\n"+captainID+"\n"), 0644)
+	if err := home.SeedCaptainProvenance(captainHome, captainID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // --- ActivateOnReceipt tests ---

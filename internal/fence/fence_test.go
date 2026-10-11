@@ -524,8 +524,29 @@ func TestValidateWritableRootsRefusals(t *testing.T) {
 			t.Fatalf("roots = %q, %v", got, err)
 		}
 	})
-	tests := []struct{ name, root, want string }{
+	// A case variant names the same directory on a case-insensitive filesystem
+	// (APFS, NTFS). On a case-sensitive host the variant does not exist, so its
+	// rows only prove it is never accepted; no lane runs the alias there.
+	sshDir := mkRoot(t, filepath.Join(userHome, ".ssh"))
+	mkRoot(t, filepath.Join(userHome, ".sshcache"))
+	mkRoot(t, filepath.Join(userHome, ".npm"))
+	homeVariant := filepath.Join(filepath.Dir(userHome), strings.ToUpper(filepath.Base(userHome)))
+	sshVariant := filepath.Join(userHome, ".SSH")
+	wantHomeVariant, wantSSHVariant := "is the user home or an ancestor of it", "overlaps protected path "+sshDir
+	if _, err := os.Stat(sshVariant); err != nil {
+		wantHomeVariant, wantSSHVariant = "fence-writable-roots: "+homeVariant+":", "fence-writable-roots: "+sshVariant+":"
+	}
+	tests := []struct{ name, root, want string }{ // an empty want must be accepted
 		{"relative", "npm-cache", "is not absolute and clean"},
+		{"a case variant of the user home", homeVariant, wantHomeVariant},
+		{"a case variant of the ssh keys", sshVariant, wantSSHVariant},
+		{"a sibling of the ssh keys with another name", filepath.Join(userHome, ".sshcache"), ""},
+		{"docker registry auth", filepath.Join(userHome, ".docker"), "overlaps protected path " + filepath.Join(userHome, ".docker")},
+		{"aws credentials", filepath.Join(userHome, ".aws"), "overlaps protected path " + filepath.Join(userHome, ".aws")},
+		{"kube config", filepath.Join(userHome, ".kube"), "overlaps protected path " + filepath.Join(userHome, ".kube")},
+		{"azure credentials", filepath.Join(userHome, ".azure"), "overlaps protected path " + filepath.Join(userHome, ".azure")},
+		{"the password store", filepath.Join(userHome, ".password-store"), "overlaps protected path " + filepath.Join(userHome, ".password-store")},
+		{"a package cache beside them", filepath.Join(userHome, ".npm"), ""},
 		{"the filesystem root", string(filepath.Separator), "path is the filesystem root"},
 		{"missing", filepath.Join(l.root, "absent"), "fence-writable-roots: " + filepath.Join(l.root, "absent") + ":"},
 		{"a file", file, file + " is not a directory"},
@@ -549,7 +570,14 @@ func TestValidateWritableRootsRefusals(t *testing.T) {
 			continue // a unix-style absolute path is not absolute on this OS
 		}
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := ValidateWritableRoots([]string{tt.root}, facts); err == nil || !strings.Contains(err.Error(), tt.want) {
+			_, err := ValidateWritableRoots([]string{tt.root}, facts)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want %s accepted", err, tt.root)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, tt.want)
 			}
 		})

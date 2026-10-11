@@ -56,9 +56,6 @@ func ValidateWritableRoots(roots []string, facts RootFacts) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fence-writable-roots: %w", err)
 		}
-		if err := clearOfProtected(resolved, userHome, forbidden); err != nil {
-			return nil, err
-		}
 		out = append(out, resolved)
 	}
 	return out, nil
@@ -67,22 +64,46 @@ func ValidateWritableRoots(roots []string, facts RootFacts) ([]string, error) {
 // clearOfProtected refuses root when it is the user's home or an ancestor of it
 // (a root under the home is the point), or overlaps any forbidden path.
 func clearOfProtected(root, userHome string, forbidden []string) error {
-	if within(userHome, root) {
+	if withinOnDisk(userHome, root) {
 		return fmt.Errorf("fence-writable-roots: %s is the user home or an ancestor of it", root)
 	}
 	for _, f := range forbidden {
-		if overlaps(root, f) {
+		if withinOnDisk(root, f) || withinOnDisk(f, root) {
 			return fmt.Errorf("fence-writable-roots: %s overlaps protected path %s", root, f)
 		}
 	}
 	return nil
 }
 
+// withinOnDisk is within, widened by identity on disk: when root exists, child
+// is also within it if child or any of its ancestors is the same file. The
+// lexical test misses a case variant (/users/me, ~/.SSH) on a case-insensitive
+// filesystem and a symlinked parent (<d>/lp/sub with lp linking to a checkout);
+// os.SameFile misses neither, so no separate check of the resolved path is needed.
+func withinOnDisk(child, root string) bool {
+	if within(child, root) {
+		return true
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false
+	}
+	for p := child; ; p = filepath.Dir(p) {
+		if info, err := os.Stat(p); err == nil && os.SameFile(info, rootInfo) {
+			return true
+		}
+		if filepath.Dir(p) == p {
+			return false
+		}
+	}
+}
+
 // forbiddenRootPaths lists each protected path as given and, when it exists,
-// symlink-resolved, so a root cannot reach one through a symlinked parent.
+// symlink-resolved, so a root cannot reach one through a symlinked parent. The
+// home-relative list is the known credential and tool set, not exhaustive.
 func forbiddenRootPaths(userHome string, facts RootFacts) []string {
 	paths := append([]string{facts.Home, "/opt/homebrew", "/usr/local"}, facts.Checkouts...)
-	for _, rel := range []string{".ssh", ".gnupg", ".config", ".pi", ".local/bin", "go/bin", ".cargo/bin", "Library/LaunchAgents", "Library/Keychains"} {
+	for _, rel := range []string{".ssh", ".gnupg", ".config", ".pi", ".docker", ".aws", ".kube", ".azure", ".password-store", ".local/bin", "go/bin", ".cargo/bin", "Library/LaunchAgents", "Library/Keychains"} {
 		paths = append(paths, filepath.Join(userHome, filepath.FromSlash(rel)))
 	}
 	claude, _ := filepath.Glob(filepath.Join(userHome, ".claude*"))

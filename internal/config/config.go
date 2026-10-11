@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,13 @@ func ConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, "config")
 }
 
+// missingKeyError is the error for a key with no config file. It matches
+// fs.ErrNotExist without printing the file path.
+type missingKeyError string
+
+func (e missingKeyError) Error() string { return fmt.Sprintf("config key %q not found", string(e)) }
+func (e missingKeyError) Unwrap() error { return fs.ErrNotExist }
+
 // Get reads a config value from the flat config file at
 // $MUNSU_HOME/config/<key>. Core Config never reads the process environment.
 func Get(homeDir, key string) (string, error) {
@@ -51,7 +59,7 @@ func Get(homeDir, key string) (string, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("config key %q not found: %w", key, err)
+			return "", missingKeyError(key)
 		}
 		return "", fmt.Errorf("reading config file %s: %w", p, err)
 	}

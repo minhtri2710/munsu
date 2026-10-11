@@ -41,6 +41,11 @@ func captainHomeID(homeDir string) (string, error) {
 	if err == nil || errors.Is(err, home.ErrCaptainHomeMismatch) {
 		return id, nil
 	}
+	if !errors.Is(err, home.ErrCaptainMarkerUnusable) {
+		// The seed command only rewrites an unusable marker; it cannot fix a
+		// marker that cannot be read.
+		return "", fmt.Errorf("captain provenance marker %s cannot be read or verified: %w", filepath.Join(homeDir, home.CaptainProvenanceMarkerName), err)
+	}
 	if !strings.Contains(err.Error(), "munsu captain seed") {
 		err = fmt.Errorf("%w; fix: run 'munsu captain seed <id> <home> --repo <repo>'", err)
 	}
