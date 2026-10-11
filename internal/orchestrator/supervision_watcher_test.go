@@ -551,7 +551,7 @@ func TestAbsorbStaleSignal_UnknownStep(t *testing.T) {
 	}
 }
 
-// --- handleStale / resetStreak tests (idle-seconds timer, not poll count) ---
+// --- handleStale / resetStreak tests (first-seen stale timestamp) ---
 
 func TestHandleStale_FirstSeen(t *testing.T) {
 	delete(staleFirstSeen, "test-task-1")
@@ -687,11 +687,10 @@ func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
 	}
 }
 
-// --- Evidence: absorb + streak integration tests ---
+// --- Evidence: absorb tests ---
 //
-// These tests demonstrate the two behaviors from the user intent:
-// 1. Absorb provably-working wakes (no-mistakes run-step absorbs stale)
-// 2. Demand-deep-inspection streak tracking after 3 consecutive stale polls
+// These tests show that a provably-working seat (an active no-mistakes
+// run-step) absorbs a stale signal.
 
 func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 	absorbSteps := []string{"running", "fixing", "ci", "awaiting_approval"}

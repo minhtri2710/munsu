@@ -487,7 +487,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 			ReportOwned: reportOwnsStatus(homeDir, match.TaskID, match.LastLine),
 		}
 		if !reason.ReportOwned {
-			if r := repeatedFailureReason(homeDir, match.TaskID, lv); r != nil {
+			if r := repeatedFailureReason(homeDir, match.TaskID, lv, reason); r != nil {
 				reason = r
 			}
 		}
@@ -550,7 +550,11 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 // lines and the end at lv.RepeatEnd. The message names the stage and never the
 // count, so each stage keeps one fingerprint. A different last line ends the
 // run, and the line is an ordinary signal again.
-func repeatedFailureReason(homeDir, id string, lv config.SeatLiveness) *WakeReason {
+//
+// A stage replaces signal only once the seat's watcher marker shows that line's
+// signal, or an earlier stage of it, was already queued: the General receives
+// the failure text first, and the next cycle escalates to the stage reached.
+func repeatedFailureReason(homeDir, id string, lv config.SeatLiveness, signal *WakeReason) *WakeReason {
 	lines, err := home.ReadStatus(homeDir, id)
 	if err != nil || len(lines) == 0 {
 		return nil
@@ -564,16 +568,29 @@ func repeatedFailureReason(homeDir, id string, lv config.SeatLiveness) *WakeReas
 	for i := len(lines) - 1; i >= 0 && lines[i] == last; i-- {
 		run++
 	}
-	var stage string
+	stage := func(label string) *WakeReason {
+		return &WakeReason{Kind: "stale", TaskIDs: []string{id}, Message: fmt.Sprintf("seat repeated the same %s status line (%s)", verb, label)}
+	}
+	nudge, end := stage("nudge: steer it"), stage("end: stuck, fail or relaunch it")
+	var due *WakeReason
 	switch {
 	case run >= lv.RepeatEnd:
-		stage = "end: stuck, fail or relaunch it"
+		due = end
 	case run >= lv.RepeatNudge:
-		stage = "nudge: steer it"
+		due = nudge
 	default:
 		return nil
 	}
-	return &WakeReason{Kind: "stale", TaskIDs: []string{id}, Message: fmt.Sprintf("seat repeated the same %s status line (%s)", verb, stage)}
+	seen, err := os.ReadFile(home.WatcherSeenMarkerPath(homeDir, id))
+	if err != nil {
+		return nil
+	}
+	for _, queued := range []*WakeReason{signal, nudge, end} {
+		if string(seen) == wakeFingerprint(homeDir, queued) {
+			return due
+		}
+	}
+	return nil
 }
 
 func collectStatusIDs(stateDir string) map[string]struct{} {

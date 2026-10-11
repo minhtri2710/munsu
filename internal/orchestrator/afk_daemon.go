@@ -14,7 +14,7 @@ import (
 
 // Daemon is the Go-native AFK sub-supervisor daemon.
 // It manages the consent flag, identity lock, and wake triage
-// Phase 2.2+: runLoop integrates digester, wedge detection, and stale clearing.
+// Phase 2.2+: runLoop integrates the digester, the watcher beat check, and stale clearing.
 //
 // The daemon diagnoses and accumulates; it never repairs. Reaching the general
 // while they are away has two owners: the uplink notify path for immediate
@@ -42,7 +42,7 @@ type Daemon struct {
 //  2. Acquire the identity lock (idempotent — no-op if already running).
 //  3. Set the consent flag (state/.afk).
 //  4. Clear stale artifacts from any prior session.
-//  5. Start the runLoop goroutine (triage → feed digester → check wedge → clear stale → flush).
+//  5. Start the runLoop goroutine (triage → feed digester → check watcher beat → clear stale → flush).
 //  6. Block until SIGTERM/SIGINT.
 //  7. Flush any remaining digest entries.
 //  8. Clear the consent flag.

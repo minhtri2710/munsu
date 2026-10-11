@@ -161,6 +161,20 @@ func TestSeatLivenessIncidents(t *testing.T) {
 			w.say(failedLine, 1)
 			w.cycle()
 		}, []string{"signal: " + failedLine, nudgeWake, endWake}, ""},
+		{"first-sight-at-nudge", func(w *seatWorld) {
+			w.say(failedLine, 5)
+			w.cycles(2)
+		}, []string{"signal: " + failedLine, nudgeWake}, ""},
+		{"first-sight-at-end", func(w *seatWorld) {
+			w.say(failedLine, 8)
+			w.cycles(2)
+		}, []string{"signal: " + failedLine, endWake}, ""},
+		{"end-stays-sticky", func(w *seatWorld) {
+			for i := 0; i < 12; i++ {
+				w.say(failedLine, 1)
+				w.cycle()
+			}
+		}, []string{"signal: " + failedLine, nudgeWake, endWake}, ""},
 		{"repeat-ends-when-the-line-changes", func(w *seatWorld) {
 			w.say(failedLine, 1)
 			w.cycle()
