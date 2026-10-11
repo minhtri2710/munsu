@@ -149,7 +149,7 @@ func (c *Canonical) RecordGate(op domain.Operation, req CanonicalRecordGateReque
 	}
 	defer lk.Release()
 
-	if _, ok, err := c.checkedReceipt(op); err != nil {
+	if _, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return GateRecord{}, err
 	} else if ok {
 		g, found, err := c.readGateRecord(req.TaskID.Value(), op.ID.Value())

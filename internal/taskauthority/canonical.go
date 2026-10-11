@@ -291,6 +291,22 @@ func (c *Canonical) checkedReceipt(op domain.Operation) (receipt, bool, error) {
 	return rec, true, nil
 }
 
+// receiptAfterRecovery returns the committed receipt for an operation under the
+// scope lock lk, which must be the scope the operation commits to. It reads the
+// receipt first, so a replay over a journal record recovery cannot read is not
+// newly refused. Otherwise it recovers an interrupted commit and reads again:
+// that commit may have been this operation, left pending by an earlier attempt
+// (home.ErrInDoubt) in this process.
+func (c *Canonical) receiptAfterRecovery(lk *home.Lock, op domain.Operation) (receipt, bool, error) {
+	if rec, ok, err := c.checkedReceipt(op); err != nil || ok {
+		return rec, ok, err
+	}
+	if err := c.h.RecoverPending(lk); err != nil {
+		return receipt{}, false, err
+	}
+	return c.checkedReceipt(op)
+}
+
 // prepare validates the operation identity, verifies the digest derives from
 // the typed intent, and binds the operation to this canonical home.
 func (c *Canonical) prepare(op domain.Operation, intent domain.Intent, homeID domain.HomeID) error {
@@ -482,7 +498,7 @@ func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, 
 }
 
 func (c *Canonical) mutateTaskFencedLocked(lk *home.Lock, op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error), gate *reservationGate, cleanup *cleanupGate) (Outcome, error) {
-	if rec, ok, err := c.checkedReceipt(op); err != nil {
+	if rec, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return Outcome{}, err
 	} else if ok {
 		return rec.outcome(), nil

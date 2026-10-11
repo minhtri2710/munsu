@@ -693,7 +693,7 @@ func (c *Canonical) mutateDelivery(op domain.Operation, taskID domain.TaskID, pr
 	}
 	defer lk.Release()
 
-	if _, ok, err := c.checkedReceipt(op); err != nil {
+	if _, ok, err := c.receiptAfterRecovery(lk, op); err != nil {
 		return DeliveryIndex{}, false, err
 	} else if ok {
 		index, exists, err := c.readDeliveryIndex(taskID.Value())
