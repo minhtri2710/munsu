@@ -16,7 +16,7 @@ func TestProvisionGitShim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provisionGitShim: %v", err)
 	}
-	wantDir := filepath.Join(home, "state", "shim", "bin")
+	wantDir := filepath.Join(home, "git-shim", "bin")
 	if shimDir != wantDir {
 		t.Fatalf("shimDir = %q, want %q", shimDir, wantDir)
 	}
@@ -52,7 +52,7 @@ func TestProvisionGitShim(t *testing.T) {
 }
 
 func TestProvisionGitShimFailsClosedWhenDirUnavailable(t *testing.T) {
-	// A home path that is a regular file cannot host state/shim/bin: MkdirAll
+	// A home path that is a regular file cannot host git-shim/bin: MkdirAll
 	// fails and provisioning returns the error so the caller fails the launch.
 	fileHome := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(fileHome, []byte("x"), 0o644); err != nil {
@@ -70,6 +70,7 @@ func TestSoldierLaunchScriptPrependsGitShim(t *testing.T) {
 		WorktreePath:   wt,
 		LaunchDir:      wt,
 		HomeDir:        home,
+		PathDirs:       seatPathDirs(home),
 		TaskID:         "ship-shim",
 		SnapshotDigest: "digest",
 		LaunchBin:      "/bin/true",
@@ -86,7 +87,7 @@ func TestSoldierLaunchScriptPrependsGitShim(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(body)
-	shimDir := filepath.Join(home, "state", "shim", "bin")
+	shimDir := filepath.Join(home, "git-shim", "bin")
 	if !strings.Contains(script, "export PATH=") || !strings.Contains(script, shimDir) {
 		t.Fatalf("soldier launch script missing git-shim PATH prepend for %q:\n%s", shimDir, script)
 	}
@@ -103,7 +104,7 @@ func TestSoldierLaunchScriptExportsExactlyTheSeatPathDirs(t *testing.T) {
 	wt := t.TempDir()
 	t.Setenv("PATH", strings.Join([]string{"/munsu/a", ".", "", "rel/bin", "/munsu/b/"}, ":"))
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath: wt, LaunchDir: wt, HomeDir: home, TaskID: "ship-shim", SnapshotDigest: "digest",
+		WorktreePath: wt, LaunchDir: wt, HomeDir: home, PathDirs: seatPathDirs(home), TaskID: "ship-shim", SnapshotDigest: "digest",
 		LaunchBin: "/bin/true", LaunchArgs: []string{"--go"}, LaunchID: "lid", Generation: "1", EndpointFence: "fence",
 	})
 	if err != nil {
@@ -130,7 +131,7 @@ func TestSoldierLaunchScriptExportsExactlyTheSeatPathDirs(t *testing.T) {
 	}
 	got := strings.Split(string(out), ":")
 
-	shimDir := filepath.Join(home, "state", "shim", "bin")
+	shimDir := filepath.Join(home, "git-shim", "bin")
 	tests := []struct {
 		name string
 		ok   bool
@@ -161,7 +162,7 @@ func TestCaptainLaunchScriptPrependsGitShim(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(body)
-	shimDir := filepath.Join(cwd, "state", "shim", "bin")
+	shimDir := filepath.Join(cwd, "git-shim", "bin")
 	if !strings.Contains(script, "export PATH=") || !strings.Contains(script, shimDir) {
 		t.Fatalf("captain launch script missing git-shim PATH prepend for %q:\n%s", shimDir, script)
 	}

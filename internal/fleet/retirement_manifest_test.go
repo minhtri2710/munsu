@@ -513,7 +513,7 @@ func seedRetirementManifestEvidence(t *testing.T, auth *taskauthority.Canonical,
 		Project: "retirement-fixture", ParentTaskID: "general", LaunchID: "launch-" + taskID + "-1",
 		WindowLabel: "window-" + taskID, WorktreeReservationID: wtLease,
 		WorktreeFenceToken: wtFence, EndpointReservationID: epLease,
-		EndpointFenceToken: epFence, EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
+		EndpointFenceToken: epFence, SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-manifest-"+taskID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn: %v", err)

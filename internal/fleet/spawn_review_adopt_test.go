@@ -192,7 +192,7 @@ func TestBuildBeginSpawnRequestReservesNoWorktreeForAReview(t *testing.T) {
 	} {
 		r := NewRunner(Args{ID: "task-1", Authority: c})
 		r.kind, r.taskID = tc.kind, mustFleetTaskID(t, "task-1")
-		req := r.buildBeginSpawnRequest(domain.Of(1, 1), 1, "incarnation")
+		req := r.buildBeginSpawnRequest(domain.Of(1, 1), 1, "incarnation", []string{"/usr/bin"})
 		if got := req.WorktreeReservationID != "" && req.WorktreeFenceToken != ""; got != tc.wantReserve {
 			t.Errorf("%s: worktree reservation %q fence %q, want reserved=%v", tc.kind, req.WorktreeReservationID, req.WorktreeFenceToken, tc.wantReserve)
 		}

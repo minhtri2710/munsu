@@ -12,7 +12,7 @@ import (
 )
 
 // shimBinSuffix is the trailing path segment every fleet git-shim directory
-// ends in (<home>/state/shim/bin). The strip matches this suffix rather than
+// ends in (<home>/git-shim/bin). The strip matches this suffix rather than
 // rederiving the absolute dir from MUNSU_HOME, so it removes the shim
 // regardless of what MUNSU_HOME says — see stripShimDirFromPath.
 var shimBinSuffix = string(os.PathSeparator) + filepath.FromSlash(fleet.GitShimBinRelPath)
@@ -24,7 +24,7 @@ var shimBinSuffix = string(os.PathSeparator) + filepath.FromSlash(fleet.GitShimB
 // shim. The shim fences agent-issued git; munsu is the authority and runs
 // unfenced.
 //
-// The match is on the shim path suffix (…/state/shim/bin), NOT on a dir
+// The match is on the shim path suffix (…/git-shim/bin), NOT on a dir
 // rederived from MUNSU_HOME. Keying off MUNSU_HOME would recurse: if the shim
 // dir is on PATH but MUNSU_HOME is unset or points elsewhere, the strip would
 // no-op, LookPath would find the shim again, and a read that the fence allows

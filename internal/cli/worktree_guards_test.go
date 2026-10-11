@@ -94,7 +94,7 @@ func TestWorktreeOwnershipGuards(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("d", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: "", LaunchID: "launch-guard", WindowLabel: "window-guard", WorktreeReservationID: "wt-guard-no-project", WorktreeFenceToken: "fence-guard", EndpointReservationID: "ep-guard", EndpointFenceToken: "ep-fence-guard", EndpointIncarnation: "ep-inc-guard", Reason: "guard test"}
+			launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("d", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: "", LaunchID: "launch-guard", WindowLabel: "window-guard", WorktreeReservationID: "wt-guard-no-project", WorktreeFenceToken: "fence-guard", EndpointReservationID: "ep-guard", EndpointFenceToken: "ep-fence-guard", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-guard", Reason: "guard test"}
 			if _, err := auth.BeginSpawn(mustCanonicalOp(t, "guard-launch", launch), launch); err != nil {
 				t.Fatal(err)
 			}

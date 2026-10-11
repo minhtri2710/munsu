@@ -314,6 +314,9 @@ type LaunchArtifactInput struct {
 	// own prelude (exports, shim, guard) runs before it, unfenced. Nil means no
 	// fence applies on this host.
 	Fence *fence.Fence
+	// PathDirs is the seat's PATH, shim first: the launch intent's committed
+	// list, the one the fence was built from.
+	PathDirs []string
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
@@ -397,8 +400,11 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		posture.SkillBlock = true
 	}
 	// The seat's PATH is exactly the list the fence denies, never the pane's.
+	if len(in.PathDirs) == 0 {
+		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: the seat PATH is required")
+	}
 	b.WriteString("export PATH=")
-	b.WriteString(shQuote(strings.Join(seatPathDirs(in.HomeDir), string(os.PathListSeparator))))
+	b.WriteString(shQuote(strings.Join(in.PathDirs, string(os.PathListSeparator))))
 	b.WriteString("\n")
 	// A fenced git cannot write the gc and maintenance state it would start in
 	// the background, so turn both off for every git the harness runs.

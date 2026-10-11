@@ -184,7 +184,7 @@ func launchRequestForConcurrency(taskID domain.TaskID) CanonicalBeginSpawnReques
 		WorktreeFenceToken:    "wt-fence-concurrency",
 		EndpointReservationID: "ep-res-concurrency",
 		EndpointFenceToken:    "ep-fence-concurrency",
-		EndpointIncarnation:   "inc-concurrency",
-		Reason:                "spawn",
+		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-concurrency",
+		Reason: "spawn",
 	}
 }

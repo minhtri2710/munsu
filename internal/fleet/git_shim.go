@@ -11,10 +11,11 @@ import (
 // resolves to the shim (munsu git-guard) instead of the real git; the munsu
 // binary strips this same path so its own git runs unfenced
 // (cli.stripShimDirFromPath, which matches this suffix rather than rederiving
-// the absolute dir, so the strip does not depend on MUNSU_HOME). It lives under
-// the home's already-untracked state/ tree, never inside a worktree, so it
-// needs no launch-envelope manifest entry.
-const GitShimBinRelPath = "state/shim/bin"
+// the absolute dir, so the strip does not depend on MUNSU_HOME). It sits beside
+// the home's state/ tree, not inside it: a soldier writes state/, and no seat
+// may chmod, rename or replace the shim dir or any directory above it. It is
+// never inside a worktree, so it needs no launch-envelope manifest entry.
+const GitShimBinRelPath = "git-shim/bin"
 
 func gitShimDir(homeDir string) string {
 	return filepath.Join(homeDir, filepath.FromSlash(GitShimBinRelPath))
@@ -35,7 +36,7 @@ func seatPathDirs(homeDir string) []string {
 	return dirs
 }
 
-// provisionGitShim writes the git shim under <homeDir>/state/shim/bin/git and
+// provisionGitShim writes the git shim under <homeDir>/git-shim/bin/git and
 // returns the shim directory to prepend to PATH. The shim is a small bash
 // script that re-invokes this munsu binary's git-guard with the git arguments;
 // the binary path is resolved (symlinks followed) at provision time so a reset

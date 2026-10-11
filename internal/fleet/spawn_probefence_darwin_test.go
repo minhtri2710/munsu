@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestProbeFenceRecordsTheProjectsWritableRoots(t *testing.T) {
@@ -94,5 +95,101 @@ func TestProbeFenceRefusesTheSeatsPathDirs(t *testing.T) {
 	}
 	if out, err := touch(f.worktree); err != nil {
 		t.Errorf("write in the worktree was refused: %v %s", err, out)
+	}
+}
+
+// fencedAppendStatusHome names the home the child process below appends to.
+const fencedAppendStatusHome = "MUNSU_TEST_FENCED_APPEND_STATUS_HOME"
+
+// TestFencedAppendStatusChild is the body TestFencedSoldierAppendsItsStatus
+// runs inside the fence: the real status append every soldier report makes.
+func TestFencedAppendStatusChild(t *testing.T) {
+	dir := os.Getenv(fencedAppendStatusHome)
+	if dir == "" {
+		t.Skip("runs only as the child of TestFencedSoldierAppendsItsStatus")
+	}
+	if err := home.AppendStatus(dir, "task-1", "running: x"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A soldier's own status append chmods the state dir, a fence writable root:
+// the PATH-dir protection must leave that mode change alone.
+func TestFencedSoldierAppendsItsStatus(t *testing.T) {
+	isolateHuman(t)
+	f := newFenceFixture(t)
+	state := filepath.Join(f.home, "state")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := f.runner("direct-PR")
+	if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
+		t.Fatal(err)
+	}
+	argv, err := r.fence.Wrap([]string{os.Args[0], "-test.run=^TestFencedAppendStatusChild$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), fencedAppendStatusHome+"="+f.home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the status append failed under the fence: %v\n%s", err, out)
+	}
+	if fi, err := os.Stat(state); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("state dir = %v, %v; want the append to have restricted it to 0700", fi, err)
+	}
+	lines, err := home.ReadStatus(f.home, "task-1")
+	if err != nil || len(lines) != 1 || lines[0] != "running: x" {
+		t.Fatalf("status = %q, %v; want the appended line", lines, err)
+	}
+}
+
+// Taking the shim dir off the seat's PATH would let `git` resolve past the git
+// guard: a directory the shell cannot enter is skipped. Neither the shim dir,
+// its parent, nor the state dir the seat writes may be chmod'ed to hide it.
+// The fixture home sits under a temp root, so the home dir itself is writable
+// here and is not asserted.
+func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
+	isolateHuman(t)
+	f := newFenceFixture(t)
+	shimDir, err := provisionGitShim(f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(f.home, "state")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hidden := []string{filepath.Dir(shimDir), shimDir, state}
+	t.Cleanup(func() {
+		for _, d := range hidden {
+			os.Chmod(d, 0o755)
+		}
+	})
+	r := f.runner("direct-PR")
+	if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
+		t.Fatal(err)
+	}
+	script := "PATH=" + shQuote(shimDir) + ":/usr/bin\n"
+	for _, d := range hidden {
+		script += "/bin/chmod 000 " + shQuote(d) + " 2>/dev/null; command -v git; /bin/chmod 755 " + shQuote(d) + " 2>/dev/null\n"
+	}
+	argv, err := r.fence.Wrap([]string{"/bin/sh", "-c", script})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := filepath.Join(shimDir, "git")
+	got := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for i, d := range hidden {
+		if i >= len(got) || got[i] != want {
+			t.Errorf("after a chmod 000 of %s, `command -v git` = %q; want the shim %s", d, got, want)
+		}
 	}
 }

@@ -200,7 +200,7 @@ func TestCrashBeforeAttachPersistsAndReusesIncarnation(t *testing.T) {
 			LaunchID: "launch-crash-1", WindowLabel: "",
 			WorktreeReservationID: wtRes, WorktreeFenceToken: wtFence,
 			EndpointReservationID: epRes, EndpointFenceToken: epFence,
-			EndpointIncarnation: inc, Reason: "spawn",
+			SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: inc, Reason: "spawn",
 		}
 	}
 	// First attempt: commit the intent with the minted incarnation.

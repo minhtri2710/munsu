@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -80,7 +81,12 @@ func New(l Launch) (*Fence, error) {
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
 	// Later rules win in a sandbox profile: broad allows first, then the
 	// protected denies, then the seat's own roots and git carve-outs.
-	allow(&b, "subpath", append([]string{"/private/tmp", "/private/var/folders", "/dev"}, dirs...)...)
+	var roots []string // every subpath this profile makes writable
+	allowRoots := func(paths ...string) {
+		roots = append(roots, paths...)
+		allow(&b, "subpath", paths...)
+	}
+	allowRoots(append([]string{"/private/tmp", "/private/var/folders", "/dev"}, dirs...)...)
 	allowFiles(&b, files...)
 	deny(&b, "subpath", protected...)
 	if l.Role == RoleReviewer && p.home != "" {
@@ -88,13 +94,13 @@ func New(l Launch) (*Fence, error) {
 		// own harness state dir, inside state/, is carved back out.
 		deny(&b, "subpath", homeRoots(p.home)...)
 		if p.stateDir != "" {
-			allow(&b, "subpath", p.stateDir)
+			allowRoots(p.stateDir)
 		}
 	}
-	allow(&b, "subpath", seat...)
+	allowRoots(seat...)
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
-		allow(&b, "subpath", p.gateRepo)
+		allowRoots(p.gateRepo)
 		allowFiles(&b, p.gateState, p.gateState+"-wal", p.gateState+"-shm", p.gateState+"-journal")
 	}
 	if l.Role == RoleSoldier {
@@ -102,21 +108,27 @@ func New(l Launch) (*Fence, error) {
 		if err != nil {
 			return nil, err
 		}
-		allow(&b, "subpath", p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
+		allowRoots(p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
 			filepath.Join(p.commonDir, "refs", "remotes"), filepath.Join(p.commonDir, "logs", "refs", "remotes"))
 		allow(&b, "literal", gitBranchFiles(p.commonDir, branch)...)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
 	}
 	// Last, so nothing above reopens it: a seat's PATH directories, and every
-	// ancestor's own name so a directory cannot be renamed away and replaced.
-	// No lane runs this off darwin; the darwin fence lane covers it.
-	pathDirs, ancestors, err := pathDirDenies(append(append([]string{}, l.PathDirs...), binDirs...))
+	// ancestor's own name so a directory cannot be renamed or removed away and
+	// replaced. An ancestor strictly inside a writable root is the seat's to
+	// reach but never to change, so chmod, unlink and rename are all refused: a
+	// mode of 000 would take the PATH dir off the seat's PATH. A writable root
+	// itself and everything above it refuse only unlink (a rename is an unlink
+	// of the source name), because munsu chmods and fills them. No lane runs
+	// this off darwin; the darwin fence lane covers it.
+	pathDirs, locked, removable, err := pathDirDenies(append(append([]string{}, l.PathDirs...), binDirs...), roots)
 	if err != nil {
 		return nil, err
 	}
 	deny(&b, "subpath", pathDirs...)
-	deny(&b, "literal", ancestors...)
+	deny(&b, "literal", locked...)
+	denyUnlink(&b, removable...)
 
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
@@ -133,13 +145,15 @@ func New(l Launch) (*Fence, error) {
 }
 
 // pathDirDenies returns the PATH directories as given and symlink-resolved, and
-// the names of all their ancestors. A relative or empty entry names the seat's
-// working directory, which the fence cannot refuse, so it is an error: the
-// caller keeps such entries off the seat's PATH.
-func pathDirDenies(pathDirs []string) (dirs, ancestors []string, err error) {
+// the names of all their ancestors split by the writable roots: locked are those
+// strictly inside a root and neither a root nor above one, removable the rest
+// (outside every root the profile already refuses them). A relative or empty entry names
+// the seat's working directory, which the fence cannot refuse, so it is an
+// error: the caller keeps such entries off the seat's PATH.
+func pathDirDenies(pathDirs, roots []string) (dirs, locked, removable []string, err error) {
 	for _, d := range pathDirs {
 		if !filepath.IsAbs(d) {
-			return nil, nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
+			return nil, nil, nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
 		}
 		d = filepath.Clean(d)
 		dirs = append(dirs, d)
@@ -148,12 +162,22 @@ func pathDirDenies(pathDirs []string) (dirs, ancestors []string, err error) {
 		}
 	}
 	dirs = dedupe(dirs)
+	var ancestors []string
 	for _, d := range dirs {
 		for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
 			ancestors = append(ancestors, a)
 		}
 	}
-	return dirs, dedupe(ancestors), nil
+	for _, a := range dedupe(ancestors) {
+		atOrAboveRoot := slices.ContainsFunc(roots, func(r string) bool { return within(r, a) })
+		insideRoot := slices.ContainsFunc(roots, func(r string) bool { return within(a, r) })
+		if insideRoot && !atOrAboveRoot {
+			locked = append(locked, a)
+		} else {
+			removable = append(removable, a)
+		}
+	}
+	return dirs, locked, removable, nil
 }
 
 func resolveLaunch(l Launch) (launchPaths, error) {
@@ -449,14 +473,24 @@ func quote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
-func allow(b *strings.Builder, filter string, paths ...string) { rule(b, "allow", filter, paths) }
-func deny(b *strings.Builder, filter string, paths ...string)  { rule(b, "deny", filter, paths) }
+func allow(b *strings.Builder, filter string, paths ...string) {
+	rule(b, "allow", "file-write*", filter, paths)
+}
+func deny(b *strings.Builder, filter string, paths ...string) {
+	rule(b, "deny", "file-write*", filter, paths)
+}
 
-func rule(b *strings.Builder, verb, filter string, paths []string) {
+// denyUnlink refuses removing or renaming each exact path, and nothing else
+// about it.
+func denyUnlink(b *strings.Builder, paths ...string) {
+	rule(b, "deny", "file-write-unlink", "literal", paths)
+}
+
+func rule(b *strings.Builder, verb, op, filter string, paths []string) {
 	if len(paths) == 0 {
 		return
 	}
-	b.WriteString("(" + verb + " file-write*")
+	b.WriteString("(" + verb + " " + op)
 	for _, p := range paths {
 		b.WriteString(" (" + filter + " " + quote(p) + ")")
 	}

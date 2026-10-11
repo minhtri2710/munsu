@@ -90,7 +90,7 @@ func mustBindReviewTask(t *testing.T, c *taskauthority.Canonical, shipID, head s
 		Mode: "direct-PR", Kind: taskauthority.KindReview, Project: "proj", ParentTaskID: "parent",
 		LaunchID: "launch-" + reviewID, WindowLabel: "window-" + reviewID,
 		EndpointReservationID: "ep-res-" + reviewID, EndpointFenceToken: "ep-fence-" + reviewID,
-		EndpointIncarnation: "inc-" + reviewID, Reason: "spawn",
+		SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + reviewID, Reason: "spawn",
 	}
 	if _, err := c.BeginSpawn(mustFleetOperation(t, "op-begin-"+reviewID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn(%s): %v", reviewID, err)

@@ -35,8 +35,8 @@ func launchRequest(c *Canonical, taskID string, prec domain.Precondition) Canoni
 		WorktreeFenceToken:    "wt-fence-" + taskID,
 		EndpointReservationID: "ep-res-" + taskID,
 		EndpointFenceToken:    "ep-fence-" + taskID,
-		EndpointIncarnation:   "inc-" + taskID,
-		Reason:                "spawn",
+		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID,
+		Reason: "spawn",
 	}
 }
 

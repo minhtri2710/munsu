@@ -141,7 +141,8 @@ func TestPathDirDenies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dirs, ancestors, err := pathDirDenies(tt.in)
+			dirs, locked, removable, err := pathDirDenies(tt.in, nil)
+			ancestors := append(locked, removable...)
 			if tt.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.want) {
 					t.Fatalf("err = %v, want %q", err, tt.want)
@@ -152,6 +153,26 @@ func TestPathDirDenies(t *testing.T) {
 				t.Fatalf("pathDirDenies = %q, %q, %v; want the cleaned dirs and their ancestors below the root", dirs, ancestors, err)
 			}
 		})
+	}
+}
+
+// An ancestor strictly inside a writable root is locked against chmod as well as
+// removal; a root and everything above it refuse only removal, so munsu can
+// still chmod and fill them.
+func TestPathDirDeniesSplitsAncestorsByWritableRoot(t *testing.T) {
+	dirs := []string{"/pdd/state/shim/bin", "/pdd/state/T-1.pi-agent/bin", "/pdd/work/node_modules/.bin", "/pdd/other/bin"}
+	roots := []string{"/pdd/state", "/pdd/state/T-1.pi-agent", "/pdd/work"}
+	_, locked, removable, err := pathDirDenies(dirs, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(locked)
+	slices.Sort(removable)
+	if want := []string{"/pdd/state/shim", "/pdd/work/node_modules"}; !slices.Equal(locked, want) {
+		t.Errorf("locked = %q, want %q", locked, want)
+	}
+	if want := []string{"/pdd", "/pdd/other", "/pdd/state", "/pdd/state/T-1.pi-agent", "/pdd/work"}; !slices.Equal(removable, want) {
+		t.Errorf("removable = %q, want %q", removable, want)
 	}
 }
 
