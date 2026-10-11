@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,23 @@ type ReturnReport struct {
 	BlockedItems  []string `json:"blocked_items"`
 	DigestedCount int      `json:"digested_count"`
 
+	// RoutineReports lists the routine uplink entries Return accepted, as
+	// "key: payload". Escalated entries are accepted too but are printed under
+	// Escalations; this is where the General sees the rest, so that every report
+	// Return accepts is one it was shown.
+	RoutineReports []string `json:"routine_reports"`
+
+	// UnacceptedReports lists drained uplink entries whose envelope could not be
+	// accepted, each with the NotificationRef to pass to `munsu inbox ack`. The
+	// digest is already drained, so it carries the only remaining copy of the ref.
+	UnacceptedReports []UnacceptedReport `json:"unaccepted_reports"`
+
+	// DigestNotRemoved names the digest file Return could not remove after
+	// accepting its reports, with the error. It is not a failed return: the
+	// reports are accepted and the file still holds their refs, so a re-run
+	// replays the idempotent acks and removes it.
+	DigestNotRemoved string `json:"digest_not_removed,omitempty"`
+
 	// LossyStop records that the daemon was stopped by a mechanism that can
 	// skip its final digest flush (stopProcessIsLossy, afk_process_windows.go):
 	// the drained digest may be missing up to one window of entries that never
@@ -53,7 +71,7 @@ type ReturnReport struct {
 // rather than a clean bill. Re-running Return clears the flag -- there is
 // nothing left to stop or drain -- but cannot recover the lost window.
 func (r *ReturnReport) HasActionable() bool {
-	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0 || r.LossyStop
+	return len(r.Escalations) > 0 || len(r.WedgeAlarms) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.DigestNotRemoved != "" || r.LossyStop
 }
 
 // String returns a human-readable summary of the report.
@@ -83,8 +101,23 @@ func (r *ReturnReport) String() string {
 			b.WriteString(fmt.Sprintf("    - %s\n", bItem))
 		}
 	}
+	if len(r.RoutineReports) > 0 {
+		b.WriteString(fmt.Sprintf("  routine uplink reports accepted (%d):\n", len(r.RoutineReports)))
+		for _, rr := range r.RoutineReports {
+			b.WriteString(fmt.Sprintf("    - %s\n", rr))
+		}
+	}
+	if len(r.UnacceptedReports) > 0 {
+		b.WriteString(fmt.Sprintf("  uplink reports not accepted (%d); %s:\n", len(r.UnacceptedReports), UnacceptedReportsHint))
+		for _, u := range r.UnacceptedReports {
+			b.WriteString(fmt.Sprintf("    - %s\n", u))
+		}
+	}
+	if r.DigestNotRemoved != "" {
+		b.WriteString(fmt.Sprintf("  digest not removed: %s; its reports are accepted, run `munsu afk return` again once the cause is fixed to remove it\n", r.DigestNotRemoved))
+	}
 	if r.LossyStop {
-		b.WriteString("\nLossy stop: the daemon was killed without its final digest flush, so up to one batch window of entries never reached the digest and cannot be drained. Treat the record above as a lower bound, not the full window.\n")
+		b.WriteString("\nLossy stop: the daemon was killed without its final digest flush, so up to one batch window of entries never reached the digest and cannot be drained. Treat the record above as a lower bound, not the full window. Uplink reports in that window were never accepted and stay pending: ack one with `munsu inbox ack '<ref>'` if you hold its ref, otherwise retire its task with `munsu teardown <id> --force`.\n")
 	}
 	if r.HasActionable() {
 		b.WriteString("\nActionable items remain — reconcile before resuming normal work.\n")
@@ -104,7 +137,13 @@ func (r *ReturnReport) String() string {
 //     (daemonIdentityForPID). An unverifiable PID is refused, not terminated.
 //  2. Clear the consent flag (state/.afk)
 //  3. Drain the durable digest queue (state/.afk-digest)
-//  4. Summarize escalations, wedge alarms, and blocked items
+//  4. Accept the uplink report each digest entry carries: the digest handed to
+//     the General is its acknowledgment, as a resolved wake is. This runs inside
+//     the drain, before the digest file is removed, so a crash or a failed
+//     removal leaves the refs on disk and a re-run replays the idempotent ack.
+//     A failed accept is listed in the report and leaves its envelope pending;
+//     it never aborts the return.
+//  5. Summarize escalations, wedge alarms, and blocked items
 func Return(homeDir string) (*ReturnReport, error) {
 	report := &ReturnReport{}
 
@@ -187,6 +226,13 @@ func Return(homeDir string) (*ReturnReport, error) {
 			// (a), and machinery that (c) removes the need for rather than
 			// adds to. Left to the same removal condition above, not patched
 			// here.
+			//
+			// What the lossy window now also loses: the uplink wakes in it were
+			// already drained from the wake queue, so a dropped entry takes its
+			// NotificationRef with it and that report stays pending (teardown
+			// refuses it). Escape: ack by ref if held, else `munsu teardown <id>
+			// --force`; ReturnReport.String says so. Removal condition: a digester
+			// that is durable on arrival, (c) above.
 			if stopProcessIsLossy() {
 				report.LossyStop = true
 			}
@@ -210,9 +256,27 @@ func Return(homeDir string) (*ReturnReport, error) {
 		return report, err
 	}
 
-	// 3. Drain and summarize the digest queue.
-	be, err := drainDigest(homeDir)
-	if err != nil {
+	// 3. Drain the digest queue, accepting the reports it carries before the
+	// file is removed.
+	acceptor := uplinkAcceptor{home: homeDir}
+	be, err := drainDigest(homeDir, func(be *BatchedEscalation) {
+		for _, entry := range be.Entries {
+			if entry.Ref == "" {
+				continue
+			}
+			if err := acceptor.accept(entry.Ref); err != nil {
+				report.UnacceptedReports = append(report.UnacceptedReports, UnacceptedReport{Key: entry.Key, Payload: entry.Payload, Ref: entry.Ref, Reason: err.Error()})
+				continue
+			}
+			if entry.Type == EscalationRoutine {
+				report.RoutineReports = append(report.RoutineReports, fmt.Sprintf("%s: %s", entry.Key, entry.Payload))
+			}
+		}
+	})
+	var notRemoved *digestRemovalError
+	if errors.As(err, &notRemoved) {
+		report.DigestNotRemoved = notRemoved.Error()
+	} else if err != nil {
 		return report, fmt.Errorf("draining digest: %w", err)
 	}
 
@@ -273,9 +337,19 @@ func waitForDaemonExit(pid int) bool {
 	}
 }
 
-// drainDigest reads and removes the durable digest file.
-// Returns nil, nil when no digest exists.
-func drainDigest(homeDir string) (*BatchedEscalation, error) {
+// removeDigestFile is a variable only so a test can fail the removal that
+// follows acceptance (TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted).
+var removeDigestFile = os.Remove
+
+// drainDigest reads the durable digest file, hands it to accept, and only then
+// removes it: the digest is the only copy of the refs its entries carry, so it
+// must outlive their acceptance. If the removal fails the file stays and a
+// re-run accepts again (the ack is idempotent); the digest is still returned,
+// with a *digestRemovalError, because by then it is fully accepted and the
+// caller reports the leftover file instead of failing. An unparseable file holds no ref
+// this code can read and is removed, so one corrupt digest cannot wedge every
+// later return. Returns nil, nil when no digest exists.
+func drainDigest(homeDir string, accept func(*BatchedEscalation)) (*BatchedEscalation, error) {
 	path := filepath.Join(homeDir, digestFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -284,12 +358,23 @@ func drainDigest(homeDir string) (*BatchedEscalation, error) {
 		}
 		return nil, err
 	}
-	// Remove regardless of parse outcome — drain is one-shot.
-	os.Remove(path)
-
 	var be BatchedEscalation
 	if err := json.Unmarshal(data, &be); err != nil {
+		_ = removeDigestFile(path)
 		return nil, fmt.Errorf("unmarshal digest: %w", err)
+	}
+	accept(&be)
+	if err := removeDigestFile(path); err != nil && !os.IsNotExist(err) {
+		return &be, &digestRemovalError{path: path, err: err}
 	}
 	return &be, nil
 }
+
+// digestRemovalError is a digest file that outlived its acceptance.
+type digestRemovalError struct {
+	path string
+	err  error
+}
+
+func (e *digestRemovalError) Error() string { return fmt.Sprintf("%s: %v", e.path, e.err) }
+func (e *digestRemovalError) Unwrap() error { return e.err }

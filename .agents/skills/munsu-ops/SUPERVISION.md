@@ -15,15 +15,22 @@ The watcher is a singleton persistent event-driven daemon. It queues actionable 
 
 ## Wake handling (`munsu wake`)
 
-When the watcher queues actionable events, prefer lease-based handling:
+Reports from soldiers and captains reach the General only as queued wakes; nothing writes a report into the General pane.
+
+Under herdr with a claude General, `munsu session-start` records `general-pane` and `wake-delivery-mode=herdr`, and the watcher daemon submits each queued wake to the General pane as a `[mu-system:wake]` prompt when the General is idle with an empty composer. The prompt carries `key`, `claim_id`, `event_id`, the wake line and the exact command to run: handle the wake, then `munsu wake resolve --claim-id <claim_id> --event-id <event_id> --summary <text>` with a non-empty summary. Read ground truth with `munsu soldier-state <id>`, not a raw status tail.
+
+A dispatch refused before the claim leaves the wake queued: AFK is on, the harness is not claude, the composer holds input or is not recognized, or the General is busy. A failure after the claim (the prompt is not accepted) leaves the wake claimed until its 300 s lease expires, after which the next `munsu wake claim` reclaims it. `munsu inbox` shows queued and claimed wakes.
+
+Settling an uplink wake, by `munsu wake resolve` or `munsu wake ack`, consumes the wake and also accepts the soldier's report: one ledger, so run no `munsu inbox ack` for a wake. The sender's pending report then retires on the watcher's next recovery pass, and teardown's acknowledgment check passes after that. If the report cannot be accepted the wake is still settled and the command prints the report's ref: run `munsu inbox ack '<ref>'` once the cause is fixed. `munsu afk return` accepts every uplink report in the digest it prints and lists any it could not accept with the same hint. `munsu inbox ack` otherwise stays for captain mailbox notifications.
+
+On any other backend or harness nothing is delivered. Claim under a lease, then settle each event:
 
 ```sh
 munsu wake claim --consumer <id>     # claim a bounded batch under a lease
 munsu soldier-state <id>             # read ground truth, not a raw status tail
-munsu wake ack <lease-id> <event-id> # acknowledge each processed event
+munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>
+munsu wake ack <lease-id> <event-id> # or consume an event without a summary
 ```
-
-`munsu wake claim` is the lease-based wake queue surface; claim, resolve, and ack are the canonical operations.
 
 After handling actionable wakes, confirm the persistent watcher remains healthy if tasks are still in flight:
 

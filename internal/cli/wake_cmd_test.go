@@ -58,3 +58,52 @@ func TestWakeClaimOutputsWakeContent(t *testing.T) {
 		})
 	}
 }
+
+// A wake whose uplink report cannot be accepted is still settled; the report
+// comes back in the contract output with its ref and the retry hint, for resolve
+// and ack alike.
+func TestWakeSettleOutputListsAnUnacceptedReport(t *testing.T) {
+	ref := `{"message_id":"no-such-message","sender_identity":"no-such-sender"}`
+	settle := map[string]func(lease, event string) []string{
+		"resolve": func(lease, event string) []string {
+			return []string{"wake", "resolve", "--claim-id", lease, "--event-id", event, "--summary", "seen"}
+		},
+		"ack": func(lease, event string) []string {
+			return []string{"wake", "ack", lease, event}
+		},
+	}
+	for name, args := range settle {
+		t.Run(name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			if _, err := home.Init(homeDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := home.EnqueueRefWake(homeDir, "uplink", "task", ref, "done: x [task=task key=default]"); err != nil {
+				t.Fatal(err)
+			}
+			claim, err := home.ClaimWakes(homeDir, "test", 60, 1)
+			if err != nil || len(claim.Wakes) != 1 {
+				t.Fatalf("claim: %+v err=%v", claim, err)
+			}
+			args := append(args(claim.LeaseID, claim.Wakes[0].Epoch+":"+claim.Wakes[0].Seq), "--home", homeDir, "--output", OutputJSON)
+			out, err := runRoot(t, args...)
+			if err != nil {
+				t.Fatalf("settle must succeed despite the unaccepted report: %v\n%s", err, out)
+			}
+			var resp Response[WakeAck]
+			if err := json.Unmarshal([]byte(out), &resp); err != nil {
+				t.Fatalf("invalid JSON: %v\n%s", err, out)
+			}
+			got := resp.Data.UnacceptedReports
+			if len(got) != 1 || got[0].Ref != ref || got[0].Key != "task" || got[0].Reason == "" {
+				t.Fatalf("unaccepted_reports = %+v, want the report with ref %s", got, ref)
+			}
+			if !strings.Contains(resp.Data.Hint, "munsu inbox ack") {
+				t.Fatalf("hint = %q, want the inbox ack retry hint", resp.Data.Hint)
+			}
+			if held, _ := home.LeaseWakes(homeDir, claim.LeaseID); len(held) != 0 {
+				t.Fatalf("lease still holds %d wakes, want the wake settled", len(held))
+			}
+		})
+	}
+}

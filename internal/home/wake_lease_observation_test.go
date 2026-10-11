@@ -42,7 +42,7 @@ func TestClaimReportsWakeToClaimLatency(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := enqueueWakeAt(home, "signal", fmt.Sprintf("task-%d", i), "payload", enqueueAt); err != nil {
+		if err := enqueueWakeAt(home, "signal", fmt.Sprintf("task-%d", i), "", "payload", enqueueAt); err != nil {
 			t.Fatalf("EnqueueWake #%d: %v", i, err)
 		}
 	}

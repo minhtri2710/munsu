@@ -17,6 +17,7 @@ type WakeDigest struct {
 	Kind              string
 	Key               string
 	Payload           string
+	Ref               string
 	IsGeneralRelevant bool
 }
 
@@ -74,6 +75,7 @@ func OneCycle(homeDir string) (*Digest, error) {
 			Kind:    rec.Kind,
 			Key:     rec.Key,
 			Payload: rec.Payload,
+			Ref:     rec.Ref,
 			// Use classify to evaluate captain-relevance based on the payload.
 			// Wake payloads are status-line notes; only needs-decision,
 			// blocked and failed content escalates.

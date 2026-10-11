@@ -20,7 +20,7 @@ import (
 func newInboxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inbox",
-		Short: "Show actionable wakes and last captain status lines (General convenience view)",
+		Short: "Show queued and claimed wakes and last captain status lines (General convenience view)",
 		Long: `Display a compact inbox view for the General, combining:
 
   - Pending wakes from the wake queue
@@ -216,7 +216,7 @@ func renderInbox(homeDir string, w interface{ Write([]byte) (int, error) }) erro
 	switch {
 	case pending > 0:
 		out("Pending wakes: %d\n", pending)
-		out("  Run `munsu wake claim --consumer <id>` to process.\n")
+		out("  Under herdr each is delivered as a prompt once the General is idle; elsewhere run `munsu wake claim --consumer <id>`.\n")
 	case len(claimed) > 0:
 		out("Wakes: none queued, %d claimed\n", len(claimed))
 	case claimedErr != nil:

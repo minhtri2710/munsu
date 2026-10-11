@@ -14,7 +14,10 @@ import (
 // Removed artifacts:
 //   - state/.seen-*             — watcher dedup markers from a prior session
 //   - state/.subsuper-*         — subsupervisor escalation artifacts
-//   - state/.afk-digest         — any prior digest that was never consumed
+//   - state/.afk-digest         — any prior digest that was never consumed,
+//     except one holding uplink refs: those entries are the only copy of the
+//     reports' NotificationRefs, so it is kept and the next `munsu afk return`
+//     drains it (the digester appends to it meanwhile) and accepts them
 //   - state/.afk-wedge-alarm    — any prior wedge alarm marker
 //
 // Only operates within the given home directory — never touches sibling homes
@@ -35,6 +38,9 @@ func ClearStaleArtifacts(homeDir string) error {
 		name := entry.Name()
 		if isStaleArtifact(name) {
 			path := filepath.Join(stateDir, name)
+			if name == ".afk-digest" && digestHoldsRefs(path) {
+				continue
+			}
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				removeErr = fmt.Errorf("removing stale artifact %s: %w", name, err)
 			}
@@ -42,6 +48,21 @@ func ClearStaleArtifacts(homeDir string) error {
 	}
 
 	return removeErr
+}
+
+// digestHoldsRefs reports whether the digest file at path carries an uplink ref.
+// An unreadable or unparseable file holds none this code can use.
+func digestHoldsRefs(path string) bool {
+	be, err := readDigestFile(path)
+	if err != nil || be == nil {
+		return false
+	}
+	for _, entry := range be.Entries {
+		if entry.Ref != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // isStaleArtifact checks whether a filename matches a stale artifact pattern.

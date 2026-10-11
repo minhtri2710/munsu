@@ -337,17 +337,21 @@ func readWakeQueue(homeDir string) ([]WakeRecord, error) {
 }
 
 func decodeWakeRecordLine(line string) (WakeRecord, bool) {
-	parts := strings.SplitN(line, "\t", 5)
+	parts := strings.SplitN(line, "\t", 6)
 	if len(parts) < 5 {
 		return WakeRecord{}, false
 	}
-	return WakeRecord{
+	record := WakeRecord{
 		Epoch:   parts[0],
 		Seq:     parts[1],
 		Kind:    parts[2],
 		Key:     parts[3],
 		Payload: decodeWakePayload(parts[4]),
-	}, true
+	}
+	if len(parts) == 6 {
+		record.Ref = parts[5]
+	}
+	return record, true
 }
 
 func encodeWakePayload(payload string) string {
@@ -397,7 +401,11 @@ func decodeWakePayload(encoded string) string {
 }
 
 func writeWakeRecord(b *strings.Builder, record WakeRecord) {
-	fmt.Fprintf(b, "%s\t%s\t%s\t%s\t%s\n", record.Epoch, record.Seq, record.Kind, record.Key, encodeWakePayload(record.Payload))
+	fmt.Fprintf(b, "%s\t%s\t%s\t%s\t%s", record.Epoch, record.Seq, record.Kind, record.Key, encodeWakePayload(record.Payload))
+	if record.Ref != "" {
+		fmt.Fprintf(b, "\t%s", record.Ref)
+	}
+	b.WriteByte('\n')
 }
 
 func wakeQueueData(records []WakeRecord) []byte {
