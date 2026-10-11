@@ -236,43 +236,6 @@ func TestValidateHarness(t *testing.T) {
 	}
 }
 
-func TestTemplates(t *testing.T) {
-	if tmpl, ok := Templates[Claude]; !ok {
-		t.Errorf("missing template for %s", Claude)
-	} else if tmpl.ModelFlag != "--model" {
-		t.Errorf("Claude ModelFlag = %q, want --model", tmpl.ModelFlag)
-	}
-
-	if tmpl, ok := Templates[Codex]; !ok {
-		t.Errorf("missing template for %s", Codex)
-	} else if tmpl.DefaultModel == "" {
-		t.Errorf("Codex DefaultModel is empty")
-	}
-
-	if tmpl, ok := Templates[Pi]; !ok {
-		t.Errorf("missing template for %s", Pi)
-	} else if tmpl.ModelFlag != "--model" {
-		t.Errorf("Pi ModelFlag = %q, want --model", tmpl.ModelFlag)
-	}
-
-	if tmpl, ok := Templates[Grok]; !ok {
-		t.Errorf("missing template for %s", Grok)
-	} else if tmpl.ModelFlag != "--model" {
-		t.Errorf("Grok ModelFlag = %q, want --model", tmpl.ModelFlag)
-	}
-
-	if tmpl, ok := Templates[Agy]; !ok {
-		t.Errorf("missing template for %s", Agy)
-	} else if tmpl.ModelFlag != "--model" {
-		t.Errorf("Agy ModelFlag = %q, want --model", tmpl.ModelFlag)
-	} else if len(tmpl.ExtraArgs) == 0 {
-	} else if len(tmpl.ExtraArgs) == 0 {
-		t.Errorf("Agy ExtraArgs should not be empty")
-	} else if tmpl.ExtraArgs[0] != "--dangerously-skip-permissions" {
-		t.Errorf("Agy ExtraArgs[0] = %q, want --dangerously-skip-permissions", tmpl.ExtraArgs[0])
-	}
-}
-
 func TestSoldier_HasDispatchDefault(t *testing.T) {
 	tmp := t.TempDir()
 

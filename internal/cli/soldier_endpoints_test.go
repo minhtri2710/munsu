@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -10,8 +9,6 @@ import (
 
 type soldierEndpointBackend struct {
 	alive      bool
-	busy       bool
-	busyErr    error
 	recognized bool
 	status     string
 	prompt     backend.PromptResult
@@ -25,7 +22,6 @@ func (b *soldierEndpointBackend) Teardown(string) error                    { ret
 func (b *soldierEndpointBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.alive, b.alive && b.recognized, nil
 }
-func (b *soldierEndpointBackend) AgentBusy(string) (bool, error) { return b.busy, b.busyErr }
 func (b *soldierEndpointBackend) IsRecognizedAgent(string) (bool, string) {
 	return b.recognized, b.status
 }
@@ -66,20 +62,6 @@ func TestSoldierEndpointsRejectsBackendAndHerdrOwnershipMismatch(t *testing.T) {
 		}}
 		if _, err := endpoint.backend("home", meta); err == nil {
 			t.Fatalf("meta=%v: expected ownership error", meta)
-		}
-	}
-}
-
-func TestSoldierEndpointsBusyCheckerOutcomes(t *testing.T) {
-	for _, tt := range []struct {
-		busy bool
-		err  error
-	}{{false, nil}, {true, nil}, {false, errors.New("unknown")}} {
-		bk := &soldierEndpointBackend{alive: true, busy: tt.busy, busyErr: tt.err}
-		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
-		got, err := endpoint.Busy("home", map[string]string{"window": "pane"})
-		if got != tt.busy || (err != nil) != (tt.err != nil) {
-			t.Fatalf("got=%v err=%v", got, err)
 		}
 	}
 }

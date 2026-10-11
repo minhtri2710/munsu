@@ -39,7 +39,7 @@ func TestCheckedToolsRegistry(t *testing.T) {
 		seen[spec.Name] = true
 	}
 
-	expectedTools := []string{"git", "tmux", "treehouse", "zellij", "no-mistakes", "gh-axi", "gh"}
+	expectedTools := []string{"git", "tmux", "treehouse", "zellij", "no-mistakes", "gh-axi", "gh", "fuser"}
 	for _, name := range expectedTools {
 		if !seen[name] {
 			t.Errorf("expected tool %q not found in checkedTools", name)

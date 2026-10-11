@@ -57,7 +57,6 @@ type Runner struct {
 	reviewTask      string
 	reviewHead      string
 	review          *ReviewLaunch
-	launchCmd       string
 	endpoints       EndpointCapabilities
 	endpoint        CreatedEndpoint
 	briefData       []byte
@@ -310,7 +309,6 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.resolveHarness(); err != nil {
 		return "", err
 	}
-	r.resolveLaunchConfig()
 	if err := r.createAttestation(); err != nil {
 		return "", err
 	}
@@ -1506,18 +1504,6 @@ func (r *Runner) taskDescription() string {
 		}
 	}
 	return r.args.ID
-}
-
-// Phase 10: resolveLaunchConfig finalizes the launch command from the identity
-// already resolved by resolveEffectiveIdentity (harness, model, effort). The
-// policy-owned project selection is resolved once so validation, preflight,
-// and launch all share it.
-func (r *Runner) resolveLaunchConfig() {
-	adapter, ok := harness.GetAdapter(r.harness)
-	if !ok {
-		return
-	}
-	r.launchCmd = harness.LaunchStringWith(r.harness, adapter.LaunchTemplate, r.model, r.effort)
 }
 
 // createAttestation creates a capability attestation snapshot after the harness

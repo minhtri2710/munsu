@@ -20,7 +20,7 @@ Detection checks each adapter's env markers (CLAUDECODE, CODECLIMB, OPENCODE, PI
 
 ## Turn-end hooks
 
-Each adapter's turn-end hook is its `TurnEndHook` entry in `internal/harness/adapter.go`. See `REFERENCE.md` for dispatch precedence.
+See `REFERENCE.md` for each harness's wake arming rule and dispatch precedence.
 
 ---
 

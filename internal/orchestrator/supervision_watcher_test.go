@@ -1918,3 +1918,78 @@ func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
 		t.Fatalf("the state directory was recreated: %v", statErr)
 	}
 }
+
+// A status line an uplink report delivered is owned by the report's own wake,
+// open or accepted; a status line that came any other way still wakes the
+// General.
+func TestRunCycleWakesOnceForAReportedStatus(t *testing.T) {
+	signalWakes := func(t *testing.T, generalHome string) int {
+		t.Helper()
+		wakes, err := mhome.PeekWakes(generalHome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, w := range wakes {
+			if w.Kind == "signal" {
+				n++
+			}
+		}
+		return n
+	}
+	report := func(t *testing.T) (string, *ReportResult) {
+		generalHome, identity := directGeneralHome(t)
+		res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
+		if _, _, err := AppendReportStatus(generalHome, "direct-task", "failed", "direct dispatch failure", "default"); err != nil {
+			t.Fatal(err)
+		}
+		return generalHome, res
+	}
+	accept := func(t *testing.T, generalHome string, res *ReportResult) {
+		env, err := NewStore(generalHome).ReadEnvelope("direct-task", res.MessageID)
+		if err != nil || env == nil {
+			t.Fatalf("ReadEnvelope: %v", err)
+		}
+		if err := NewStore(generalHome).WriteAck(&ProcessingAck{
+			MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity,
+			ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
+			PayloadHash: env.PayloadHash, Outcome: OutcomeAccepted, ProcessedAt: time.Now().UnixNano(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Recover(RecoverRequest{SenderHome: generalHome, ReceiverHome: generalHome}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name  string
+		setup func(t *testing.T) string
+		want  int
+	}{
+		{"open report", func(t *testing.T) string { g, _ := report(t); return g }, 0},
+		{"accepted report", func(t *testing.T) string {
+			g, res := report(t)
+			accept(t, g, res)
+			return g
+		}, 0},
+		{"status after the report", func(t *testing.T) string {
+			g, res := report(t)
+			accept(t, g, res)
+			if err := mhome.AppendStatus(g, "direct-task", "failed: a different failure [key=default]"); err != nil {
+				t.Fatal(err)
+			}
+			return g
+		}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			generalHome := tc.setup(t)
+			if _, err := testRunCycle(generalHome); err != nil {
+				t.Fatal(err)
+			}
+			if got := signalWakes(t, generalHome); got != tc.want {
+				t.Fatalf("signal wakes = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

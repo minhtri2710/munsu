@@ -159,40 +159,6 @@ type Template struct {
 	ExtraArgs     []string // Additional CLI arguments for launch (autonomy, interactive, etc.)
 }
 
-// Templates maps each known harness to its launch template (CLI flag conventions).
-// The adapter registry (Adapters) is the authoritative source; Templates is a
-var Templates = map[string]Template{
-	Claude: {
-		ModelFlag: "--model",
-		// DefaultModel omitted — let Claude Code use its runtime default
-	},
-	Codex: {
-		ModelFlag:     "--model",
-		EffortFlag:    "--effort",
-		DefaultModel:  "gpt-5.2-codex",
-		DefaultEffort: "80",
-	},
-	Opencode: {
-		ModelFlag:     "--model",
-		EffortFlag:    "--effort",
-		DefaultModel:  "gpt-5.2-codex",
-		DefaultEffort: "80",
-	},
-	Pi: {
-		ModelFlag:  "--model",
-		EffortFlag: "--thinking",
-	},
-	Grok: {
-		ModelFlag:  "--model",
-		EffortFlag: "--reasoning-effort",
-	},
-	Agy: {
-		ModelFlag: "--model",
-		// DefaultModel omitted — let agy use its runtime default (Claude Sonnet 4.6)
-		ExtraArgs: []string{"--dangerously-skip-permissions"},
-	},
-}
-
 // ErrNoSoldierHarnessInSnapshot is returned by ResolveSoldierFromSnapshot when
 // the resolved project snapshot carries no soldier harness identity.
 var ErrNoSoldierHarnessInSnapshot = errors.New("no soldier harness identity resolved from snapshot")

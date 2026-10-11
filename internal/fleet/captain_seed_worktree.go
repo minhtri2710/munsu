@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -116,7 +117,7 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 	checkoutRef := ref
 	if checkoutRef == "" {
 		var defaultBranch string
-		defaultBranch, err = resolveDefaultBranch(absRepo)
+		defaultBranch, err = backend.DefaultBranch(absRepo)
 		if err != nil {
 			err = fmt.Errorf("resolving default branch for %s: %w", absRepo, err)
 			return
@@ -360,35 +361,6 @@ func writeCaptainProvenance(homePath, repoPath string) error {
 	}
 
 	return os.WriteFile(filepath.Join(homePath, CaptainProvenanceName), []byte(content), 0644)
-}
-
-// resolveDefaultBranch returns the default branch name for repoPath
-// by reading origin/HEAD's symbolic ref.
-func resolveDefaultBranch(repoPath string) (string, error) {
-	symRef, err := gitRun("-C", repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
-	if err != nil {
-		// Fallback: try origin/main directly.
-		if _, fallbackErr := gitRun("-C", repoPath, "rev-parse", "--verify", "origin/main"); fallbackErr == nil {
-			return "main", nil
-		}
-		// Try origin/master as last resort.
-		if _, fallbackErr := gitRun("-C", repoPath, "rev-parse", "--verify", "origin/master"); fallbackErr == nil {
-			return "master", nil
-		}
-		// Fallback: try local main/master branches.
-		for _, candidate := range []string{"main", "master"} {
-			if _, fbErr := gitRun("-C", repoPath, "rev-parse", "--verify", candidate); fbErr == nil {
-				return candidate, nil
-			}
-		}
-		return "", fmt.Errorf("cannot resolve default branch — set origin/HEAD or ensure origin/main exists: %w", err)
-	}
-
-	parts := strings.SplitN(symRef, "/", 4)
-	if len(parts) < 4 || parts[0] != "refs" || parts[1] != "remotes" || parts[2] != "origin" {
-		return "", fmt.Errorf("unexpected origin/HEAD format: %q", symRef)
-	}
-	return parts[3], nil
 }
 
 // readCaptainProvenance parses the .captain-provenance file and returns the

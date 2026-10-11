@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -23,32 +24,6 @@ func TestGitBranch(t *testing.T) {
 	}
 	if branch == "" {
 		t.Fatal("expected non-empty branch name")
-	}
-}
-
-func TestGitDefaultBranch(t *testing.T) {
-	tmp := t.TempDir()
-	initGitRepo(t, tmp, "")
-
-	branch, err := gitDefaultBranch(tmp)
-	if err != nil {
-		t.Fatalf("gitDefaultBranch: %v", err)
-	}
-	if branch != "main" && branch != "master" {
-		t.Errorf("expected main or master, got %q", branch)
-	}
-}
-
-func TestGitDefaultBranch_NoRemote(t *testing.T) {
-	tmp := t.TempDir()
-	initGitRepo(t, tmp, "")
-
-	branch, err := gitDefaultBranch(tmp)
-	if err != nil {
-		t.Fatalf("gitDefaultBranch without remote: %v", err)
-	}
-	if branch == "" {
-		t.Fatal("expected a branch name even without remote")
 	}
 }
 
@@ -112,7 +87,7 @@ func TestGitDiffSummary_WithDiff(t *testing.T) {
 	}
 
 	// Get the default branch name
-	defaultBranch, err := gitDefaultBranch(tmp)
+	defaultBranch, err := backend.DefaultBranch(tmp)
 	if err != nil {
 		t.Fatalf("gitDefaultBranch: %v", err)
 	}
@@ -136,7 +111,7 @@ func TestGitDiffSummary_BinaryNumstatCountsZero(t *testing.T) {
 	tmp := t.TempDir()
 	initGitRepo(t, tmp, "")
 	gitEnv := gitEnvForDir(tmp)
-	defaultBranch, err := gitDefaultBranch(tmp)
+	defaultBranch, err := backend.DefaultBranch(tmp)
 	if err != nil {
 		t.Fatalf("gitDefaultBranch: %v", err)
 	}

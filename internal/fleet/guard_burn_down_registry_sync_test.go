@@ -35,7 +35,7 @@ func TestGuardBurnDownRegistrySyncRefusals(t *testing.T) {
 		}
 		registrySyncGit(t, dir, "init")
 		registrySyncGit(t, dir, "remote", "add", "origin", remote)
-		if err := syncOne(dir); err == nil || !strings.Contains(err.Error(), "no default branch (main/master) found on origin") {
+		if err := syncOne(dir); err == nil || !strings.Contains(err.Error(), "cannot resolve default branch") {
 			t.Fatalf("syncOne no-default-branch error = %v, want default-branch refusal", err)
 		}
 	})

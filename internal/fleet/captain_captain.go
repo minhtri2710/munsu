@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -1391,16 +1392,10 @@ func safeFF(captainHome, parentHome string) (before, after string, reason SafeFF
 	}
 
 	// Resolve default branch via origin/HEAD symbolic ref. No fallback.
-	symRef, err := gitRun("-C", upstreamRepo, "symbolic-ref", "refs/remotes/origin/HEAD")
+	defaultBranch, err := backend.OriginHeadBranch(upstreamRepo)
 	if err != nil {
-		return "", "", SafeFFMissingOrigin, fmt.Errorf("upstream origin/HEAD symbolic ref missing — no default branch detected: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("upstream default branch: %w", err)
 	}
-	// symRef looks like "refs/remotes/origin/main" — extract branch name.
-	remoteRefParts := strings.SplitN(symRef, "/", 4)
-	if len(remoteRefParts) < 4 || remoteRefParts[0] != "refs" || remoteRefParts[1] != "remotes" || remoteRefParts[2] != "origin" {
-		return "", "", SafeFFMissingOrigin, fmt.Errorf("unexpected origin/HEAD symbolic ref format: %q", symRef)
-	}
-	defaultBranch := remoteRefParts[3]
 
 	// Verify the local branch ref exists.
 	localRef := "refs/heads/" + defaultBranch

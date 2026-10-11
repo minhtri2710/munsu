@@ -554,7 +554,6 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		// harness binary-absent preflight is expected in CI; resolution already happened.
 		t.Logf("preflightHarness: %v (expected in CI without harness binary)", err)
 	}
-	r.resolveLaunchConfig()
 	if r.harness != "codex" || r.model != "q-model" {
 		t.Fatalf("launch identity diverged from validated identity: harness=%q model=%q", r.harness, r.model)
 	}

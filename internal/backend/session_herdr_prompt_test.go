@@ -382,19 +382,6 @@ func TestAgentPrompt_ProtocolProbeFailure(t *testing.T) {
 	}
 }
 
-func TestAgentPrompt_Protocol17LegacyPrompt(t *testing.T) {
-	// LegacyPrompt is tested in herdr_backend_test.go SendKeys tests.
-	// This test requires a fake herdr that handles send-text/send-keys
-	// which the prompt-focused fake doesn't provide.
-	t.Skip("LegacyPrompt tested via SendKeys in herdr_backend_test.go")
-}
-
-func TestAgentPrompt_SystemOK(t *testing.T) {
-	// Integration-style test: run Tests above as a suite.
-	// This is a placeholder; real Herdr 0.7.5 smoke removed.
-	t.Log("herdr 0.7.5 real smoke test: requires isolated herdr session")
-}
-
 // TestAgentPrompt_EmptyResponseOnSuccess ensures empty success output
 // (no JSON) is treated as backend-failed.
 func TestAgentPrompt_EmptyResponseOnSuccess(t *testing.T) {

@@ -15,6 +15,7 @@ var checkedTools = []ToolSpec{
 	{"no-mistakes", false},
 	{"gh-axi", false},
 	{"gh", false},
+	{"fuser", false},
 }
 
 // IsHardRequired returns true if tool is classified as a hard-required dependency.

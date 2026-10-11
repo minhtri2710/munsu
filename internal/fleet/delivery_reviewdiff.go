@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -53,7 +54,7 @@ func ReviewDiff(homeDir string, id string) error {
 		base = "origin/" + ident.BaseRef
 	} else {
 		// Use default branch
-		defaultBranch, derr := gitDefaultBranch(worktreePath)
+		defaultBranch, derr := backend.DefaultBranch(worktreePath)
 		if derr != nil {
 			return fmt.Errorf("cannot detect default branch: %w", derr)
 		}
@@ -85,32 +86,6 @@ func gitBranch(repoPath string) (string, error) {
 		return "", fmt.Errorf("git rev-parse: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// gitDefaultBranch returns the default branch name (e.g., main, master).
-func gitDefaultBranch(repoPath string) (string, error) {
-	// Try origin/HEAD first
-	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
-	cmd.Dir = repoPath
-	out, err := cmd.Output()
-	if err == nil {
-		ref := strings.TrimSpace(string(out))
-		// refs/remotes/origin/main -> main
-		if parts := strings.Split(ref, "/"); len(parts) > 0 {
-			return parts[len(parts)-1], nil
-		}
-	}
-
-	// Fall back to common names
-	for _, name := range []string{"main", "master"} {
-		cmd := exec.Command("git", "rev-parse", "--verify", name)
-		cmd.Dir = repoPath
-		if err := cmd.Run(); err == nil {
-			return name, nil
-		}
-	}
-
-	return "", fmt.Errorf("cannot determine default branch")
 }
 
 // checkDefaultBranchStale warns if the local default branch is behind origin.

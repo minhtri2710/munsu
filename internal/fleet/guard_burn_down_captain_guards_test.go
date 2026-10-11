@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,23 +115,6 @@ func TestSeedCaptain_RefusesMissingRepoBeforeMutation(t *testing.T) {
 	}
 	if _, statErr := os.Stat(h); !os.IsNotExist(statErr) {
 		t.Fatalf("refused seed created %s (stat err = %v)", h, statErr)
-	}
-}
-
-func TestResolveDefaultBranch_MalformedSymRef(t *testing.T) {
-	repoPath := t.TempDir()
-	cmd := exec.Command("git", "init", repoPath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v, %s", err, string(out))
-	}
-	cmd = exec.Command("git", "-C", repoPath, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/main")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git symbolic-ref: %v, %s", err, string(out))
-	}
-
-	_, err := resolveDefaultBranch(repoPath)
-	if err == nil || !strings.Contains(err.Error(), "unexpected origin/HEAD format") {
-		t.Fatalf("resolveDefaultBranch err = %v, want unexpected origin/HEAD format", err)
 	}
 }
 

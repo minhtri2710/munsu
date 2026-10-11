@@ -40,9 +40,6 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	if err != nil {
 		return false, err
 	}
-	if checker, ok := bk.(backend.BusyChecker); ok {
-		return checker.AgentBusy(meta["window"])
-	}
 	if _, ok := bk.(backend.AgentActivityReader); ok {
 		observation := backend.ObserveEndpoint(bk, meta["window"], harnessProcessMatcher(meta["harness"]))
 		if observation.Lifecycle != backend.LifecycleAlive {
