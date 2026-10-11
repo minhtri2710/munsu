@@ -138,9 +138,12 @@ jobs:
     timeout-minutes: 20
     # The soldier and reviewer write fence is sandbox-exec, which exists only
     # on darwin; every other lane compiles these tests (GOOS=darwin vet) but
-    # never runs them. This job runs the fence package whole and the fleet
-    # tests whose names contain "Fence", and fails if that pattern selects no
-    # fleet test, so a rename cannot empty the lane silently.
+    # never runs their darwin branches. This job runs internal/fence whole and
+    # the named fleet tests that apply or assert the real fence. As in the
+    # windows job, the names are the gate's single source: `go test -list`
+    # with the anchored pattern must return exactly these names before
+    # anything runs, so a rename fails here instead of leaving the lane, and a
+    # new fence test stays out until it is added below. Not a required check.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -150,12 +153,26 @@ jobs:
       - name: Fence tests
         run: |
           set -euo pipefail
-          if [ -z "$(go test -list 'Fence' ./internal/fleet/ | grep '^Test' || true)" ]; then
-            echo "::error::-run Fence selects no fleet test (renamed or deleted?)"
-            exit 1
-          fi
-          go test -count=1 ./internal/fence/
-          go test -count=1 ./internal/fleet/ -run 'Fence'
+          gated() {
+            tags="$1"; want="$(printf '%s\n' "$2" | sed 's/^[[:space:]]*//' | sort)"
+            re="^($(printf '%s\n' "$want" | paste -sd '|' -))\$"
+            got="$(go test -tags "$tags" -list "$re" ./internal/fleet/ | grep '^Test' | sort || true)"
+            if [ "$got" != "$want" ]; then
+              echo "::error::-run pattern does not select exactly the gated tests (renamed or deleted?)"
+              diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true
+              exit 1
+            fi
+            go test -tags "$tags" -count=1 ./internal/fleet/ -run "$re" -v
+          }
+          go test -count=1 ./internal/fence/ -v
+          gated "" 'TestBuildLaunchArtifactExecsTheHarnessUnderTheFence
+          TestBuildLaunchArtifactRefusesAnArgvTheFenceCannotWrap
+          TestProbeFenceRecordsTheProjectsWritableRoots
+          TestProbeFenceRefusals
+          TestProbeFenceRecordsTheSeatFence
+          TestProbeFenceOnAHostWithoutAFence
+          TestLaunchRecordsTheSeatOfTheLaunch'
+          gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout'
 
   race:
     name: Race detector
