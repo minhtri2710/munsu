@@ -295,3 +295,14 @@ func TestInboxAck_SoldierIdentifiedByItsTask(t *testing.T) {
 		t.Fatalf("error = %v, want the missing-task refusal", err)
 	}
 }
+
+func TestReadLastLineTakesALineOverTheScannerLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.status")
+	long := "done: " + strings.Repeat("x", 100*1024)
+	if err := os.WriteFile(path, []byte("working: a\n"+long+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLastLine(path); got != long {
+		t.Fatalf("readLastLine() returned %d bytes, want the %d-byte last line", len(got), len(long))
+	}
+}

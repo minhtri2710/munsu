@@ -435,3 +435,13 @@ func TestReadCaptainID_FromMarker(t *testing.T) {
 		}
 	})
 }
+
+func TestMaterialReportExistsTakesALineOverTheScannerLimit(t *testing.T) {
+	home := t.TempDir()
+	if err := mhome.AppendStatus(home, "t1", "done: "+strings.Repeat("row\n", 30000)); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := MaterialReportExists(home, "t1"); err != nil || !has {
+		t.Fatalf("MaterialReportExists() = %v, %v; want true", has, err)
+	}
+}

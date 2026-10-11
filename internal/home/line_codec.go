@@ -1,6 +1,10 @@
 package home
 
-import "strings"
+import (
+	"bufio"
+	"io"
+	"strings"
+)
 
 // EscapeLine makes s safe to store as one tab-separated field of a line-framed
 // home file: backslash, tab, CR and LF become \\, \t, \r and \n, so a value can
@@ -58,4 +62,23 @@ func UnescapeLine(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// EachLine calls fn with every line of r, without its line ending, however long
+// the line is: a line is the whole message of an escaped report, and
+// bufio.Scanner would fail on one past 64KB.
+func EachLine(r io.Reader, fn func(line string)) error {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadString('\n')
+		if line != "" {
+			fn(strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"))
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }

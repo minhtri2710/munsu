@@ -49,3 +49,25 @@ func TestAppendStatusKeepsMultiLineLineOneRecord(t *testing.T) {
 		t.Fatalf("AppendStatusOnce(same line) = %v, %v; want no append", ok, err)
 	}
 }
+
+// An escaped report is one line however long its message is; every status read
+// must take it whole instead of failing on bufio.Scanner's 64KB token limit.
+func TestStatusReadsTakeALineOverTheScannerLimit(t *testing.T) {
+	h := t.TempDir()
+	line := "working: " + strings.Repeat("row\n", 30000)
+	for i := 0; i < 2; i++ {
+		if err := AppendStatus(h, "task-1", line); err != nil {
+			t.Fatalf("AppendStatus #%d: %v", i+1, err)
+		}
+	}
+	lines, err := ReadStatus(h, "task-1")
+	if err != nil || len(lines) != 2 || lines[1] != line {
+		t.Fatalf("ReadStatus() = %d lines, %v; want 2 lines, the last as written", len(lines), err)
+	}
+	if ok, err := StatusHasLine(h, "task-1", line); err != nil || !ok {
+		t.Fatalf("StatusHasLine() = %v, %v; want true", ok, err)
+	}
+	if ok, err := AppendStatusOnce(h, "task-1", line); err != nil || ok {
+		t.Fatalf("AppendStatusOnce(same line) = %v, %v; want no append", ok, err)
+	}
+}

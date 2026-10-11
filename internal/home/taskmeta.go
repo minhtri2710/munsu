@@ -365,11 +365,8 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 	defer f.Close()
 
 	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lines = append(lines, UnescapeLine(scanner.Text()))
-	}
-	return lines, scanner.Err()
+	err = EachLine(f, func(line string) { lines = append(lines, UnescapeLine(line)) })
+	return lines, err
 }
 
 // StatusHasLine reports whether the task's status holds line. A status that

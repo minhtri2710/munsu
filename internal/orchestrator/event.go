@@ -60,64 +60,27 @@ func parseRecord(line string) (Record, bool) {
 	}, true
 }
 
-// highWaterPath names the sidecar that lets nextID skip the part of the log it
-// has already scanned.
-func highWaterPath(homeDir string) string { return LogPath(homeDir) + ".hwm" }
-
-// readHighWater returns the log offset and largest ID the last Append recorded.
-// An absent or unparsable sidecar reads as 0, 0: a full scan.
-func readHighWater(homeDir string) (offset int64, maxID uint64) {
-	data, err := os.ReadFile(highWaterPath(homeDir))
-	if err != nil {
-		return 0, 0
-	}
-	if _, err := fmt.Sscanf(string(data), "%d %d", &offset, &maxID); err != nil || offset < 0 {
-		return 0, 0
-	}
-	return offset, maxID
-}
-
 // nextID returns the next monotonic ID (1-based): one past the largest ID in
-// the log, and the log size it scanned to. It refuses when the largest ID is already
-// the maximum, rather than wrap to 0. Only the bytes past the recorded
-// high-water offset are read; the maximum is taken over the whole log, so a log
-// whose order is not ID order still yields its true maximum. A log shorter than
-// the recorded offset was replaced and is scanned in full. The caller must hold
-// the event log lock.
-func nextID(homeDir string) (uint64, int64, error) {
-	f, err := os.Open(LogPath(homeDir))
+// the log. It refuses when the largest ID is already the maximum, rather than
+// wrap to 0. The caller must hold the event log lock.
+func nextID(homeDir string) (uint64, error) {
+	data, err := os.ReadFile(LogPath(homeDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 1, 0, nil
+			return 1, nil
 		}
-		return 0, 0, fmt.Errorf("reading event log: %w", err)
+		return 0, fmt.Errorf("reading event log: %w", err)
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return 0, 0, fmt.Errorf("reading event log: %w", err)
-	}
-	size := info.Size()
-	offset, maxID := readHighWater(homeDir)
-	if offset > size {
-		offset, maxID = 0, 0
-	}
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return 0, 0, fmt.Errorf("reading event log: %w", err)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, size-offset))
-	if err != nil {
-		return 0, 0, fmt.Errorf("reading event log: %w", err)
-	}
+	var maxID uint64
 	for _, line := range strings.Split(string(data), "\n") {
 		if r, ok := parseRecord(line); ok && r.ID > maxID {
 			maxID = r.ID
 		}
 	}
 	if maxID == math.MaxUint64 {
-		return 0, 0, fmt.Errorf("event log %s: largest event ID is already %d, no ID is left to assign", LogPath(homeDir), uint64(math.MaxUint64))
+		return 0, fmt.Errorf("event log %s: largest event ID is already %d, no ID is left to assign", LogPath(homeDir), uint64(math.MaxUint64))
 	}
-	return maxID + 1, size, nil
+	return maxID + 1, nil
 }
 
 // Append writes a typed event to the event log and returns its ID. The four
@@ -134,7 +97,7 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 
 	var id uint64
 	err := home.WithExclusiveFileLock(path+".lock", func() error {
-		next, scanned, err := nextID(homeDir)
+		next, err := nextID(homeDir)
 		if err != nil {
 			return err
 		}
@@ -150,9 +113,6 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 			return fmt.Errorf("writing event: %w", err)
 		}
 		id = next
-		// The sidecar is only a scan shortcut: a failed write costs the next
-		// Append a full scan and never the event.
-		_ = os.WriteFile(highWaterPath(homeDir), []byte(fmt.Sprintf("%d %d\n", scanned+int64(len(line)), next)), 0644)
 		return nil
 	})
 	if err != nil {

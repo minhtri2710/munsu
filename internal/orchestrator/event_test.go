@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -341,7 +340,7 @@ func TestEventReadersSkipAndCountMalformedLines(t *testing.T) {
 		}
 	}
 	// the five-field line (ID 9) must not feed nextID either
-	if id, _, err := nextID(home); err != nil || id != 3 {
+	if id, err := nextID(home); err != nil || id != 3 {
 		t.Errorf("nextID() = %d, %v; want 3", id, err)
 	}
 }
@@ -433,43 +432,6 @@ func TestDeliverWakeKeepsMultiLineMessageOneStatusLineAndEvent(t *testing.T) {
 	}
 }
 
-// nextID reads only the log past the recorded high-water offset, takes the
-// maximum over the whole log, and rescans a log that is shorter than the mark.
-func TestNextIDHighWater(t *testing.T) {
-	const (
-		big   = "900\t1\tt\tp\t\ta\n"
-		seven = "7\t2\tt\tp\t\tb\n"
-	)
-	cases := []struct {
-		name string
-		log  string
-		mark string // written as the sidecar; empty writes none
-		want uint64
-	}{
-		{name: "out of ID order", log: outOfOrderLog, want: 10},
-		{name: "skips the scanned prefix", log: big + seven, mark: fmt.Sprintf("%d 6\n", len(big)), want: 8},
-		{name: "reads a tail appended after the mark", log: seven + big, mark: fmt.Sprintf("%d 7\n", len(seven)), want: 901},
-		{name: "rescans a log shorter than the mark", log: seven, mark: "9999 500\n", want: 8},
-		{name: "rescans over an unparsable mark", log: seven, mark: "garbage", want: 8},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			writeEventLog(t, home, tc.log)
-			if tc.mark != "" {
-				if err := os.WriteFile(highWaterPath(home), []byte(tc.mark), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for i := uint64(0); i < 2; i++ {
-				if id, err := Append(home, "t", "p", "", "x"); err != nil || id != tc.want+i {
-					t.Fatalf("Append #%d = %d, %v; want %d", i+1, id, err, tc.want+i)
-				}
-			}
-		})
-	}
-}
-
 // The largest ID is never wrapped to 0: Append refuses and writes nothing, and
 // one below the maximum still takes the maximum.
 func TestAppendRefusesWhenLogIDIsMaximum(t *testing.T) {
@@ -480,18 +442,12 @@ func TestAppendRefusesWhenLogIDIsMaximum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ { // the second call runs against whatever the first left behind
-		_, err = Append(home, "t", "p", "", "x")
-		if err == nil || !strings.Contains(err.Error(), "18446744073709551615") || !strings.Contains(err.Error(), LogPath(home)) {
-			t.Fatalf("Append() = %v, want an error naming the maximum ID and the log path", err)
-		}
+	if _, err = Append(home, "t", "p", "", "x"); err == nil || !strings.Contains(err.Error(), "18446744073709551615") || !strings.Contains(err.Error(), LogPath(home)) {
+		t.Fatalf("Append() = %v, want an error naming the maximum ID and the log path", err)
 	}
 	after, _ := os.ReadFile(LogPath(home))
 	if string(after) != string(before) {
 		t.Fatalf("log changed on refusal: %q -> %q", before, after)
-	}
-	if _, err := os.Stat(highWaterPath(home)); !os.IsNotExist(err) {
-		t.Fatalf("refusal wrote the high-water sidecar: %v", err)
 	}
 
 	below := t.TempDir()

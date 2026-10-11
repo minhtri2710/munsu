@@ -483,14 +483,11 @@ func MaterialReportExists(homeDir, taskID string) (bool, error) {
 	defer f.Close()
 
 	var lastLine string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
+	if err := home.EachLine(f, func(line string) {
+		if line = strings.TrimSpace(line); line != "" {
 			lastLine = line
 		}
-	}
-	if err := scanner.Err(); err != nil {
+	}); err != nil {
 		return false, fmt.Errorf("scanning status file %s: %w", statusPath, err)
 	}
 	if lastLine == "" {
