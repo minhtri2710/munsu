@@ -104,10 +104,15 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		return err
 	}
 
-	// Refuse to replace an existing unmanaged captain home (force would delete it).
-	if isUnmanagedCaptainHome(absHome) {
-		err = fmt.Errorf("path %s is an existing captain home that is not a managed worktree; it is unsupported and will not be replaced — remove it and reseed", absHome)
-		return
+	// Refuse to replace an existing captain home that is not a managed worktree
+	// (force would delete it). A home whose captain files cannot be read cannot be
+	// proven replaceable, so it is refused too: no lane runs this; isManagedWorktree
+	// stats the same entries first, so only a race or EIO reaches it.
+	if !managed {
+		if captain, capErr := home.IsCaptainHome(absHome); capErr != nil || captain {
+			err = fmt.Errorf("path %s is an existing captain home that is not a managed worktree; it is unsupported and will not be replaced — remove it and reseed", absHome)
+			return
+		}
 	}
 
 	// Remote validation: verify source repo remote matches parent remote.
@@ -273,26 +278,6 @@ func isManagedWorktree(homePath string) (bool, error) {
 	}
 
 	return true, nil
-}
-
-// isUnmanagedCaptainHome checks whether homePath is a captain home (home.IsCaptainHome:
-// the .munsu-captain-home marker, even a dangling one, or the .captain-provenance
-// file) that is not a git worktree (.git is not a file). A home whose captain
-// files cannot be read is treated as one: it cannot be proven replaceable.
-func isUnmanagedCaptainHome(homePath string) bool {
-	fi, err := os.Stat(homePath)
-	if err != nil || !fi.IsDir() {
-		return false
-	}
-	captain, err := home.IsCaptainHome(homePath)
-	if err != nil {
-		return true
-	}
-	if !captain {
-		return false
-	}
-	gitFi, gitErr := os.Stat(filepath.Join(homePath, ".git"))
-	return gitErr != nil || gitFi.IsDir()
 }
 
 // worktreeExcludeFileName is the excludes file munsu writes inside the

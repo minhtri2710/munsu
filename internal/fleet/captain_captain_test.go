@@ -2801,8 +2801,10 @@ func TestSeedFromWorktree_Idempotent(t *testing.T) {
 }
 
 // TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes: a home with either
-// captain file that is not a git worktree is never replaced, even with force;
-// a provenance-only home whose .git is a worktree file is still re-seedable.
+// captain file (a dangling marker counts) that is not a managed worktree (a .git
+// file and a .captain-provenance file) is never replaced, even with force, and
+// nothing in it is deleted; a provenance-only home whose .git is a worktree file
+// is still re-seedable.
 func TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes(t *testing.T) {
 	project := newWorktreeFixture(t)
 	for _, tc := range []struct {
@@ -2833,6 +2835,30 @@ func TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes(t *testing.T) {
 			wantErr: "is not a managed worktree",
 		},
 		{
+			name: "marker with a worktree .git file and no provenance file blocks",
+			prepare: func(t *testing.T, parent, homePath string) {
+				unsupportedCaptainHomeFixture(t, parent, "existing-sm")
+				if err := os.WriteFile(filepath.Join(homePath, ".git"), []byte("gitdir: /nonexistent\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			kept:    ".git",
+			wantErr: "is not a managed worktree",
+		},
+		{
+			name: "dangling marker blocks",
+			prepare: func(t *testing.T, _, homePath string) {
+				if err := os.MkdirAll(homePath, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(homePath, "missing-target"), filepath.Join(homePath, home.CaptainProvenanceMarkerName)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			kept:    home.CaptainProvenanceMarkerName,
+			wantErr: "is not a managed worktree",
+		},
+		{
 			name: "provenance file with a worktree .git file allows",
 			prepare: func(t *testing.T, parent, homePath string) {
 				if err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", false, ""); err != nil {
@@ -2852,6 +2878,10 @@ func TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes(t *testing.T) {
 			}
 			homePath := filepath.Join(parent, "captains", "existing-sm")
 			tc.prepare(t, parent, homePath)
+			sentinel := filepath.Join(homePath, "sentinel")
+			if err := os.WriteFile(sentinel, []byte("keep"), 0644); err != nil {
+				t.Fatal(err)
+			}
 
 			err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", true, "")
 			if tc.wantErr == "" {
@@ -2863,6 +2893,9 @@ func TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes(t *testing.T) {
 			}
 			if _, statErr := os.Lstat(filepath.Join(homePath, tc.kept)); statErr != nil {
 				t.Fatalf("%s: %v", tc.kept, statErr)
+			}
+			if _, statErr := os.Stat(sentinel); (tc.wantErr != "") != (statErr == nil) {
+				t.Fatalf("sentinel stat = %v, want it kept exactly when the seed was refused", statErr)
 			}
 		})
 	}

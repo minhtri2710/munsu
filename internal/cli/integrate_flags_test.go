@@ -63,7 +63,9 @@ func TestIntegrateWithoutHarnessUsesOnlyTheConfiguredOne(t *testing.T) {
 		{name: "install with none configured blocks", args: []string{"integrate", "install", "--dry-run"}, wantErr: "munsu config set soldier-harness"},
 		{name: "repair with none configured blocks", args: []string{"integrate", "repair", "--dry-run"}, wantErr: "munsu config set soldier-harness"},
 		{name: "status with none configured blocks", args: []string{"integrate", "status"}, wantErr: "munsu config set soldier-harness"},
-		{name: "status with soldier-harness configured allows", args: []string{"integrate", "status"}, configured: "pi", wantOut: "pi"},
+		{name: "install with soldier-harness configured allows", args: []string{"integrate", "install", "--dry-run"}, configured: "pi", wantOut: "harness: pi"},
+		{name: "repair with soldier-harness configured allows", args: []string{"integrate", "repair", "--dry-run"}, configured: "pi", wantOut: "harness: pi"},
+		{name: "status with soldier-harness configured allows", args: []string{"integrate", "status"}, configured: "pi", wantOut: "harness: pi"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()

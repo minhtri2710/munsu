@@ -179,7 +179,7 @@ export default function (pi: ExtensionAPI) {
     if (modeResult.code !== 0) return;
     if (modeResult.stdout.trim()) {
       const mode = parseContract<{ message: string }>(modeResult.stdout, "message");
-      if (!mode.ok || (mode.data.message !== "native" && mode.data.message !== "")) return;
+      if (!mode.ok || mode.data.message !== "native") return;
     }
     claimInFlight = true;
     try {
