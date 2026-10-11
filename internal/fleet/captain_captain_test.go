@@ -2800,22 +2800,71 @@ func TestSeedFromWorktree_Idempotent(t *testing.T) {
 	}
 }
 
-func TestSeedFromWorktree_RefusesUnmanagedCaptainHome(t *testing.T) {
-	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	homePath := unsupportedCaptainHomeFixture(t, parent, "existing-sm")
+// TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes: a home with either
+// captain file that is not a git worktree is never replaced, even with force;
+// a provenance-only home whose .git is a worktree file is still re-seedable.
+func TestSeedFromWorktree_ReplacesOnlyManagedCaptainHomes(t *testing.T) {
 	project := newWorktreeFixture(t)
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, parent, homePath string)
+		kept    string
+		wantErr string
+	}{
+		{
+			name: "marker without a worktree blocks",
+			prepare: func(t *testing.T, parent, _ string) {
+				unsupportedCaptainHomeFixture(t, parent, "existing-sm")
+			},
+			kept:    home.CaptainProvenanceMarkerName,
+			wantErr: "is not a managed worktree",
+		},
+		{
+			name: "provenance file with a regular .git directory blocks",
+			prepare: func(t *testing.T, _, homePath string) {
+				if err := os.MkdirAll(filepath.Join(homePath, ".git"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(homePath, home.CaptainProvenanceName), []byte("source-repo: elsewhere\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			kept:    home.CaptainProvenanceName,
+			wantErr: "is not a managed worktree",
+		},
+		{
+			name: "provenance file with a worktree .git file allows",
+			prepare: func(t *testing.T, parent, homePath string) {
+				if err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", false, ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(filepath.Join(homePath, home.CaptainProvenanceMarkerName)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			kept: home.CaptainProvenanceMarkerName,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			if _, err := home.Init(parent); err != nil {
+				t.Fatal(err)
+			}
+			homePath := filepath.Join(parent, "captains", "existing-sm")
+			tc.prepare(t, parent, homePath)
 
-	for _, force := range []bool{false, true} {
-		err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", force, "")
-		if err == nil || !strings.Contains(err.Error(), "is not a managed worktree") {
-			t.Fatalf("force=%v: err = %v, want unmanaged-home refusal", force, err)
-		}
-		if _, statErr := os.Stat(filepath.Join(homePath, home.CaptainProvenanceMarkerName)); statErr != nil {
-			t.Fatalf("force=%v: unmanaged home was modified: %v", force, statErr)
-		}
+			err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", true, "")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("forced re-seed of a worktree home: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+			if _, statErr := os.Lstat(filepath.Join(homePath, tc.kept)); statErr != nil {
+				t.Fatalf("%s: %v", tc.kept, statErr)
+			}
+		})
 	}
 }
 

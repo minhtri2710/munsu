@@ -167,8 +167,8 @@ var ErrNoSoldierHarnessInSnapshot = errors.New("no soldier harness identity reso
 // project snapshot only. It fails closed when the snapshot carries no soldier
 // harness identity, and rejects unknown harness names via ValidateHarness.
 // Snapshot-only: no flat-file lookup, no Detect, no env/PATH input.
-// Operations consume this function; Soldier remains the diagnostics/legacy
-// surface with its fallback chain.
+// Operations consume this function; Soldier serves the commands that read the
+// configured harness outside a project.
 func ResolveSoldierFromSnapshot(cfg config.ResolvedProjectConfig) (string, error) {
 	if cfg.SoldierHarness == "" {
 		return "", fmt.Errorf("%w: project %q", ErrNoSoldierHarnessInSnapshot, cfg.Project)
@@ -179,15 +179,13 @@ func ResolveSoldierFromSnapshot(cfg config.ResolvedProjectConfig) (string, error
 	return cfg.SoldierHarness, nil
 }
 
-// Soldier resolves the soldier harness following the legacy fallback chain
-// (diagnostics surface):
+// Soldier resolves the configured soldier harness:
 //
 //  1. Published snapshot (captain context)
 //  2. Fleet base document (general context)
-//  3. Detected harness from Detect()
 //
-// Operations resolve the soldier harness from the snapshot only via
-// ResolveSoldierFromSnapshot; Soldier remains for diagnostics.
+// It never guesses from the environment: with neither set it fails closed and
+// names the command that configures the harness.
 func Soldier(homeDir string) (string, error) {
 	// 1. Try published snapshot (captain context)
 	snapshot, err := config.LoadPublishedSnapshot(homeDir)
@@ -215,8 +213,7 @@ func Soldier(homeDir string) (string, error) {
 		return base.Config.SoldierHarness, nil
 	}
 
-	// 3. Fall back to detected harness
-	return Detect()
+	return "", fmt.Errorf("no soldier harness configured: run `munsu config set soldier-harness <name>`")
 }
 
 // CaptainProfile is the resolved captain launch profile: harness plus optional model/effort tokens.
@@ -263,8 +260,8 @@ var ErrNoCaptainHarnessInSnapshot = errors.New("no captain harness identity reso
 // project snapshot only. It fails closed when the snapshot carries no captain
 // harness identity, and rejects unknown harness names via ValidateHarness.
 // Snapshot-only: no flat-file lookup, no Detect, no env/PATH input.
-// Operations consume this function; Captain remains the diagnostics/legacy
-// surface with its fallback chain.
+// Operations consume this function; Captain serves the commands that read the
+// configured harness outside a project.
 func ResolveCaptainFromSnapshot(cfg config.ResolvedProjectConfig) (string, error) {
 	if cfg.CaptainProfile.Harness == "" {
 		return "", fmt.Errorf("%w: project %q", ErrNoCaptainHarnessInSnapshot, cfg.Project)
@@ -275,13 +272,14 @@ func ResolveCaptainFromSnapshot(cfg config.ResolvedProjectConfig) (string, error
 	return cfg.CaptainProfile.Harness, nil
 }
 
-// Captain resolves the general harness following:
+// Captain resolves the configured general harness:
 //
 //  1. base.CaptainProfile.Harness (config/base.json)
 //  2. base.Config.SoldierHarness (config/base.json)
-//  3. Detected harness from Detect()
 //
-// For model/effort tokens use CaptainProfileFromHome.
+// It never guesses from the environment: with neither set it fails closed and
+// names the command that configures the harness. For model/effort tokens use
+// CaptainProfileFromHome.
 func Captain(homeDir string) (string, error) {
 	prof, err := CaptainProfileFromHome(homeDir)
 	if err != nil {
@@ -290,13 +288,13 @@ func Captain(homeDir string) (string, error) {
 	if prof.Harness != "" {
 		return prof.Harness, nil
 	}
-	return Detect()
+	return "", fmt.Errorf("no captain harness configured: run `munsu config set captain-harness <name>`")
 }
 
 // CaptainProfileFromHome resolves harness + optional model/effort for captain
 // launch from the fleet base document (config/base.json), the single authoring
 // authority. It runs in the General home; a captain home without a base
-// document degrades to an empty profile (caller falls back to Detect), and a
+// document degrades to an empty profile (Captain then refuses), and a
 // malformed/invalid document fails closed.
 //
 // Precedence for harness:

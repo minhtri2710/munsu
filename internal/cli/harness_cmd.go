@@ -35,7 +35,7 @@ func newHarnessCmd() *cobra.Command {
 	soldierCmd := &cobra.Command{
 		Use:   "soldier",
 		Short: "Resolve soldier harness",
-		Long:  `Resolve the soldier harness. Fallback chain: published snapshot > fleet base document (config/base.json) > detected harness.`,
+		Long:  `Resolve the configured soldier harness: published snapshot, then fleet base document (config/base.json). Refuses when none is configured; set one with 'munsu config set soldier-harness <name>'. Unlike 'harness detect', it never guesses from the environment.`,
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			h, err := harness.Soldier(ctx.Home)
@@ -56,7 +56,7 @@ func newHarnessCmd() *cobra.Command {
 	captainCmd := &cobra.Command{
 		Use:   "captain",
 		Short: "Resolve captain harness",
-		Long:  `Resolve the general harness. Fallback chain: fleet base captain profile > fleet base soldier-harness > detected harness (all from config/base.json).`,
+		Long:  `Resolve the configured general harness: fleet base captain profile, then fleet base soldier-harness (both from config/base.json). Refuses when none is configured; set one with 'munsu config set captain-harness <name>'. Unlike 'harness detect', it never guesses from the environment.`,
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			h, err := harness.Captain(ctx.Home)

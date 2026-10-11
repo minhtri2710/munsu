@@ -36,7 +36,7 @@ func newIntegrateCmd() *cobra.Command {
 Integration is opt-in: no harness-level hooks or extensions are created
 during 'munsu init'. Use 'munsu integrate install --harness <name>' to
 install native hooks (Pi extensions, Claude hooks, etc.) for your
-detected or chosen agent harness.
+configured or chosen agent harness.
 
 Commands:
   install             Install integration artifacts for a harness
@@ -46,7 +46,7 @@ Commands:
   sessionstart-nudge  Print session-start instruction or stay silent (for Claude SessionStart hook)
 
 Flags:
-  --harness          Target harness (default: auto-detect)
+  --harness          Target harness (default: the configured soldier-harness)
   --scope            Installation scope: "user" (default) or "project"
   --dry-run          Report what would change without writing`,
 	}
@@ -60,15 +60,16 @@ Flags:
 Idempotent: repeated install with identical content is a no-op.
 Owned artifacts are marked; existing user content is backed up.
 
-Use --harness to specify the target harness. When omitted, the
-currently active harness is auto-detected.`,
+Use --harness to specify the target harness. When omitted, the configured
+soldier-harness is used; with none configured the command refuses (set one
+with 'munsu config set soldier-harness <name>').`,
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return runIntegrateInstall(cmd, ctx, flags)
 		}),
 	}
 	configureContractCommand(installCmd)
-	installCmd.Flags().StringVar(&flags.harness, "harness", "", "Target harness (default: auto-detect)")
+	installCmd.Flags().StringVar(&flags.harness, "harness", "", "Target harness (default: the configured soldier-harness)")
 	installCmd.Flags().StringVar(&flags.scope, "scope", "user", "Installation scope: user or project")
 	installCmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Report what would change without writing")
 
@@ -84,7 +85,7 @@ content by re-installing owned artifacts.`,
 		}),
 	}
 	configureContractCommand(repairCmd)
-	repairCmd.Flags().StringVar(&flags.harness, "harness", "", "Target harness (default: auto-detect)")
+	repairCmd.Flags().StringVar(&flags.harness, "harness", "", "Target harness (default: the configured soldier-harness)")
 	repairCmd.Flags().StringVar(&flags.scope, "scope", "user", "Installation scope: user or project")
 	repairCmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Report what would change without writing")
 
@@ -92,7 +93,7 @@ content by re-installing owned artifacts.`,
 		Use:   "status [harness]",
 		Short: "Show integration status for a harness",
 		Long: `Show whether integration artifacts are installed, healthy, drifted,
-or unsupported for the specified or auto-detected harness.
+or unsupported for the specified or configured soldier-harness.
 
 Reports the manifest version, installed-at timestamp, and current
 health state.`,
@@ -186,11 +187,11 @@ func runIntegrateInstall(cmd *cobra.Command, ctx Ctx, flags integrateFlags) erro
 
 	harnessName := flags.harness
 	if harnessName == "" {
-		detected, err := detectHarnessForIntegrate(ctx.Home)
+		configured, err := harness.Soldier(ctx.Home)
 		if err != nil {
-			return fmt.Errorf("auto-detect harness: %w (specify --harness)", err)
+			return fmt.Errorf("resolving harness: %w (or pass --harness)", err)
 		}
-		harnessName = detected
+		harnessName = configured
 	}
 
 	cwd, _ := os.Getwd()
@@ -221,11 +222,11 @@ func runIntegrateRepair(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 
 	harnessName := flags.harness
 	if harnessName == "" {
-		detected, err := detectHarnessForIntegrate(ctx.Home)
+		configured, err := harness.Soldier(ctx.Home)
 		if err != nil {
-			return fmt.Errorf("auto-detect harness: %w (specify --harness)", err)
+			return fmt.Errorf("resolving harness: %w (or pass --harness)", err)
 		}
-		harnessName = detected
+		harnessName = configured
 	}
 
 	cwd, _ := os.Getwd()
@@ -256,10 +257,11 @@ func runIntegrateStatus(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 
 	harnessName := flags.harness
 	if harnessName == "" {
-		detected, err := detectHarnessForIntegrate(ctx.Home)
-		if err == nil {
-			harnessName = detected
+		configured, err := harness.Soldier(ctx.Home)
+		if err != nil {
+			return fmt.Errorf("resolving harness: %w (or pass --harness)", err)
 		}
+		harnessName = configured
 	}
 
 	cwd, _ := os.Getwd()
@@ -281,10 +283,6 @@ func runIntegrateStatus(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 			Drifted:     result.Drifted,
 		},
 	})
-}
-
-func detectHarnessForIntegrate(homeDir string) (string, error) {
-	return harness.Soldier(homeDir)
 }
 
 type integrateResultData struct {

@@ -275,16 +275,20 @@ func isManagedWorktree(homePath string) (bool, error) {
 	return true, nil
 }
 
-// isUnmanagedCaptainHome checks whether homePath is an existing captain home
-// without a git worktree.
+// isUnmanagedCaptainHome checks whether homePath is a captain home (home.IsCaptainHome:
+// the .munsu-captain-home marker, even a dangling one, or the .captain-provenance
+// file) that is not a git worktree (.git is not a file). A home whose captain
+// files cannot be read is treated as one: it cannot be proven replaceable.
 func isUnmanagedCaptainHome(homePath string) bool {
 	fi, err := os.Stat(homePath)
 	if err != nil || !fi.IsDir() {
 		return false
 	}
-	// Has .munsu-captain-home marker but no .git worktree file.
-	_, markerErr := os.Stat(filepath.Join(homePath, home.CaptainProvenanceMarkerName))
-	if markerErr != nil {
+	captain, err := home.IsCaptainHome(homePath)
+	if err != nil {
+		return true
+	}
+	if !captain {
 		return false
 	}
 	gitFi, gitErr := os.Stat(filepath.Join(homePath, ".git"))

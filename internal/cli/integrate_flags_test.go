@@ -1,6 +1,12 @@
 package cli
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
+)
 
 // TestIntegrateSubcommandFlagsRegistered is a regression guard for a bug where
 // `munsu integrate install --harness <X>` (and repair) failed with "unknown
@@ -40,5 +46,52 @@ func TestIntegrateSubcommandFlagsRegistered(t *testing.T) {
 	}
 	if st.Flags().Lookup("scope") == nil {
 		t.Error("integrate status must register --scope")
+	}
+}
+
+// TestIntegrateWithoutHarnessUsesOnlyTheConfiguredOne: without --harness every
+// integrate subcommand uses the configured soldier-harness and refuses when
+// none is configured, even where the environment names a harness.
+func TestIntegrateWithoutHarnessUsesOnlyTheConfiguredOne(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		configured string
+		wantErr    string
+		wantOut    string
+	}{
+		{name: "install with none configured blocks", args: []string{"integrate", "install", "--dry-run"}, wantErr: "munsu config set soldier-harness"},
+		{name: "repair with none configured blocks", args: []string{"integrate", "repair", "--dry-run"}, wantErr: "munsu config set soldier-harness"},
+		{name: "status with none configured blocks", args: []string{"integrate", "status"}, wantErr: "munsu config set soldier-harness"},
+		{name: "status with soldier-harness configured allows", args: []string{"integrate", "status"}, configured: "pi", wantOut: "pi"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", homeDir)
+			t.Setenv("CLAUDECODE", "1")
+			if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
+				SchemaVersion: config.FleetBaseSchemaVersion,
+				Config:        config.FleetBaseConfig{SoldierHarness: tc.configured},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs(tc.args)
+			err := root.Execute()
+			out := buf.String()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("%v = (%q, %v), want error containing %q", tc.args, out, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(out, tc.wantOut) {
+				t.Fatalf("%v = (%q, %v), want output containing %q", tc.args, out, err, tc.wantOut)
+			}
+		})
 	}
 }

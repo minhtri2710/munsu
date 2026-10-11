@@ -176,6 +176,9 @@ class MockAPI {
 
   wakeKey: string = "test-wake";
 
+  // config get wake-delivery-mode: an unset key exits 0 with no output.
+  configGet: { code: number; stdout: string; stderr: string } = { code: 0, stdout: "", stderr: "" };
+
   exec(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
     this.execCalls.push({ bin, args });
 
@@ -216,7 +219,7 @@ class MockAPI {
     }
 
     if (args[0] === "config" && args[1] === "get") {
-      return Promise.resolve({ code: 1, stdout: "", stderr: "unset" });
+      return Promise.resolve(this.configGet);
     }
 
     // wake claim: return proper contract envelope
@@ -462,6 +465,17 @@ await mock.fire("agent_end", {}, { ...mockCtx, isIdle: () => true });
 if (mock.userMessages.length > 0) {
   throw new Error("agent_end must not set off wake claim — agent_settled is required");
 }
+
+// --- Test 9: a failed wake-delivery-mode read never claims; an unset one does ---
+const claimCount = () => mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "claim").length;
+mock.userMessages = [];
+const claimsBeforeModeRead = claimCount();
+mock.configGet = { code: 1, stdout: "", stderr: "unreadable" };
+await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+if (claimCount() !== claimsBeforeModeRead) throw new Error("agent_settled must not claim when wake-delivery-mode cannot be read");
+mock.configGet = { code: 0, stdout: "", stderr: "" };
+await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+if (claimCount() !== claimsBeforeModeRead + 1) throw new Error("agent_settled must claim when wake-delivery-mode is unset");
 
 // All tests passed!
 console.log("ALL TESTS PASSED");
