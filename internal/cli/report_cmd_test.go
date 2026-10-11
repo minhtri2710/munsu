@@ -116,11 +116,13 @@ func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
 		addArgs []string
 		meta    map[string]string
 		corrupt bool
+		noTask  bool
 		want    string
 	}{
-		{"canonical ship is refused with no meta kind", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, shipRefusal},
-		{"unreadable canonical record is refused", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "scout"}, true, readRefusal},
-		{"canonical scout passes although meta claims ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false, ""},
+		{"canonical ship is refused with no meta kind", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, false, shipRefusal},
+		{"unreadable canonical record is refused", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "scout"}, true, false, readRefusal},
+		{"canonical scout passes although meta claims ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false, false, ""},
+		{"task with no canonical record and no meta is allowed", nil, nil, false, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -129,11 +131,13 @@ func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
 			t.Setenv("MUNSU_TASK_ID", "res-1")
 			t.Setenv("MUNSU_ROLE", "soldier")
 			t.Setenv("MUNSU_PARENT_STATUS", homeDir)
-			if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--home", homeDir}, tc.addArgs...)); err != nil {
-				t.Fatalf("task add: %v\n%s", err, out)
-			}
-			if err := home.WriteMeta(homeDir, "res-1", tc.meta); err != nil {
-				t.Fatal(err)
+			if !tc.noTask {
+				if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--home", homeDir}, tc.addArgs...)); err != nil {
+					t.Fatalf("task add: %v\n%s", err, out)
+				}
+				if err := home.WriteMeta(homeDir, "res-1", tc.meta); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.corrupt {
 				current := filepath.Join(homeDir, "state", "task-authority", "tasks", "res-1", "current.json")
@@ -148,6 +152,15 @@ func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
 				got := err != nil && strings.Contains(err.Error(), refusal)
 				if got != (refusal == tc.want) {
 					t.Fatalf("report resolved err = %v, refusal %q seen=%v, want only %q", err, refusal, got, tc.want)
+				}
+			}
+			if tc.noTask {
+				if err != nil {
+					t.Fatalf("report resolved for a task with no canonical record: %v", err)
+				}
+				lines, statusErr := home.ReadStatus(homeDir, "res-1")
+				if statusErr != nil || len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "resolved") || !strings.Contains(lines[len(lines)-1], "done with it") {
+					t.Fatalf("status lines = %q (%v), want a resolved line ending the file", lines, statusErr)
 				}
 			}
 		})
