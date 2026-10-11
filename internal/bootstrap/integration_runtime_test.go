@@ -176,6 +176,9 @@ class MockAPI {
 
   wakeKey: string = "test-wake";
 
+  // config get wake-delivery-mode: an unset key exits 0 with no output.
+  configGet: { code: number; stdout: string; stderr: string } = { code: 0, stdout: "", stderr: "" };
+
   exec(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
     this.execCalls.push({ bin, args });
 
@@ -216,7 +219,7 @@ class MockAPI {
     }
 
     if (args[0] === "config" && args[1] === "get") {
-      return Promise.resolve({ code: 1, stdout: "", stderr: "unset" });
+      return Promise.resolve(this.configGet);
     }
 
     // wake claim: return proper contract envelope
@@ -461,6 +464,34 @@ mock.userMessages = [];
 await mock.fire("agent_end", {}, { ...mockCtx, isIdle: () => true });
 if (mock.userMessages.length > 0) {
   throw new Error("agent_end must not set off wake claim — agent_settled is required");
+}
+
+// --- Test 9: wake-delivery-mode gates the claim: only native or unset claims ---
+mock.wakeKey = "test-wake";
+const claimCount = () => mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "claim").length;
+const modeEnvelope = (message: string) => JSON.stringify({
+  schema_version: "munsu.orchestration/v1",
+  kind: "message",
+  status: "success",
+  data: { message },
+});
+const modeRows: Array<{ name: string; result: { code: number; stdout: string; stderr: string }; claims: boolean }> = [
+  { name: "unreadable (nonzero exit)", result: { code: 1, stdout: "", stderr: "unreadable" }, claims: false },
+  { name: "set to empty", result: { code: 0, stdout: modeEnvelope(""), stderr: "" }, claims: false },
+  { name: "set to herdr", result: { code: 0, stdout: modeEnvelope("herdr"), stderr: "" }, claims: false },
+  { name: "set to manual", result: { code: 0, stdout: modeEnvelope("manual"), stderr: "" }, claims: false },
+  { name: "unparsable output", result: { code: 0, stdout: "not json", stderr: "" }, claims: false },
+  { name: "unset (no output)", result: { code: 0, stdout: "", stderr: "" }, claims: true },
+  { name: "set to native", result: { code: 0, stdout: modeEnvelope("native"), stderr: "" }, claims: true },
+];
+for (const row of modeRows) {
+  mock.userMessages = [];
+  const claimsBefore = claimCount();
+  mock.configGet = row.result;
+  await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+  const claimed = claimCount() - claimsBefore;
+  if (claimed !== (row.claims ? 1 : 0)) throw new Error("wake-delivery-mode " + row.name + ": claims=" + claimed + ", want " + (row.claims ? 1 : 0));
+  if (row.claims) await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
 }
 
 // All tests passed!

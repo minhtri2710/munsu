@@ -293,17 +293,57 @@ func writeBase(t *testing.T, home string, doc config.FleetBaseDocument) {
 	}
 }
 
-func TestSoldier_NoConfig(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("CLAUDECODE", "1")
+// TestResolveRefusesWithoutAConfiguredHarness: Soldier and Captain use only the
+// configured harness; an environment that Detect would recognise never stands in.
+func TestResolveRefusesWithoutAConfiguredHarness(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		resolve func(string) (string, error)
+		base    config.FleetBaseDocument
+		want    string
+		wantErr string
+	}{
+		{
+			name:    "soldier with none configured blocks",
+			resolve: Soldier,
+			wantErr: "munsu config set soldier-harness",
+		},
+		{
+			name:    "soldier with soldier-harness configured allows",
+			resolve: Soldier,
+			base:    config.FleetBaseDocument{Config: config.FleetBaseConfig{SoldierHarness: Codex}},
+			want:    Codex,
+		},
+		{
+			name:    "captain with none configured blocks",
+			resolve: Captain,
+			wantErr: "munsu config set captain-harness",
+		},
+		{
+			name:    "captain with captain-harness configured allows",
+			resolve: Captain,
+			base:    config.FleetBaseDocument{CaptainProfile: config.CaptainProfile{Harness: Grok}},
+			want:    Grok,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnvMarkers(t)
+			t.Setenv("CLAUDECODE", "1")
+			home := t.TempDir()
+			tc.base.SchemaVersion = config.FleetBaseSchemaVersion
+			writeBase(t, home, tc.base)
 
-	// No config files at all — falls back to detected harness
-	h, err := Soldier(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h == "" {
-		t.Error("Soldier() returned empty, expected a harness from detect")
+			got, err := tc.resolve(home)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolve = (%q, %v), want error containing %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("resolve = (%q, %v), want %q", got, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -342,19 +382,6 @@ func TestCaptain_FallsBackToSoldierHarness(t *testing.T) {
 	}
 }
 
-func TestCaptain_NoConfig(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("CLAUDECODE", "1")
-
-	h, err := Captain(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h == "" {
-		t.Error("Captain() returned empty, expected a harness from detect")
-	}
-}
-
 func TestDispatchDefaultHarness(t *testing.T) {
 	cfg := &DispatchConfig{
 		DefaultHarness: "pi",
@@ -367,27 +394,6 @@ func TestDispatchDefaultHarness(t *testing.T) {
 	}
 	if len(cfg.Profiles) == 0 {
 		t.Fatal("expected at least one profile")
-	}
-}
-
-func TestCaptain_UnsetProfileFallsToDetect(t *testing.T) {
-	tmp := t.TempDir()
-
-	// Empty captain profile and empty soldier harness — both unset, so the
-	// resolver falls through to Detect.
-	writeBase(t, tmp, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion})
-
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT", "AGY_CONVERSATION_ID", "ANTIGRAVITY_AGENT", "ANTIGRAVITY_CLI", "ANTIGRAVITY_LS_ADDRESS"} {
-		t.Setenv(env, "")
-	}
-	t.Setenv("CLAUDECODE", "1")
-
-	h, err := Captain(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h != Claude {
-		t.Errorf("Captain() = %q, want %q (unset profile should fall through to Detect)", h, Claude)
 	}
 }
 
