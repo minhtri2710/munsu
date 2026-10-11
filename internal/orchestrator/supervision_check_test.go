@@ -19,15 +19,6 @@ import (
 // rule. Whether an artifact is a runnable script is pinned where that rule
 // lives (fleet.ValidateCheckWithLstat) and where the loop applies it, not here.
 
-func TestAcceptOrRefuseStale_Valid(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "task-1.check")
-	writeExecScript(t, path, "#!/bin/bash\necho poll\n")
-	if err := AcceptOrRefuseStale(path); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 // An artifact the check-validation rule rejects never reaches this function,
 // so it has no verdict to give on one. Pinning that keeps the boundary
 // explicit: if a shape like this ever arrives here, the caller stopped
@@ -51,52 +42,55 @@ func TestAcceptOrRefuseStale_JudgesOnlyStaleness(t *testing.T) {
 	}
 }
 
-func TestAcceptOrRefuseStale_MissingFile(t *testing.T) {
-	if err := AcceptOrRefuseStale(filepath.Join(t.TempDir(), "gone.check")); err == nil {
-		t.Fatal("expected error for a check that cannot be stat'd")
-	}
-}
-
-func TestAcceptOrRefuseStale_MetaNewer(t *testing.T) {
-	dir := t.TempDir()
-	checkPath := filepath.Join(dir, "task-1.check")
-	writeExecScript(t, checkPath, "#!/bin/bash\necho poll\n")
-
-	// Write a .meta file with newer modification time
-	metaPath := filepath.Join(dir, "task-1.meta")
-	if err := os.WriteFile(metaPath, []byte("kind=ship\npr_url=...\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// Set meta modification time to be after check
-	checkFI, _ := os.Stat(checkPath)
-	future := checkFI.ModTime().Add(time.Hour)
-	os.Chtimes(metaPath, future, future)
-
-	if err := AcceptOrRefuseStale(checkPath); err == nil {
-		t.Fatal("expected error for stale check (meta newer)")
-	}
-	if _, statErr := os.Stat(checkPath); os.IsNotExist(statErr) {
-		t.Error("expected stale check to remain for inspection")
-	}
-}
-
-func TestAcceptOrRefuseStale_NotStale(t *testing.T) {
-	dir := t.TempDir()
-
-	// Write meta BEFORE check so check mod time is newer
-	metaPath := filepath.Join(dir, "task-2.meta")
-	if err := os.WriteFile(metaPath, []byte("kind=ship\npr_url=...\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Sleep briefly so check mod time is definitely after meta
-	time.Sleep(10 * time.Millisecond)
-
-	checkPath := filepath.Join(dir, "task-2.check")
-	writeExecScript(t, checkPath, "#!/bin/bash\necho poll\n")
-
-	if err := AcceptOrRefuseStale(checkPath); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestAcceptOrRefuseStale(t *testing.T) {
+	base := time.Now().Add(-time.Hour)
+	for _, tc := range []struct {
+		name       string
+		noCheck    bool
+		hasMeta    bool
+		metaOffset time.Duration // meta mtime relative to the check
+		wantErr    string
+	}{
+		{name: "check that cannot be stat'd", noCheck: true, wantErr: "cannot stat check"},
+		{name: "meta newer than the check", hasMeta: true, metaOffset: time.Hour, wantErr: "refused stale check (meta newer)"},
+		{name: "meta older than the check", hasMeta: true, metaOffset: -time.Hour},
+		{name: "no companion meta"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			checkPath := filepath.Join(dir, "task-1.check")
+			if !tc.noCheck {
+				writeExecScript(t, checkPath, "#!/bin/bash\necho poll\n")
+				if err := os.Chtimes(checkPath, base, base); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.hasMeta {
+				metaPath := filepath.Join(dir, "task-1.meta")
+				if err := os.WriteFile(metaPath, []byte("kind=ship\npr_url=...\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				at := base.Add(tc.metaOffset)
+				if err := os.Chtimes(metaPath, at, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := AcceptOrRefuseStale(checkPath)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("AcceptOrRefuseStale = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("AcceptOrRefuseStale = %v, want %q", err, tc.wantErr)
+			}
+			if !tc.noCheck {
+				if _, statErr := os.Stat(checkPath); statErr != nil {
+					t.Errorf("a refused check must remain for inspection: %v", statErr)
+				}
+			}
+		})
 	}
 }
 

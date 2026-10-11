@@ -22,26 +22,26 @@ func TestSupersededRefCannotBeReceivedOrAcked(t *testing.T) {
 		t.Fatal(err)
 	}
 	soldierIdentity := home.ReceiverIDForTask("task:1")
-	first, err := Report(ReportRequest{SenderHome: senderHome, ReceiverHome: receiverHome, SenderRank: RankSoldier, SenderIdentity: soldierIdentity, ReceiverRank: RankCaptain, ReceiverID: "captain-one", TaskID: "task:1", Key: "phase", State: "blocked", Message: "waiting"})
+	first, err := Report(ReportRequest{SenderHome: senderHome, ReceiverHome: receiverHome, SenderRank: home.RankSoldier, SenderIdentity: soldierIdentity, ReceiverRank: home.RankCaptain, ReceiverID: "captain-one", TaskID: "task:1", Key: "phase", State: "blocked", Message: "waiting"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Report(ReportRequest{SenderHome: senderHome, ReceiverHome: receiverHome, SenderRank: RankSoldier, SenderIdentity: soldierIdentity, ReceiverRank: RankCaptain, ReceiverID: "captain-one", TaskID: "task:1", Key: "phase", State: "done", Message: "complete"})
+	second, err := Report(ReportRequest{SenderHome: senderHome, ReceiverHome: receiverHome, SenderRank: home.RankSoldier, SenderIdentity: soldierIdentity, ReceiverRank: home.RankCaptain, ReceiverID: "captain-one", TaskID: "task:1", Key: "phase", State: "done", Message: "complete"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := NewReceiver(receiverHome)
+	receiver, err := home.NewReceiver(receiverHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldRef := NotificationRef{MessageID: first.MessageID, SenderIdentity: soldierIdentity}
+	oldRef := home.NotificationRef{MessageID: first.MessageID, SenderIdentity: soldierIdentity}
 	if _, err := receiver.Receive(oldRef); err == nil {
 		t.Fatal("old ref receive should fail")
 	}
 	if _, err := receiver.Ack(oldRef); err == nil {
 		t.Fatal("old ref ack should fail")
 	}
-	newRef := NotificationRef{MessageID: second.MessageID, SenderIdentity: soldierIdentity}
+	newRef := home.NotificationRef{MessageID: second.MessageID, SenderIdentity: soldierIdentity}
 	if _, err := receiver.Receive(newRef); err != nil {
 		t.Fatal(err)
 	}

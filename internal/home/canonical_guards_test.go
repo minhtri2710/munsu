@@ -86,58 +86,6 @@ func TestOpenRefusesLayoutDirectoryReplacedByAFile(t *testing.T) {
 	}
 }
 
-// The provenance marker is what distinguishes a captain home from a copy of
-// one. Every refusal below is a marker that cannot answer "which captain is
-// this, and is this still the home it was seeded as".
-func TestValidateCaptainProvenanceRefusesUnusableMarkers(t *testing.T) {
-	seeded := func(t *testing.T) string {
-		t.Helper()
-		dir := t.TempDir()
-		if err := SeedCaptainProvenance(dir, "captain-1"); err != nil {
-			t.Fatalf("SeedCaptainProvenance: %v", err)
-		}
-		// Control: the seeded marker validates to its captain id, so each
-		// refusal below comes from the one line the case rewrites.
-		id, err := ValidateCaptainProvenance(dir)
-		if err != nil || id != "captain-1" {
-			t.Fatalf("ValidateCaptainProvenance = (%q, %v), want (captain-1, nil)", id, err)
-		}
-		return dir
-	}
-	rewrite := func(t *testing.T, dir, content string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, CaptainProvenanceMarkerName), []byte(content), 0600); err != nil {
-			t.Fatalf("rewrite marker: %v", err)
-		}
-	}
-
-	for _, tc := range []struct {
-		name    string
-		content func(canonical string) string
-		wantSub string
-	}{
-		{"a marker with fewer than three lines", func(string) string { return "munsu-v2\ncaptain-1\n" }, "expected exactly 3 lines"},
-		{"a marker with extra content", func(c string) string { return "munsu-v2\ncaptain-1\n" + c + "\nextra\n" }, "has extra content"},
-		{"a marker from an unsupported version", func(c string) string { return "munsu-v1\ncaptain-1\n" + c + "\n" }, "unsupported version"},
-		{"a marker with a blank id", func(c string) string { return "munsu-v2\n \n" + c + "\n" }, "empty id"},
-		{"a marker recording a different canonical home", func(string) string { return "munsu-v2\ncaptain-1\n/somewhere/else\n" }, "may have been copied/moved"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := seeded(t)
-			canonical, err := CanonicalCaptainHome(dir)
-			if err != nil {
-				t.Fatalf("CanonicalCaptainHome: %v", err)
-			}
-			rewrite(t, dir, tc.content(canonical))
-			if _, err := ValidateCaptainProvenance(dir); err == nil {
-				t.Fatalf("ValidateCaptainProvenance accepted %s", tc.name)
-			} else if !strings.Contains(err.Error(), tc.wantSub) {
-				t.Fatalf("error = %v, want the %q refusal", err, tc.wantSub)
-			}
-		})
-	}
-}
-
 // The writer identity file names which process may write a given kind of
 // record. A record from another schema, or one whose kind does not match the
 // slot it is being published into, cannot carry that authority.

@@ -30,7 +30,7 @@ func RecoveryMarkerPath(receiverHome, messageID string) string {
 // RecoverInbox attempts one recovery delivery for a single pending envelope.
 // It checks if the envelope was already acked and skips if so.
 // It writes a fingerprint marker on completion to prevent repeated retries.
-func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelope) *RecoveryAttempt {
+func RecoverInboxWithSender(sender home.BoundSender, receiverHome string, env *home.Envelope) *RecoveryAttempt {
 	ra := &RecoveryAttempt{
 		MessageID: env.MessageID,
 	}
@@ -47,7 +47,7 @@ func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelo
 		return ra
 	}
 
-	store := NewStore(receiverHome)
+	store := home.NewStore(receiverHome)
 	if store.IsAcked(env.SenderIdentity, env.MessageID) {
 		ra.AlreadyAck = true
 		os.WriteFile(markerPath, []byte("acked\n"), 0644)
@@ -93,11 +93,11 @@ func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelo
 // RecoverAllInboxes scans the given home for all pending inbox envelopes
 // from all senders and attempts recovery delivery for each.
 // This is the entry point for watcher startup recovery.
-func RecoverAllInboxesWithSender(sender BoundSender, receiverHome string) ([]*RecoveryAttempt, error) {
+func RecoverAllInboxesWithSender(sender home.BoundSender, receiverHome string) ([]*RecoveryAttempt, error) {
 	return recoverAllInboxesWithFS(sender, receiverHome, os.Stat, os.ReadDir)
 }
 
-func recoverAllInboxesWithFS(sender BoundSender, receiverHome string, stat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error)) ([]*RecoveryAttempt, error) {
+func recoverAllInboxesWithFS(sender home.BoundSender, receiverHome string, stat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error)) ([]*RecoveryAttempt, error) {
 	// Recovery validates state and inbox roots, then stops at state: the home
 	// itself is internal/home's contract to validate, where the guard at
 	// internal/home/canonical.go:346 is still gated on os.IsNotExist (#707's
@@ -115,7 +115,7 @@ func recoverAllInboxesWithFS(sender BoundSender, receiverHome string, stat func(
 		return nil, fmt.Errorf("reading inbox root: %s is not a directory", stateRoot)
 	}
 
-	inboxRoot := filepath.Join(stateRoot, InboxDir)
+	inboxRoot := filepath.Join(stateRoot, home.InboxDir)
 	info, err := stat(inboxRoot)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -138,7 +138,7 @@ func recoverAllInboxesWithFS(sender BoundSender, receiverHome string, stat func(
 			continue
 		}
 		senderIdentity := entry.Name()
-		envs, listErr := NewStore(receiverHome).ListInbox(senderIdentity)
+		envs, listErr := home.NewStore(receiverHome).ListInbox(senderIdentity)
 		if listErr != nil || len(envs) == 0 {
 			continue
 		}

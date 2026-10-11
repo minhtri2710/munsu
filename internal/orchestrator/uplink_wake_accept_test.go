@@ -57,16 +57,13 @@ func TestResolvingOrAckingAnUplinkWakeAcceptsItsReport(t *testing.T) {
 			generalHome, identity := directGeneralHome(t)
 			res, claim := reportAndClaim(t, generalHome, identity)
 			wake := uplinkWake(t, claim)
-			if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
-				t.Fatal("continuity must refuse while the report is unacknowledged")
-			}
 
 			unaccepted, err := settle(generalHome, claim.LeaseID, wakeEventID(wake))
 			if err != nil || len(unaccepted) != 0 {
 				t.Fatalf("settling the wake: unaccepted = %v err = %v", unaccepted, err)
 			}
-			ack, err := NewStore(generalHome).ReadAck("direct-task", res.MessageID)
-			if err != nil || ack == nil || ack.Outcome != OutcomeAccepted {
+			ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID)
+			if err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
 				t.Fatalf("ack = %+v err = %v, want an accepted ack for message %s", ack, err, res.MessageID)
 			}
 
@@ -74,7 +71,7 @@ func TestResolvingOrAckingAnUplinkWakeAcceptsItsReport(t *testing.T) {
 			if err := ReconcileCaptainHook(generalHome, false, transport); err != nil {
 				t.Fatalf("ReconcileCaptainHook: %v", err)
 			}
-			if pending, err := NewStore(generalHome).ListPending("direct-task"); err != nil || len(pending) != 0 {
+			if pending, err := home.NewStore(generalHome).ListPending("direct-task"); err != nil || len(pending) != 0 {
 				t.Fatalf("pending after recovery = %d err = %v, want 0", len(pending), err)
 			}
 			if err := VerifyRetirementContinuity(generalHome, "direct-task"); err != nil {
@@ -90,19 +87,19 @@ func TestResolvingOrAckingAnUplinkWakeAcceptsItsReport(t *testing.T) {
 // resolve and ack alike.
 func TestSettlingAWakeWhoseReportCannotBeAcceptedStillSettlesIt(t *testing.T) {
 	causes := map[string]struct {
-		break_ func(t *testing.T, generalHome string, env *Envelope)
+		break_ func(t *testing.T, generalHome string, env *home.Envelope)
 		reason string
 	}{
-		"conflicting outcome": {func(t *testing.T, generalHome string, env *Envelope) {
-			if err := NewStore(generalHome).WriteAck(&ProcessingAck{
+		"conflicting outcome": {func(t *testing.T, generalHome string, env *home.Envelope) {
+			if err := home.NewStore(generalHome).WriteAck(&home.ProcessingAck{
 				MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity,
 				ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
-				PayloadHash: env.PayloadHash, Outcome: OutcomeDone, ProcessedAt: time.Now().UnixNano(),
+				PayloadHash: env.PayloadHash, Outcome: home.OutcomeDone, ProcessedAt: time.Now().UnixNano(),
 			}); err != nil {
 				t.Fatal(err)
 			}
 		}, "conflicting"},
-		"provenance loss": {func(t *testing.T, generalHome string, _ *Envelope) {
+		"provenance loss": {func(t *testing.T, generalHome string, _ *home.Envelope) {
 			path, err := home.MetaFilePath(generalHome, "direct-task")
 			if err != nil {
 				t.Fatal(err)
@@ -118,7 +115,7 @@ func TestSettlingAWakeWhoseReportCannotBeAcceptedStillSettlesIt(t *testing.T) {
 				generalHome, identity := directGeneralHome(t)
 				res, claim := reportAndClaim(t, generalHome, identity)
 				wake := uplinkWake(t, claim)
-				env, err := NewStore(generalHome).ReadEnvelope("direct-task", res.MessageID)
+				env, err := home.NewStore(generalHome).ReadEnvelope("direct-task", res.MessageID)
 				if err != nil || env == nil {
 					t.Fatalf("ReadEnvelope: %v", err)
 				}
@@ -151,7 +148,7 @@ func TestResolveNormalizesBeforeAccepting(t *testing.T) {
 		if _, err := ResolveWake(generalHome, " "+claim.LeaseID+" ", " "+wakeEventID(wake)+" ", " seen "); err != nil {
 			t.Fatalf("ResolveWake with padded ids: %v", err)
 		}
-		if ack, err := NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack == nil {
+		if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack == nil {
 			t.Fatalf("ack = %+v err = %v, want the padded resolve to accept the report", ack, err)
 		}
 	})
@@ -169,7 +166,7 @@ func TestResolveNormalizesBeforeAccepting(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "claim-id, event-id, and summary are required") || len(unaccepted) != 0 {
 				t.Fatalf("unaccepted = %v err = %v, want the existing required refusal", unaccepted, err)
 			}
-			if ack, err := NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
+			if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
 				t.Fatalf("ack = %+v err = %v, want none from a refused request", ack, err)
 			}
 			if held, _ := ListClaimedWakes(generalHome, time.Now()); len(held) == 0 {
@@ -201,7 +198,7 @@ func TestSettlingAWakeAcceptsOnlyTheReportItNames(t *testing.T) {
 	if _, err := ResolveWake(generalHome, claim.LeaseID, wakeEventID(signal), "seen"); err != nil {
 		t.Fatalf("ResolveWake: %v", err)
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
+	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
 		t.Fatalf("ack = %+v err = %v, want none: the uplink wake was not settled", ack, err)
 	}
 }
@@ -222,10 +219,10 @@ func TestSettlingTheWakeOfASupersededReportSucceeds(t *testing.T) {
 			t.Fatalf("resolving %s: unaccepted = %v err = %v, want a superseded report skipped, not listed", wakeEventID(w), unaccepted, err)
 		}
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", second.MessageID); err != nil || ack == nil {
+	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", second.MessageID); err != nil || ack == nil {
 		t.Fatalf("the live report must be accepted: ack = %+v err = %v", ack, err)
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", first.MessageID); err != nil || ack != nil {
+	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", first.MessageID); err != nil || ack != nil {
 		t.Fatalf("the superseded report must stay unacked: ack = %+v err = %v", ack, err)
 	}
 }

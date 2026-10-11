@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -11,14 +12,14 @@ func TestResolveWakeDeliveryMode(t *testing.T) {
 		name, value string
 		unreadable  bool
 		want        WakeDeliveryMode
-		wantErr     bool
+		wantErr     string
 	}{
 		{name: "unset", want: WakeDeliveryNative},
 		{name: "native", value: "native", want: WakeDeliveryNative},
 		{name: "herdr", value: "herdr", want: WakeDeliveryHerdr},
 		{name: "manual", value: "manual", want: WakeDeliveryManual},
-		{name: "invalid", value: "other", wantErr: true},
-		{name: "unreadable", unreadable: true, wantErr: true},
+		{name: "invalid", value: "other", wantErr: "unsupported wake-delivery-mode"},
+		{name: "unreadable", unreadable: true, wantErr: "reading config file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -36,8 +37,14 @@ func TestResolveWakeDeliveryMode(t *testing.T) {
 				}
 			}
 			got, err := ResolveWakeDeliveryMode(home)
-			if (err != nil) != tc.wantErr || got != tc.want {
-				t.Fatalf("mode=%q err=%v", got, err)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("mode=%q err=%v, want %q", got, err, tc.want)
 			}
 		})
 	}

@@ -8,105 +8,119 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func TestReconciledOrphanWorktreeRefusesEmptyProviderPath(t *testing.T) {
-	_, err := reconciledOrphanWorktree("/some/worktree", []backend.WorktreeEntry{{Path: ""}})
-	if err == nil || !strings.Contains(err.Error(), "provider status contains an empty worktree path; refusing return") {
-		t.Fatalf("reconciledOrphanWorktree error = %v, want empty provider path refusal", err)
+func TestWorktreeOwnershipGuards(t *testing.T) {
+	const path = "/some/worktree"
+	artifactWorktree := func(t *testing.T, name string) string {
+		worktree := t.TempDir()
+		if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		artifact := filepath.Join(worktree, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(artifact, []byte("held\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return worktree
 	}
-}
-
-func TestReconciledOrphanWorktreeRefusesDuplicateListing(t *testing.T) {
-	path := "/some/worktree"
-	_, err := reconciledOrphanWorktree(path, []backend.WorktreeEntry{{Path: path}, {Path: path}})
-	if err == nil || !strings.Contains(err.Error(), "lists worktree") || !strings.Contains(err.Error(), "more than once; refusing return") {
-		t.Fatalf("reconciledOrphanWorktree error = %v, want duplicate listing refusal", err)
+	reconciled := func(entries ...backend.WorktreeEntry) func(*testing.T) error {
+		return func(*testing.T) error {
+			_, err := reconciledOrphanWorktree(path, entries)
+			return err
+		}
 	}
-}
-
-func TestReconciledOrphanWorktreeRefusesUnreconciledLeaseHolder(t *testing.T) {
-	path := "/some/worktree"
-	_, err := reconciledOrphanWorktree(path, []backend.WorktreeEntry{{Path: path, LeaseHolder: "wt-unknown"}})
-	if err == nil || !strings.Contains(err.Error(), `lease holder "wt-unknown" is not reconciled; refusing return`) {
-		t.Fatalf("reconciledOrphanWorktree error = %v, want unreconciled lease holder refusal", err)
+	cases := []struct {
+		name    string
+		run     func(t *testing.T) error
+		refused string
+	}{
+		{"block: provider lists an empty worktree path", reconciled(backend.WorktreeEntry{Path: ""}), "provider status contains an empty worktree path; refusing return"},
+		{"block: provider lists the worktree twice", reconciled(backend.WorktreeEntry{Path: path}, backend.WorktreeEntry{Path: path}), `provider status lists worktree "/some/worktree" more than once; refusing return`},
+		{"block: provider does not list the worktree", reconciled(backend.WorktreeEntry{Path: "/some/other"}), `worktree ownership is not established by provider status; refusing return "/some/worktree"`},
+		{"block: lease holder not reconciled", reconciled(backend.WorktreeEntry{Path: path, LeaseHolder: "wt-unknown"}), `worktree lease holder "wt-unknown" is not reconciled; refusing return`},
+		{"allow: provider lists the worktree once without a lease holder", reconciled(backend.WorktreeEntry{Path: path}), ""},
+		{"block: relative worktree path", func(*testing.T) error { return verifyManualWorktreeRelease("relative/worktree") }, `worktree path must be absolute for ownership verification: "relative/worktree"`},
+		{"block: .git marker is a directory", func(t *testing.T) error {
+			worktree := t.TempDir()
+			if err := os.Mkdir(filepath.Join(worktree, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return verifyManualWorktreeRelease(worktree)
+		}, "worktree .git marker is not a regular file; refusing return"},
+		{"block: harness launch file under a subdirectory", func(t *testing.T) error {
+			return verifyManualWorktreeRelease(artifactWorktree(t, harness.PiProjectSettingsRelPath))
+		}, `known or unanchored launch artifact "` + harness.PiProjectSettingsRelPath + `" is present; refusing return`},
+		{"block: soldier launch guard file", func(t *testing.T) error {
+			return verifyManualWorktreeRelease(artifactWorktree(t, ".soldier-launch-guard-abc"))
+		}, `known or unanchored launch artifact ".soldier-launch-guard-abc" is present; refusing return`},
+		{"block: untracked content", func(t *testing.T) error {
+			_, worktree := gitOrphanWorktree(t)
+			if err := os.WriteFile(filepath.Join(worktree, "user-notes.txt"), []byte("protected\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return verifyManualWorktreeRelease(worktree)
+		}, "worktree contains dirty, untracked, or ignored content; refusing return"},
+		{"allow: clean canonical orphan", func(t *testing.T) error {
+			_, worktree := gitOrphanWorktree(t)
+			return verifyManualWorktreeRelease(worktree)
+		}, ""},
+		{"block: provider lists an empty path to the claim scan", func(t *testing.T) error {
+			homeDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", homeDir)
+			initCLITestHome(t, homeDir)
+			_, _, err := activeWorktreeClaims(homeDir, []backend.WorktreeEntry{{Path: ""}})
+			return err
+		}, "provider status contains an empty worktree path"},
+		{"block: live reservation without a project", func(t *testing.T) error {
+			homeDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", homeDir)
+			initCLITestHome(t, homeDir)
+			auth := testAuthorityFor(t, homeDir)
+			taskID := mustTaskIDFor(t, "guard-no-project")
+			projectID, err := domain.NewProjectID("guard-project")
+			if err != nil {
+				t.Fatal(err)
+			}
+			create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "guard reservation", Kind: "ship", Project: projectID, Reason: "guard test"}
+			if _, err := auth.Create(mustCanonicalOp(t, "guard-create", create), create); err != nil {
+				t.Fatal(err)
+			}
+			agg, err := auth.Get(taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("d", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: "", LaunchID: "launch-guard", WindowLabel: "window-guard", WorktreeReservationID: "wt-guard-no-project", WorktreeFenceToken: "fence-guard", EndpointReservationID: "ep-guard", EndpointFenceToken: "ep-fence-guard", EndpointIncarnation: "ep-inc-guard", Reason: "guard test"}
+			if _, err := auth.BeginSpawn(mustCanonicalOp(t, "guard-launch", launch), launch); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = activeWorktreeClaims(homeDir, nil)
+			return err
+		}, `launch reservation "wt-guard-no-project" has no canonical project identity`},
+		{"allow: provider lists a worktree no task claims", func(t *testing.T) error {
+			homeDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", homeDir)
+			initCLITestHome(t, homeDir)
+			_, _, err := activeWorktreeClaims(homeDir, []backend.WorktreeEntry{{Path: path}})
+			return err
+		}, ""},
 	}
-}
-
-func TestVerifyManualWorktreeReleaseRefusesRelativePath(t *testing.T) {
-	err := verifyManualWorktreeRelease("relative/worktree")
-	if err == nil || !strings.Contains(err.Error(), "worktree path must be absolute for ownership verification") {
-		t.Fatalf("verifyManualWorktreeRelease error = %v, want absolute path refusal", err)
-	}
-}
-
-func TestVerifyManualWorktreeReleaseRefusesDirectoryGitMarker(t *testing.T) {
-	worktree := t.TempDir()
-	if err := os.Mkdir(filepath.Join(worktree, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	err := verifyManualWorktreeRelease(worktree)
-	if err == nil || !strings.Contains(err.Error(), "worktree .git marker is not a regular file; refusing return") {
-		t.Fatalf("verifyManualWorktreeRelease error = %v, want non-regular .git marker refusal", err)
-	}
-	if _, err := os.Stat(filepath.Join(worktree, ".git")); err != nil {
-		t.Fatalf("directory .git marker was disturbed: %v", err)
-	}
-}
-
-func TestVerifyManualWorktreeReleaseRefusesSoldierLaunchGuardFile(t *testing.T) {
-	worktree := t.TempDir()
-	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	guard := filepath.Join(worktree, ".soldier-launch-guard-abc")
-	if err := os.WriteFile(guard, []byte("held\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := verifyManualWorktreeRelease(worktree)
-	if err == nil || !strings.Contains(err.Error(), `known or unanchored launch artifact ".soldier-launch-guard-abc" is present; refusing return`) {
-		t.Fatalf("verifyManualWorktreeRelease error = %v, want launch guard artifact refusal", err)
-	}
-	if got, err := os.ReadFile(guard); err != nil || string(got) != "held\n" {
-		t.Fatalf("launch guard file = %q, err=%v; refused release must not remove it", got, err)
-	}
-}
-
-func TestActiveWorktreeClaimsRefusesEmptyProviderPath(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", homeDir)
-	initCLITestHome(t, homeDir)
-	_, _, err := activeWorktreeClaims(homeDir, []backend.WorktreeEntry{{Path: ""}})
-	if err == nil || !strings.Contains(err.Error(), "provider status contains an empty worktree path") {
-		t.Fatalf("activeWorktreeClaims error = %v, want empty provider path refusal", err)
-	}
-}
-
-func TestActiveWorktreeClaimsRefusesLiveReservationWithoutProject(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", homeDir)
-	initCLITestHome(t, homeDir)
-	auth := testAuthorityFor(t, homeDir)
-	taskID := mustTaskIDFor(t, "guard-no-project")
-	projectID, err := domain.NewProjectID("guard-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "guard reservation", Kind: "ship", Project: projectID, Reason: "guard test"}
-	if _, err := auth.Create(mustCanonicalOp(t, "guard-create", create), create); err != nil {
-		t.Fatal(err)
-	}
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("d", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: "", LaunchID: "launch-guard", WindowLabel: "window-guard", WorktreeReservationID: "wt-guard-no-project", WorktreeFenceToken: "fence-guard", EndpointReservationID: "ep-guard", EndpointFenceToken: "ep-fence-guard", EndpointIncarnation: "ep-inc-guard", Reason: "guard test"}
-	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "guard-launch", launch), launch); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = activeWorktreeClaims(homeDir, nil)
-	if err == nil || !strings.Contains(err.Error(), `launch reservation "wt-guard-no-project" has no canonical project identity`) {
-		t.Fatalf("activeWorktreeClaims error = %v, want missing project identity refusal", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run(t)
+			if tc.refused == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want allowed", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refused) {
+				t.Fatalf("error = %v, want %q", err, tc.refused)
+			}
+		})
 	}
 }

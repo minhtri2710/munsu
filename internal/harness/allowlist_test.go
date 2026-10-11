@@ -109,23 +109,6 @@ func TestLoadModelAllowlist(t *testing.T) {
 			t.Fatalf("allowed = %v, want empty", allowed)
 		}
 	})
-	t.Run("parses identities, ignores blanks and comments", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "# fleet policy\n\npi:opencode-go/deepseek-v4-flash\n  codex:gpt-5.2-codex  \n")
-		allowed, present, err := LoadModelAllowlist(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !present {
-			t.Fatal("policy should be present")
-		}
-		if !allowed["pi:opencode-go/deepseek-v4-flash"] {
-			t.Error("missing pi identity")
-		}
-		if !allowed["codex:gpt-5.2-codex"] {
-			t.Error("missing codex identity (whitespace should be trimmed)")
-		}
-	})
 	t.Run("uppercase policy identities canonicalized at parse", func(t *testing.T) {
 		home := t.TempDir()
 		writeAllowlist(t, home, "PI:sonnet\nCodex:gpt-5.2-codex\n")
@@ -148,18 +131,35 @@ func TestLoadModelAllowlist(t *testing.T) {
 			t.Fatal("identity with colons in model should parse")
 		}
 	})
-	t.Run("empty policy fails closed", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "# only a comment\n\n")
-		_, present, err := LoadModelAllowlist(home)
-		if err == nil {
-			t.Fatal("empty policy must fail closed")
-		}
-		if !present {
-			t.Fatal("present empty policy must report present")
-		}
-		if !strings.Contains(err.Error(), "empty") {
-			t.Errorf("error should mention empty policy, got: %v", err)
+	t.Run("empty policy", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			content string
+			wantErr string
+		}{
+			{name: "comments only fails closed", content: "# only a comment\n\n", wantErr: "denies every model"},
+			{name: "identities among blanks and comments load", content: "# fleet policy\n\npi:opencode-go/deepseek-v4-flash\n  codex:gpt-5.2-codex  \n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				home := t.TempDir()
+				writeAllowlist(t, home, tc.content)
+				allowed, present, err := LoadModelAllowlist(home)
+				if !present {
+					t.Fatal("a configured policy must report present")
+				}
+				if tc.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+						t.Fatalf("error = %v, want %q", err, tc.wantErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !allowed["pi:opencode-go/deepseek-v4-flash"] || !allowed["codex:gpt-5.2-codex"] {
+					t.Fatalf("allowed = %v, want both identities (whitespace trimmed)", allowed)
+				}
+			})
 		}
 	})
 	t.Run("malformed entries fail closed", func(t *testing.T) {
@@ -225,92 +225,69 @@ func TestCanonicalHarness(t *testing.T) {
 }
 
 func TestCheckModelAllowed(t *testing.T) {
-	t.Run("absent policy preserves compatibility", func(t *testing.T) {
-		if err := CheckModelAllowed(t.TempDir(), Pi, "any-model"); err != nil {
-			t.Fatalf("absent policy must not enforce: %v", err)
-		}
-	})
-	t.Run("allowed identity passes", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "pi:opencode-go/deepseek-v4-flash\n")
-		if err := CheckModelAllowed(home, Pi, "opencode-go/deepseek-v4-flash"); err != nil {
-			t.Fatalf("allowed identity rejected: %v", err)
-		}
-	})
-	t.Run("denied identity fails closed with allowed values and correction", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "pi:opencode-go/deepseek-v4-flash\n")
-		err := CheckModelAllowed(home, Pi, "claude-sonnet-4-20250515")
-		if err == nil {
-			t.Fatal("denied identity must fail closed")
-		}
-		msg := err.Error()
-		if !strings.Contains(msg, "claude-sonnet-4-20250515") {
-			t.Errorf("error must name the denied model, got: %v", err)
-		}
-		if !strings.Contains(msg, "pi:opencode-go/deepseek-v4-flash") {
-			t.Errorf("error must list allowed values, got: %v", err)
-		}
-		if !strings.Contains(msg, "munsu config set "+ModelAllowlistKey) {
-			t.Errorf("error must include correction, got: %v", err)
-		}
-	})
-	t.Run("empty identity with policy present fails closed", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "pi:sonnet\n")
-		if err := CheckModelAllowed(home, "", "sonnet"); err == nil {
-			t.Fatal("empty harness under an active policy must fail closed")
-		}
-		if err := CheckModelAllowed(home, Pi, ""); err == nil {
-			t.Fatal("empty model under an active policy must fail closed (a runtime default cannot bypass the policy)")
-		}
-		if err := CheckModelAllowed(home, "", ""); err == nil {
-			t.Fatal("fully unresolved identity under an active policy must fail closed")
-		}
-	})
-	t.Run("empty identity without policy stays compatible", func(t *testing.T) {
-		if err := CheckModelAllowed(t.TempDir(), Pi, ""); err != nil {
-			t.Fatalf("absent policy with empty model must stay compatible: %v", err)
-		}
-		if err := CheckModelAllowed(t.TempDir(), "", ""); err != nil {
-			t.Fatalf("absent policy with empty identity must stay compatible: %v", err)
-		}
-	})
-	t.Run("harness identity checked case-insensitively", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "pi:sonnet\n")
-		for _, h := range []string{"pi", "Pi", "PI"} {
-			if err := CheckModelAllowed(home, h, "sonnet"); err != nil {
-				t.Fatalf("harness %q should canonicalize to pi: %v", h, err)
+	const (
+		unresolved   = "effective identity is unresolved"
+		nonCanonical = "not a canonical registry harness"
+		denied       = "is not in the munsu model allowlist"
+	)
+	for _, tc := range []struct {
+		name     string
+		policy   string
+		noPolicy bool
+		harness  string
+		model    string
+		wantErr  []string
+	}{
+		{name: "absent policy allows an unresolved identity", noPolicy: true, harness: "", model: "", wantErr: nil},
+		{name: "empty model fails closed", policy: "pi:sonnet\n", harness: Pi, model: "", wantErr: []string{unresolved}},
+		{name: "concrete model resolves", policy: "pi:sonnet\n", harness: Pi, model: "sonnet"},
+		{name: "empty harness is not canonical", policy: "pi:sonnet\n", harness: "", model: "sonnet", wantErr: []string{nonCanonical}},
+		{name: "case variant harness canonicalizes", policy: "pi:sonnet\n", harness: "PI", model: "sonnet"},
+		{name: "alias harness is not canonical", policy: "pi:sonnet\n", harness: "pi-codex", model: "sonnet", wantErr: []string{nonCanonical}},
+		{
+			name:    "model outside the policy names the allowed values and the correction",
+			policy:  "pi:opencode-go/deepseek-v4-flash\n",
+			harness: Pi,
+			model:   "claude-sonnet-4-20250515",
+			wantErr: []string{denied, "claude-sonnet-4-20250515", "pi:opencode-go/deepseek-v4-flash", "munsu config set " + ModelAllowlistKey},
+		},
+		{name: "model inside the policy", policy: "pi:opencode-go/deepseek-v4-flash\n", harness: Pi, model: "opencode-go/deepseek-v4-flash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if !tc.noPolicy {
+				writeAllowlist(t, home, tc.policy)
 			}
-		}
-	})
-	t.Run("non-canonical harness with policy fails closed", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "pi:sonnet\n")
-		if err := CheckModelAllowed(home, "pi-codex", "sonnet"); err == nil {
-			t.Fatal("non-canonical harness under an active policy must fail closed")
-		}
-	})
-	t.Run("denied in general policy applies to captain home", func(t *testing.T) {
+			err := CheckModelAllowed(home, tc.harness, tc.model)
+			if len(tc.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("CheckModelAllowed = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckModelAllowed(%q, %q) = nil, want a refusal", tc.harness, tc.model)
+			}
+			for _, want := range tc.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q lacks %q", err, want)
+				}
+			}
+		})
+	}
+
+	t.Run("general policy applies to a captain home", func(t *testing.T) {
 		parent := t.TempDir()
 		writeAllowlist(t, parent, "codex:gpt-5.2-codex\n")
 		captain := filepath.Join(t.TempDir(), "captains", "alpha")
 		if err := config.Set(captain, "parent-home", parent); err != nil {
 			t.Fatal(err)
 		}
-		if err := CheckModelAllowed(captain, Pi, "claude-sonnet-4-20250515"); err == nil {
-			t.Fatal("captain-context identity must be checked against the general policy")
+		if err := CheckModelAllowed(captain, Pi, "claude-sonnet-4-20250515"); err == nil || !strings.Contains(err.Error(), denied) {
+			t.Fatalf("captain-context identity error = %v, want the general policy refusal", err)
 		}
 		if err := CheckModelAllowed(captain, Codex, "gpt-5.2-codex"); err != nil {
 			t.Fatalf("allowed general identity rejected for captain context: %v", err)
-		}
-	})
-	t.Run("empty policy fails closed at check", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "\n")
-		if err := CheckModelAllowed(home, Pi, "sonnet"); err == nil {
-			t.Fatal("empty policy must fail closed at check")
 		}
 	})
 }

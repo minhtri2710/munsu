@@ -37,17 +37,17 @@ func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 	result, err := Report(ReportRequest{
 		SenderHome:     senderHome,
 		ReceiverHome:   receiverHome,
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "default",
 		State:          "done",
 		Message:        "complete",
-		Notify: func(ref NotificationRef) UplinkNotifyResult {
-			pending, _ := NewStore(senderHome).ReadPending("soldier-1", ref.MessageID)
-			envelope, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", ref.MessageID)
+		Notify: func(ref mhome.NotificationRef) UplinkNotifyResult {
+			pending, _ := mhome.NewStore(senderHome).ReadPending("soldier-1", ref.MessageID)
+			envelope, _ := mhome.NewStore(receiverHome).ReadEnvelope("soldier-1", ref.MessageID)
 			observedDurable = pending != nil && envelope != nil
 			return QueuedNotification()
 		},
@@ -72,8 +72,8 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 
 	first, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "blocked", Message: "waiting",
 	})
 	if err != nil {
@@ -81,8 +81,8 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 	}
 	second, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "done", Message: "complete",
 	})
 	if err != nil {
@@ -91,17 +91,17 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 	if first.MessageID == second.MessageID {
 		t.Fatal("superseding report should have a new immutable message ID")
 	}
-	pending, err := NewStore(senderHome).ListPending("soldier-1")
+	pending, err := mhome.NewStore(senderHome).ListPending("soldier-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) != 1 || pending[0].MessageID != second.MessageID {
 		t.Fatalf("pending = %+v, want only latest report", pending)
 	}
-	if env, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", first.MessageID); env != nil {
+	if env, _ := mhome.NewStore(receiverHome).ReadEnvelope("soldier-1", first.MessageID); env != nil {
 		t.Fatal("superseded receiver payload should be garbage-collected")
 	}
-	if !NewStore(receiverHome).IsSuperseded("soldier-1", first.MessageID) {
+	if !mhome.NewStore(receiverHome).IsSuperseded("soldier-1", first.MessageID) {
 		t.Fatal("superseded marker missing")
 	}
 }
@@ -111,8 +111,8 @@ func TestReportReplacementFailurePreservesOldPending(t *testing.T) {
 	receiverHome := captainReceiverHome(t, "captain-1")
 	first, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "blocked", Message: "waiting",
 	})
 	if err != nil {
@@ -126,14 +126,14 @@ func TestReportReplacementFailurePreservesOldPending(t *testing.T) {
 	}
 	_, err = Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "done", Message: "complete",
 	})
 	if err == nil {
 		t.Fatal("replacement should fail")
 	}
-	pending, readErr := NewStore(senderHome).ReadPending("soldier-1", first.MessageID)
+	pending, readErr := mhome.NewStore(senderHome).ReadPending("soldier-1", first.MessageID)
 	if readErr != nil || pending == nil {
 		t.Fatalf("old pending must survive: %v", readErr)
 	}
@@ -144,26 +144,26 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	receiverHome := t.TempDir()
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankCaptain, SenderIdentity: "captain-1",
-		ReceiverRank: RankGeneral, ReceiverID: "general-1",
+		SenderRank: mhome.RankCaptain, SenderIdentity: "captain-1",
+		ReceiverRank: mhome.RankGeneral, ReceiverID: "general-1",
 		TaskID: "captain:1", Key: "default", State: "failed", Message: "failed",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	env, err := NewStore(receiverHome).ReadEnvelope("captain-1", result.MessageID)
+	env, err := mhome.NewStore(receiverHome).ReadEnvelope("captain-1", result.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("ReadEnvelope: %v", err)
 	}
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID: env.MessageID, SenderRank: env.SenderRank,
 		SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank,
 		ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
 		PayloadHash: env.PayloadHash, ProcessedAt: time.Now().UnixNano(),
-		Outcome: OutcomeAccepted,
+		Outcome: mhome.OutcomeAccepted,
 	}
-	if err := NewStore(receiverHome).WriteAck(ack); err != nil {
+	if err := mhome.NewStore(receiverHome).WriteAck(ack); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,7 +171,7 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	recovered, err := Recover(RecoverRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderIdentity: "captain-1", ForceNotify: true,
-		Notify: func(ref NotificationRef) UplinkNotifyResult {
+		Notify: func(ref mhome.NotificationRef) UplinkNotifyResult {
 			notified = ref.Encode()
 			return AcknowledgedNotification()
 		},
@@ -191,7 +191,7 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	if !hasEvidence(acceptedEvidencePath(senderHome, "captain:1", "default")) {
 		t.Fatal("accepted evidence should be durable")
 	}
-	pending, _ := NewStore(senderHome).ReadPending("captain-1", result.MessageID)
+	pending, _ := mhome.NewStore(senderHome).ReadPending("captain-1", result.MessageID)
 	if pending != nil {
 		t.Fatal("accepted pending should be removed")
 	}
@@ -202,10 +202,10 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	receiverHome := captainReceiverHome(t, "captain-1")
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "default", State: "done", Message: "complete",
-		Notify: func(NotificationRef) UplinkNotifyResult { return AcknowledgedNotification() },
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult { return AcknowledgedNotification() },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -217,11 +217,11 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got NotificationRef
+	var got mhome.NotificationRef
 	recovered, err := Recover(RecoverRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderIdentity: "soldier-1", Now: time.Now(),
-		Notify: func(ref NotificationRef) UplinkNotifyResult {
+		Notify: func(ref mhome.NotificationRef) UplinkNotifyResult {
 			got = ref
 			return AcknowledgedNotification()
 		},
@@ -232,7 +232,7 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	if recovered.Notified != 1 || got.MessageID != result.MessageID {
 		t.Fatalf("recover = %+v ref=%+v", recovered, got)
 	}
-	if _, err := os.Stat(filepath.Join(receiverHome, "state", InboxDir, "soldier-1", result.MessageID+".json")); err != nil {
+	if _, err := os.Stat(filepath.Join(receiverHome, "state", mhome.InboxDir, "soldier-1", result.MessageID+".json")); err != nil {
 		t.Fatal("recovery must retain the original envelope")
 	}
 }
@@ -242,10 +242,10 @@ func TestRecoverTransportFailureIsLoudAndRetriable(t *testing.T) {
 	receiverHome := captainReceiverHome(t, "captain-1")
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:transport", Key: "default", State: "failed", Message: "failed",
-		Notify: func(NotificationRef) UplinkNotifyResult { return QueuedNotification() },
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult { return QueuedNotification() },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +256,7 @@ func TestRecoverTransportFailureIsLoudAndRetriable(t *testing.T) {
 	_, err = Recover(RecoverRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderIdentity: "soldier-1", ForceNotify: true,
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult {
 			calls++
 			return FailedNotification(sentinel)
 		},
@@ -264,7 +264,7 @@ func TestRecoverTransportFailureIsLoudAndRetriable(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("Recover error = %v, want transport failure", err)
 	}
-	pending, readErr := NewStore(senderHome).ReadPending("soldier-1", result.MessageID)
+	pending, readErr := mhome.NewStore(senderHome).ReadPending("soldier-1", result.MessageID)
 	if readErr != nil || pending == nil {
 		t.Fatalf("pending report = %v, want durable retry record", readErr)
 	}
@@ -275,7 +275,7 @@ func TestRecoverTransportFailureIsLoudAndRetriable(t *testing.T) {
 	_, err = Recover(RecoverRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderIdentity: "soldier-1", ForceNotify: true,
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult {
 			calls++
 			return AcknowledgedNotification()
 		},
@@ -295,15 +295,15 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 	repRes, err := Report(ReportRequest{
 		SenderHome:     senderHome,
 		ReceiverHome:   receiverHome,
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:ack",
 		Key:            "default",
 		State:          "done",
 		Message:        "complete",
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult {
 			return AcknowledgedNotification()
 		},
 	})
@@ -319,7 +319,7 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 		ReceiverHome:   receiverHome,
 		SenderIdentity: "soldier-1",
 		ForceNotify:    true,
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult {
 			return AcknowledgedNotification()
 		},
 	})
@@ -334,15 +334,15 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 	repQueued, err := Report(ReportRequest{
 		SenderHome:     senderHome,
 		ReceiverHome:   receiverHome,
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:queued",
 		Key:            "default",
 		State:          "done",
 		Message:        "complete",
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult {
 			return QueuedNotification()
 		},
 	})
@@ -358,7 +358,7 @@ func TestUplinkNotifyResult_ClassifiedOutcomesAgreement(t *testing.T) {
 		ReceiverHome:   receiverHome,
 		SenderIdentity: "soldier-1",
 		ForceNotify:    true,
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(mhome.NotificationRef) UplinkNotifyResult {
 			return QueuedNotification()
 		},
 	})

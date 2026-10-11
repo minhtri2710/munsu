@@ -13,8 +13,8 @@ type captainContinuityAdapter struct {
 func (a captainContinuityAdapter) Reconcile(parentHome string, captain fleet.CaptainEndpoint) (fleet.CaptainContinuityResult, error) {
 	result := fleet.CaptainContinuityResult{}
 	uplink, err := orchestrator.Recover(orchestrator.RecoverRequest{
-		SenderHome: captain.Home, ReceiverHome: parentHome, ReceiverRank: orchestrator.RankGeneral,
-		Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+		SenderHome: captain.Home, ReceiverHome: parentHome, ReceiverRank: home.RankGeneral,
+		Notify: func(ref home.NotificationRef) orchestrator.UplinkNotifyResult {
 			return orchestrator.NotifyParentWithTransport(captain.Home, parentHome, ref, a.notification)
 		},
 	})

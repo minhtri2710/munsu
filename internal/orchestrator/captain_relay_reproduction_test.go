@@ -40,19 +40,19 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	env := &Envelope{
-		Kind: "uplink-report", SenderRank: RankSoldier, SenderIdentity: "soldier-reproduction",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-reproduction", TaskID: "task-reproduction",
-		Payload: "reproduction", PayloadHash: PayloadHashHex("reproduction"),
+	env := &mhome.Envelope{
+		Kind: "uplink-report", SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-reproduction",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-reproduction", TaskID: "task-reproduction",
+		Payload: "reproduction", PayloadHash: mhome.PayloadHashHex("reproduction"),
 	}
-	if err := NewStore(captainHome).WriteEnvelope(env); err != nil {
+	if err := mhome.NewStore(captainHome).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewStore(captainHome).WritePending(env); err != nil {
+	if err := mhome.NewStore(captainHome).WritePending(env); err != nil {
 		t.Fatal(err)
 	}
 
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+	ref := mhome.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
 	directTarget, directErr := ResolveTargetWithSource(captainHome)
 	t.Logf("direct_target=%+v direct_error=%v", directTarget, directErr)
 	crossTarget, crossErr := resolveReceiverTarget(captainHome, false, ref)
@@ -65,26 +65,26 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 	transport := &reproductionNotificationTransport{}
 
 	recovery, recoveryErr := Recover(RecoverRequest{
-		SenderHome: captainHome, ReceiverHome: captainHome, ReceiverRank: RankCaptain,
+		SenderHome: captainHome, ReceiverHome: captainHome, ReceiverRank: mhome.RankCaptain,
 		ForceNotify: true,
-		Notify: func(ref NotificationRef) UplinkNotifyResult {
+		Notify: func(ref mhome.NotificationRef) UplinkNotifyResult {
 			return NotifyParentWithTransport(captainHome, captainHome, ref, transport)
 		},
 	})
 	t.Logf("recover_result=%+v recover_error=%v", recovery, recoveryErr)
 	reconcileErr := ReconcileCaptainHook(captainHome, true, transport)
 	t.Logf("reconcile_error=%v", reconcileErr)
-	if err := NewStore(captainHome).WriteAck(&ProcessingAck{
+	if err := mhome.NewStore(captainHome).WriteAck(&mhome.ProcessingAck{
 		MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity,
 		ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
-		PayloadHash: env.PayloadHash, Outcome: OutcomeAccepted, ProcessedAt: time.Now().UnixNano(),
+		PayloadHash: env.PayloadHash, Outcome: mhome.OutcomeAccepted, ProcessedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Recover(RecoverRequest{SenderHome: captainHome, ReceiverHome: captainHome, ReceiverRank: RankCaptain}); err != nil {
+	if _, err := Recover(RecoverRequest{SenderHome: captainHome, ReceiverHome: captainHome, ReceiverRank: mhome.RankCaptain}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := NewStore(captainHome).ListPending(env.SenderIdentity)
+	pending, err := mhome.NewStore(captainHome).ListPending(env.SenderIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}

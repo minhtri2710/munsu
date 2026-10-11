@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type notifyTransport struct{ submitted string }
@@ -12,11 +14,11 @@ func (t *notifyTransport) Notify(_ string, _ TargetResult, payload string) Uplin
 }
 
 func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) {
-	ref := NotificationRef{MessageID: "message-one", SenderIdentity: "soldier-one"}
+	ref := mhome.NotificationRef{MessageID: "message-one", SenderIdentity: "soldier-one"}
 	transport := &notifyTransport{}
 	var receiverSeen string
 	result := NotifyParentWithTargetResolver("sender", "receiver", ref,
-		func(receiver string, _ bool, got NotificationRef) (TargetResult, error) {
+		func(receiver string, _ bool, got mhome.NotificationRef) (TargetResult, error) {
 			receiverSeen = receiver
 			return TargetResult{Source: RuntimeSource, Handle: "fleet:p9"}, nil
 		}, transport)
@@ -35,8 +37,8 @@ func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) 
 }
 
 func TestNotifyParentWithTargetResolverQueuesUnavailableTarget(t *testing.T) {
-	result := NotifyParentWithTargetResolver("sender", "receiver", NotificationRef{},
-		func(string, bool, NotificationRef) (TargetResult, error) {
+	result := NotifyParentWithTargetResolver("sender", "receiver", mhome.NotificationRef{},
+		func(string, bool, mhome.NotificationRef) (TargetResult, error) {
 			return TargetResult{Source: Unsupported}, nil
 		}, &notifyTransport{})
 	if !result.Queued() || result.Acknowledged() {

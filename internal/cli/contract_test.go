@@ -377,7 +377,7 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 		{name: "task observe", args: []string{"task", "observe"}},
 		{name: "soldier state", args: []string{"soldier-state"}},
 	} {
-		for _, state := range []string{"meta-only", "missing", "corrupt"} {
+		for _, state := range []string{"missing", "corrupt"} {
 			t.Run(command.name+"/"+state, func(t *testing.T) {
 				homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 				initCLITestHome(t, homeDir)
@@ -385,10 +385,6 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 				const taskID = "windows-path"
 
 				switch state {
-				case "meta-only":
-					if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("kind=ship\n"), 0644); err != nil {
-						t.Fatal(err)
-					}
 				case "corrupt":
 					cliSeedCanonicalTask(t, homeDir, taskID, "ship")
 					current := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
@@ -408,8 +404,6 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 				}
 				var wantPrefix string
 				switch state {
-				case "meta-only":
-					wantPrefix = fmt.Sprintf("Task %q in home %s has no canonical Task Authority record; observation refuses the legacy projection", taskID, homeDir)
 				case "missing":
 					wantPrefix = fmt.Sprintf("Task %q was not found in home %s", taskID, homeDir)
 				case "corrupt":

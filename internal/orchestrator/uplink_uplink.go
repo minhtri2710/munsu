@@ -71,9 +71,9 @@ func (r UplinkNotifyResult) Failure() error     { return r.err }
 type ReportRequest struct {
 	SenderHome, ReceiverHome    string
 	SenderIdentity, ReceiverID  string
-	SenderRank, ReceiverRank    Rank
+	SenderRank, ReceiverRank    mhome.Rank
 	TaskID, Key, State, Message string
-	Notify                      func(NotificationRef) UplinkNotifyResult
+	Notify                      func(mhome.NotificationRef) UplinkNotifyResult
 }
 
 type ReportResult struct {
@@ -85,10 +85,10 @@ type ReportResult struct {
 type RecoverRequest struct {
 	SenderHome, ReceiverHome string
 	SenderIdentity           string
-	ReceiverRank             Rank
+	ReceiverRank             mhome.Rank
 	ForceNotify              bool
 	Now                      time.Time
-	Notify                   func(NotificationRef) UplinkNotifyResult
+	Notify                   func(mhome.NotificationRef) UplinkNotifyResult
 }
 
 type RecoverResult struct {
@@ -115,7 +115,7 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if req.Key == "" {
 		req.Key = "default"
 	}
-	if _, homeRank, err := ReadHomeIdentity(req.ReceiverHome); err != nil {
+	if _, homeRank, err := mhome.ReadHomeIdentity(req.ReceiverHome); err != nil {
 		return nil, fmt.Errorf("uplink report: reading receiver home rank: %w", err)
 	} else if req.ReceiverRank != homeRank {
 		return nil, fmt.Errorf("uplink report: receiver rank %q cannot be satisfied by receiving home %s of rank %q", req.ReceiverRank, req.ReceiverHome, homeRank)
@@ -126,23 +126,23 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	}
 
 	payload := fmt.Sprintf("%s: %s [task=%s key=%s]", req.State, req.Message, req.TaskID, req.Key)
-	env := &Envelope{
+	env := &mhome.Envelope{
 		SenderRank: req.SenderRank, SenderIdentity: req.SenderIdentity,
 		ReceiverRank: req.ReceiverRank, ReceiverID: req.ReceiverID,
 		Kind: "uplink-report", TaskID: req.TaskID, Key: req.Key, Payload: payload,
 	}
-	if err := NewStore(req.ReceiverHome).WriteEnvelope(env); err != nil {
+	if err := mhome.NewStore(req.ReceiverHome).WriteEnvelope(env); err != nil {
 		return nil, fmt.Errorf("uplink report: write envelope: %w", err)
 	}
 	// The wake lands before the sender's pending record: a crash between them
 	// leaves a wake for a report the sender does not track yet, which the
 	// receiver can still settle, never a pending report nothing will ever
 	// surface to a General (its recovery pass does not re-notify one).
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
+	ref := mhome.NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
 	if err := mhome.EnqueueRefWake(req.ReceiverHome, "uplink", req.TaskID, ref.Encode(), payload); err != nil {
 		return nil, fmt.Errorf("uplink report: enqueue receiver wake: %w", err)
 	}
-	if err := NewStore(req.SenderHome).WritePending(env); err != nil {
+	if err := mhome.NewStore(req.SenderHome).WritePending(env); err != nil {
 		return nil, fmt.Errorf("uplink report: write pending: %w", err)
 	}
 	if err := writeEvidence(openEvidencePath(req.SenderHome, req.TaskID, req.Key), evidence{MessageID: env.MessageID, TaskID: req.TaskID, Key: req.Key, State: req.State, At: time.Now().UnixNano()}); err != nil {
@@ -175,12 +175,12 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 	if req.Now.IsZero() {
 		req.Now = time.Now()
 	}
-	var pending []*Envelope
+	var pending []*mhome.Envelope
 	var err error
 	if req.SenderIdentity == "" {
-		pending, err = NewStore(req.SenderHome).ListAllPending()
+		pending, err = mhome.NewStore(req.SenderHome).ListAllPending()
 	} else {
-		pending, err = NewStore(req.SenderHome).ListPending(req.SenderIdentity)
+		pending, err = mhome.NewStore(req.SenderHome).ListPending(req.SenderIdentity)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("uplink recover: list pending: %w", err)
@@ -190,22 +190,22 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if req.ReceiverRank != "" && env.ReceiverRank != req.ReceiverRank {
 			continue
 		}
-		ack, err := NewStore(req.ReceiverHome).ReadAck(env.SenderIdentity, env.MessageID)
+		ack, err := mhome.NewStore(req.ReceiverHome).ReadAck(env.SenderIdentity, env.MessageID)
 		if err != nil {
 			return nil, err
 		}
 		if ack != nil {
-			if err := ValidateAck(env, ack); err != nil {
+			if err := mhome.ValidateAck(env, ack); err != nil {
 				return nil, fmt.Errorf("uplink recover: invalid ack: %w", err)
 			}
-			if ack.Outcome != OutcomeAccepted {
+			if ack.Outcome != mhome.OutcomeAccepted {
 				return nil, fmt.Errorf("uplink recover: ack outcome %q is not accepted", ack.Outcome)
 			}
 			if err := writeEvidence(acceptedEvidencePath(req.SenderHome, env.TaskID, env.Key), evidence{MessageID: env.MessageID, TaskID: env.TaskID, Key: env.Key, At: req.Now.UnixNano()}); err != nil {
 				return nil, err
 			}
 			_ = os.Remove(openEvidencePath(req.SenderHome, env.TaskID, env.Key))
-			if err := NewStore(req.SenderHome).RemovePendingAfterAck(env.SenderIdentity, env.MessageID, ack); err != nil {
+			if err := mhome.NewStore(req.SenderHome).RemovePendingAfterAck(env.SenderIdentity, env.MessageID, ack); err != nil {
 				return nil, err
 			}
 			_ = os.Remove(notificationAttemptPath(req.SenderHome, env.MessageID))
@@ -216,7 +216,7 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 			result.Queued++
 			continue
 		}
-		ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+		ref := mhome.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
 		nr := req.Notify(ref)
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
@@ -243,7 +243,7 @@ func HasAnyOpenReport(home, taskID string) bool {
 // HasPendingReport checks sender pending records directly so teardown remains
 // fail-closed if a crash occurs before local open evidence is written.
 func HasPendingReport(home, taskID string) bool {
-	pending, err := NewStore(home).ListAllPending()
+	pending, err := mhome.NewStore(home).ListAllPending()
 	if err != nil {
 		return true
 	}
@@ -255,12 +255,12 @@ func HasPendingReport(home, taskID string) bool {
 	return false
 }
 
-func supersededReports(req ReportRequest) ([]*Envelope, error) {
-	pending, err := NewStore(req.SenderHome).ListPending(req.SenderIdentity)
+func supersededReports(req ReportRequest) ([]*mhome.Envelope, error) {
+	pending, err := mhome.NewStore(req.SenderHome).ListPending(req.SenderIdentity)
 	if err != nil {
 		return nil, err
 	}
-	var old []*Envelope
+	var old []*mhome.Envelope
 	for _, env := range pending {
 		if env.TaskID == req.TaskID && normalizedKey(env.Key) == normalizedKey(req.Key) {
 			old = append(old, env)
@@ -269,12 +269,12 @@ func supersededReports(req ReportRequest) ([]*Envelope, error) {
 	return old, nil
 }
 
-func retireSuperseded(senderHome, receiverHome string, old []*Envelope) error {
+func retireSuperseded(senderHome, receiverHome string, old []*mhome.Envelope) error {
 	for _, env := range old {
-		if err := NewStore(receiverHome).MarkSuperseded(env.SenderIdentity, env.MessageID); err != nil {
+		if err := mhome.NewStore(receiverHome).MarkSuperseded(env.SenderIdentity, env.MessageID); err != nil {
 			return err
 		}
-		if err := os.Remove(filepath.Join(senderHome, "state", OutboxDir, env.SenderIdentity, env.MessageID+".pending")); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(filepath.Join(senderHome, "state", mhome.OutboxDir, env.SenderIdentity, env.MessageID+".pending")); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		_ = os.Remove(notificationAttemptPath(senderHome, env.MessageID))
@@ -329,17 +329,17 @@ func notificationDue(home, messageID string, now time.Time) bool {
 // receiverHome's own runtime target. Cross-process captain resolution uses
 // authoritative parent metadata and fails closed when its pane identity is
 // unavailable.
-type TargetResolver func(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error)
+type TargetResolver func(receiverHome string, selfDirected bool, ref mhome.NotificationRef) (TargetResult, error)
 
 type NotificationTransport interface {
 	Notify(senderHome string, target TargetResult, payload string) UplinkNotifyResult
 }
 
-func NotifyParentWithTransport(senderHome, receiverHome string, ref NotificationRef, transport NotificationTransport) UplinkNotifyResult {
+func NotifyParentWithTransport(senderHome, receiverHome string, ref mhome.NotificationRef, transport NotificationTransport) UplinkNotifyResult {
 	return NotifyParentWithTargetResolver(senderHome, receiverHome, ref, resolveReceiverTarget, transport)
 }
 
-func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
+func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref mhome.NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
 	target, err := resolveTarget(receiverHome, senderHome == receiverHome, ref)
 	if err != nil {
 		return QueuedNotification()
@@ -354,12 +354,12 @@ func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref Notific
 // one: the General's pane is written by the watcher wake dispatch alone, so a
 // General-bound report stays queued here and its wake is already in the
 // General's queue (Report enqueues it before notifying).
-func resolveReceiverTarget(receiverHome string, selfDirected bool, ref NotificationRef) (TargetResult, error) {
-	env, err := NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
+func resolveReceiverTarget(receiverHome string, selfDirected bool, ref mhome.NotificationRef) (TargetResult, error) {
+	env, err := mhome.NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
 		return TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)
 	}
-	if env.ReceiverRank != RankCaptain {
+	if env.ReceiverRank != mhome.RankCaptain {
 		return TargetResult{Source: Unsupported}, nil
 	}
 	if selfDirected {
@@ -373,13 +373,5 @@ func resolveReceiverTarget(receiverHome string, selfDirected bool, ref Notificat
 	if err != nil {
 		return TargetResult{}, err
 	}
-	paneID := strings.TrimSpace(meta["herdr_pane_id"])
-	if paneID == "" {
-		return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
-	}
-	sessionID := strings.TrimSpace(meta["herdr_session"])
-	if sessionID == "" {
-		sessionID = "default"
-	}
-	return TargetResult{Source: RuntimeSource, Handle: sessionID + ":" + paneID, Session: sessionID}, nil
+	return captainMetaTarget(meta)
 }

@@ -95,22 +95,22 @@ func acceptUplinkReports(h, leaseID string, eventIDs []string) ([]UnacceptedRepo
 // paths and the AFK return all go through it.
 type uplinkAcceptor struct {
 	home     string
-	receiver *Receiver
+	receiver *home.Receiver
 }
 
 // accept acks the envelope ref names with Receiver.Ack. A superseded report is
 // skipped: its replacement has its own wake. Every Ack failure, a conflicting
 // outcome included, is returned for the caller to report.
 func (a *uplinkAcceptor) accept(rawRef string) error {
-	ref, err := ParseNotificationRef(rawRef)
+	ref, err := home.ParseNotificationRef(rawRef)
 	if err != nil {
 		return err
 	}
-	if NewStore(a.home).IsSuperseded(ref.SenderIdentity, ref.MessageID) {
+	if home.NewStore(a.home).IsSuperseded(ref.SenderIdentity, ref.MessageID) {
 		return nil
 	}
 	if a.receiver == nil {
-		if a.receiver, err = NewReceiver(a.home); err != nil {
+		if a.receiver, err = home.NewReceiver(a.home); err != nil {
 			return fmt.Errorf("creating receiver: %w", err)
 		}
 	}

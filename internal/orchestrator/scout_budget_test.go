@@ -7,37 +7,35 @@ import (
 )
 
 func TestEnforceScoutRuntimeBudget(t *testing.T) {
-	start := int64(100)
 	cases := []struct {
-		name    string
-		now     int64
-		want    ScoutBudgetOutcome
-		wantErr error
+		name     string
+		started  int64
+		observed int64
+		now      int64
+		want     ScoutBudgetOutcome
+		wantErr  error
 	}{
-		{"under-budget", 109, ScoutBudgetWithin, nil},
-		{"exact-boundary", 110, ScoutBudgetWithin, nil},
-		{"over-budget", 111, ScoutBudgetRejected, ErrScoutBudgetExceeded},
+		{name: "missing start timestamp", started: 0, observed: 100, now: 100, wantErr: ErrScoutBudgetMissingTimestamp},
+		{name: "under-budget", started: 100, observed: 100, now: 109, want: ScoutBudgetWithin},
+		{name: "exact-boundary", started: 100, observed: 100, now: 110, want: ScoutBudgetWithin},
+		{name: "over-budget", started: 100, observed: 100, now: 111, want: ScoutBudgetRejected, wantErr: ErrScoutBudgetExceeded},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			evidence, err := EnforceScoutRuntimeBudget(10, start, start, time.Unix(tc.now, 0))
+			evidence, err := EnforceScoutRuntimeBudget(10, tc.started, tc.observed, time.Unix(tc.now, 0))
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err=%v, want %v", err, tc.wantErr)
 			}
 			if evidence.Outcome != tc.want {
 				t.Fatalf("outcome=%q, want %q", evidence.Outcome, tc.want)
 			}
-			if evidence.ElapsedSecs != tc.now-start {
-				t.Fatalf("elapsed=%d, want %d", evidence.ElapsedSecs, tc.now-start)
+			if tc.wantErr == ErrScoutBudgetMissingTimestamp {
+				return
+			}
+			if evidence.ElapsedSecs != tc.now-tc.started {
+				t.Fatalf("elapsed=%d, want %d", evidence.ElapsedSecs, tc.now-tc.started)
 			}
 		})
-	}
-}
-
-func TestEnforceScoutRuntimeBudgetMissingTimestamps(t *testing.T) {
-	_, err := EnforceScoutRuntimeBudget(10, 0, 100, time.Unix(100, 0))
-	if !errors.Is(err, ErrScoutBudgetMissingTimestamp) {
-		t.Fatalf("err=%v", err)
 	}
 }
 

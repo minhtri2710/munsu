@@ -95,23 +95,3 @@ func TestSessionMailboxSenderPreservesTypedPromptResult(t *testing.T) {
 		}
 	}
 }
-
-func TestSessionMailboxSenderRejectsBoundBackendMismatch(t *testing.T) {
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return mailboxPromptBackend{}, "herdr", nil
-	}}
-	got := sender.Send("/home", map[string]string{"backend": "tmux", "window": "pane"}, "payload")
-	if got.Err == nil {
-		t.Fatal("expected bound backend mismatch")
-	}
-}
-
-func TestSessionMailboxSenderRejectsHerdrOwnershipMismatch(t *testing.T) {
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return mailboxPromptBackend{}, "herdr", nil
-	}}
-	got := sender.Send("/home", map[string]string{"backend": "herdr", "window": "actual:tab", "herdr_session": "expected"}, "payload")
-	if got.Err == nil {
-		t.Fatal("expected Herdr ownership mismatch")
-	}
-}

@@ -9,107 +9,54 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-// TestBackendForTask_BoundIdentityUsed verifies that BackendForTask resolves the
-// identity durably bound in meta["backend"], independent of any config file.
-// Core Backend never reads config directly — composition translates config once
-// into the typed snapshot before operation start.
-func TestBackendForTask_BoundIdentityUsed(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Write a config file saying "herdr" — BackendForTask must NOT consult it.
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if !hasTmux() {
-		t.Skip("tmux not on PATH (constructBackend verifies the requested capability)")
-	}
-
-	meta := map[string]string{"backend": "tmux", "window": "@test"}
-	bk, name, err := BackendForTask(tmpDir, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "tmux" {
-		t.Errorf("name = %q, want tmux", name)
-	}
-	if _, ok := bk.(*TmuxBackend); !ok {
-		t.Errorf("expected TmuxBackend, got %T", bk)
-	}
-}
-
-// TestBackendForTask_MissingIdentityFailsClosed verifies that a task whose
-// metadata has no "backend" identity FAILS CLOSED — config pins and env/PATH
-// markers must NOT fall through.
-func TestBackendForTask_MissingIdentityFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Write global config saying "herdr"
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+// TestBackendIdentity is the one table for the backend identity owner,
+// requireIdentity, through both of its callers. The tmux binary is present and
+// the env markers name tmux and herdr, so a refused row cannot be a missing
+// binary or an auto-detection.
+func TestBackendIdentity(t *testing.T) {
+	testutil.PrependPath(t, fakeExecutables(t, "tmux"))
 	t.Setenv("TMUX", "/tmp/tmux-socket")
-	t.Setenv("HERDR_ENV", "")
+	t.Setenv("HERDR_ENV", "1")
+	home := t.TempDir()
 
-	meta := map[string]string{"window": "@test"}
-	if _, _, err := BackendForTask(tmpDir, meta); err == nil {
-		t.Fatal("missing bound backend identity must fail CLOSED (no config/env/PATH fallthrough)")
+	resolve := func(name string) func() (Backend, string, error) {
+		return func() (Backend, string, error) { return Resolve(name) }
 	}
-}
-
-// TestBackendForTask_EmptyMetaBackendFailsClosed verifies that an explicitly
-// empty bound identity is treated the same as missing — fail closed.
-func TestBackendForTask_EmptyMetaBackendFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Write global config saying "herdr"
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
+	bound := func(meta map[string]string) func() (Backend, string, error) {
+		return func() (Backend, string, error) { return BackendForTask(home, meta) }
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		call func() (Backend, string, error)
+		want string // "" allows
+	}{
+		{"Resolve empty", resolve(""), `no session backend identity: ""`},
+		{"Resolve auto", resolve("auto"), `no session backend identity: "auto"`},
+		{"Resolve unknown", resolve("nonexistent"), `unknown session backend: "nonexistent"`},
+		{"Resolve tmux", resolve("tmux"), ""},
+		{"BackendForTask nil meta", bound(nil), `meta["backend"]: no session backend identity: ""`},
+		{"BackendForTask meta without backend", bound(map[string]string{"window": "@test"}), `meta["backend"]: no session backend identity: ""`},
+		{"BackendForTask empty backend", bound(map[string]string{"backend": ""}), `meta["backend"]: no session backend identity: ""`},
+		{"BackendForTask auto", bound(map[string]string{"backend": "auto"}), `meta["backend"]: no session backend identity: "auto"`},
+		{"BackendForTask unknown", bound(map[string]string{"backend": "nonexistent"}), `unknown bound session backend: "nonexistent"`},
+		{"BackendForTask tmux", bound(map[string]string{"backend": "tmux"}), ""},
 	}
-
-	meta := map[string]string{"backend": "", "window": "@test"}
-	if _, _, err := BackendForTask(tmpDir, meta); err == nil {
-		t.Fatal("empty bound backend identity must fail CLOSED")
-	}
-}
-
-// TestBackendForTask_NilMetaFailsClosed verifies that a nil meta map fails
-// closed — no auto-detection fallback.
-func TestBackendForTask_NilMetaFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("TMUX", "/tmp/tmux-socket")
-
-	if _, _, err := BackendForTask(tmpDir, nil); err == nil {
-		t.Fatal("nil meta must fail CLOSED (no backend identity, no auto-detect)")
-	}
-}
-
-// TestBackendForTask_UnknownMetaBackendFailsClosed verifies that an unknown
-// bound backend in meta never falls through to config/default resolution.
-func TestBackendForTask_UnknownMetaBackendFailsClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("tmux\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	meta := map[string]string{"backend": "nonexistent", "window": "@test"}
-	if _, _, err := BackendForTask(tmpDir, meta); err == nil {
-		t.Fatal("expected unknown bound backend to fail closed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bk, name, err := tt.call()
+			if tt.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Fatalf("error = %v, want %q", err, tt.want)
+				}
+				if bk != nil || name != "" {
+					t.Fatalf("refused call returned backend %T, name %q", bk, name)
+				}
+				return
+			}
+			if _, ok := bk.(*TmuxBackend); err != nil || !ok || name != "tmux" {
+				t.Fatalf("got %T, %q, %v; want the tmux backend", bk, name, err)
+			}
+		})
 	}
 }
 

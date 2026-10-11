@@ -232,7 +232,7 @@ type CheckValidationPort interface {
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling; a nil check-validation port is refused as a
 // fatal cycle capability error.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events)
 }
 
@@ -242,7 +242,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -632,7 +632,7 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
 	obs := newCycleObservation()
 	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs)
 	if err == nil {
@@ -645,7 +645,7 @@ func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 // It retries pending inbox envelopes once with fingerprint dedup,
 // runs the mailbox recovery hook (if any) once,
 // then completes any pending poll retirements.
-func runRecovery(homeDir string, sender BoundSender, hooks WatcherHooks) error {
+func runRecovery(homeDir string, sender home.BoundSender, hooks WatcherHooks) error {
 	if sender == nil {
 		return fmt.Errorf("mailbox recovery sender capability is required")
 	}
@@ -692,7 +692,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
 	// A watcher with no way to validate a check artifact cannot decide anything
 	// about one, and skipping every check would make that look like "no checks
 	// are ready". Fail the cycle instead: the capability is required, and its
@@ -1193,7 +1193,7 @@ func reportOwnsStatus(homeDir, taskID, line string) bool {
 	}
 	key := strings.TrimSuffix(line[i+len(" [key="):], "]")
 	hash := home.PayloadHashHex(fmt.Sprintf("%s [task=%s key=%s]", line[:i], taskID, key))
-	store := NewStore(homeDir)
+	store := home.NewStore(homeDir)
 	sender := home.ReceiverIDForTask(taskID)
 	for _, path := range []string{openEvidencePath(homeDir, taskID, key), acceptedEvidencePath(homeDir, taskID, key)} {
 		data, err := os.ReadFile(path)

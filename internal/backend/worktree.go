@@ -260,32 +260,8 @@ func (p *treehouseProvider) Return(path string) error {
 	if err != nil {
 		return err
 	}
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("refusing to return worktree with a non-absolute path: %q", path)
-	}
-	markerPath := filepath.Join(path, ".git")
-	marker, err := os.Lstat(markerPath)
-	if err != nil {
-		return fmt.Errorf("verifying worktree .git marker: %w", err)
-	}
-	if !marker.Mode().IsRegular() {
-		return fmt.Errorf("refusing to return worktree with a non-regular .git marker")
-	}
-	markerBytes, err := os.ReadFile(markerPath)
-	if err != nil {
-		return fmt.Errorf("reading worktree .git marker: %w", err)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(string(markerBytes)), "gitdir: ") {
-		return fmt.Errorf("unexpected .git file format: %s", strings.TrimSpace(string(markerBytes)))
-	}
-	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
-	status.Dir = path
-	out, err := status.Output()
-	if err != nil {
-		return fmt.Errorf("checking worktree cleanliness before return: %w", err)
-	}
-	if len(out) != 0 {
-		return fmt.Errorf("refusing to return worktree with dirty, untracked, or ignored content")
+	if _, err := assertReturnable(path, "return"); err != nil {
+		return err
 	}
 	stdout, stderr, err := runWorktreeMutationCommand(bin, "", "return", "--force", path)
 	output := commandOutput(stdout, stderr)
@@ -425,28 +401,10 @@ func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {
 }
 
 func (p *gitWorktreeProvider) Return(path string) error {
-	gitFile := filepath.Join(path, ".git")
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("refusing to remove worktree with a non-absolute path: %q", path)
-	}
-	marker, err := os.Lstat(gitFile)
+	repoGitDir, err := assertReturnable(path, "remove")
 	if err != nil {
-		return fmt.Errorf("checking worktree .git marker: %w", err)
+		return err
 	}
-	if !marker.Mode().IsRegular() {
-		return fmt.Errorf("refusing to remove worktree with a non-regular .git marker")
-	}
-	// Read the .git file to find the owning repo, since git worktree remove
-	// must be run from within a git repository.
-	data, err := os.ReadFile(gitFile)
-	if err != nil {
-		return fmt.Errorf("reading worktree .git file: %w", err)
-	}
-	line := strings.TrimSpace(string(data))
-	if !strings.HasPrefix(line, "gitdir: ") {
-		return fmt.Errorf("unexpected .git file format: %s", line)
-	}
-	repoGitDir := strings.TrimPrefix(line, "gitdir: ")
 	// Resolve relative paths against the worktree parent.
 	if !filepath.IsAbs(repoGitDir) {
 		repoGitDir = filepath.Join(filepath.Dir(path), repoGitDir)
@@ -454,20 +412,47 @@ func (p *gitWorktreeProvider) Return(path string) error {
 	// The repo root is three levels above .git/worktrees/<name>.
 	repoDir := filepath.Dir(filepath.Dir(filepath.Dir(repoGitDir)))
 
-	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
-	status.Dir = path
-	out, err := status.Output()
-	if err != nil {
-		return fmt.Errorf("checking worktree cleanliness before return: %w", err)
-	}
-	if len(out) != 0 {
-		return fmt.Errorf("refusing to remove worktree with dirty, untracked, or ignored content")
-	}
 	out, stderr, err := runWorktreeMutationCommand("git", repoDir, "worktree", "remove", "--force", path)
 	if err != nil {
 		return wrapBackendCommandError("git worktree remove", out, stderr, err)
 	}
 	return nil
+}
+
+// assertReturnable proves path is an absolute, clean git worktree whose .git
+// marker is a regular gitdir pointer, and returns the pointer's target. verb
+// names the refused operation in the message ("return", "remove").
+func assertReturnable(path, verb string) (gitDir string, err error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("refusing to %s worktree with a non-absolute path: %q", verb, path)
+	}
+	markerPath := filepath.Join(path, ".git")
+	marker, err := os.Lstat(markerPath)
+	if err != nil {
+		return "", fmt.Errorf("verifying worktree .git marker: %w", err)
+	}
+	if !marker.Mode().IsRegular() {
+		return "", fmt.Errorf("refusing to %s worktree with a non-regular .git marker", verb)
+	}
+	markerBytes, err := os.ReadFile(markerPath)
+	if err != nil {
+		return "", fmt.Errorf("reading worktree .git marker: %w", err)
+	}
+	line := strings.TrimSpace(string(markerBytes))
+	gitDir, ok := strings.CutPrefix(line, "gitdir: ")
+	if !ok {
+		return "", fmt.Errorf("unexpected .git file format: %s", line)
+	}
+	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
+	status.Dir = path
+	out, err := status.Output()
+	if err != nil {
+		return "", fmt.Errorf("checking worktree cleanliness before %s: %w", verb, err)
+	}
+	if len(out) != 0 {
+		return "", fmt.Errorf("refusing to %s worktree with dirty, untracked, or ignored content", verb)
+	}
+	return gitDir, nil
 }
 
 func (p *gitWorktreeProvider) Status() (string, error) {
@@ -526,6 +511,7 @@ func stableHash(s string) string {
 
 // AssertNotTangled checks if the project's primary checkout at projectDir is on a
 // non-default branch. Returns nil if HEAD is detached or on the default branch.
+// A default branch it cannot resolve is a refusal, not a skip.
 func AssertNotTangled(projectDir, projectName string) error {
 	// Check current HEAD state
 	out, _, err := runWorktreeCommand("git", projectDir, "rev-parse", "--abbrev-ref", "HEAD")
@@ -542,8 +528,8 @@ func AssertNotTangled(projectDir, projectName string) error {
 
 	def, err := DefaultBranch(projectDir)
 	if err != nil {
-		// Can't determine default branch; skip tangle check
-		return nil
+		return fmt.Errorf("cannot check %s for a tangled primary checkout: the default branch cannot be resolved: %w; run git -C %s remote set-head origin -a, or create a main or master branch",
+			projectName, err, projectDir)
 	}
 	// On the default branch = no tangle
 	if branch == def.Name {

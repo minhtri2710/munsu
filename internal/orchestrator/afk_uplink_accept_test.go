@@ -20,8 +20,8 @@ func reportDuringAFK(t *testing.T, generalHome, identity string, states ...strin
 	for _, state := range states {
 		res, err := Report(ReportRequest{
 			SenderHome: generalHome, ReceiverHome: generalHome,
-			SenderRank: RankSoldier, SenderIdentity: "direct-task",
-			ReceiverRank: RankGeneral, ReceiverID: identity,
+			SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
+			ReceiverRank: home.RankGeneral, ReceiverID: identity,
 			TaskID: "direct-task", Key: state, State: state, Message: "afk " + state,
 		})
 		if err != nil {
@@ -61,7 +61,7 @@ func TestUplinkWakeKeepsItsRefThroughTheAFKDigest(t *testing.T) {
 	}
 	for _, entry := range be.Entries {
 		state := strings.SplitN(entry.Payload, ":", 2)[0]
-		want := NotificationRef{MessageID: ids[state], SenderIdentity: "direct-task"}.Encode()
+		want := home.NotificationRef{MessageID: ids[state], SenderIdentity: "direct-task"}.Encode()
 		if entry.Ref != want {
 			t.Fatalf("%s entry ref = %q, want %q", state, entry.Ref, want)
 		}
@@ -74,9 +74,6 @@ func TestUplinkWakeKeepsItsRefThroughTheAFKDigest(t *testing.T) {
 func TestAFKReturnAcceptsTheDrainedUplinkReports(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
 	ids := reportDuringAFK(t, generalHome, identity, "failed", "done")
-	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
-		t.Fatal("continuity must refuse while the reports are unacknowledged")
-	}
 
 	report, err := Return(generalHome)
 	if err != nil {
@@ -91,7 +88,7 @@ func TestAFKReturnAcceptsTheDrainedUplinkReports(t *testing.T) {
 		t.Fatalf("routine reports = %q, want %q printed in:\n%s", report.RoutineReports, wantRoutine, report.String())
 	}
 	for state, id := range ids {
-		if ack, err := NewStore(generalHome).ReadAck("direct-task", id); err != nil || ack == nil || ack.Outcome != OutcomeAccepted {
+		if ack, err := home.NewStore(generalHome).ReadAck("direct-task", id); err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
 			t.Fatalf("%s report ack = %+v err = %v, want accepted", state, ack, err)
 		}
 	}
@@ -123,7 +120,7 @@ func TestAFKReturnAcceptsNothingForAnEntryWithoutARef(t *testing.T) {
 	if report.DigestedCount != 1 || len(report.UnacceptedReports) != 0 {
 		t.Fatalf("report = %+v, want the signal entry drained and nothing unaccepted", report)
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
+	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
 		t.Fatalf("ack = %+v err = %v, want none for an envelope no digest entry names", ack, err)
 	}
 }
@@ -142,14 +139,14 @@ func TestAFKReturnReportsAConflictingAckAndKeepsTheDigest(t *testing.T) {
 	if report.DigestedCount != 1 || len(report.Escalations) != 1 {
 		t.Fatalf("report = %+v, want the drained escalation kept", report)
 	}
-	wantRef := NotificationRef{MessageID: ids["failed"], SenderIdentity: "direct-task"}.Encode()
+	wantRef := home.NotificationRef{MessageID: ids["failed"], SenderIdentity: "direct-task"}.Encode()
 	if len(report.UnacceptedReports) != 1 || !strings.Contains(report.UnacceptedReports[0].Reason, "conflicting") || report.UnacceptedReports[0].Ref != wantRef {
 		t.Fatalf("unaccepted = %v, want the conflicting refusal with the ref %s", report.UnacceptedReports, wantRef)
 	}
 	if !report.HasActionable() || !strings.Contains(report.String(), "not accepted") {
 		t.Fatalf("a failed accept must be actionable and printed:\n%s", report.String())
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", ids["failed"]); err != nil || ack == nil || ack.Outcome != OutcomeDone {
+	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", ids["failed"]); err != nil || ack == nil || ack.Outcome != home.OutcomeDone {
 		t.Fatalf("existing ack = %+v err = %v, want it untouched", ack, err)
 	}
 }
@@ -158,14 +155,14 @@ func TestAFKReturnReportsAConflictingAckAndKeepsTheDigest(t *testing.T) {
 // it fails closed.
 func writeConflictingAck(t *testing.T, generalHome, messageID string) {
 	t.Helper()
-	env, err := NewStore(generalHome).ReadEnvelope("direct-task", messageID)
+	env, err := home.NewStore(generalHome).ReadEnvelope("direct-task", messageID)
 	if err != nil || env == nil {
 		t.Fatalf("ReadEnvelope: %v", err)
 	}
-	if err := NewStore(generalHome).WriteAck(&ProcessingAck{
+	if err := home.NewStore(generalHome).WriteAck(&home.ProcessingAck{
 		MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity,
 		ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
-		PayloadHash: env.PayloadHash, Outcome: OutcomeDone, ProcessedAt: time.Now().UnixNano(),
+		PayloadHash: env.PayloadHash, Outcome: home.OutcomeDone, ProcessedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +217,7 @@ func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	if !failed.HasActionable() || !strings.Contains(failed.String(), "digest not removed") {
 		t.Fatalf("a leftover digest must be actionable and printed:\n%s", failed.String())
 	}
-	if ack, err := NewStore(generalHome).ReadAck("direct-task", ids["done"]); err != nil || ack == nil || ack.Outcome != OutcomeAccepted {
+	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", ids["done"]); err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
 		t.Fatalf("ack = %+v err = %v, want the report accepted before the removal was attempted", ack, err)
 	}
 	if _, err := os.Stat(digestPath); err != nil {

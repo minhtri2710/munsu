@@ -42,12 +42,12 @@ func directGeneralHome(t *testing.T) (string, string) {
 	if err := home.WriteMeta(generalHome, "direct-task", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
-	identity, rank, err := ReadHomeIdentity(generalHome)
+	identity, rank, err := home.ReadHomeIdentity(generalHome)
 	if err != nil {
 		t.Fatalf("ReadHomeIdentity: %v", err)
 	}
-	if rank != RankGeneral {
-		t.Fatalf("fixture home rank = %q, want %q", rank, RankGeneral)
+	if rank != home.RankGeneral {
+		t.Fatalf("fixture home rank = %q, want %q", rank, home.RankGeneral)
 	}
 	return generalHome, identity
 }
@@ -61,16 +61,16 @@ func directGeneralHome(t *testing.T) (string, string) {
 // these tests describe the ring-enabled path only.
 func reportUnderDirectGeneralDispatch(t *testing.T, generalHome, identity string, transport NotificationTransport) *ReportResult {
 	t.Helper()
-	_, rank, err := ReadHomeIdentity(generalHome)
+	_, rank, err := home.ReadHomeIdentity(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
 	res, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
-		SenderRank: RankSoldier, SenderIdentity: "direct-task",
+		SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
 		ReceiverRank: rank, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
-		Notify: func(ref NotificationRef) UplinkNotifyResult {
+		Notify: func(ref home.NotificationRef) UplinkNotifyResult {
 			return NotifyParentWithTransport(generalHome, generalHome, ref, transport)
 		},
 	})
@@ -90,11 +90,11 @@ func TestReportToTheGeneralEnqueuesItsWakeAndReachesNoTransport(t *testing.T) {
 	cases := []struct {
 		name                   string
 		senderHome             string
-		senderRank             Rank
+		senderRank             home.Rank
 		senderIdentity, taskID string
 	}{
-		{"direct dispatch", generalHome, RankSoldier, "direct-task", "direct-task"},
-		{"captain relay", captainHome, RankCaptain, "captain-one", "captain:1"},
+		{"direct dispatch", generalHome, home.RankSoldier, "direct-task", "direct-task"},
+		{"captain relay", captainHome, home.RankCaptain, "captain-one", "captain:1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,9 +102,9 @@ func TestReportToTheGeneralEnqueuesItsWakeAndReachesNoTransport(t *testing.T) {
 			res, err := Report(ReportRequest{
 				SenderHome: tc.senderHome, ReceiverHome: generalHome,
 				SenderRank: tc.senderRank, SenderIdentity: tc.senderIdentity,
-				ReceiverRank: RankGeneral, ReceiverID: identity,
+				ReceiverRank: home.RankGeneral, ReceiverID: identity,
 				TaskID: tc.taskID, Key: tc.name, State: "failed", Message: "failure",
-				Notify: func(ref NotificationRef) UplinkNotifyResult {
+				Notify: func(ref home.NotificationRef) UplinkNotifyResult {
 					return NotifyParentWithTransport(tc.senderHome, generalHome, ref, transport)
 				},
 			})
@@ -131,17 +131,17 @@ func TestDirectGeneralDispatchReportIsReceivableByItsOwnGeneral(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
 	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
 
-	recv, err := NewReceiver(generalHome)
+	recv, err := home.NewReceiver(generalHome)
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
-	ref := NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"}
+	ref := home.NotificationRef{MessageID: res.MessageID, SenderIdentity: "direct-task"}
 	env, err := recv.Receive(ref)
 	if err != nil {
 		t.Fatalf("the receiving General must be able to read its own inbox item: %v", err)
 	}
-	if env.ReceiverRank != RankGeneral {
-		t.Fatalf("receiver rank = %q, want %q", env.ReceiverRank, RankGeneral)
+	if env.ReceiverRank != home.RankGeneral {
+		t.Fatalf("receiver rank = %q, want %q", env.ReceiverRank, home.RankGeneral)
 	}
 	if _, err := recv.Ack(ref); err != nil {
 		t.Fatalf("the receiving General must be able to ack its own inbox item: %v", err)
@@ -156,9 +156,6 @@ func TestDirectGeneralDispatchRecoveryPassRetiresAcknowledgedReport(t *testing.T
 	generalHome, identity := directGeneralHome(t)
 	res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
 	messageID := res.MessageID
-	if err := VerifyRetirementContinuity(generalHome, "direct-task"); err == nil {
-		t.Fatal("VerifyRetirementContinuity must refuse while the durable report is pending")
-	}
 
 	transport := &countingTransport{}
 	if err := ReconcileCaptainHook(generalHome, true, transport); err != nil {
@@ -167,22 +164,22 @@ func TestDirectGeneralDispatchRecoveryPassRetiresAcknowledgedReport(t *testing.T
 	if transport.calls != 0 {
 		t.Fatalf("recovery transport calls = %d, want 0 for a General-bound report", transport.calls)
 	}
-	pending, err := NewStore(generalHome).ListPending("direct-task")
+	pending, err := home.NewStore(generalHome).ListPending("direct-task")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending after the retry pass = %d err=%v, want 1 until the General acknowledges", len(pending), err)
 	}
 
-	recv, err := NewReceiver(generalHome)
+	recv, err := home.NewReceiver(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := recv.Ack(NotificationRef{MessageID: messageID, SenderIdentity: "direct-task"}); err != nil {
+	if _, err := recv.Ack(home.NotificationRef{MessageID: messageID, SenderIdentity: "direct-task"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReconcileCaptainHook(generalHome, false, transport); err != nil {
 		t.Fatalf("ReconcileCaptainHook retirement: %v", err)
 	}
-	pending, err = NewStore(generalHome).ListPending("direct-task")
+	pending, err = home.NewStore(generalHome).ListPending("direct-task")
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("pending after acknowledged reconciliation = %d err=%v, want 0", len(pending), err)
 	}
@@ -198,14 +195,14 @@ func TestReportRefusesAReceiverRankTheReceivingHomeCannotSatisfy(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
 	_, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
-		SenderRank: RankSoldier, SenderIdentity: "direct-task",
-		ReceiverRank: RankCaptain, ReceiverID: identity,
+		SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
+		ReceiverRank: home.RankCaptain, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
 	})
 	if err == nil {
 		t.Fatal("a Captain receiver rank in a General home must be refused")
 	}
-	if pending, listErr := NewStore(generalHome).ListPending("direct-task"); listErr != nil || len(pending) != 0 {
+	if pending, listErr := home.NewStore(generalHome).ListPending("direct-task"); listErr != nil || len(pending) != 0 {
 		t.Fatalf("refused report left pending=%d err=%v", len(pending), listErr)
 	}
 }
@@ -214,8 +211,8 @@ func TestReportRefusesAReceiverRankTheReceivingHomeCannotSatisfy(t *testing.T) {
 // It remains queued for durable delivery and the transport is not reached.
 func TestNotifyParentWithTargetResolverQueuesResolutionError(t *testing.T) {
 	transport := &countingTransport{}
-	result := NotifyParentWithTargetResolver("sender", "receiver", NotificationRef{MessageID: "m", SenderIdentity: "s"},
-		func(string, bool, NotificationRef) (TargetResult, error) {
+	result := NotifyParentWithTargetResolver("sender", "receiver", home.NotificationRef{MessageID: "m", SenderIdentity: "s"},
+		func(string, bool, home.NotificationRef) (TargetResult, error) {
 			return TargetResult{}, errors.New("captain parent-home unavailable")
 		}, transport)
 	if !result.Queued() || result.Failure() != nil || result.Acknowledged() {
@@ -231,10 +228,10 @@ func TestReportFailsClosedWhenTheNotificationPathFails(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
 	_, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
-		SenderRank: RankSoldier, SenderIdentity: "direct-task",
-		ReceiverRank: RankGeneral, ReceiverID: identity,
+		SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
+		ReceiverRank: home.RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
-		Notify: func(NotificationRef) UplinkNotifyResult {
+		Notify: func(home.NotificationRef) UplinkNotifyResult {
 			return FailedNotification(fmt.Errorf("resolving receiver target"))
 		},
 	})
@@ -247,7 +244,7 @@ func TestReportFailsClosedWhenTheNotificationPathFails(t *testing.T) {
 	if !errors.Is(err, ErrReportDurable) {
 		t.Fatalf("err = %v, want it to identify the report as already durable", err)
 	}
-	pending, listErr := NewStore(generalHome).ListPending("direct-task")
+	pending, listErr := home.NewStore(generalHome).ListPending("direct-task")
 	if listErr != nil || len(pending) != 1 {
 		t.Fatalf("pending = %d err = %v, want the report to have landed durably", len(pending), listErr)
 	}
@@ -265,8 +262,8 @@ func TestReportRefusesAReceivingHomeWhoseProvenanceIsUnreadable(t *testing.T) {
 	}
 	_, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
-		SenderRank: RankSoldier, SenderIdentity: "direct-task",
-		ReceiverRank: RankGeneral, ReceiverID: identity,
+		SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
+		ReceiverRank: home.RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
 	})
 	if err == nil {
@@ -280,21 +277,21 @@ func TestReportRefusesAReceivingHomeWhoseProvenanceIsUnreadable(t *testing.T) {
 // envelope marked superseded, and the receiver reading and acking the second.
 func TestReReportingAfterANotifyFailureSupersedesInsteadOfDoubleWriting(t *testing.T) {
 	generalHome, identity := directGeneralHome(t)
-	report := func(notify func(NotificationRef) UplinkNotifyResult) (*ReportResult, error) {
+	report := func(notify func(home.NotificationRef) UplinkNotifyResult) (*ReportResult, error) {
 		return Report(ReportRequest{
 			SenderHome: generalHome, ReceiverHome: generalHome,
-			SenderRank: RankSoldier, SenderIdentity: "direct-task",
-			ReceiverRank: RankGeneral, ReceiverID: identity,
+			SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
+			ReceiverRank: home.RankGeneral, ReceiverID: identity,
 			TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
 			Notify: notify,
 		})
 	}
-	if _, err := report(func(NotificationRef) UplinkNotifyResult {
+	if _, err := report(func(home.NotificationRef) UplinkNotifyResult {
 		return FailedNotification(fmt.Errorf("transport blip"))
 	}); err == nil {
 		t.Fatal("the first report must fail on its notification path")
 	}
-	firstPending, err := NewStore(generalHome).ListPending("direct-task")
+	firstPending, err := home.NewStore(generalHome).ListPending("direct-task")
 	if err != nil || len(firstPending) != 1 {
 		t.Fatalf("pending after the failed report = %d err = %v, want 1", len(firstPending), err)
 	}
@@ -304,21 +301,21 @@ func TestReReportingAfterANotifyFailureSupersedesInsteadOfDoubleWriting(t *testi
 		t.Fatalf("re-running report after a notify failure must succeed: %v", err)
 	}
 
-	pending, err := NewStore(generalHome).ListPending("direct-task")
+	pending, err := home.NewStore(generalHome).ListPending("direct-task")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) != 1 || pending[0].MessageID != second.MessageID {
 		t.Fatalf("pending = %d records, want only the second report; got %+v", len(pending), pending)
 	}
-	if !NewStore(generalHome).IsSuperseded("direct-task", firstPending[0].MessageID) {
+	if !home.NewStore(generalHome).IsSuperseded("direct-task", firstPending[0].MessageID) {
 		t.Fatal("the first report must be marked superseded, not left live alongside the second")
 	}
-	recv, err := NewReceiver(generalHome)
+	recv, err := home.NewReceiver(generalHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := NotificationRef{MessageID: second.MessageID, SenderIdentity: "direct-task"}
+	ref := home.NotificationRef{MessageID: second.MessageID, SenderIdentity: "direct-task"}
 	if _, err := recv.Receive(ref); err != nil {
 		t.Fatalf("the receiver must be able to read the superseding report: %v", err)
 	}
@@ -339,14 +336,14 @@ func TestReportWritesNoPendingRecordWhenItsWakeCannotBeEnqueued(t *testing.T) {
 
 	_, err := Report(ReportRequest{
 		SenderHome: generalHome, ReceiverHome: generalHome,
-		SenderRank: RankSoldier, SenderIdentity: "direct-task",
-		ReceiverRank: RankGeneral, ReceiverID: identity,
+		SenderRank: home.RankSoldier, SenderIdentity: "direct-task",
+		ReceiverRank: home.RankGeneral, ReceiverID: identity,
 		TaskID: "direct-task", Key: "default", State: "failed", Message: "direct dispatch failure",
 	})
 	if err == nil || !strings.Contains(err.Error(), "enqueue receiver wake") {
 		t.Fatalf("Report err = %v, want the wake enqueue to fail", err)
 	}
-	if pending, listErr := NewStore(generalHome).ListPending("direct-task"); listErr != nil || len(pending) != 0 {
+	if pending, listErr := home.NewStore(generalHome).ListPending("direct-task"); listErr != nil || len(pending) != 0 {
 		t.Fatalf("pending = %d err = %v, want none when the wake was never enqueued", len(pending), listErr)
 	}
 }

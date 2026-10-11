@@ -35,10 +35,10 @@ func isCaptainHome(homeDir string) bool {
 }
 
 // captainHomeID is a captain home's id from its provenance marker. A copied home
-// (a well-formed marker naming another home) keeps the marker's id.
+// (a well-formed marker naming another home) is refused like any unusable marker.
 func captainHomeID(homeDir string) (string, error) {
 	id, err := home.ValidateCaptainProvenance(homeDir)
-	if err == nil || errors.Is(err, home.ErrCaptainHomeMismatch) {
+	if err == nil {
 		return id, nil
 	}
 	if !errors.Is(err, home.ErrCaptainMarkerUnusable) {

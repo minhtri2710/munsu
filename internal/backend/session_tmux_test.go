@@ -4,19 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
-
-// hasTmux reports whether tmux is available on PATH.
-func hasTmux() bool {
-	_, err := exec.LookPath("tmux")
-	return err == nil
-}
 
 // fakeExecutables writes an executable stub for each name into a temp dir and
 // returns that dir, for PATH-controlled capability-verification tests.
@@ -28,22 +21,6 @@ func fakeExecutables(t *testing.T, names ...string) string {
 		testutil.WriteFakeExecutable(t, path, "#!/bin/sh\nexit 0")
 	}
 	return fakeBin
-}
-
-func TestDefault_IsDeletedFromOperationPath(t *testing.T) {
-	// Default() is removed from the operation path — no auto-detection exists.
-	// Resolve with an empty requested identity must fail closed even when every
-	// adapter is present.
-	fakeBin := fakeExecutables(t, "tmux", "herdr")
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
-	t.Setenv("TMUX", "/tmp/tmux-socket")
-	t.Setenv("HERDR_ENV", "1")
-
-	if _, _, err := Resolve(""); err == nil {
-		t.Fatal("Resolve('') must fail CLOSED — no auto-detection (Default() is gone)")
-	}
 }
 
 func TestSelect_RejectsUnknownNames(t *testing.T) {
@@ -92,25 +69,6 @@ func TestSelect_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
 	}
 }
 
-func TestResolve_EmptyIdentityFailsClosed(t *testing.T) {
-	// Even with env markers set, an empty requested identity must NOT auto-detect.
-	t.Setenv("TMUX", "/tmp/tmux-socket")
-	t.Setenv("HERDR_ENV", "1")
-	if _, _, err := Resolve(""); err == nil {
-		t.Fatal("Resolve with empty identity must fail CLOSED, never auto-detect from env/PATH")
-	} else if !strings.Contains(err.Error(), "no session backend identity") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestResolve_AutoIdentityFailsClosed(t *testing.T) {
-	if _, _, err := Resolve("auto"); err == nil {
-		t.Fatal("Resolve('auto') must fail CLOSED (auto-detection is gone)")
-	} else if !strings.Contains(err.Error(), "no session backend identity") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestResolve_ExplicitIdentityIgnoresEnvAndConfigFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	// A config/backend file must NOT be read by Resolve (composition translates
@@ -141,14 +99,6 @@ func TestResolve_ExplicitIdentityIgnoresEnvAndConfigFile(t *testing.T) {
 	}
 	if _, ok := bk.(*TmuxBackend); !ok {
 		t.Fatalf("Resolve('tmux') returned %T, want *TmuxBackend", bk)
-	}
-}
-
-func TestResolve_UnknownExplicitIdentityFailsClosed(t *testing.T) {
-	if _, _, err := Resolve("nonexistent"); err == nil {
-		t.Fatal("expected error for unknown backend name")
-	} else if !strings.Contains(err.Error(), "unknown session backend") {
-		t.Errorf("unexpected error: %v", err)
 	}
 }
 

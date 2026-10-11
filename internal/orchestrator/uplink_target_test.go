@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -20,11 +21,11 @@ func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	env := &Envelope{Kind: "uplink-report", SenderRank: RankSoldier, SenderIdentity: "task_special", ReceiverRank: RankCaptain, ReceiverID: "captain-one", TaskID: "task:with/slash", Payload: "done"}
-	if err := NewStore(captainHome).WriteEnvelope(env); err != nil {
+	env := &mhome.Envelope{Kind: "uplink-report", SenderRank: mhome.RankSoldier, SenderIdentity: "task_special", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-one", TaskID: "task:with/slash", Payload: "done"}
+	if err := mhome.NewStore(captainHome).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+	ref := mhome.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
 	target, err := resolveReceiverTarget(captainHome, false, ref)
 	if err != nil {
 		t.Fatal(err)
@@ -34,14 +35,14 @@ func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
 	}
 }
 
-func TestResolveReceiverTargetCaptainFailsClosedWithoutMeta(t *testing.T) {
+func TestResolveReceiverTargetCaptainFailsClosedWithoutParentHome(t *testing.T) {
 	captainHome := t.TempDir()
-	env := &Envelope{Kind: "uplink-report", SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain-one", TaskID: "task:1", Payload: "done"}
-	if err := NewStore(captainHome).WriteEnvelope(env); err != nil {
+	env := &mhome.Envelope{Kind: "uplink-report", SenderRank: mhome.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-one", TaskID: "task:1", Payload: "done"}
+	if err := mhome.NewStore(captainHome).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	_, err := resolveReceiverTarget(captainHome, false, NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity})
-	if err == nil {
-		t.Fatal("missing authoritative captain meta must fail closed")
+	_, err := resolveReceiverTarget(captainHome, false, mhome.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity})
+	if err == nil || !strings.Contains(err.Error(), "captain parent-home unavailable") {
+		t.Fatalf("resolveReceiverTarget error = %v, want the parent-home refusal", err)
 	}
 }

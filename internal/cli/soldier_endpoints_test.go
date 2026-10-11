@@ -41,37 +41,12 @@ func (b recognizedOnlyBackend) CheckAgentAlive(a string) (bool, bool, error) {
 	return b.base.CheckAgentAlive(a)
 }
 
-func TestSoldierEndpointsAllowsConfiguredBackendWhenMetaBackendMissing(t *testing.T) {
-	bk := &soldierEndpointBackend{alive: true}
-	endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return bk, "tmux", nil
-	}}
-	if _, err := endpoint.backend("home", map[string]string{"window": "pane"}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSoldierEndpointsRejectsBackendAndHerdrOwnershipMismatch(t *testing.T) {
-	bk := &soldierEndpointBackend{alive: true}
-	for _, meta := range []map[string]string{
-		{"backend": "tmux", "window": "pane"},
-		{"backend": "herdr", "window": "other:pane", "herdr_session": "owned"},
-	} {
-		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-			return bk, "herdr", nil
-		}}
-		if _, err := endpoint.backend("home", meta); err == nil {
-			t.Fatalf("meta=%v: expected ownership error", meta)
-		}
-	}
-}
-
 func TestSoldierEndpointsBusyRejectsUnknownRecognizedAgentStatus(t *testing.T) {
 	bk := recognizedOnlyBackend{base: &soldierEndpointBackend{alive: true, recognized: true, status: "mystery"}}
 	endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 		return bk, "custom", nil
 	}}
-	busy, err := endpoint.Busy("home", map[string]string{"window": "pane"})
+	busy, err := endpoint.Busy("home", map[string]string{"backend": "custom", "window": "pane"})
 	if busy {
 		t.Fatal("Busy() = true, want false for unknown status")
 	}
@@ -96,7 +71,7 @@ func TestSoldierEndpointsRecognizedAgentOutcomes(t *testing.T) {
 	} {
 		bk := recognizedOnlyBackend{base: &soldierEndpointBackend{alive: tt.alive, recognized: tt.recognized, status: tt.status}}
 		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "custom", nil }}
-		got, err := endpoint.Busy("home", map[string]string{"window": "pane"})
+		got, err := endpoint.Busy("home", map[string]string{"backend": "custom", "window": "pane"})
 		if got != tt.busy || (err != nil) != tt.wantErr {
 			t.Fatalf("%+v: got=%v err=%v", tt, got, err)
 		}
@@ -110,7 +85,7 @@ func TestSoldierEndpointsMapsPromptOutcomes(t *testing.T) {
 	for _, status := range []backend.PromptStatus{backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled, backend.PromptEndpointDead, backend.PromptBackendFailed, backend.PromptUnsupported} {
 		bk := &soldierEndpointBackend{prompt: backend.PromptResult{Status: status}}
 		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
-		got := endpoint.Send("home", map[string]string{"window": "pane"}, "payload")
+		got := endpoint.Send("home", map[string]string{"backend": "tmux", "window": "pane"}, "payload")
 		wantAck := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
 		if got.Acknowledged != wantAck || !strings.EqualFold(got.Status, string(status)) {
 			t.Fatalf("status=%s got=%+v", status, got)

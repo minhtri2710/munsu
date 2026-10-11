@@ -187,7 +187,7 @@ func TestPeekCmd_RejectsMetaWithoutBoundBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing bound backend error")
 	}
-	if !strings.Contains(err.Error(), "bound capture identity is incomplete") {
+	if !strings.Contains(err.Error(), "task does not record the pane's backend") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

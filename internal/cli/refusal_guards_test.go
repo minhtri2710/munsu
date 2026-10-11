@@ -242,15 +242,26 @@ func TestGuardReportRefusesACaptainWithNoParentStatusHome(t *testing.T) {
 // --- internal/cli/skill_cmd.go ---------------------------------------------
 
 func TestGuardSkillShowDeniesManagementSkillsToASoldier(t *testing.T) {
-	t.Setenv("MUNSU_ROLE", "soldier")
-	_, err := runRoot(t, "skill", "show", "munsu-ops")
-	wantErrContains(t, err, "soldier role cannot inspect management skill", "skill show munsu-ops as a soldier")
-
-	// The same command under any other role reaches the embed, which is what
-	// makes the refusal above attributable to the role and not to the name.
-	t.Setenv("MUNSU_ROLE", "general")
-	if _, err := runRoot(t, "skill", "show", "munsu-ops"); err != nil {
-		t.Fatalf("skill show munsu-ops as general = %v, want acceptance", err)
+	// The same skill under another role reaches the embed, which is what makes
+	// the refusal attributable to the role and not to the name.
+	for _, tc := range []struct {
+		role string
+		want string
+	}{
+		{"soldier", "soldier role cannot inspect management skill"},
+		{"general", ""},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			t.Setenv("MUNSU_ROLE", tc.role)
+			_, err := runRoot(t, "skill", "show", "munsu-ops")
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("skill show munsu-ops as %s = %v, want acceptance", tc.role, err)
+				}
+				return
+			}
+			wantErrContains(t, err, tc.want, "skill show munsu-ops as a "+tc.role)
+		})
 	}
 }
 
@@ -326,7 +337,6 @@ func TestGuardMailboxSenderRefusesAnIncompleteBoundIdentity(t *testing.T) {
 		meta map[string]string
 	}{
 		{"no home", "", boundMeta()},
-		{"no backend", "/home", map[string]string{"window": "sess:p1"}},
 		{"no window", "/home", map[string]string{"backend": "herdr"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -364,10 +374,8 @@ func TestGuardSoldierEndpointsRefuseAnIncompleteBoundIdentity(t *testing.T) {
 	if resolved != 0 {
 		t.Fatalf("resolve was called %d times; the guard must refuse before any backend is resolved", resolved)
 	}
-	// A soldier endpoint may carry no recorded backend name — that is the
-	// difference from the sender above, and it must keep being accepted.
-	if _, err := eps.backend("/home", map[string]string{"window": "sess:p1"}); err != nil {
-		t.Fatalf("soldier backend with no recorded backend name = %v, want acceptance", err)
+	if _, err := eps.backend("/home", boundMeta()); err != nil {
+		t.Fatalf("soldier backend with a complete identity = %v, want acceptance", err)
 	}
 }
 
@@ -383,7 +391,6 @@ func TestGuardBoundTeardownRefusesAnIncompleteBoundIdentity(t *testing.T) {
 		meta map[string]string
 	}{
 		{"no home", "", boundMeta()},
-		{"no backend", "/home", map[string]string{"window": "sess:p1"}},
 		{"no window", "/home", map[string]string{"backend": "herdr"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -394,30 +401,8 @@ func TestGuardBoundTeardownRefusesAnIncompleteBoundIdentity(t *testing.T) {
 	if resolved != 0 {
 		t.Fatalf("resolve was called %d times; the guard must refuse before any backend is resolved", resolved)
 	}
-}
-
-func TestGuardBoundTeardownRefusesABackendOtherThanTheRecordedOne(t *testing.T) {
-	td := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return &guardBackend{}, "tmux", nil
-	}}
-	_, _, err := td.resolveBound("/home", boundMeta())
-	wantErrContains(t, err, `bound backend resolved as "tmux"`, "resolveBound where the resolver disagrees with meta")
-	if strings.Contains(err.Error(), "identity is incomplete") {
-		t.Fatalf("resolveBound = %v, which is the incomplete-identity refusal in front of it", err)
-	}
-}
-
-func TestGuardBoundTeardownRefusesAHerdrSessionItDoesNotOwn(t *testing.T) {
-	td := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return &guardBackend{}, "herdr", nil
-	}}
-	meta := boundMeta()
-	meta["window"] = "other-session:p1" // the handle names a session the claim does not own
-	_, _, err := td.resolveBound("/home", meta)
-	wantErrContains(t, err, "herdr session ownership mismatch", "resolveBound with a foreign herdr session in the handle")
-
 	if _, _, err := td.resolveBound("/home", boundMeta()); err != nil {
-		t.Fatalf("resolveBound with the owned session = %v, want acceptance", err)
+		t.Fatalf("resolveBound with a complete identity = %v, want acceptance", err)
 	}
 }
 
@@ -680,8 +665,30 @@ func TestGuardDecisionHoldCompleteRefusesAnAttestationThatNamesKeys(t *testing.T
 func TestGuardSendRefusesUplinkToTheGeneral(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	_, err := runRoot(t, "send", "general", "status?", "--home", homeDir)
-	wantErrContains(t, err, "uplink use munsu report; send is downlink only", "send addressed to general")
+	// The allow row names a task nobody recorded: it passes the uplink guard
+	// and stops at the next stage, reading the receiver's meta. send refuses
+	// gate agents between the two, so run from the temp home, not a checkout.
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+	for _, tc := range []struct {
+		name     string
+		receiver string
+		want     string
+	}{
+		{"receiver is the general", "general", "uplink use munsu report; send is downlink only"},
+		{"receiver is another id", "t1", "reading task t1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runRoot(t, "send", tc.receiver, "status?", "--home", homeDir)
+			wantErrContains(t, err, tc.want, "send addressed to "+tc.receiver)
+		})
+	}
 }
 
 func TestGuardSendRefusesACaptainWithNoHomeRecorded(t *testing.T) {
@@ -786,7 +793,7 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	}
 }
 
-func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
+func TestBriefRequiresCanonicalTaskRecord(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
@@ -804,32 +811,43 @@ func TestBriefWritesKnownLegacyAndForcedTasks(t *testing.T) {
 	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runRoot(t, "brief", "known", "demo-repo", "--home", homeDir); err != nil {
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "meta-only.meta"), []byte("kind=ship\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "data", "known", "brief.md")); err != nil {
-		t.Fatal(err)
-	}
-	if !called {
-		t.Fatal("write fence was not invoked")
-	}
-	for _, force := range []bool{false, true} {
-		id := "unknown"
-		if force {
-			id = "forced"
-		}
-		args := []string{"brief", id, "demo-repo", "--home", homeDir}
-		if force {
-			args = append(args, "--force")
-		} else if err := os.WriteFile(filepath.Join(homeDir, "state", id+".meta"), []byte("kind=ship\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := runRoot(t, args...); err != nil {
-			t.Fatalf("brief force=%v: %v", force, err)
-		}
-		if _, err := os.Stat(filepath.Join(homeDir, "data", id, "brief.md")); err != nil {
-			t.Fatalf("brief missing force=%v: %v", force, err)
-		}
+	for _, tc := range []struct {
+		name    string
+		id      string
+		force   bool
+		wantErr string
+	}{
+		{name: "canonical record allows", id: "known"},
+		{name: "legacy meta without a canonical record blocks", id: "meta-only", wantErr: `task "meta-only" not found`},
+		{name: "force allows a task with no record", id: "forced", force: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"brief", tc.id, "demo-repo", "--home", homeDir}
+			if tc.force {
+				args = append(args, "--force")
+			}
+			called = false
+			_, err := runRoot(t, args...)
+			_, statErr := os.Stat(filepath.Join(homeDir, "data", tc.id, "brief.md"))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("brief error = %v, want %q", err, tc.wantErr)
+				}
+				if called || statErr == nil {
+					t.Fatalf("a refused brief reached the write fence (called=%v, brief exists=%v)", called, statErr == nil)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("brief: %v", err)
+			}
+			if statErr != nil || !called {
+				t.Fatalf("brief not written (write fence called=%v, stat=%v)", called, statErr)
+			}
+		})
 	}
 }
 

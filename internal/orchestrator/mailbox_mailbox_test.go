@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Envelope creation and validation ---
@@ -18,14 +20,16 @@ import (
 // only on paths that must skip before any send happens.
 type deliverySender struct {
 	alive  bool
-	result BoundSendResult
+	result mhome.BoundSendResult
 }
 
-func (s *deliverySender) Alive(string, map[string]string) (bool, error)          { return s.alive, nil }
-func (s *deliverySender) Send(string, map[string]string, string) BoundSendResult { return s.result }
+func (s *deliverySender) Alive(string, map[string]string) (bool, error) { return s.alive, nil }
+func (s *deliverySender) Send(string, map[string]string, string) mhome.BoundSendResult {
+	return s.result
+}
 
 func TestNewMessageID_ProducesHex(t *testing.T) {
-	id, err := NewMessageID()
+	id, err := mhome.NewMessageID()
 	if err != nil {
 		t.Fatalf("NewMessageID: %v", err)
 	}
@@ -41,29 +45,29 @@ func TestNewMessageID_ProducesHex(t *testing.T) {
 }
 
 func TestPayloadHashHex(t *testing.T) {
-	hash := PayloadHashHex("hello")
+	hash := mhome.PayloadHashHex("hello")
 	if len(hash) != 64 {
 		t.Errorf("hash length=%d, want 64", len(hash))
 	}
-	if PayloadHashHex("hello") != hash {
+	if mhome.PayloadHashHex("hello") != hash {
 		t.Error("hash not deterministic")
 	}
-	if PayloadHashHex("hello") == PayloadHashHex("world") {
+	if mhome.PayloadHashHex("hello") == mhome.PayloadHashHex("world") {
 		t.Error("hash collision")
 	}
 }
 
 func TestValidRank(t *testing.T) {
-	if !ValidRank(RankGeneral) {
+	if !mhome.ValidRank(mhome.RankGeneral) {
 		t.Error("general should be valid")
 	}
-	if !ValidRank(RankCaptain) {
+	if !mhome.ValidRank(mhome.RankCaptain) {
 		t.Error("captain should be valid")
 	}
-	if !ValidRank(RankSoldier) {
+	if !mhome.ValidRank(mhome.RankSoldier) {
 		t.Error("soldier should be valid")
 	}
-	if ValidRank(Rank("invalid")) {
+	if mhome.ValidRank(mhome.Rank("invalid")) {
 		t.Error("invalid rank should not be valid")
 	}
 }
@@ -71,32 +75,32 @@ func TestValidRank(t *testing.T) {
 func TestValidateEnvelope_ValidTransitions(t *testing.T) {
 	tests := []struct {
 		name      string
-		sender    Rank
-		receiver  Rank
+		sender    mhome.Rank
+		receiver  mhome.Rank
 		wantError bool
 	}{
-		{"general->captain", RankGeneral, RankCaptain, false},
-		{"captain->general", RankCaptain, RankGeneral, false},
-		{"captain->soldier", RankCaptain, RankSoldier, false},
-		{"soldier->captain", RankSoldier, RankCaptain, false},
-		{"general->soldier", RankGeneral, RankSoldier, false},
-		{"general->general", RankGeneral, RankGeneral, true},
-		{"captain->captain", RankCaptain, RankCaptain, true},
-		{"soldier->general", RankSoldier, RankGeneral, false}, // direct General dispatch
-		{"soldier->soldier", RankSoldier, RankSoldier, true},
+		{"general->captain", mhome.RankGeneral, mhome.RankCaptain, false},
+		{"captain->general", mhome.RankCaptain, mhome.RankGeneral, false},
+		{"captain->soldier", mhome.RankCaptain, mhome.RankSoldier, false},
+		{"soldier->captain", mhome.RankSoldier, mhome.RankCaptain, false},
+		{"general->soldier", mhome.RankGeneral, mhome.RankSoldier, false},
+		{"general->general", mhome.RankGeneral, mhome.RankGeneral, true},
+		{"captain->captain", mhome.RankCaptain, mhome.RankCaptain, true},
+		{"soldier->general", mhome.RankSoldier, mhome.RankGeneral, false}, // direct General dispatch
+		{"soldier->soldier", mhome.RankSoldier, mhome.RankSoldier, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := &Envelope{
+			env := &mhome.Envelope{
 				MessageID:      "test-id-1234567890abcdef",
 				SenderRank:     tt.sender,
 				SenderIdentity: "sender-1",
 				ReceiverRank:   tt.receiver,
 				ReceiverID:     "receiver-1",
 				Payload:        "test message",
-				PayloadHash:    PayloadHashHex("test message"),
+				PayloadHash:    mhome.PayloadHashHex("test message"),
 			}
-			err := ValidateEnvelope(env)
+			err := mhome.ValidateEnvelope(env)
 			if tt.wantError && err == nil {
 				t.Error("expected validation error, got nil")
 			}
@@ -112,16 +116,16 @@ func TestValidateEnvelope_ValidTransitions(t *testing.T) {
 func TestEnvelope_ImmutableStruct(t *testing.T) {
 	// The Envelope struct has no mutable delivery/ack fields.
 	// This test verifies the struct shape: no DeliveryStatus, State, etc.
-	env := &Envelope{
+	env := &mhome.Envelope{
 		MessageID:      "test-id",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "my-key",
 		Payload:        "done: work",
-		PayloadHash:    PayloadHashHex("done: work"),
+		PayloadHash:    mhome.PayloadHashHex("done: work"),
 		CreatedAt:      1000,
 	}
 	// Verify that a round-trip through JSON preserves all fields and adds none.
@@ -129,7 +133,7 @@ func TestEnvelope_ImmutableStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var decoded Envelope
+	var decoded mhome.Envelope
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -180,12 +184,12 @@ func TestEnvelope_ImmutableStruct(t *testing.T) {
 
 func TestStore_WriteEnvelope_WritesToReceiverInbox(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
+	env := &mhome.Envelope{
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-task-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-munsu",
 		Payload:        "done: task complete",
 	}
@@ -193,7 +197,7 @@ func TestStore_WriteEnvelope_WritesToReceiverInbox(t *testing.T) {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
-	inboxDir := filepath.Join(home, "state", InboxDir, env.SenderIdentity)
+	inboxDir := filepath.Join(home, "state", mhome.InboxDir, env.SenderIdentity)
 	entries, err := os.ReadDir(inboxDir)
 	if err != nil {
 		t.Fatalf("reading inbox dir: %v", err)
@@ -221,11 +225,11 @@ func TestStore_WriteEnvelope_WritesToReceiverInbox(t *testing.T) {
 }
 
 func TestStore_WriteEnvelope_AutoGeneratesID(t *testing.T) {
-	store := NewStore(t.TempDir())
-	env := &Envelope{
-		SenderRank:     RankCaptain,
+	store := mhome.NewStore(t.TempDir())
+	env := &mhome.Envelope{
+		SenderRank:     mhome.RankCaptain,
 		SenderIdentity: "captain-1",
-		ReceiverRank:   RankGeneral,
+		ReceiverRank:   mhome.RankGeneral,
 		ReceiverID:     "general-main",
 		Payload:        "report",
 	}
@@ -238,7 +242,7 @@ func TestStore_WriteEnvelope_AutoGeneratesID(t *testing.T) {
 }
 
 func TestStore_ReadEnvelope_NotFound(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := mhome.NewStore(t.TempDir())
 	got, err := store.ReadEnvelope("sender-1", "nonexistent-id")
 	if err != nil {
 		t.Fatalf("ReadEnvelope: %v", err)
@@ -252,12 +256,12 @@ func TestStore_ReadEnvelope_NotFound(t *testing.T) {
 
 func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
+	env := &mhome.Envelope{
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "complete payload",
 	}
@@ -266,7 +270,7 @@ func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 	}
 
 	// Read the file directly and verify it's valid JSON.
-	path := filepath.Join(home, "state", InboxDir, "soldier-1", env.MessageID+".json")
+	path := filepath.Join(home, "state", mhome.InboxDir, "soldier-1", env.MessageID+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading file: %v", err)
@@ -293,10 +297,10 @@ func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			e := &Envelope{
-				SenderRank:     RankSoldier,
+			e := &mhome.Envelope{
+				SenderRank:     mhome.RankSoldier,
 				SenderIdentity: "soldier-1",
-				ReceiverRank:   RankCaptain,
+				ReceiverRank:   mhome.RankCaptain,
 				ReceiverID:     "captain-1",
 				Payload:        "payload",
 			}
@@ -306,7 +310,7 @@ func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 	wg.Wait()
 
 	// All envelope files must be valid JSON.
-	inboxDir := filepath.Join(home, "state", InboxDir, "soldier-1")
+	inboxDir := filepath.Join(home, "state", mhome.InboxDir, "soldier-1")
 	entries, err = os.ReadDir(inboxDir)
 	if err != nil {
 		t.Fatalf("reading inbox: %v", err)
@@ -330,22 +334,22 @@ func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
 
 func TestStore_Pending_IdentityPathIsolation(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
 	// Two different sender identities share the same home.
-	env1 := &Envelope{
+	env1 := &mhome.Envelope{
 		MessageID:      "msg-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-alpha",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "report from alpha",
 	}
-	env2 := &Envelope{
+	env2 := &mhome.Envelope{
 		MessageID:      "msg-2",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-beta",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "report from beta",
 	}
@@ -376,7 +380,7 @@ func TestStore_Pending_IdentityPathIsolation(t *testing.T) {
 
 	// Write ack files so RemovePendingAfterAck can validate.
 	pending1, _ := store.ReadPending("soldier-alpha", "msg-1")
-	ack1 := &ProcessingAck{
+	ack1 := &mhome.ProcessingAck{
 		MessageID: pending1.MessageID, SenderRank: pending1.SenderRank,
 		SenderIdentity: pending1.SenderIdentity, ReceiverRank: pending1.ReceiverRank,
 		ReceiverID: pending1.ReceiverID, PayloadHash: pending1.PayloadHash,
@@ -402,17 +406,17 @@ func TestStore_Pending_IdentityPathIsolation(t *testing.T) {
 
 func TestStore_WriteAck_AndRead(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID:      "msg-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "my-key",
-		PayloadHash:    PayloadHashHex("done: work"),
+		PayloadHash:    mhome.PayloadHashHex("done: work"),
 		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
@@ -433,22 +437,22 @@ func TestStore_WriteAck_AndRead(t *testing.T) {
 	if got.Outcome != "done" {
 		t.Errorf("Outcome: %q != %q", got.Outcome, "done")
 	}
-	if got.SchemaVersion != AckSchemaVersion {
-		t.Errorf("SchemaVersion: %q != %q", got.SchemaVersion, AckSchemaVersion)
+	if got.SchemaVersion != mhome.AckSchemaVersion {
+		t.Errorf("SchemaVersion: %q != %q", got.SchemaVersion, mhome.AckSchemaVersion)
 	}
 }
 
 func TestStore_IsAcked(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID:      "msg-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
-		PayloadHash:    PayloadHashHex("done"),
+		PayloadHash:    mhome.PayloadHashHex("done"),
 		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
@@ -469,93 +473,93 @@ func TestStore_IsAcked(t *testing.T) {
 // --- Exact ack validation ---
 
 func TestValidateAck_ExactMatch(t *testing.T) {
-	env := &Envelope{
+	env := &mhome.Envelope{
 		MessageID:      "msg-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "my-key",
 		Payload:        "done: work",
-		PayloadHash:    PayloadHashHex("done: work"),
+		PayloadHash:    mhome.PayloadHashHex("done: work"),
 	}
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID:      "msg-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "my-key",
-		PayloadHash:    PayloadHashHex("done: work"),
+		PayloadHash:    mhome.PayloadHashHex("done: work"),
 		Outcome:        "done",
 	}
-	if err := ValidateAck(env, ack); err != nil {
+	if err := mhome.ValidateAck(env, ack); err != nil {
 		t.Fatalf("ValidateAck exact match: %v", err)
 	}
 }
 
 func TestValidateAck_WrongMessageID(t *testing.T) {
-	env := &Envelope{MessageID: "msg-1", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "msg-2", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "message ID") {
+	env := &mhome.Envelope{MessageID: "msg-1", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "msg-2", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "message ID") {
 		t.Errorf("expected message ID mismatch error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongSenderRank(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankCaptain, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender rank") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankCaptain, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender rank") {
 		t.Errorf("expected sender rank error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongSenderIdentity(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "soldier-2", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender identity") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-2", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender identity") {
 		t.Errorf("expected sender identity error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongReceiverRank(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankGeneral, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver rank") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankGeneral, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver rank") {
 		t.Errorf("expected receiver rank error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongReceiverID(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "captain-1", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "captain-2", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver ID") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-2", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver ID") {
 		t.Errorf("expected receiver ID error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongTaskID(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", TaskID: "task:1", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", TaskID: "task:2", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "task ID") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", TaskID: "task:1", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", TaskID: "task:2", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "task ID") {
 		t.Errorf("expected task ID error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongKey(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", Key: "key-a", PayloadHash: PayloadHashHex("x")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", Key: "key-b", PayloadHash: PayloadHashHex("x")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "key") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", Key: "key-a", PayloadHash: mhome.PayloadHashHex("x")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", Key: "key-b", PayloadHash: mhome.PayloadHashHex("x")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "key") {
 		t.Errorf("expected key error, got: %v", err)
 	}
 }
 
 func TestValidateAck_WrongPayloadHash(t *testing.T) {
-	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", Payload: "hello", PayloadHash: PayloadHashHex("hello")}
-	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("world")}
-	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "payload hash") {
+	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", Payload: "hello", PayloadHash: mhome.PayloadHashHex("hello")}
+	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("world")}
+	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "payload hash") {
 		t.Errorf("expected payload hash error, got: %v", err)
 	}
 }
@@ -563,25 +567,25 @@ func TestValidateAck_WrongPayloadHash(t *testing.T) {
 // --- ValidOutcome ---
 
 func TestValidOutcome(t *testing.T) {
-	if !ValidOutcome("done") {
+	if !mhome.ValidOutcome("done") {
 		t.Error("done should be valid")
 	}
-	if !ValidOutcome("failed") {
+	if !mhome.ValidOutcome("failed") {
 		t.Error("failed should be valid")
 	}
-	if !ValidOutcome("needs-decision") {
+	if !mhome.ValidOutcome("needs-decision") {
 		t.Error("needs-decision should be valid")
 	}
-	if !ValidOutcome("blocked") {
+	if !mhome.ValidOutcome("blocked") {
 		t.Error("blocked should be valid")
 	}
-	if !ValidOutcome("paused") {
+	if !mhome.ValidOutcome("paused") {
 		t.Error("paused should be valid")
 	}
-	if ValidOutcome("") {
+	if mhome.ValidOutcome("") {
 		t.Error("empty should not be valid")
 	}
-	if ValidOutcome("invalid") {
+	if mhome.ValidOutcome("invalid") {
 		t.Error("invalid should not be valid")
 	}
 }
@@ -589,51 +593,51 @@ func TestValidOutcome(t *testing.T) {
 // --- ValidateProcessingAck ---
 
 func TestValidateProcessingAck_Valid(t *testing.T) {
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		ProcessedAt: 1000,
 		Outcome:     "done",
 	}
-	if err := ValidateProcessingAck(ack); err != nil {
+	if err := mhome.ValidateProcessingAck(ack); err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
 }
 
 func TestValidateProcessingAck_ProcessedAtZero(t *testing.T) {
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		ProcessedAt: 0,
 		Outcome:     "done",
 	}
-	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
+	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
 		t.Errorf("expected processed_at error, got: %v", err)
 	}
 }
 
 func TestValidateProcessingAck_ProcessedAtNegative(t *testing.T) {
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		ProcessedAt: -1,
 		Outcome:     "done",
 	}
-	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
+	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
 		t.Errorf("expected processed_at error, got: %v", err)
 	}
 }
 
 func TestValidateProcessingAck_InvalidOutcome(t *testing.T) {
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		ProcessedAt: 1000,
 		Outcome:     "invalid",
 	}
-	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
+	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
 		t.Errorf("expected outcome error, got: %v", err)
 	}
 }
 
 func TestValidateProcessingAck_EmptyOutcome(t *testing.T) {
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		ProcessedAt: 1000,
 		Outcome:     "",
 	}
-	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
+	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
 		t.Errorf("expected outcome error, got: %v", err)
 	}
 }
@@ -651,7 +655,7 @@ func TestValidatePathComponent_Valid(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc, func(t *testing.T) {
-			if err := ValidatePathComponent(tc, "test"); err != nil {
+			if err := mhome.ValidatePathComponent(tc, "test"); err != nil {
 				t.Errorf("expected no error, got: %v", err)
 			}
 		})
@@ -659,31 +663,31 @@ func TestValidatePathComponent_Valid(t *testing.T) {
 }
 
 func TestValidatePathComponent_Slash(t *testing.T) {
-	if err := ValidatePathComponent("a/b", "test"); err == nil || !strings.Contains(err.Error(), "slash") {
+	if err := mhome.ValidatePathComponent("a/b", "test"); err == nil || !strings.Contains(err.Error(), "slash") {
 		t.Errorf("expected slash error, got: %v", err)
 	}
 }
 
 func TestValidatePathComponent_Backslash(t *testing.T) {
-	if err := ValidatePathComponent("a\\b", "test"); err == nil || !strings.Contains(err.Error(), "backslash") {
+	if err := mhome.ValidatePathComponent("a\\b", "test"); err == nil || !strings.Contains(err.Error(), "backslash") {
 		t.Errorf("expected backslash error, got: %v", err)
 	}
 }
 
 func TestValidatePathComponent_DotDot(t *testing.T) {
-	if err := ValidatePathComponent("..", "test"); err == nil || !strings.Contains(err.Error(), "relative path") {
+	if err := mhome.ValidatePathComponent("..", "test"); err == nil || !strings.Contains(err.Error(), "relative path") {
 		t.Errorf("expected relative path error, got: %v", err)
 	}
 }
 
 func TestValidatePathComponent_Empty(t *testing.T) {
-	if err := ValidatePathComponent("", "test"); err == nil || !strings.Contains(err.Error(), "empty") {
+	if err := mhome.ValidatePathComponent("", "test"); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("expected empty error, got: %v", err)
 	}
 }
 
 func TestValidatePathComponent_Colon(t *testing.T) {
-	if err := ValidatePathComponent("a:b", "test"); err == nil || !strings.Contains(err.Error(), "colon") {
+	if err := mhome.ValidatePathComponent("a:b", "test"); err == nil || !strings.Contains(err.Error(), "colon") {
 		t.Errorf("expected colon error, got: %v", err)
 	}
 }
@@ -691,12 +695,12 @@ func TestValidatePathComponent_Colon(t *testing.T) {
 // --- Idempotent envelope write ---
 
 func TestStore_WriteEnvelope_Idempotent_SameContent(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := mhome.NewStore(t.TempDir())
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
+	env := &mhome.Envelope{
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "done: same content",
 	}
@@ -705,11 +709,11 @@ func TestStore_WriteEnvelope_Idempotent_SameContent(t *testing.T) {
 		t.Fatalf("first WriteEnvelope: %v", err)
 	}
 	msgID := env.MessageID
-	env2 := &Envelope{
+	env2 := &mhome.Envelope{
 		MessageID:      msgID,
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "done: same content",
 	}
@@ -719,13 +723,13 @@ func TestStore_WriteEnvelope_Idempotent_SameContent(t *testing.T) {
 }
 
 func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := mhome.NewStore(t.TempDir())
 
-	env := &Envelope{
+	env := &mhome.Envelope{
 		MessageID:      "fixed-id",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "first content",
 	}
@@ -734,11 +738,11 @@ func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
 	}
 
 	// Same message ID, different payload — must fail.
-	env2 := &Envelope{
+	env2 := &mhome.Envelope{
 		MessageID:      "fixed-id",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "different content",
 	}
@@ -749,11 +753,11 @@ func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
 	}
 
 	// Different receiver ID with same message ID — must fail.
-	env3 := &Envelope{
+	env3 := &mhome.Envelope{
 		MessageID:      "fixed-id",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-2",
 		Payload:        "first content",
 	}
@@ -764,11 +768,11 @@ func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
 	}
 
 	// Different sender rank with same message ID — must fail.
-	env4 := &Envelope{
+	env4 := &mhome.Envelope{
 		MessageID:      "fixed-id",
-		SenderRank:     RankCaptain,
+		SenderRank:     mhome.RankCaptain,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankGeneral,
+		ReceiverRank:   mhome.RankGeneral,
 		ReceiverID:     "captain-1",
 		Payload:        "first content",
 	}
@@ -782,15 +786,15 @@ func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
 // --- Idempotent ack ---
 
 func TestStore_WriteAck_Conflict(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := mhome.NewStore(t.TempDir())
 
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID:      "msg-conflict",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
-		PayloadHash:    PayloadHashHex("first"),
+		PayloadHash:    mhome.PayloadHashHex("first"),
 		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
@@ -799,13 +803,13 @@ func TestStore_WriteAck_Conflict(t *testing.T) {
 	}
 
 	// Different outcome — must fail.
-	ack2 := &ProcessingAck{
+	ack2 := &mhome.ProcessingAck{
 		MessageID:      "msg-conflict",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
-		PayloadHash:    PayloadHashHex("first"),
+		PayloadHash:    mhome.PayloadHashHex("first"),
 		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "failed",
 	}
@@ -818,15 +822,15 @@ func TestStore_WriteAck_Conflict(t *testing.T) {
 
 func TestStore_WriteAck_Idempotent(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID:      "msg-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
-		PayloadHash:    PayloadHashHex("work"),
+		PayloadHash:    mhome.PayloadHashHex("work"),
 		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
@@ -854,10 +858,10 @@ func TestStore_WriteAck_Idempotent(t *testing.T) {
 
 func TestStore_ListInbox_ExcludesAcked(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	env1 := &Envelope{SenderRank: RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: RankCaptain, ReceiverID: "captain-1", Payload: "first"}
-	env2 := &Envelope{SenderRank: RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: RankCaptain, ReceiverID: "captain-1", Payload: "second"}
+	env1 := &mhome.Envelope{SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1", Payload: "first"}
+	env2 := &mhome.Envelope{SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1", Payload: "second"}
 	if err := store.WriteEnvelope(env1); err != nil {
 		t.Fatal(err)
 	}
@@ -866,9 +870,9 @@ func TestStore_ListInbox_ExcludesAcked(t *testing.T) {
 	}
 
 	// Ack env1.
-	ack := &ProcessingAck{
-		MessageID: env1.MessageID, SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+	ack := &mhome.ProcessingAck{
+		MessageID: env1.MessageID, SenderRank: mhome.RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain,
 		ReceiverID: "captain-1", PayloadHash: env1.PayloadHash,
 		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
@@ -892,7 +896,7 @@ func TestStore_ListInbox_ExcludesAcked(t *testing.T) {
 
 func TestStore_ReadEnvelope_V1Compat(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
 	// Write a v1-style envelope with extra mutable fields.
 	v1Data := `{
@@ -907,14 +911,14 @@ func TestStore_ReadEnvelope_V1Compat(t *testing.T) {
 		"key": "",
 		"state": "done",
 		"payload": "done: legacy",
-		"payload_hash": "` + PayloadHashHex("done: legacy") + `",
+		"payload_hash": "` + mhome.PayloadHashHex("done: legacy") + `",
 		"created_at": 1000,
 		"delivery_status": "acked",
 		"delivery_attempts": 1,
 		"last_attempt_at": 1001,
 		"acked_at": 1002
 	}`
-	inboxDir := filepath.Join(home, "state", InboxDir, "soldier-1")
+	inboxDir := filepath.Join(home, "state", mhome.InboxDir, "soldier-1")
 	if err := os.MkdirAll(inboxDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -932,7 +936,7 @@ func TestStore_ReadEnvelope_V1Compat(t *testing.T) {
 	if env.MessageID != "v1-msg" {
 		t.Errorf("MessageID: %q", env.MessageID)
 	}
-	if env.SenderRank != RankSoldier {
+	if env.SenderRank != mhome.RankSoldier {
 		t.Errorf("SenderRank: %q", env.SenderRank)
 	}
 	if env.SenderIdentity != "soldier-1" {
@@ -941,7 +945,7 @@ func TestStore_ReadEnvelope_V1Compat(t *testing.T) {
 	if env.Payload != "done: legacy" {
 		t.Errorf("Payload: %q", env.Payload)
 	}
-	if env.PayloadHash != PayloadHashHex("done: legacy") {
+	if env.PayloadHash != mhome.PayloadHashHex("done: legacy") {
 		t.Errorf("PayloadHash mismatch")
 	}
 	if env.CreatedAt != 1000 {
@@ -955,7 +959,7 @@ func TestStore_ReadEnvelope_V1Compat(t *testing.T) {
 
 func TestStore_ReadPending_V1Compat(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
 	v1Data := `{
 		"schema_version": "munsu.mailbox-envelope/v1",
@@ -965,12 +969,12 @@ func TestStore_ReadPending_V1Compat(t *testing.T) {
 		"receiver_rank": "captain",
 		"receiver_id": "captain-1",
 		"payload": "done: legacy pending",
-		"payload_hash": "` + PayloadHashHex("done: legacy pending") + `",
+		"payload_hash": "` + mhome.PayloadHashHex("done: legacy pending") + `",
 		"created_at": 2000,
 		"delivery_status": "pending",
 		"delivery_attempts": 0
 	}`
-	pendingDir := filepath.Join(home, "state", OutboxDir, "soldier-1")
+	pendingDir := filepath.Join(home, "state", mhome.OutboxDir, "soldier-1")
 	if err := os.MkdirAll(pendingDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1003,16 +1007,16 @@ func TestStore_ReadPending_V1Compat(t *testing.T) {
 
 func TestStore_Pending_RoundTrip(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	env := &Envelope{
+	env := &mhome.Envelope{
 		MessageID:      "pending-1",
-		SenderRank:     RankSoldier,
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "done: pending test",
-		PayloadHash:    PayloadHashHex("done: pending test"),
+		PayloadHash:    mhome.PayloadHashHex("done: pending test"),
 	}
 	if err := store.WritePending(env); err != nil {
 		t.Fatalf("WritePending: %v", err)
@@ -1038,10 +1042,10 @@ func TestStore_Pending_RoundTrip(t *testing.T) {
 	}
 
 	// Write matching ack so RemovePendingAfterAck can validate.
-	ack := &ProcessingAck{
-		MessageID: "pending-1", SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("done: pending test"),
+	ack := &mhome.ProcessingAck{
+		MessageID: "pending-1", SenderRank: mhome.RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: mhome.PayloadHashHex("done: pending test"),
 		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
 	store.WriteAck(ack)
@@ -1060,13 +1064,13 @@ func TestStore_Pending_RoundTrip(t *testing.T) {
 func TestStore_FullFlow(t *testing.T) {
 	receiverHome := t.TempDir()
 	senderHome := t.TempDir()
-	receiverStore := NewStore(receiverHome)
-	senderStore := NewStore(senderHome)
+	receiverStore := mhome.NewStore(receiverHome)
+	senderStore := mhome.NewStore(senderHome)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
+	env := &mhome.Envelope{
+		SenderRank:     mhome.RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
+		ReceiverRank:   mhome.RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "report-key",
@@ -1090,7 +1094,7 @@ func TestStore_FullFlow(t *testing.T) {
 	}
 
 	// Write ack on receiver side.
-	ack := &ProcessingAck{
+	ack := &mhome.ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,
 		SenderIdentity: env.SenderIdentity,
@@ -1114,7 +1118,7 @@ func TestStore_FullFlow(t *testing.T) {
 	if readAck == nil {
 		t.Fatal("ack not found")
 	}
-	if err := ValidateAck(env, readAck); err != nil {
+	if err := mhome.ValidateAck(env, readAck); err != nil {
 		t.Fatalf("ValidateAck: %v", err)
 	}
 
@@ -1132,16 +1136,16 @@ func TestStore_FullFlow(t *testing.T) {
 
 func TestStore_ListAllPending(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	envs := []*Envelope{
+	envs := []*mhome.Envelope{
 		{MessageID: "a-1", SenderIdentity: "alpha", Payload: "a1"},
 		{MessageID: "a-2", SenderIdentity: "alpha", Payload: "a2"},
 		{MessageID: "b-1", SenderIdentity: "beta", Payload: "b1"},
 	}
 	for _, e := range envs {
-		e.SenderRank = RankSoldier
-		e.ReceiverRank = RankCaptain
+		e.SenderRank = mhome.RankSoldier
+		e.ReceiverRank = mhome.RankCaptain
 		e.ReceiverID = "captain-1"
 		if err := store.WritePending(e); err != nil {
 			t.Fatal(err)
@@ -1161,19 +1165,19 @@ func TestStore_ListAllPending(t *testing.T) {
 
 func TestRecoverInbox_AlreadyAcked(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	env := &Envelope{
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+	env := &mhome.Envelope{
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		MessageID: "test-id", Payload: "done: test",
 	}
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	ack := &ProcessingAck{
-		MessageID: env.MessageID, SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+	ack := &mhome.ProcessingAck{
+		MessageID: env.MessageID, SenderRank: mhome.RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain,
 		ReceiverID: "captain-1", PayloadHash: env.PayloadHash,
 		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
@@ -1192,11 +1196,11 @@ func TestRecoverInbox_AlreadyAcked(t *testing.T) {
 
 func TestRecoverInbox_SkipOnMarker(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
+	store := mhome.NewStore(home)
 
-	env := &Envelope{
-		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+	env := &mhome.Envelope{
+		SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		MessageID: "test-id-skip", Payload: "done: test",
 	}
 	if err := store.WriteEnvelope(env); err != nil {
@@ -1213,9 +1217,9 @@ func TestRecoverInbox_SkipOnMarker(t *testing.T) {
 }
 
 func TestRecoverInbox_SkipsUplinkEnvelope(t *testing.T) {
-	for _, env := range []*Envelope{
-		{MessageID: "soldier-up", Kind: "uplink-report", SenderRank: RankSoldier, ReceiverRank: RankCaptain},
-		{MessageID: "captain-up", Kind: "uplink-report", SenderRank: RankCaptain, ReceiverRank: RankGeneral},
+	for _, env := range []*mhome.Envelope{
+		{MessageID: "soldier-up", Kind: "uplink-report", SenderRank: mhome.RankSoldier, ReceiverRank: mhome.RankCaptain},
+		{MessageID: "captain-up", Kind: "uplink-report", SenderRank: mhome.RankCaptain, ReceiverRank: mhome.RankGeneral},
 	} {
 		attempt := RecoverInboxWithSender(&deliverySender{}, t.TempDir(), env)
 		if !attempt.Skipped || attempt.Delivered {
