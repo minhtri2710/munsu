@@ -132,6 +132,31 @@ jobs:
           fi
           go test -count=1 ./internal/fleet/ -run "$re" -v
 
+  darwin-fence:
+    name: Darwin fence tests
+    runs-on: macos-latest
+    timeout-minutes: 20
+    # The soldier and reviewer write fence is sandbox-exec, which exists only
+    # on darwin; every other lane compiles these tests (GOOS=darwin vet) but
+    # never runs them. This job runs the fence package whole and the fleet
+    # tests whose names contain "Fence", and fails if that pattern selects no
+    # fleet test, so a rename cannot empty the lane silently.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Fence tests
+        run: |
+          set -euo pipefail
+          if [ -z "$(go test -list 'Fence' ./internal/fleet/ | grep '^Test' || true)" ]; then
+            echo "::error::-run Fence selects no fleet test (renamed or deleted?)"
+            exit 1
+          fi
+          go test -count=1 ./internal/fence/
+          go test -count=1 ./internal/fleet/ -run 'Fence'
+
   race:
     name: Race detector
     runs-on: ubuntu-latest
