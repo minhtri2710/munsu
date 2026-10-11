@@ -46,7 +46,7 @@ func captainBackedSoldierReport(t *testing.T, taskID string) (soldierHome, capta
 	return soldierHome, captainHome
 }
 
-// TestCaptainBackedSoldierCanEndItsTurn is the BEO-112 regression guard.
+// TestCaptainBackedSoldierCanEndItsTurn is a regression guard.
 //
 // A soldier whose parent is a captain home reported a material terminal state.
 // Nothing in the binary can write the ack for the receipt that report left in

@@ -1,11 +1,11 @@
-# BEO-122: measure what `go test` actually does on windows. This is an
+# Measure what `go test` actually does on windows. This is an
 # OBSERVATION lane, not a gate.
 #
 # The repo has never run a test on windows. ci.yml now also builds and vets
 # natively on windows-latest (the `windows-build-vet` gate); before that, the
 # only windows coverage in ci.yml was `GOOS=windows go vet ./...`, which
 # compiles the windows halves and never executes them -- five bugs reached main
-# through exactly that gap (BEO-112/114/116/120). Compiling is still not
+# through exactly that gap. Compiling is still not
 # running, and the difference is still what this file measures.
 #
 # Read this before changing anything here:
@@ -31,7 +31,7 @@
 # The ubuntu job exists only as a timing reference measured the same way on the
 # same commit, so "windows is slower" is a number rather than a hunch.
 
-name: Windows observation (BEO-122)
+name: Windows observation
 
 on:
   workflow_dispatch:

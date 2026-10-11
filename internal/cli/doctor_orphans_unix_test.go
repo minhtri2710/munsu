@@ -24,8 +24,8 @@ const orphanChildReady = "ready\n"
 // path of `munsu doctor --orphans` — the runtime writer fence, the real OS
 // process inventory, the real oracle — against a real leftover: a process that
 // carries a run marker whose run-scoped TMPDIR is gone, started with setsid()
-// so it sits outside this test's process group the way the leftovers BEO-45
-// inventoried do. The scan must find it, call it GARBAGE, and leave it alive.
+// so it sits outside this test's process group the way real
+// leftovers do. The scan must find it, call it GARBAGE, and leave it alive.
 func TestOrphanScanReportsRealGarbageAndLeavesItRunning(t *testing.T) {
 	vanished := filepath.Join(t.TempDir(), "multica-task-vanished")
 

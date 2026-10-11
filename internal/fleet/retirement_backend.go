@@ -54,7 +54,7 @@ func (s RetirementEndpointStatus) Live() bool {
 }
 
 // AuthorizedAbsence concludes NEGATIVE authorization for this raw retirement
-// probe against the exact canonical EndpointBinding proof (BEO-16/P1a): only a
+// probe against the exact canonical EndpointBinding proof: only a
 // narrow exact structured absence of the exact bound handle, revalidated under
 // the current generation/revision, may conclude AuthoritativeAbsent(). A raw
 // probe is fresh-unknown; an incomplete/stale proof or a non-absence reading
@@ -64,7 +64,7 @@ func (s RetirementEndpointStatus) AuthorizedAbsence(proof exactEndpointProof) Re
 }
 
 // AuthorizedLive concludes POSITIVE authorization for this raw retirement
-// probe (BEO-16/P1a): raw probe liveness is promoted to Live() only with
+// probe: raw probe liveness is promoted to Live() only with
 // explicit acquisition evidence tying the exact handle to the incarnation
 // (proof.acquired — the canonical EndpointBinding is the acquisition receipt)
 // plus a complete proof revalidated under current generation/revision.

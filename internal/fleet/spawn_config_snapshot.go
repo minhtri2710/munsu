@@ -45,7 +45,7 @@ func resolvedStep(step taskauthority.DeliveryStep) fleetconfig.ResolvedStep {
 }
 
 // ResolveSpawnProjectConfig loads the only config surface authorized by the
-// resolved dispatch policy (issue #546 Slice 6, ADR-0008 §6): CaptainMediated
+// resolved dispatch policy: CaptainMediated
 // reads the Captain's assigned published snapshot; GeneralDirect resolves the
 // requested project from the typed fleet and project documents. The opposite
 // read — or any read without a resolved policy — fails closed with an empty
@@ -107,14 +107,14 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	if selection.Harness == "" {
 		return SpawnProjectConfig{}, fleetconfig.Remediate(
 			fleetconfig.RemediateInvalidProfile,
-			"set soldierHarness or a matching dispatch profile in data/projects.json",
+			"run `munsu project config set <project> soldier-harness <name>` or add a matching profile with `munsu config dispatch add`",
 			fmt.Errorf("project %q resolved no Soldier harness", args.ProjectName),
 		)
 	}
 	if err := harness.ValidateHarness(selection.Harness); err != nil {
 		return SpawnProjectConfig{}, fleetconfig.Remediate(
 			fleetconfig.RemediateInvalidProfile,
-			"fix the project's dispatch profile or soldierHarness in data/projects.json",
+			"fix the project's dispatch profile with `munsu config dispatch` or its harness with `munsu project config set <project> soldier-harness <name>`",
 			err,
 		)
 	}

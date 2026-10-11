@@ -32,7 +32,7 @@ const (
 
 // WakeReason describes an actionable watcher condition.
 type WakeReason struct {
-	Kind                 string // signal, stale, check, heartbeat
+	Kind                 string // signal, stale, check
 	TaskIDs              []string
 	Message              string
 	DemandDeepInspection bool // set after stale-by-idle-seconds threshold for same task
@@ -224,7 +224,7 @@ type CheckValidationPort interface {
 }
 
 // RunWithProbeSenderAndEvents starts the persistent watcher and also runs the
-// bounded native observation event lane (BEO-17/P1b): a validated event hint
+// bounded native observation event lane: a validated event hint
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling; a nil check-validation port is refused as a
@@ -270,7 +270,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	ticker := newTicker(watcherPollInterval)
 	defer ticker.Stop()
 
-	// Optional native event lane (BEO-17/P1b): bounded event wait feeding
+	// Optional native event lane: bounded event wait feeding
 	// validated wake hints; every other outcome is absorbed by the lane so
 	// the polling ticker remains the cadence authority and the watcher is
 	// never silent. A closed lane (no event surface, degraded reader) keeps
@@ -303,7 +303,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				continue
 			}
 			if pulse.outcome == EventWaitSignal {
-				// Event-to-reprobe (BEO-17/P1b): a native wake hint only
+				// Event-to-reprobe: a native wake hint only
 				// triggers an immediate re-probe cycle; the cycle re-probes the
 				// exact binding before any recovery/relaunch/dispose decision.
 				// The hint itself is never lifecycle truth and never sets a

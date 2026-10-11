@@ -53,6 +53,9 @@ func operationError(code, action, message string) error {
 	}
 }
 
+// configureContractCommand gives a contract command its --output toon|json flag
+// (toon is the default); an unknown flag or an unsupported output format is a
+// usage error.
 func configureContractCommand(cmd *cobra.Command) {
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true

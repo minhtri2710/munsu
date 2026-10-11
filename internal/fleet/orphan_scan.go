@@ -14,7 +14,7 @@ import (
 // otherwise touches a scanned process: CompositeWriterFence.Controller is
 // never reached from InspectOrphans. Automatic cleanup stays out until an
 // explicit adoption registry exists, because no passive signal distinguishes
-// a leftover from a daemon a member started on purpose (ADR-BEO-40-01 §5).
+// a leftover from a daemon a member started on purpose.
 
 // Ownership marker keys read out of a scanned process environment. The list is
 // a whitelist: no other key is ever kept, rendered or logged, because process
@@ -29,8 +29,7 @@ const (
 )
 
 // runScopedTmpdirBasePrefix is the observed naming convention of the per-run
-// temporary directory the Multica runtime creates and removes with the run
-// (BEO-45 correlated it 6/6). It is a convention read off running processes,
+// temporary directory the Multica runtime creates and removes with the run. It is a convention read off running processes,
 // NOT a contract read out of runtime source: a runtime that skips the removal
 // on its crash path leaves the directory in place and this oracle then reports
 // the run as alive. That direction is the safe one — the scan misses garbage,
@@ -79,12 +78,11 @@ type MarkerScan struct {
 
 // MarkerInventory enumerates processes carrying ownership markers. The scan
 // walks the whole process table rather than a process group, so a process that
-// called setsid() out of its run's group is still seen (3/3 of the leftovers
-// BEO-45 inventoried had done exactly that).
+// called setsid() out of its run's group is still seen.
 //
 // It sees a process only if it can read that process's environment. Another
 // user's processes, and on macOS every Apple platform binary (/bin/bash,
-// /usr/bin/python3 — the exact shape of the BEO-40 leftover), refuse that read:
+// /usr/bin/python3), refuse that read:
 // the kernel hands back the executable path and nothing else. Those processes
 // are counted as unreadable rather than silently treated as unmarked.
 type MarkerInventory interface {

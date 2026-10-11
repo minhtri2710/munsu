@@ -280,7 +280,7 @@ type LaunchArtifact struct {
 // reviewer reads, the launch directory it is launched from, and the one file it
 // may write. It carries values only; wrapping the launch in the reviewer fence
 // is the launch wiring's job (F2). Before is the reviewed tree observed before
-// the harness is submitted; it becomes the verdict's Before (ADR-0025).
+// the harness is submitted; it becomes the verdict's Before.
 type ReviewLaunch struct {
 	TaskID           string
 	Generation       uint64
@@ -739,7 +739,7 @@ func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
 // is carried by fleet.BoundWorktree, which only bindWorktree can produce and
 // buildSoldierPrompt requires as an argument — the compiler enforces it on
 // every caller, so repeating the git classification here would be a second
-// owner of the same invariant (ADR-0009) for no added guarantee.
+// owner of the same invariant for no added guarantee.
 func FailClosedDuringLaunch(input LaunchPromptInput) error {
 	var failures []string
 

@@ -1,29 +1,29 @@
 ::error::citations that do not resolve and are not in .github/testdata/citations/unmatched-backtick-continue/waiver:
-  docs/doc.md: symbol home.MissingAfterHTML
-    docs/doc.md:19:Then `home.MissingAfterHTML` then ``.
-  docs/doc.md: symbol home.MissingAfterHTMLBlank
-    docs/doc.md:35:Then `home.MissingAfterHTMLBlank` then ``.
-  docs/doc.md: symbol home.MissingAfterIndented
-    docs/doc.md:48:    Then `home.MissingAfterIndented`.
-  docs/doc.md: symbol home.MissingAfterInlineHTML
-    docs/doc.md:38:<span>inline html</span>`` and `home.MissingAfterInlineHTML`.
-  docs/doc.md: symbol home.MissingAfterItem
-    docs/doc.md:9:- `home.MissingAfterItem` then ``
-  docs/doc.md: symbol home.MissingAfterLazy
-    docs/doc.md:12:After`` and `home.MissingAfterLazy`.
-  docs/doc.md: symbol home.MissingAfterLazyItem
-    docs/doc.md:15:continuation`` and `home.MissingAfterLazyItem`.
-  docs/doc.md: symbol home.MissingAfterListHTML
-    docs/doc.md:45:Then `home.MissingAfterListHTML` then ``.
-  docs/doc.md: symbol home.MissingAfterMultilineHTML
-    docs/doc.md:30:Then `home.MissingAfterMultilineHTML` then ``.
-  docs/doc.md: symbol home.MissingAfterQuote
-    docs/doc.md:6:> `home.MissingAfterQuote`.
-  docs/doc.md: symbol home.MissingAfterRawHTML
-    docs/doc.md:25:Then `home.MissingAfterRawHTML` then ``.
-  docs/doc.md: symbol home.MissingAfterRuns
-    docs/doc.md:3:Finally `home.MissingAfterRuns`.
+  README.md: symbol home.MissingAfterHTML
+    README.md:19:Then `home.MissingAfterHTML` then ``.
+  README.md: symbol home.MissingAfterHTMLBlank
+    README.md:35:Then `home.MissingAfterHTMLBlank` then ``.
+  README.md: symbol home.MissingAfterIndented
+    README.md:48:    Then `home.MissingAfterIndented`.
+  README.md: symbol home.MissingAfterInlineHTML
+    README.md:38:<span>inline html</span>`` and `home.MissingAfterInlineHTML`.
+  README.md: symbol home.MissingAfterItem
+    README.md:9:- `home.MissingAfterItem` then ``
+  README.md: symbol home.MissingAfterLazy
+    README.md:12:After`` and `home.MissingAfterLazy`.
+  README.md: symbol home.MissingAfterLazyItem
+    README.md:15:continuation`` and `home.MissingAfterLazyItem`.
+  README.md: symbol home.MissingAfterListHTML
+    README.md:45:Then `home.MissingAfterListHTML` then ``.
+  README.md: symbol home.MissingAfterMultilineHTML
+    README.md:30:Then `home.MissingAfterMultilineHTML` then ``.
+  README.md: symbol home.MissingAfterQuote
+    README.md:6:> `home.MissingAfterQuote`.
+  README.md: symbol home.MissingAfterRawHTML
+    README.md:25:Then `home.MissingAfterRawHTML` then ``.
+  README.md: symbol home.MissingAfterRuns
+    README.md:3:Finally `home.MissingAfterRuns`.
   A path citation must name a file that exists; a symbol citation must name a func,
   method, type, const, var or struct field this tree declares. Correct the citation,
-  or add a line to that file with a reason -- see ADR-0017 4 for what a reason has to say.
+  or add a line to that file with a reason: say what the document claims that makes the citation deliberate, and what would make it wrong.
 exit 1

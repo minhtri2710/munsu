@@ -1,4 +1,5 @@
-// Package stow provides knowledge-sweep functionality.
+// Knowledge-sweep functionality.
+
 package cli
 
 import (

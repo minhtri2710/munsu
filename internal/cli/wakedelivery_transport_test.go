@@ -91,7 +91,7 @@ func TestSessionActivationTransportDefersWorkingAgent(t *testing.T) {
 	}
 }
 
-// TestSessionActivationTransportReadyNormalization binds the BEO-117
+// TestSessionActivationTransportReadyNormalization binds the
 // readiness normalisation at the wake-delivery Attempt call site: a status
 // that is ready after ToLower+TrimSpace (" Idle ")
 // must not be short-circuited to verdict "pending", while genuinely

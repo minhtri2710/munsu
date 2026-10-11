@@ -70,13 +70,6 @@ func main() {
 // the documentation set
 // ---------------------------------------------------------------------------
 
-// The covered set: every markdown file under docs/ except docs/plans/, plus the
-// root documents that carry citations as their primary evidence.
-//
-// A walk rather than a list, so a new document joins this lane by existing --
-// the same argument the gofmt step in ci.yml makes for passing `.` instead of a
-// package list. Not opt-in inside that boundary: a file nobody remembered to
-// add is a file nobody checks, which is the failure this lane exists to end.
 func containedPath(root, target string) (string, error) {
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -101,21 +94,12 @@ func containedPath(root, target string) (string, error) {
 	return resolved, nil
 }
 
-// docs/plans/ is excluded, and the reason is a property of the document class
-// rather than of its backlog. A plan is a dated artifact: it records what
-// someone intended on a day, its citations were true on that day, and nobody
-// maintains it afterwards. The correct state of a June plan that cites a
-// since-renamed symbol is UNCHANGED, so a lane over plans produces a burn-down
-// that can never legitimately reach zero -- which is how a waiver file turns
-// into the graveyard citations.sh's header warns about. When this was measured
-// plans were the majority of the seeded waiver on their own; the count is not
-// repeated here, because a frozen number in a comment is the shape #553 took
-// out of .github/build-tags.manifest. Re-derive it by deleting the SkipDir
-// below and running `citations.sh list`. ADRs stay in: CLAUDE.md cites 0017 as
-// governing rules soldiers work under today, which makes an ADR a live
-// normative document and a stale citation in one a real defect.
+// The covered set is the root documents that carry citations as their primary
+// evidence: README.md, AGENTS.md and CLAUDE.md. Each is named, so one that goes
+// missing or resolves outside the repository fails the run instead of dropping
+// out of the lane.
 //
-// Also out of scope, stated here rather than left as an accident of the glob:
+// Also out of scope, stated here rather than left as an accident of the list:
 // CONTRIBUTING.md at the root, and Go doc comments. Doc comments carry the same class of defect -- a stale
 // `munsu delivery pr-check` citation sat in supervision_check.go's doc comment
 // (#573) -- but they are a different extractor over a different corpus, and
@@ -144,60 +128,6 @@ func docFiles(root string) ([]string, error) {
 		}
 		seen[target] = true
 		out = append(out, name)
-	}
-	docs := filepath.Join(root, "docs")
-	plans := filepath.Join(docs, "plans")
-	info, err := os.Lstat(docs)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("covered directory docs/ is missing or symlinked")
-	}
-	if _, err := containedPath(root, docs); err != nil {
-		return nil, fmt.Errorf("covered directory docs/: %w", err)
-	}
-	err = filepath.WalkDir(docs, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if p == plans {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			targetInfo, statErr := os.Stat(p)
-			if statErr != nil {
-				return fmt.Errorf("covered documentation symlink %s: %w", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))), statErr)
-			}
-			if targetInfo.IsDir() {
-				return fmt.Errorf("covered documentation directory %s is symlinked", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))))
-			}
-		}
-		if !strings.HasSuffix(p, ".md") {
-			return nil
-		}
-		if _, err := containedPath(root, p); err != nil {
-			if strings.Contains(err.Error(), "outside repository root") {
-				return fmt.Errorf("covered document %s resolves outside repository root", filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))))
-			}
-			return err
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if strings.IndexFunc(rel, unicode.IsControl) >= 0 {
-			return fmt.Errorf("covered document %q contains a control character", rel)
-		}
-		out = append(out, rel)
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	sort.Strings(out)
 	return out, nil
@@ -899,7 +829,7 @@ func buildFiles(root string) (*files, error) {
 	// No emptiness guard here on purpose. buildIndex runs first and already
 	// fails on a tree with no .go file, so by this point the walk has seen at
 	// least that one -- a guard nothing can enter is a branch no test can cover
-	// and no reader can trust (ADR-0017).
+	// and no reader can trust.
 	return fi, nil
 }
 
@@ -914,7 +844,7 @@ func buildFiles(root string) (*files, error) {
 // file, and both are cited that way in the covered set. A bare `.go` has no
 // stem. `_test.go`, `_windows.go` and `_lock_windows.go` are filename SUFFIXES
 // -- Go does not build a file whose name starts with `_`, so nothing in a Go
-// tree is ever called that, and ADR-0017 cites all three while discussing how
+// tree is ever called that, and documents cite all three when discussing how
 // files are named. Neither is dropped in silence: pathShaped sends both to an
 // `unchecked` row.
 func fileCitation(fi *files, tok string) bool {
@@ -957,7 +887,7 @@ func fileCitation(fi *files, tok string) bool {
 //     tree never uses, so the derived rule cannot tell it from prose.
 //   - `.gitignore`, `.go`: all extension, no stem. A real dotfile and a bare
 //     suffix are the same shape.
-//   - `internal/fleet/process_runtime_{unix,windows}.go`, `docs/**`,
+//   - `internal/fleet/process_runtime_{unix,windows}.go`, `internal/**`,
 //     `state/<task-id>.meta`: brace, glob and placeholder notation. Each stands
 //     for a set of paths rather than one, which is why fileCitation refuses it
 //     and why it has to be declared -- the brace form above expands to two
@@ -969,7 +899,7 @@ func fileCitation(fi *files, tok string) bool {
 //
 // What this function declines gets NO row -- not `unchecked`, nothing. This is
 // the one place that enumerates ALL of the lane's silence, which is why the
-// summaries in citations.sh and AGENTS.md point here instead of restating it.
+// summary in citations.sh points here instead of restating it.
 // Two of the six ways in are upstream of this function and are repeated here
 // on purpose: a limit stated only where it is implemented is a limit the
 // reader has to already know about to find.

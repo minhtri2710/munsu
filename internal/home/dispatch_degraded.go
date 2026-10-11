@@ -47,7 +47,7 @@ func isDegradedAction(action DispatchAction) bool {
 // Allowed during degraded mode (no check):
 //   - Diagnostics (read-only)
 //   - Repair (fix integration, restore state)
-//   - Reconciliation (captain converge, terminal receipt relay)
+//   - Reconciliation (captain converge)
 //   - Authorized delivery (wake delivery, report)
 //   - Dispatch holds (create, release, check)
 //   - Safe teardown (stop watcher, release lease)

@@ -39,9 +39,6 @@ func TestAdapters_AllVerifiedPresent(t *testing.T) {
 		if a.TrustDialog == "" {
 			t.Errorf("adapter %q has empty TrustDialog", name)
 		}
-		if a.SupervisionProtocol == "" {
-			t.Errorf("adapter %q has empty SupervisionProtocol", name)
-		}
 	}
 }
 

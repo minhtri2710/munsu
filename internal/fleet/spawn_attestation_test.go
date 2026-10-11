@@ -33,7 +33,7 @@ func mustSpawnedAttestationTask(t *testing.T, homeDir, taskID string) (*Runner, 
 		endpoint: CreatedEndpoint{
 			Backend:     "herdr",
 			Handle:      "session:pane-1",
-			Incarnation: "inc-" + taskID, // opaque launch incarnation (BEO-16/P1a contract)
+			Incarnation: "inc-" + taskID, // opaque launch incarnation (contract)
 		},
 	}
 	spawned, err := r.confirmSpawn()

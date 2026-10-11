@@ -9,7 +9,7 @@ import (
 )
 
 // TransferBoundary is the Task Authority surface that enables a Fleet-owned
-// Task Transfer journal (ADR-0008 §3) over two local Task Authority
+// Task Transfer journal over two local Task Authority
 // interfaces. Fleet orchestrates the ordering and retries; Task Authority
 // exposes only the exact-generation, idempotent, home-backed primitives:
 //

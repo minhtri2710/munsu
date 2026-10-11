@@ -1,7 +1,7 @@
 name: Auto-update PR branches
 
-# Two independent events can leave a PR needing an update, and until BEO-109
-# this workflow listened to only one of them:
+# Two independent events can leave a PR needing an update, and this workflow once
+# listened to only one of them:
 #
 #   push to main            an already-queued PR falls behind
 #   auto_merge_enabled      a PR that was already behind joins the queue
@@ -55,7 +55,7 @@ permissions: {}
 # That "the newer one will redo it" only holds between two runs sweeping the
 # same base for the same reason, so the key is per triggering event and, for
 # auto-merge, per PR. Cancelling across those boundaries is what brings the
-# BEO-109 hang back:
+# hang back:
 #
 # A sweep that updated a PR is not finished at the PUT. It then waits, for up
 # to ~120s across two poll loops, for the parked CI run on the head it just
@@ -66,6 +66,9 @@ permissions: {}
 # at all, with auto-merge waiting on four required checks that will never be
 # reported. Green run, `updated=0 skipped=1 failed=0`, no warning: the same
 # silent deadlock this file exists to remove, one step to the left.
+#
+# The stranded PR is unmergeable only because the four required checks never
+# report on it, so relaxing the required checks gives it a merge path.
 #
 # Two cross-boundary cancels would do that, and the key separates both:
 #   - two PRs enabling auto-merge seconds apart (#498 and #500 did exactly

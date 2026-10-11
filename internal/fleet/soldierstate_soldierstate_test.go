@@ -22,7 +22,7 @@ func setHomeEnv(t *testing.T, path string) {
 }
 
 // seedCanonicalPhase creates one canonical task at the given phase through
-// the concrete Task Authority (ADR-0008), never legacy backlog state.
+// the concrete Task Authority, never legacy backlog state.
 func seedCanonicalPhase(t *testing.T, homeDir, taskID string, phase taskauthority.Phase) {
 	t.Helper()
 	auth := canonicalAtHome(t, homeDir)

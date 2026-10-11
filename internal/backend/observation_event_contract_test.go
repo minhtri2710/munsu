@@ -1,4 +1,4 @@
-// Contract tests for the native observation event seam (BEO-17/P1b).
+// Contract tests for the native observation event seam.
 //
 // These tests live in the DEFAULT test lane (no integration build tag) and
 // use fake herdr executables to check exact argv/JSON/absence/error behavior.

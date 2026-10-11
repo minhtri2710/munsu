@@ -11,6 +11,11 @@ const (
 	PublishedSnapshotPath          = "config/resolved-project.json"
 )
 
+// PublishedSnapshotDocument is the resolved project config General publishes to
+// a Captain. General is the sole resolver; the Captain stores the snapshot and
+// does not resolve it again. A snapshot is schema- and field-validated (it
+// requires a digest) when stored and loaded; it is not signed and no signature
+// is verified.
 type PublishedSnapshotDocument struct {
 	SchemaVersion string                `json:"schemaVersion"`
 	Config        ResolvedProjectConfig `json:"config"`

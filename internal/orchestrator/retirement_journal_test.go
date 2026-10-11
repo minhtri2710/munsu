@@ -23,7 +23,7 @@ func TestVerifyRetirementContinuityBlocksOpenMaterialReport(t *testing.T) {
 	}
 }
 
-// TestVerifyRetirementContinuityAllowsCaptainBackedSoldier is the BEO-112
+// TestVerifyRetirementContinuityAllowsCaptainBackedSoldier is the
 // teardown half of the regression. DeliverWake opens a ReportRelay obligation
 // in the parent home for every material soldier report; when that parent is a
 // captain home nothing in the binary could close it, so teardown refused

@@ -79,7 +79,7 @@ func newTaskCmd() *cobra.Command {
 			if _, err := auth.Create(op, req); err != nil {
 				return err
 			}
-			// .meta and .status are post-commit projections (ADR-0007 §7):
+			// .meta and .status are post-commit projections:
 			// the authoritative fields are derived from the canonical
 			// aggregate; a projection failure must not roll back the
 			// authoritative Task Generation.
@@ -305,7 +305,7 @@ func newTaskStartCmd() *cobra.Command {
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Supervision gate: start fails closed when the watcher lease is
-			// degraded, before any Task Authority call (Task 4.3, ADR-0007 §8).
+			// degraded, before any Task Authority call.
 			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
 				return err
 			}
@@ -461,7 +461,7 @@ func newTaskRetryCmd() *cobra.Command {
 }
 
 // runTaskLifecycleTransition runs one authoritative Task Authority lifecycle
-// transition and appends the .status post-commit projection (ADR-0007 §7): a
+// transition and appends the .status post-commit projection: a
 // projection failure must not roll back the authoritative transition; the
 // projection can be retried independently and the authoritative operation is
 // never replayed.
@@ -522,8 +522,7 @@ func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []st
 
 // projectTaskMeta overlays the canonical aggregate fields onto the task .meta
 // projection, preserving runtime-only projection fields. Empty canonical
-// values remove stale keys. It is the post-commit projection write (ADR-0007
-// §7): the authoritative Task Generation is never written here.
+// values remove stale keys. It is the post-commit projection write: the authoritative Task Generation is never written here.
 func projectTaskMeta(homeDir string, agg taskauthority.Aggregate, runtime map[string]string) error {
 	return home.UpdateMeta(homeDir, agg.TaskID, func(derived map[string]string) error {
 		for k, v := range runtime {

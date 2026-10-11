@@ -1,7 +1,7 @@
 package fleet
 
 // BusyReading is Fleet's single answer to "is this endpoint busy / idle /
-// unknown / blocked / dead" (ADR-0021 Decision 1). It is derived from the
+// unknown / blocked / dead". It is derived from the
 // typed axes already carried on a Fleet-authorized EndpointStatus, primarily
 // the Activity axis, and is a dispatch/attention input only — never Task
 // lifecycle truth (that lives in taskauthority).

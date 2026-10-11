@@ -52,7 +52,7 @@ func TestSessionMailboxSenderDefersWorkingAgent(t *testing.T) {
 	}
 }
 
-// TestSessionMailboxSenderReadyNormalization binds the BEO-117 readiness
+// TestSessionMailboxSenderReadyNormalization binds the readiness
 // normalisation at the mailbox Send call site: a status that is ready after
 // ToLower+TrimSpace ("Idle", " idle ", "IDLE", "Done") must submit, while
 // genuinely not-ready statuses still defer. The raw pre-fix comparison

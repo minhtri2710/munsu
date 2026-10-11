@@ -3,7 +3,7 @@
 // helpers.
 //
 // Endpoint observation is the typed, orthogonal runtime diagnostic of one
-// exact bound endpoint (BEO-16/P1a). It is NOT Task lifecycle truth: the
+// exact bound endpoint. It is NOT Task lifecycle truth: the
 // canonical Task phase lives in taskauthority, and observation is only a
 // recovery/readiness input. The orthogonal dimensions keep a diagnostic
 // reading from being mistaken for an authoritative Task or endpoint decision:
@@ -158,7 +158,7 @@ const (
 	SourceProbe
 	SourceDerived
 	// SourceEvent marks an observation/hint derived from a native event
-	// transport (BEO-17/P1b). Event-derived hints are wake/activity hints only
+	// transport. Event-derived hints are wake/activity hints only
 	// and are never lifecycle truth; Absent()/Live() require probe or derived
 	// sources and freshness authorization by Fleet.
 	SourceEvent
@@ -182,8 +182,8 @@ func (s ObservationSource) Valid() bool {
 }
 
 // EndpointRef identifies one exact bound endpoint for a typed probe. Incarnation
-// is the opaque launch-operation provenance token minted and persisted by Fleet
-// (BEO-16/P1a). An adapter carries the requested reference but never attests the
+// is the opaque launch-operation provenance token minted and persisted by Fleet.
+// An adapter carries the requested reference but never attests the
 // incarnation itself; the field is populated by Fleet's freshness authorization.
 type EndpointRef struct {
 	Backend     string
@@ -279,7 +279,7 @@ func (o EndpointObservation) State() EndpointObservationState {
 // Live reports a confirmed-alive, current, exact-binding reading and is the
 // only positive readiness condition. It is true only for a trusted probe or
 // Fleet-derived source whose freshness Fleet authorized as current against the
-// exact canonical binding and the explicit acquisition evidence (BEO-16/P1a);
+// exact canonical binding and the explicit acquisition evidence;
 // an event-derived SourceEvent observation is a wake/activity hint only and can
 // never be Live(), matching the SourceEvent contract and the Absent() siblings.
 func (o EndpointObservation) Live() bool {

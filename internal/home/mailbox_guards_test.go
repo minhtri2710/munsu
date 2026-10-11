@@ -15,7 +15,7 @@ import (
 // The accepted fixture is asserted first, once per validator, so a case that
 // refuses can only be refusing because of the field it broke: if an earlier
 // guard were what fired, the untouched fixture would already be rejected. That
-// control is what BEO-87 found missing — two tests asserted a refusal message
+// control is what was once missing — two tests asserted a refusal message
 // while an earlier guard was what produced it.
 //
 // Messages are asserted individually rather than `err != nil`, because every
@@ -201,7 +201,7 @@ func TestRemovePendingAfterAckRefusesNilAck(t *testing.T) {
 // Rank is what makes the mailbox one-hop. An unrecognised rank has no place in
 // the hierarchy, and same-rank routes remain refused; recognized cross-rank
 // routes follow the explicit transition table. These branches were invisible
-// to the guards lane until BEO-123 fixed the instrument, which had been
+// to the guards lane until the instrument was fixed; it had been
 // reading SenderRank and ReceiverRank as error values on their names.
 func TestValidateEnvelopeRefusesInvalidRanksAndIllegalTransitions(t *testing.T) {
 	runGuardCases(t, validGuardEnvelope,

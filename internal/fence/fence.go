@@ -1,6 +1,6 @@
 // Package fence confines a launched seat's whole process tree to a set of
 // writable roots with an OS sandbox (macOS sandbox-exec). It is defense in depth
-// beside the shell lexer and the git shim (ADR-0005 §6, ADR-0014): those refuse
+// beside the shell lexer and the git shim: those refuse
 // by reading argv; the fence refuses at the syscall, so a wrapped program, an
 // absolute-path git, or a reset PATH cannot write outside the roots.
 //

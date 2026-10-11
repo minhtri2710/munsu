@@ -48,6 +48,6 @@ See `REFERENCE.md` for the bundled contract:
 ## Safety rules
 
 1. All AFK operations are scoped to a single `MUNSU_HOME` — never touches sibling homes
-2. The daemon diagnoses only — it never writes to the general pane (ADR-0013)
+2. The daemon diagnoses only — it never writes to the general pane
 3. Return is idempotent — safe to call on clean state
 4. See `REFERENCE.md` for the full safety invariants

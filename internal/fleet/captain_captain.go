@@ -332,7 +332,7 @@ Use %[6]smunsu send%[6]s to relay commands to Soldiers:
 
 The canonical Task Authority is the authoritative task source:
 - Use %[6]smunsu task list%[6]s to list tasks; queued (unblocked) items are ready.
-- Only ready items may be started. Never start a blocked or in-flight item.
+- Only ready items may be dispatched. Never dispatch a blocked or in-flight item. %[6]smunsu spawn%[6]s takes a queued task to working, so do not run %[6]smunsu task start%[6]s before it.
 - Dependencies are resolved by the Task Authority: blocked tasks are withheld until unblocked.
 - De-duplication is enforced by the Task Authority (one record per task ID) — never edit task state files directly.
 - When a task completes, update its state via %[6]smunsu task done <id>%[6]s.
@@ -340,7 +340,7 @@ The canonical Task Authority is the authoritative task source:
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
+  %[6]smunsu task list%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
 - kind: ship (default) | scout — the delivery mode comes from the project's configured review and forge tools
 - After spawning, monitor soldier progress through their task state.
 - When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
@@ -432,7 +432,7 @@ You MUST NOT:
 | Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
 | Stuck soldier | %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → ... |
 | View tasks | %[6]smunsu task list%[6]s |
-| Start task | %[6]smunsu task start <id>%[6]s |
+| Mark a queued task working without spawning | %[6]smunsu task start <id>%[6]s |
 | Complete task | %[6]smunsu task done <id>%[6]s |
 
 `, id, CaptainCharterVersion, home.FromGeneralLabel, "[mu-system:captain-bootstrap]", shQuote(statusFile), bt), nil
@@ -1021,7 +1021,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 // Without force, refuse when the captain home still has in-flight soldiers
 // (state/*.meta with kind ship|scout). force skips that gate.
 // removeHome=true removes the captain home directory after teardown.
-// On success, the captain is unregistered from parent data/captains.md.
+// On success, the captain is unregistered from the parent Captain registry (state/fleet-registry/captains.json).
 func Retire(captainHome, parentHome string, removeHome, force bool, endpoint RetireEndpoint) error {
 	markerID, err := home.ValidateCaptainProvenance(captainHome)
 	if err != nil {
@@ -1665,10 +1665,7 @@ func removeNudgeMarker(parentHome, smID string) {
 	os.Remove(nudgeMarkerPath(parentHome, smID))
 }
 
-// Converge performs a locked convergence sweep over registered captains.
-// Order: lock, validate registry/provenance, flush send outbox, retry pending
-// nudges, safe ff, inheritance push, ownership-backed backend Alive check,
-// watcher status check, and reread nudge only if instruction surface advanced.
+// ConvergeCapabilities are the ports Converge calls for each captain.
 type ConvergeCapabilities struct {
 	Notification any
 	Continuity   CaptainContinuityPort
@@ -1681,6 +1678,14 @@ type ConvergeCapabilities struct {
 	Nudge        NudgeEndpoint
 }
 
+// Converge performs a locked convergence sweep over registered captains. For
+// each captain, in order: validate registry and provenance; retry pending
+// nudges; fast-forward the Captain home when safe (writing a reread nudge only
+// if the instruction surface advanced); push inherited config; refresh the
+// charter; check liveness (a launched-but-dead endpoint is relaunched only when
+// its absence is proven and the relaunch guard is not armed); reconcile pending
+// config-reread, continuity and General-to-Captain mailbox records; and print
+// the watcher status.
 func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (*ConvergeResult, error) {
 	sender := caps.Mailbox
 	if len(registered) > 0 && caps.Notification == nil {

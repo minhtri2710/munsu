@@ -15,7 +15,7 @@ import (
 )
 
 // taskHandoffDirName is the state-root key prefix that holds the durable
-// Fleet-owned Task Transfer journals of one home (ADR-0008 §3, §5, §9). The
+// Fleet-owned Task Transfer journals of one home. The
 // journal is written before the first side effect and recovery resumes the
 // same Transfer Operation IDs. All journal state (index document and per
 // transfer records) lives under this logical key and is written through
@@ -23,7 +23,7 @@ import (
 const taskHandoffDirName = ".task-handoff"
 
 // handoffJournals is the bounded active index and record store of the
-// transfer journals of one home (ADR-0008 §5: one bounded aggregate under a
+// transfer journals of one home (one bounded aggregate under a
 // logical key in the handoff lock scope); recovery discovers journals only
 // through its index, and a completed transfer leaves it while its terminal
 // record is retained.
@@ -44,7 +44,7 @@ const (
 const handoffLockScope = "task-handoff"
 
 // Handoff transfers tasks from a parent home to a captain home through the
-// ADR-0008 Fleet-owned journaled Task Transfer (ADR-0008 §3): durable intent
+// Fleet-owned journaled Task Transfer: durable intent
 // is written before the first side effect, the source generation is fenced
 // with ReserveTransfer, the destination re-creates the generation from the
 // typed TaskDefinition with an idempotent ReceiveTransfer (NON-CURRENT), the
@@ -116,8 +116,8 @@ func configuredParentHome(homeDir string) (string, bool, error) {
 	return canonical, true, nil
 }
 
-// taskHandoffJournal is the durable Fleet-owned intent of one Task Transfer
-// (ADR-0008 §9: durable intent before side effects). It pin every typed
+// taskHandoffJournal is the durable Fleet-owned intent of one Task Transfer.
+// It pins every typed
 // request field needed to resume the transfer with the SAME Operation IDs:
 // the source generation/revision precondition, the reservation identity and
 // fence token, the destination owner, and the typed TaskDefinition the
@@ -169,7 +169,7 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 		return fmt.Errorf("handoff: no tasks requested")
 	}
 	// Supervision gate: handoff fails closed when the watcher lease of either
-	// home is degraded (ADR-0007 §8). Durable Dispatch Holds are evaluated by
+	// home is degraded. Durable Dispatch Holds are evaluated by
 	// the fleet holds gate below.
 	if err := CheckSupervisionForDispatch(source, mhome.DispatchActionHandoff); err != nil {
 		return err

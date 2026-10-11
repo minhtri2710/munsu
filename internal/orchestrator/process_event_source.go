@@ -16,7 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// Process-event source (ADR-0021 Decision 2, P1).
+// Process-event source.
 //
 // A domain-neutral, durable way to wait on a blocking external condition
 // without holding an agent turn. The source knows nothing about PRs, tasks or
@@ -28,7 +28,7 @@ import (
 //  1. capture the resolver's result into the event's own record
 //     (temp + fsync + rename, the WriteRetirementRecord pattern);
 //  2. enqueue exactly one wake through home.EnqueueWake, the sole delivery
-//     substrate (ADR-0015/0019) -- announceProcessEvent refuses to enqueue for
+//     substrate -- announceProcessEvent refuses to enqueue for
 //     a record whose durable copy does not carry a captured result;
 //  3. only an ack of the exact current generation stops re-announcement.
 //

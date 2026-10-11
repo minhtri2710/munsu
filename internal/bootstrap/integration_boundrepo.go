@@ -41,7 +41,7 @@ func IsBoundRepository(commonDir string) bool {
 // The second return value is what callers need in order to tell "this target is
 // not the bound repository" apart from "there is no binding to compare against"
 // — a distinction IsBoundRepository collapses into one false. Narrowing a
-// refusal is only allowed on the first of those (ADR-0014 §3).
+// refusal is only allowed on the first of those.
 func BoundRepositoryCommonDir() (string, bool) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))

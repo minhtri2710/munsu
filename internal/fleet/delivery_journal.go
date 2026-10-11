@@ -10,7 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// This file owns the durable Fleet delivery journal (ADR-0008 §3, §9): the
+// This file owns the durable Fleet delivery journal: the
 // journaled delivery execution path writes its intent before the first
 // external mutation and recovery resumes the same operation identities. It
 // follows the accepted Task Transfer journal mechanics

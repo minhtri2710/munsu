@@ -538,7 +538,7 @@ func isAgentStatusAlive(status string) bool {
 // predicate, never by comparing the raw status string a backend returns.
 // "idle" and "done" are ready, after ToLower+TrimSpace exactly like its live
 // sibling isAgentStatusAlive. The CLI probe path (probeCaptainBackend) is the
-// call site that makes this reachable from the binary (BEO-117): before that
+// call site that makes this reachable from the binary: before that
 // fix, readiness was computed inline against the unnormalized string, so a
 // healthy captain reporting "Idle" or " idle " was rejected permanently.
 func AgentStatusReady(status string) bool {
@@ -642,7 +642,7 @@ func (h *HerdrBackend) Teardown(windowID string) error {
 }
 
 // Wait implements ObservationEventSource over the herdr agent status-wait
-// surface (BEO-17/P1b). The backend's configured session and identity are
+// surface. The backend's configured session and identity are
 // used; wire/protocol detail stays adapter-owned. See HerdrEventSource for
 // the capability/version gate and normalization contract.
 func (h *HerdrBackend) Wait(ctx context.Context, endpoint EndpointRef, after EventCursor) (ObservationSignal, error) {
@@ -650,8 +650,8 @@ func (h *HerdrBackend) Wait(ctx context.Context, endpoint EndpointRef, after Eve
 	return src.Wait(ctx, endpoint, after)
 }
 
-// After implements the adapter-owned cursor ordering for the herdr surface
-// (BEO-17/P1b). See HerdrEventSource.After: cursor semantics stay adapter-
+// After implements the adapter-owned cursor ordering for the herdr surface.
+// See HerdrEventSource.After: cursor semantics stay adapter-
 // owned; the orchestrator never parses or compares cursors itself.
 func (h *HerdrBackend) After(next, prev EventCursor) bool {
 	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}

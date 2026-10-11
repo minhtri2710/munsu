@@ -158,7 +158,7 @@ const (
 type ReviewState string
 
 // ReviewChangesRequested is the only provider review state munsu reads: a
-// provider review can object to a merge but never approve one (ADR-0025).
+// provider review can object to a merge but never approve one.
 const ReviewChangesRequested ReviewState = "changes-requested"
 
 type CheckRun struct {
@@ -183,7 +183,7 @@ type PR struct {
 
 // CanMerge reports whether the provider state permits a merge: the PR is
 // open, every check passed, and no provider review requests changes. It never
-// approves: approval comes only from a ReviewVerdict (ADR-0025), so a provider
+// approves: approval comes only from a ReviewVerdict, so a provider
 // review can object but never authorize.
 func (pr PR) CanMerge() bool {
 	if pr.Status != PROpen {

@@ -650,7 +650,7 @@ func TestWorktreeReclaimSparesUnboundReservationUntilRetirementCompletes(t *test
 }
 
 // TestWorktreeReclaimReturnsReleasedTreehouseLeaseHolder pins the treehouse
-// case of G809: treehouse reports the retired unbound reservation as the lease
+// case: treehouse reports the retired unbound reservation as the lease
 // holder, and reclaim must treat that holder as reconciled and return the clean
 // worktree through the provider.
 func TestWorktreeReclaimReturnsReleasedTreehouseLeaseHolder(t *testing.T) {

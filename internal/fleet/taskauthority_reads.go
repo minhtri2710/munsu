@@ -9,8 +9,8 @@ import (
 	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// This file owns the canonical-read path for snapshot and observation
-// (Task 7.8, ADR-0007 §7): authoritative Task Authority records are the only
+// This file owns the canonical-read path for snapshot and observation:
+// authoritative Task Authority records are the only
 // source for kind, project, and lifecycle phase. A home that is not a
 // canonical v1 home fails closed (migration is explicit and never automatic);
 // a canonical home with no authority state at all serves the empty view

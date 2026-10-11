@@ -5,7 +5,7 @@ import "github.com/minhtri2710/munsu/internal/backend"
 type EndpointObservationState = backend.EndpointObservationState
 type EndpointStatus = backend.EndpointObservation
 
-// Typed orthogonal observation axes (BEO-16/P1a). Fleet policy uses these
+// Typed orthogonal observation axes. Fleet policy uses these
 // typed Lifecycle/Responsiveness/Freshness/Activity/Source dimensions for
 // recovery and readiness decisions, never a boolean "Alive" policy.
 type LifecycleState = backend.LifecycleState
@@ -53,7 +53,7 @@ const (
 )
 
 // exactEndpointProof carries the exact canonical identities Fleet must match
-// before an adapter observation may be concluded fresh/current (BEO-16/P1a).
+// before an adapter observation may be concluded fresh/current.
 // backend/handle identify the exact bound endpoint; incarnation is the opaque
 // launch-operation provenance token; leaseID/fenceToken are the canonical
 // launch reservation fences; generation/revision are the exact aggregate
@@ -99,7 +99,8 @@ func demoteObservation(raw EndpointStatus, reason string) EndpointStatus {
 	return raw
 }
 
-// authorizeAbsence is Fleet's NEGATIVE authorization authority (BEO-16/P1a).
+// authorizeAbsence is Fleet's NEGATIVE authorization authority. Proof of
+// quiescence is anchored in the canonical aggregate, never in .meta.
 // Only a narrowly classified exact structured target absence — the exact
 // bound handle probed dead with a trusted probe/derived source, against a
 // complete canonical proof revalidated under current generation/revision —
@@ -119,7 +120,7 @@ func authorizeAbsence(raw EndpointStatus, proof exactEndpointProof) EndpointStat
 	return raw
 }
 
-// authorizeLive is Fleet's POSITIVE authorization authority (BEO-16/P1a). Raw
+// authorizeLive is Fleet's POSITIVE authorization authority. Raw
 // probe liveness is promoted to Live() ONLY for a trusted probe/derived source
 // and with explicit acquisition/creation evidence tied to the incarnation
 // (proof.acquired): P1a adapters cannot attest incarnation, so a probe of an

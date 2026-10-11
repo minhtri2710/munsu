@@ -22,7 +22,7 @@ Run `munsu home` to check whether the munsu home directory exists. The resolutio
 Run `munsu session-start` to lock, bootstrap, and print the session-start digest. The digest has five sections:
 1. **Bootstrap Diagnostics** — toolchain readiness lines (see context pointer below).
 2. **Backlog Digest** — bounded, metadata-only summary of queued/in-flight/blocked tasks (IDs only, no bodies).
-3. **Context** — content of `data/general.md`, `data/learnings.md`, `data/projects.md`, and `data/captains.md` (first 20 lines each).
+3. **Context** — content of `data/general.md` and `data/learnings.md` (first 20 lines each).
 4. **Fleet State** — in-flight tasks with last status line and pane liveness.
 5. **Supervision** — wake-handling reminder block.
 **Completion:** Digest understood; lock status known. Do not re-bulk-read what the digest already printed.
@@ -37,7 +37,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 ### 4. Spawn / brief
 
-- `munsu task add <id> "<desc>" --kind ship|scout|review [--reviews <ship-id>] --repo <name>` — register the queued task; use `munsu task start <id>` only after readiness checks.
+- `munsu task add <id> "<desc>" --kind ship|scout|review [--reviews <ship-id>] --repo <name>` — register the queued task. `munsu spawn` takes it to working, so do not run `munsu task start <id>` before spawn.
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
 - For a ship brief, replace the `{TEST_IMPACT}` placeholder with the test-impact map: for each path the task will change, the existing tests that exercise it, found by code search (`semble` or `zg`).
@@ -72,7 +72,7 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 
 **Context pointer:** If a soldier is unresponsive or stuck, run `munsu skill show stuck-soldier-recovery` and follow its escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
 
-**Context pointer:** Supervision behavior varies by harness. Run `munsu skill show harness-adapters` for launch templates, and see `SUPERVISION.md` for the canonical watch/wake/guard loop.
+**Context pointer:** Supervision behavior varies by harness. Run `munsu skill show harness-adapters` for launch templates and the supervision table, and see `SUPERVISION.md` for the canonical watch/wake/guard loop.
 
 ### 6. Deliver
 
@@ -99,7 +99,7 @@ Teardown stops only holders of the task worktree. A task process that survives i
 ### Fleet-wide checks
 
 - `munsu fleet view` — see the full fleet.
-- `munsu captain converge` — reconcile mailbox pending records, terminal receipts, nudges, and inherited config after Captain lifecycle changes.
+- `munsu captain converge` — validate registry entries, retry pending nudges, fast-forward Captain homes, push inherited config, refresh charters, check liveness (relaunching only when absence is proven), reconcile pending mailbox records, and report watcher status after Captain lifecycle changes.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu fleet bearings` — compact resume report.
 - `munsu inbox` — preview pending wakes and captain status lines in one view.

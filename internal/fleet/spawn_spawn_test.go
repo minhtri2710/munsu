@@ -469,11 +469,11 @@ func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
-	// Working without live meta/window (task start before spawn) must ALLOW spawn.
+func TestCheckBacklogAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
+	// Working without live meta/window must pass this pre-check; beginLaunchIntent decides.
 	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: t.TempDir()}
 	if err := r.checkBacklogAuthority(); err != nil {
-		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
+		t.Fatalf("working without live meta must pass the pre-check, got: %v", err)
 	}
 }
 
@@ -977,7 +977,7 @@ func TestCheckCaptainTaskAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T)
 		homeDir:   homeDir,
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("kind-only meta without window must ALLOW start→spawn, got: %v", err)
+		t.Fatalf("a working task whose meta has no window must pass the backlog check, got: %v", err)
 	}
 }
 
@@ -991,13 +991,13 @@ func TestCheckCaptainTaskAuthority_AllowsReadyTask(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainTaskAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
+func TestCheckCaptainTaskAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
 	r := &Runner{
 		args:      Args{ID: "in-flight-task", Authority: seedSpawnAuthorityPhase(t, "in-flight-task", taskauthority.PhaseWorking)},
 		spawnRole: "captain",
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
+		t.Fatalf("working without live meta must pass the pre-check, got: %v", err)
 	}
 }
 

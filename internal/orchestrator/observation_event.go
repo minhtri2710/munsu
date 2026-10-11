@@ -1,4 +1,4 @@
-// Native observation event wait policy (BEO-17/P1b).
+// Native observation event wait policy.
 //
 // The ORCHESTRATOR owns the bounded wait: timeout, duplicate suppression,
 // stale cursor/incarnation rejection, and polling fallback. The backend

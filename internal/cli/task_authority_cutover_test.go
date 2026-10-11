@@ -75,7 +75,7 @@ func mustCanonicalOp(t *testing.T, id string, intent domain.Intent) domain.Opera
 // TestTaskAddCreatesCanonicalQueuedGeneration proves one `task add` produces
 // exactly one queued Task Generation at Revision one with owner, definition,
 // kind, and project, and that .meta is written only as a post-commit
-// projection (ADR-0007 §7).
+// projection.
 func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -103,7 +103,7 @@ func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 
 // TestTaskAddDuplicateReturnsTypedConflictWithoutProjection proves duplicate
 // creation returns a typed conflict and creates no projection duplicate and
-// no additional authoritative record (ADR-0007 §6, Task 3.2 criterion 2).
+// no additional authoritative record.
 func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -239,8 +239,8 @@ func TestTaskObserveCanonicalTaskWithoutMeta(t *testing.T) {
 }
 
 // seedAuthorityTask creates one queued task through the concrete canonical
-// Authority so lifecycle tests drive canonical Task Authority records
-// (ADR-0008), never legacy v1 aggregates.
+// Authority so lifecycle tests drive canonical Task Authority records, never
+// legacy v1 aggregates.
 func seedAuthorityTask(t *testing.T, auth *taskauthority.Canonical, id string) {
 	t.Helper()
 	tid, err := domain.NewTaskID(id)

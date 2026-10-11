@@ -1,4 +1,5 @@
-// Package agentsmd provides project AGENTS.md management.
+// Project AGENTS.md management.
+
 package cli
 
 import (

@@ -1,4 +1,4 @@
-// Native observation event seam (BEO-17/P1b).
+// Native observation event seam.
 //
 // The adapter owns ALL wire/protocol detail — socket path, JSON-RPC method,
 // event names, version/capability gate, reader lifecycle — and returns a
@@ -24,7 +24,7 @@ import (
 type EventCursor string
 
 // ObservationSignal is the normalized wake/activity hint produced by a native
-// event source (BEO-17/P1b). It carries endpoint identity, the opaque
+// event source. It carries endpoint identity, the opaque
 // incarnation the adapter can attest (empty when it cannot — P1a rule: an
 // adapter never fabricates incarnation), the activity hint, source, timestamp
 // and cursor. It has NO lifecycle axis: an event hint is never dead/alive and
@@ -46,7 +46,7 @@ func (s ObservationSignal) Valid() bool {
 	return s.Endpoint.Backend != "" && s.Endpoint.Handle != "" && s.Activity.Valid() && s.Source.Valid()
 }
 
-// ObservationEventSource is the adapter-owned native event seam (BEO-17/P1b).
+// ObservationEventSource is the adapter-owned native event seam.
 // Wait blocks until a normalized signal is available for the endpoint, the
 // context deadline (bounded wait) is reached, or the reader fails. `after` is
 // the last consumed cursor; the adapter should skip events already consumed.

@@ -31,7 +31,7 @@ func newRecordVerdictCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "record-verdict --reviewer-task <review-task-id>",
 		Short: "Record the verdict file of a review task",
-		Long: `Record the verdict a review task wrote to its verdict file (ADR-0025).
+		Long: `Record the verdict a review task wrote to its verdict file.
 This is the manual entry to the record step the supervision watcher runs when
 the file appears: it reads the review task's current verdict file, refuses a
 file that is malformed or does not speak for that task, generation and reviewed

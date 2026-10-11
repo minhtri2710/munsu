@@ -99,7 +99,7 @@ munsu captain launch /var/munsu/captains/my-monitor
 
 `munsu captain retire <captain-home> [--force]` tears down a running captain: tears
 down its session endpoint, clears parent meta, and unregisters from
-`data/captains.md`. Home directory is retained.
+the Captain registry (`state/fleet-registry/captains.json`). Home directory is retained.
 
 ### Safety checks
 
@@ -115,7 +115,7 @@ down its session endpoint, clears parent meta, and unregisters from
    not used for captain liveness (`fleet.CaptainStatus`), and the AFK lock lives
    at `state/.afk.lock`.
 4. If no parent meta exists (never launched), skips the endpoint teardown.
-5. Clears parent meta and unregisters from `data/captains.md`.
+5. Clears parent meta and unregisters from the Captain registry (`state/fleet-registry/captains.json`).
 
 ### Preflight requirements
 
@@ -124,7 +124,7 @@ Before retiring a live captain, verify:
 - **Captain fleet state** — `munsu captain list` shows the captain is registered.
 - **Soldier-state** — `munsu soldier-state <id>` confirms no in-flight soldiers.
 - **Pane liveness** — Confirm the captain's session pane is not actively processing.
-- **Backlog truth** — Check `data/captains.md` and `state/` for pending work.
+- **Backlog truth** — Check `munsu captain list` and `state/` for pending work.
 
 Retire **refuses** if the captain home has in-flight soldiers (kind `ship|scout`).
 
@@ -246,15 +246,13 @@ the whole recovery.
 
 1. **Provenance** — validate captain registration and home structure.
 2. **Config-validation** — check that inheritable config exists.
-3. **Integration-status** — verify the captain's harness integration.
-4. **Charter-refresh** — re-read AGENTS.md and refresh instructions.
-5. **Config-push** — sync inheritable config from parent.
+3. **Charter-refresh** — re-read AGENTS.md and refresh instructions.
+4. **Config-push** — sync inheritable config from parent.
+5. **Integration-status** — verify the captain's harness integration.
 6. **Launch-readiness** — verify the launch path is viable.
 7. **Relaunch-pane** — restart the captain's session pane and prove post-launch liveness; refuses a duplicate relaunch while the relaunch guard is armed.
 8. **Watcher-ensure** — ensure the watcher is running.
-9. **Legacy transport guard** — check for legacy transport artifacts.
-10. **Terminal-reconcile** — reconcile pending terminal receipts.
-11. **Nudge-retry** — retry any unreachable nudge markers.
+9. **Nudge-retry** — retry any unreachable nudge markers.
 
 ### Launch behavior
 

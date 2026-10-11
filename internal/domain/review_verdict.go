@@ -25,7 +25,7 @@ type TreeState struct {
 }
 
 // ReviewVerdict is one reviewer's judgment of one exact head. It is the only
-// approval source for delivery (ADR-0025): a provider review state never
+// approval source for delivery: a provider review state never
 // approves. HeadSHA is the reviewed head and BaseSHA the reviewed range base.
 // ReviewerTask and ReviewerGeneration name the munsu review task generation
 // that produced the verdict and ReviewerIncarnation its endpoint instance;
@@ -36,7 +36,7 @@ type TreeState struct {
 //
 // The reviewer fields are taken from the review task's aggregate by the record
 // step, never from the verdict file; they are consistency facts, not
-// authentication (ADR-0025 Decision 3).
+// authentication.
 type ReviewVerdict struct {
 	Outcome             VerdictOutcome `json:"outcome"`
 	HeadSHA             string         `json:"head_sha"`

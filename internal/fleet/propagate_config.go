@@ -73,8 +73,8 @@ func (r *PropagateConfigResult) Summary() PropagateConfigSummary {
 //
 //  1. Validates non-empty homes, provenance, and destination path safety
 //     before any mutation.
-//  2. Copies inherited config surface (inheritable files, general-shared.md,
-//     projects.md) via configPushWithResult.
+//  2. Refreshes the parent-home reference, the captain charter and the
+//     published config snapshot via configPushWithResult.
 //  3. Mirror-deletes removed settings without escaping the captain home.
 //  4. Computes effective digest and compares against current generation.
 //  5. Reconciles legacy config-reread evidence in both changed and unchanged

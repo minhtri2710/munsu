@@ -13,7 +13,7 @@ type Ctx struct {
 	Home string
 
 	// taskAuthority is the canonical Task Authority composed once for this
-	// command context over the resolved owning Home (ADR-0008 §2). It is nil
+	// command context over the resolved owning Home. It is nil
 	// until first requested; commands that never request Task Authority never
 	// construct it. Tests inject a canonical home-backed Authority by
 	// pre-setting this field. It is cached only for Ctx.Home.

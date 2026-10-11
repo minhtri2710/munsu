@@ -91,7 +91,7 @@ Flags for worktree provisioning:
 	retireCmd := &cobra.Command{
 		Use:   "retire <captain-home>",
 		Short: "Retire a captain (session-backed)",
-		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from data/captains.md. Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
+		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from the Captain registry (state/fleet-registry/captains.json). Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return fleet.Retire(args[0], ctx.Home, false, retireForce, newSessionRetireEndpoint())
@@ -135,7 +135,7 @@ Flags for worktree provisioning:
 		Use:   "handoff <captain-home> <item-key...>",
 		Short: "Transfer queued tasks to a captain",
 		Long: `Transfer queued task generations from the parent home to a captain home
-through the journaled Task Transfer (ADR-0008). Each key must be a queued
+through the journaled Task Transfer. Each key must be a queued
 task owned by the source home. The transfer is durable and resumes after
 interruption.`,
 		Args: MinimumNArgs(2),
@@ -215,8 +215,11 @@ wrong-branch, invalid-provenance, or unsupported-home (no git worktree).`,
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",
-		Long: `Locked convergence sweep: validate registry/provenance, retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
-surface tracking. State changes tracked in parent state/.captain-converge.lock`,
+		Long: `Locked convergence sweep. For each registered captain it validates registry and
+provenance, retries pending nudges, fast-forwards safely and tracks the
+instruction surface, pushes inherited config, refreshes the charter, checks
+liveness, and reconciles pending config-reread, continuity and mailbox records.
+The sweep lock is parent state/.captain-converge.lock.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
@@ -240,7 +243,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	recoverCmd := &cobra.Command{
 		Use:   "recover <captain-id>",
 		Short: "Run structured recovery transaction for a captain",
-		Long: `Run the full recovery transaction for one captain: provenance → config-validation → integration-status → charter-refresh → config-push → launch-readiness → relaunch-pane → watcher-ensure → terminal-reconcile → nudge-retry.
+		Long: `Run the full recovery transaction for one captain: provenance → config-validation → charter-refresh → config-push → integration-status → launch-readiness → relaunch-pane → watcher-ensure → nudge-retry.
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

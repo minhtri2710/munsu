@@ -19,7 +19,7 @@ import (
 //
 // The daemon diagnoses and accumulates; it never repairs. Reaching the general
 // while they are away has two owners: the uplink notify path for immediate
-// notice, and `munsu afk return` for reconciliation (ADR-0013).
+// notice, and `munsu afk return` for reconciliation.
 type Daemon struct {
 	homeDir  string
 	lock     *home.AFKLock

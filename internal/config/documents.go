@@ -1,3 +1,13 @@
+// Package config owns typed settings, defaults, validation, Project Overlays
+// and immutable resolved snapshots. It reads no process environment: cli turns
+// flags and ambient inputs into typed operations, and a snapshot is resolved
+// once per operation and stays immutable for it.
+//
+// munsu has six ports: session (backend.Backend), worktree (backend.Provider),
+// forge (fleet.DeliveryProvider), review (a step ending in a head-bound
+// ReviewVerdict), guard (the git shim plus the OS write fence; a name only) and
+// quota (harness candidate ordering). Adapters compile into the single binary;
+// there is no Go plugin and no out-of-process adapter protocol.
 package config
 
 import (
@@ -42,6 +52,14 @@ type CaptainProfile struct {
 	Effort  string `json:"effort,omitempty"`
 }
 
+// ToolEntry names a compiled-in adapter of one port, with an optional absolute
+// path that replaces PATH lookup and optional args appended to the adapter's
+// fixed argv. review accepts no-mistakes; forge accepts github and gitlab; the
+// github adapter takes neither path nor args (it runs gh-axi and gh from PATH),
+// and a review entry naming no-mistakes needs a forge entry. A tool on PATH
+// with no entry is not used. A configured step whose probe is not Ready is refused
+// and never falls back to its baseline; the operator
+// removes the entry to run the baseline.
 type ToolEntry struct {
 	Adapter string   `json:"adapter"`
 	Path    string   `json:"path,omitempty"`

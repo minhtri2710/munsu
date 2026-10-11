@@ -707,7 +707,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 	}
 	// Every channel that names a write target contributes to one list: the
 	// refusal below and the narrowing further down must agree on what this call
-	// writes (ADR-0014).
+	// writes.
 	var writeTargets []string
 	if payload.isPatch {
 		// A patch document never reaches the shell-blocking ladder below: its
@@ -758,7 +758,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 
 		// A shell command is decided on the targets it names, not on where the
 		// session happens to stand: an absolute path into the shared checkout
-		// used to pass unopposed from a valid worktree (ADR-0014 §1).
+		// used to pass unopposed from a valid worktree.
 		var shellAmbiguous bool
 		writeTargets, shellAmbiguous = shellWriteTargets(checkPath, effectiveCommand)
 		if shellAmbiguous && !block {
@@ -782,7 +782,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 	// primary checkout, is not shared-state access just because the session
 	// stands somewhere git does not recognize. Only that one refusal is
 	// narrowed, only when a binding exists to compare against, and only for
-	// calls that named a target at all (ADR-0014 §3).
+	// calls that named a target at all.
 	if result.GateRefused && !block && len(writeTargets) > 0 &&
 		result.Identity == "unrelated" && result.Error == bootstrap.UnrelatedCheckoutRefusal {
 		if _, bound := bootstrap.BoundRepositoryCommonDir(); bound {

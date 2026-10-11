@@ -1,9 +1,10 @@
-// Package marker owns the General→Captain request marker.
+// The General→Captain request marker.
 //
 // A Captain is itself a munsu home, so unmarked pane input looks like the
 // human captain typing. Marked sends tell the Captain to answer via the parent
 // status file (and optional doc pointer), never chat-only — the General does
 // not read Captain chat.
+
 package home
 
 import "strings"

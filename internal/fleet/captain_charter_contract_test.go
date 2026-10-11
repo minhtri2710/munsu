@@ -62,22 +62,21 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		t.Error("DefaultCaptainCharter must contain 'munsu delivery pr-merge' command")
 	}
 
-	// Dispatch ordering must be correct: list -> start -> brief -> spawn.
-	if !strings.Contains(charter, "munsu task list") ||
-		!strings.Contains(charter, "munsu task start") ||
-		!strings.Contains(charter, "munsu brief") ||
-		!strings.Contains(charter, "munsu spawn") {
-		t.Error("DefaultCaptainCharter dispatch ordering must contain list -> start -> brief -> spawn")
+	// Dispatch order is list -> brief -> spawn. Spawn needs a queued task and
+	// performs the queued-to-working transition itself, so the flow line must
+	// not put start before spawn.
+	flow := ""
+	for _, line := range strings.Split(charter, "\n") {
+		if strings.Contains(line, "munsu task list") && strings.Contains(line, "munsu spawn") {
+			flow = line
+			break
+		}
 	}
-	// Verify the ordering appears in the correct sequence.
-	listIdx := strings.Index(charter, "munsu task list")
-	startIdx := strings.Index(charter, "munsu task start")
-	briefIdx := strings.Index(charter, "munsu brief")
-	spawnIdx := strings.Index(charter, "munsu spawn")
-	if listIdx < 0 || startIdx < 0 || briefIdx < 0 || spawnIdx < 0 {
-		t.Error("dispatch ordering missing one or more commands")
-	} else if !(listIdx < startIdx && startIdx < briefIdx && briefIdx < spawnIdx) {
-		t.Error("dispatch ordering must be: list -> start -> brief -> spawn")
+	listIdx := strings.Index(flow, "munsu task list")
+	briefIdx := strings.Index(flow, "munsu brief")
+	spawnIdx := strings.Index(flow, "munsu spawn")
+	if flow == "" || !(listIdx < briefIdx && briefIdx < spawnIdx) || strings.Contains(flow, "munsu task start") {
+		t.Errorf("dispatch flow must be list -> brief -> spawn with no task start, got %q", flow)
 	}
 }
 

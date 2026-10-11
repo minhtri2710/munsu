@@ -271,8 +271,8 @@ func TestCanonicalRetireOperationReusedConflict(t *testing.T) {
 	}
 }
 
-// TestCanonicalRetirePreservesAcquiredEndpointEvidence proves High-2 closure
-// (BEO-16/P1a): a retirement of a generation that acquired an endpoint
+// TestCanonicalRetirePreservesAcquiredEndpointEvidence proves High-2 closure:
+// a retirement of a generation that acquired an endpoint
 // pre-bind (launch intent + AttachEndpoint, never bound) durably preserves the
 // exact acquired identity (backend/handle/lease/fence/incarnation +
 // generation) as cleanup evidence, so the known externally held resource can

@@ -6,9 +6,9 @@
 # This exists because a guard with no call site is invisible to every other lane
 # in this repo. `EnsureNotPrimary` (internal/backend/worktree.go) was the
 # founding case: four tests and coverage count 2 on its refusal branch -- a
-# perfect mutation score on a function production never called (since deleted,
-# see ADR-0009). No measurement taken *inside* a function can see that, which
-# is why reachability is its own lane and not a test. See ADR-0009 and BEO-63.
+# perfect mutation score on a function production never called (since deleted).
+# No measurement taken *inside* a function can see that, which is why
+# reachability is its own lane and not a test.
 #
 # The analysis root is `./cmd/munsu` and `-test` is deliberately OFF. A guard
 # that only its own test calls is unreachable from the shipped binary, and that
@@ -28,6 +28,16 @@
 # what catches that -- the same limit .github/build-tags.manifest writes about
 # itself. This lane catches the accident, not the intent.
 #
+# Every unreachable function is one of three things, and the lane exists for the
+# third. (a) Genuinely dead: delete it. (b) Not a finding, such as a GOOS-union
+# artifact or a test entrypoint: keep it in the allow file with the reason
+# written out. (c) Unreachable because of a production bug: stop, open an issue,
+# and do not delete it or file it as accepted debt -- deleting it converts a live
+# bug into a tidy diff. A (c) entry carries a reason that starts with OPEN-BUG;
+# `announce_open_bugs` reprints every such reason as a ::warning on every run, so
+# the entry stays visible until its issue closes. uncovered-guards.sh and
+# citations.sh read the same marker.
+#
 # Usage:
 #   deadcode.sh list    current unreachable set, in allow-file key format
 #   deadcode.sh check   tree and allow file agree, in both directions
@@ -45,7 +55,7 @@ die() { echo "::error::$*" >&2; exit 1; }
 # lives in both internal/home/process_identity_{linux,darwin}.go, and a
 # single run sees exactly one of them. Analyzing only the runner's platform
 # would leave the other file permanently outside the lane -- the same shape of
-# hole that hid a compile break behind `//go:build e2e` for four months (BEO-25).
+# hole that hid a compile break behind `//go:build e2e` for four months.
 #
 # It also makes the answer independent of who is asking: a baseline generated on
 # a macOS laptop was red on the linux runner for these two pairs, which is how

@@ -1,4 +1,4 @@
-// Tests for the orchestrator-owned native event wait policy (BEO-17/P1b):
+// Tests for the orchestrator-owned native event wait policy:
 // bounded wait, timeout, duplicate/out-of-order/stale suppression, stale
 // incarnation rejection, event-to-reprobe, and polling fallback.
 package orchestrator

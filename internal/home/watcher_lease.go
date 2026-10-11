@@ -11,7 +11,9 @@ import (
 const watcherLeaseFile = "state/.watcher-lease"
 
 // WatcherLease represents a watcher's exclusive claim on a home directory.
-// Only one watcher may hold the lease for a given home at a time.
+// Only one watcher may hold the lease for a given home at a time. The watcher
+// also holds a non-blocking flock on state/.watch.lock for its run. Flock and
+// PID liveness are host-local: the lease assumes a local home.
 // The lease is claimed on watcher startup and released on shutdown.
 type WatcherLease struct {
 	Home      string `json:"home"`       // canonical home directory

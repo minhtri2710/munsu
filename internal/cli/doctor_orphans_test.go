@@ -16,7 +16,7 @@ import (
 // should look. These are literals on purpose. Asserting against
 // orphanExitGarbage / orphanExitNeedsMember instead makes both sides of the
 // comparison move together, so the assertion restates the implementation and
-// guards nothing — the identity BEO-75 was opened for.
+// guards nothing.
 const (
 	documentedOrphanExitClean       = 0
 	documentedOrphanExitGarbage     = 1

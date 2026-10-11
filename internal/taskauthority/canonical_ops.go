@@ -149,7 +149,7 @@ func (c *Canonical) refuseTaskResidue(taskID string, rev uint64) error {
 		return err
 	}
 	if len(residue) > 0 {
-		return conflictError(ErrConflict, "task %s has no record but earlier state still names it: %s; munsu cannot clear it (ADR-0008 section 11): remove these files by hand or discard the home", taskID, strings.Join(residue, ", "))
+		return conflictError(ErrConflict, "task %s has no record but earlier state still names it: %s; munsu cannot clear it: remove these files by hand or discard the home", taskID, strings.Join(residue, ", "))
 	}
 	return nil
 }
@@ -247,7 +247,7 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 // task-scope lock. Unlike Get (a lock-free committed read), this read
 // serializes against concurrent canonical mutations for the same task
 // (Reopen/BindEndpoint/Retire), so a caller can re-read and compare-and-fence
-// immediately before a destructive external action (BEO-16/P1a retirement
+// immediately before a destructive external action (retirement
 // TOCTOU guard): a mutation either commits before the locked read (observed)
 // or after it, never in between. It returns the same current-Task-truth
 // contract as Get: a superseded/non-current generation fails closed with
@@ -698,8 +698,7 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 		return Outcome{}, err
 	}
 	// An ACTIVE cleanup claim pins the task until cleanup completes or aborts:
-	// a retired-but-unreconciled generation can never be reopened (BEO-16/P1a
-	// durable disposal claim).
+	// a retired-but-unreconciled generation can never be reopened.
 	if err := c.checkCleanupFence(cur, nil); err != nil {
 		return Outcome{}, err
 	}

@@ -1,11 +1,10 @@
 // Command guardsites derives the set of self-originating refusal sites from the
 // source tree and prints one tab-separated row per site.
 //
-// This is the derivation half of the refusal-branch coverage lane (BEO-63,
-// tier 2). Nothing in the repo declares which branches are guards: the set is
-// read out of the tree, and the committed file next to it lists only the
-// waivers. Adding a guard therefore cannot fail open, because there is no
-// register to forget to update.
+// This is the derivation half of the refusal-branch coverage lane. Nothing in
+// the repo declares which branches are guards: the set is read out of the tree,
+// and the committed file next to it lists only the waivers. Adding a guard
+// therefore cannot fail open, because there is no register to forget to update.
 //
 // Output columns: file <TAB> func <TAB> nth <TAB> predicate <TAB> body <TAB> entries
 //

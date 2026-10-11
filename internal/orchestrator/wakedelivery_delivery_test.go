@@ -28,10 +28,9 @@ func deliverEnv(t *testing.T, withParent bool) (soldierHome, captainHome string)
 	return soldierHome, captainHome
 }
 
-// TestDeliverWake_SelfAcknowledgesRegardlessOfParent pins ADR-0015: the writer
-// closes its own terminal handoff. A captain home used to be excluded here, on
-// the premise that a relay sweep would ack it later; #417 deleted that sweep and
-// left captain-backed soldiers wedged (BEO-112).
+// TestDeliverWake_SelfAcknowledgesRegardlessOfParent pins that the writer
+// closes its own terminal handoff, whether or not the parent is a captain home:
+// no relay sweep acks it later.
 func TestDeliverWake_SelfAcknowledgesRegardlessOfParent(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
@@ -77,7 +76,7 @@ func TestDeliverWake_SelfAcknowledgesRegardlessOfParent(t *testing.T) {
 //   - local wake queue entry
 //   - captain receipt (if parentHome set)
 //   - a closed report-relay obligation in the captain home: the writer closes
-//     its own handoff (ADR-0015)
+//     its own handoff
 func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	soldierHome, captainHome := deliverEnv(t, true)
 

@@ -367,7 +367,7 @@ func TestRegistryBindLockScopeIsSmallestTruthful(t *testing.T) {
 // sensitivity came from; that floor was measured on the -race lane and does not
 // exist on the integration lane, where the same code measured a 3.4ms floor and
 // a 2.05s total on one run against a 10.7ms floor and an 18.02s total on
-// another (BEO-82). A ratio cancels a constant speed factor, not a load change
+// another. A ratio cancels a constant speed factor, not a load change
 // that happens *during* the measurement — and the first and last deciles are
 // seconds apart, so runner load drifting between them reads exactly like
 // per-binding cost growth. That is what failed run 31805801020 on unchanged

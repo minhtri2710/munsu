@@ -364,7 +364,7 @@ func checkWorktreeState(homeDir string) StatusEntry {
 
 // checkPipelineReadiness reports the review tool that the delivery mode is
 // derived from. Each project's review and forge steps come from its own
-// configured tool entries (ADR-0028 §2, §5); a tool on PATH is reported and
+// configured tool entries; a tool on PATH is reported and
 // never selected, so this check cannot fail a home.
 func checkPipelineReadiness() StatusEntry {
 	if _, err := exec.LookPath("no-mistakes"); err != nil {

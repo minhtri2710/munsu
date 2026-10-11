@@ -68,7 +68,7 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 		// resource on a retired generation. Resource release itself is #412.
 		// A pre-bind acquired endpoint (a launch that acquired an external
 		// backend resource but never bound it) is preserved as cleanup
-		// evidence too (BEO-16/P1a): a known externally held resource must be
+		// evidence too: a known externally held resource must be
 		// reconciled by cleanup, and the cleanup claim never completes while
 		// a preserved acquired endpoint remains unresolved. A bound Endpoint
 		// subsumes the acquired record (BindEndpoint enforces exact identity
@@ -90,8 +90,8 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 		}
 		next.Endpoint = nil
 		next.Worktree = nil
-		// A durable cleanup claim is committed atomically WITH the retirement
-		// (BEO-16/P1a): the generation is pinned against Reopen/BindEndpoint/
+		// A durable cleanup claim is committed atomically WITH the retirement:
+		// the generation is pinned against Reopen/BindEndpoint/
 		// acquisition from the instant the retire commits, so no window exists
 		// between the retirement transition and the fleet cleanup claim. The
 		// claim is reconciled by ReconcileRetirementCleanup.

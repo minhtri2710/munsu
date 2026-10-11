@@ -1525,7 +1525,7 @@ func TestCanonicalDeliverySchemaRejectsMalformedRecords(t *testing.T) {
 // mutations (AuthorizeDelivery, RevokeDeliveryAuthorization,
 // CommitDeliveryOutcome) are gated by the active cleanup claim: a retired task
 // with an in-flight cleanup can never mutate delivery state or advance the
-// revision the cleanup revalidates against (BEO-16/P1a medium finding).
+// revision the cleanup revalidates against.
 func TestCanonicalDeliveryRejectedWhileCleanupClaimActive(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1") // working, revision 3

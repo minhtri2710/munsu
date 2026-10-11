@@ -70,7 +70,7 @@ type GitLabClient interface {
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
 	// ChangesRequested reports whether any reviewer requested changes, so the
 	// delivery observation honors domain.PR.CanMerge's refusal on
-	// ReviewChangesRequested. Approval is never read from GitLab (ADR-0025).
+	// ReviewChangesRequested. Approval is never read from GitLab.
 	ChangesRequested(host, owner, project string, iid int) (bool, error)
 
 	// MergeMR performs the typed GitLab merge mutation with the pinned request.

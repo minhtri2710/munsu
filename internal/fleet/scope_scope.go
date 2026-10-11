@@ -123,6 +123,10 @@ func gitPath(path, flag string) (string, bool, error) {
 	return resolved, true, nil
 }
 
+// ClassifyIdentity is the single owner of checkout identity. Every consumer
+// (worktree binding, spawn authorization, git target binding) classifies a path
+// here and states its own admission rule over the result; none re-derives
+// identity from paths.
 func ClassifyIdentity(path string) (Identity, string, string, error) {
 	canonical, err := canonicalPath(path)
 	if err != nil {

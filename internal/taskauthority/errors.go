@@ -4,6 +4,12 @@
 // mechanics: every mutation is an atomic journaled home.Commit under the
 // smallest scoped fenced lock, and every read observes the committed Task
 // documents. There is no Store abstraction or in-memory adapter.
+//
+// Every durable schema is v1 and a breaking change replaces v1 in place. Only a
+// fresh home or a home already at the current v1 is operated on: unreadable
+// state and a task-facing .meta with no canonical record fail closed, and no
+// command migrates, upgrades or resets a home. This package, domain and config
+// read no process environment.
 package taskauthority
 
 import (

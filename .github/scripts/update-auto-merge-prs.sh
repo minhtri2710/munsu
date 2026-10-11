@@ -9,7 +9,7 @@
 # button itself. With four lanes open at once that button was being pressed by
 # hand after every merge (four times on 15/08 alone). GitHub's merge queue is
 # the built-in answer and is unavailable here: it requires an org-owned repo
-# and this one belongs to a user account (BEO-54).
+# and this one belongs to a user account.
 #
 # Together with `allow_auto_merge`, this script reproduces the half of a merge
 # queue that matters: main moves -> the queued PRs rebase -> CI re-runs on the

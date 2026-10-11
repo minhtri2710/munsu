@@ -27,7 +27,7 @@
 # Why there is no failure-rate threshold
 # ---------------------------------------------------------------------------
 #
-# BEO-82 measured 14 reruns of the red lane on the red SHA and got 0 failures,
+# A measurement of 14 reruns of the red lane on the red SHA and got 0 failures,
 # against 3 failures in 4 original pushes. If the failure rate were a fixed
 # property of the lane, 0/14 has probability ~1e-8. The rate is not fixed: it
 # tracks the state of the runner fleet at the time of the run. Any threshold
@@ -51,7 +51,7 @@
 #
 # Only the first three enter the ledger. None of them estimate anything.
 #
-# The asymmetry is deliberate and it is what keeps this compatible with BEO-79:
+# The asymmetry is deliberate and it is what keeps this compatible with a hand-assigned owner:
 # the ledger only ever accuses, it never certifies. Absence from it proves
 # nothing -- 0/14 is what that lesson cost. An entry closes when the issue that
 # owns it closes on an argument from the code, never because N days passed with
@@ -328,7 +328,7 @@ observe() {
 	# about the world and correctly leaves the red `pending`. A failed call means
 	# this script does not know, and the two must not collapse into each other.
 	#
-	# They did, until BEO-103. A 403, a secondary rate limit or one 5xx turned a
+	# They did, once. A 403, a secondary rate limit or one 5xx turned a
 	# `flake` into a `pending`, `check` then reported the row already in the
 	# ledger as no longer derivable, and `sync` deleted it -- taking its
 	# owner_issue and deadline with it -- inside a PR that asks the reader not to
@@ -702,7 +702,7 @@ check() {
 # ---------------------------------------------------------------------------
 #
 # `state: fixed:<sha>` is the only value that takes a row out of the deadline
-# comparison, and before BEO-103 it proved nothing: `fixed:i-never-fixed-it` and
+# comparison, and it once proved nothing: `fixed:i-never-fixed-it` and
 # `fixed:0000000` both read `0 open, 0 overdue`. That made it cheaper than the
 # escape this file already admits to -- moving the deadline, which has to be
 # repeated every 14 days and shows up in `git log` as a widening gap -- while
@@ -911,8 +911,8 @@ sync() {
 # two that read `success` at run level included. That is the only test that
 # proves this reads attempts rather than conclusions.
 #
-# The classify fixtures pin the evidence and nothing else, which was the gap
-# BEO-103 measured: replacing either direction of check()'s comparison with
+# The classify fixtures pin the evidence and nothing else, which was a gap
+# once measured: replacing either direction of check()'s comparison with
 # `if false` left this selftest green, so the two rules the whole mechanism is
 # named after had no test at all. The scenarios below drive the real check(),
 # sync() and verify_fixed() over a throwaway ledger, and the mutation each one
@@ -1061,7 +1061,7 @@ selftest() {
 
 	# 1e. --owner names the issue for rows this sweep files for the first time,
 	# and a row that already exists keeps the owner it has. That rule is what
-	# stops a later sweep clobbering the BEO-79 a person moved a row to, and the
+	# stops a later sweep clobbering the owner a person moved a row to, and the
 	# hand edit is the only way to move it: one sweep files every new row under
 	# one issue, so two flakes belonging to two issues cannot both be filed
 	# right (#568). .github/flake-ledger.md tells the reader to correct

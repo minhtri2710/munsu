@@ -142,7 +142,7 @@ func (r *Runner) mintEndpointIncarnation() (string, error) {
 }
 
 // authorizeEndpoint concludes Fleet's authorization for a probe of an endpoint
-// the runner holds acquisition evidence for (BEO-16/P1a): the in-process
+// the runner holds acquisition evidence for: the in-process
 // CreatedEndpoint from CreateReserved (fresh acquisition) or the durable
 // AcquiredEndpoint (recovery) both tie the exact handle to the launch
 // incarnation. The proof revalidates the CURRENT canonical generation/revision
@@ -610,13 +610,14 @@ func (r *Runner) resolveDispatchPolicy() error {
 }
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
-// the task is present and dispatchable through the canonical Task Authority.
-// Normal Captain flow is:
-//
-//	munsu task start <id>  →  munsu spawn <id>
-//
-// Working without live meta/window MUST allow spawn without --force.
-// Refuse only duplicate live execution (meta window/pane). --force is emergency bypass only.
+// the task has a canonical Task Authority record that is not done or blocked.
+// It refuses a task whose meta names a live window or pane, so a duplicate live
+// execution never starts; --force skips the whole check and is an emergency
+// bypass only. This check passes a queued or a working task; whether spawn may
+// proceed is decided later by beginLaunchIntent, which requires queued and
+// accepts working only to resume a launch that already holds its endpoint.
+// Spawn performs the queued-to-working transition, so do not run
+// `munsu task start` for a task that will be spawned.
 func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.args.Force {
 		return nil
@@ -642,7 +643,7 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
 	switch phase {
 	case taskauthority.PhaseWorking:
-		// start→spawn: working without live window/pane is allowed.
+		// Passes this check only; beginLaunchIntent refuses a working task unless it resumes a completed launch.
 		return nil
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", taskID)
@@ -837,7 +838,10 @@ func (r *Runner) checkBacklogAuthority() error {
 	meta, metaErr := home.ReadMeta(r.homeDir, r.args.ID)
 	metaExists := metaErr == nil && meta["window"] != ""
 
-	// State-based checks. Working without live meta is start→spawn — allow.
+	// State-based checks. Running `munsu task start` first is refused: spawn
+	// needs a queued task. A working task without live meta passes this check
+	// only so beginLaunchIntent can resume a launch that already holds its
+	// endpoint; it refuses any other working task.
 	switch agg.Phase {
 	case taskauthority.PhaseBlocked:
 		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", r.args.ID, r.args.ID)
@@ -862,7 +866,7 @@ func (r *Runner) checkBacklogAuthority() error {
 func (r *Runner) checkSupervision() error {
 	// Supervision gate: spawn fails closed when the watcher lease is degraded.
 	// Durable Dispatch Holds are evaluated atomically inside the Task Authority
-	// ConfirmSpawn operation, never here (Task 4.3, ADR-0007 §8).
+	// ConfirmSpawn operation, never here.
 	return CheckSupervisionForDispatch(r.homeDir, home.DispatchActionSpawn)
 }
 
@@ -1139,7 +1143,7 @@ func (r *Runner) beginLaunchIntent() error {
 	r.taskScoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	// Resolve the opaque endpoint incarnation BEFORE any acquisition so a crash
-	// after create but before attach can reuse the same token (BEO-16/P1a).
+	// after create but before attach can reuse the same token.
 	// Recovery reuses the persisted LaunchIntent incarnation; a first attempt
 	// mints it here and the mint error aborts (never a shared sentinel).
 	endpointIncarnation := ""
@@ -1316,7 +1320,7 @@ func launchFence(salt, taskID string, gen uint64) string {
 
 // BoundWorktree is the proof that a launch target has been bound under the
 // launch intent's worktree reservation fence AND classified as an isolated
-// worktree by ClassifyIdentity (ADR-0009).
+// worktree by ClassifyIdentity.
 //
 // Only bindWorktree returns one, and every phase that writes into the worktree
 // takes one, so the invariant no longer rests on the phase ORDER inside Run():
@@ -1666,7 +1670,7 @@ func (r *Runner) createSession() error {
 	// after submit by verifyEndpointReadyBeforePersist (Fleet-authorized). Any
 	// dead or ambiguous (unknown/unresponsive/stale) reading returns
 	// readiness-pending WITHOUT disposing — the reservation and ownership are
-	// preserved and no replacement is fabricated (BEO-16).
+	// preserved and no replacement is fabricated.
 	if err != nil {
 		return fmt.Errorf("verifying created pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
 	}
@@ -2010,9 +2014,9 @@ const fenceProbeTimeout = 30 * time.Second
 // Phase 11b: probeFence builds the launch's write fence (F1 for a ship or
 // scout soldier, F2 for a reviewer) and proves, before any pane exists, that the
 // exact profile refuses the writes it must. A fence that cannot be built or whose
-// probe fails refuses the launch (G297 Q3 F1 and F2; G304 group 22); it never
-// falls back to a looser profile. A host with no fence implementation records
-// that with its reason and launches unfenced (G356).
+// probe fails refuses the launch; it never falls back to a looser profile. A
+// host with no fence implementation records that with its reason and launches
+// unfenced.
 func (r *Runner) probeFence(bound BoundWorktree) error {
 	_, gitDir, commonDir, err := ClassifyIdentity(bound.Path())
 	if err != nil {
@@ -2341,7 +2345,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			gen, rev := r.canonicalGenerationRevision()
 			// Negative authorization: only an authorized exact absence (narrow
 			// dead + current generation/revision) means the window died.
-			// Ambiguous readings are never "died" (BEO-16: unknown != dead).
+			// Ambiguous readings are never "died" (unknown != dead).
 			if dead := authorizeAbsence(status, exactEndpointProof{
 				backend: r.endpoint.Backend, handle: r.endpoint.Handle, incarnation: r.endpoint.Incarnation,
 				leaseID: r.epReservationID(), fenceToken: r.epFenceToken(),

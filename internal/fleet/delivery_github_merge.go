@@ -11,13 +11,14 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
-// This file is the GitHub delivery provider (ADR-0026): the typed observation
+// This file is the GitHub delivery provider: the typed observation
 // and the one irreversible mutation Deliver consumes for an open pull request.
-// It follows the GitLab provider's shape (delivery_gitlab.go, ADR-0018): the
+// It follows the GitLab provider's shape (delivery_gitlab.go): the
 // merge is pinned to the exact authorized head by the provider itself, the
 // base ref is a named residual fenced by Deliver's observation, and CI proof
 // is read per check by id and conclusion, never from a watch command's exit
-// code.
+// code. MergePR and the merge-state fence below state the merge flags and the
+// merge states the provider refuses.
 
 // GitHubCheckSource names the endpoint a check was reported through. Check
 // runs and commit statuses have separate id spaces, so an id orders reports

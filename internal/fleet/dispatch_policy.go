@@ -11,14 +11,14 @@
 //     the Captain's own provenanced home (.munsu-captain-home) and typed spawn
 //     config reads the Captain's assigned published snapshot. A Captain never
 //     re-resolves, never reads the General's files, and never falls back to
-//     local/base configuration (ADR-0008 §6).
+//     local/base configuration.
 //
 // ResolveDispatchPolicy is the single authority for the choice. A parent rank,
 // home provenance, or config surface that contradicts the other two is an
 // ambiguous combination and fails closed with a typed DispatchPolicyError that
 // names the rejected matrix row. In particular a General dispatch is refused
 // at the boundary the moment the operation home is Captain-owned, so General
-// code never reads or mutates Captain-owned state (ADR-0008 §4).
+// code never reads or mutates Captain-owned state.
 package fleet
 
 import (
@@ -51,7 +51,7 @@ type DispatchPolicyProblem string
 const (
 	// DispatchPolicyProblemGeneralOnCaptainHome: parent rank general, but the
 	// operation home carries Captain provenance. The General never dispatches
-	// inside a Captain-owned home (ADR-0008 §4).
+	// inside a Captain-owned home.
 	DispatchPolicyProblemGeneralOnCaptainHome DispatchPolicyProblem = "general-parent-on-captain-home"
 
 	// DispatchPolicyProblemCaptainOnUnprovenHome: parent rank captain, but the
@@ -61,7 +61,7 @@ const (
 
 	// DispatchPolicyProblemCaptainWithoutAssignedSnapshot: parent rank captain
 	// in a proven home that carries no published config snapshot. A Captain
-	// never re-resolves or spawns without its assigned snapshot (ADR-0008 §6).
+	// never re-resolves or spawns without its assigned snapshot.
 	DispatchPolicyProblemCaptainWithoutAssignedSnapshot DispatchPolicyProblem = "captain-without-assigned-snapshot"
 
 	// DispatchPolicyProblemConfigSurfaceContradiction: the home's config
@@ -101,7 +101,7 @@ func policyError(problem DispatchPolicyProblem, parent, homeDir, detail string) 
 // ResolveDispatchPolicy cannot drift on message or evidence.
 func generalOnCaptainHomeError(parent, captainID, homeDir string) error {
 	return policyError(DispatchPolicyProblemGeneralOnCaptainHome, parent, homeDir,
-		fmt.Sprintf("the operation home is Captain-owned (captain %s, .munsu-captain-home); the General never reads or mutates Captain-owned state — run the dispatch from the General home or as the Captain (ADR-0008 §4)", captainID))
+		fmt.Sprintf("the operation home is Captain-owned (captain %s, .munsu-captain-home); the General never reads or mutates Captain-owned state — run the dispatch from the General home or as the Captain", captainID))
 }
 
 // ResolveDispatchPolicy resolves the explicit dispatch policy for one
@@ -155,7 +155,7 @@ func ResolveDispatchPolicy(homeDir, parentRank string) (DispatchPolicy, string, 
 		}
 		if basePresent {
 			return "", "", policyError(DispatchPolicyProblemConfigSurfaceContradiction, parentRank, homeDir,
-				"the Captain home carries a fleet base document; a Captain never reads or resolves base/local configuration (ADR-0008 §6)")
+				"the Captain home carries a fleet base document; a Captain never reads or resolves base/local configuration")
 		}
 		if !published {
 			return "", "", policyError(DispatchPolicyProblemCaptainWithoutAssignedSnapshot, parentRank, homeDir,

@@ -17,7 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// This file is the Fleet side of the review verdict (ADR-0025): it reads the
+// This file is the Fleet side of the review verdict: it reads the
 // verdict file a munsu review task wrote, observes the reviewed worktree for
 // the review-custody record, and records the verdict through
 // Canonical.RecordReviewVerdict, the only writer of the approval source
