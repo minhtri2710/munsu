@@ -123,16 +123,16 @@ func TestReapWorktreeHolders(t *testing.T) {
 	}
 	t.Run("nothing holds the path", func(t *testing.T) {
 		fakeFuser(t, "exit 1")
-		if n, err := reapWorktreeHolders(t.TempDir(), "T-1", "/wt"); n != 0 || err != nil {
-			t.Fatalf("reapWorktreeHolders = %d, %v; want 0, nil", n, err)
+		if killed, err := reapWorktreeHolders(t.TempDir(), "T-1", "/wt"); len(killed) != 0 || err != nil {
+			t.Fatalf("reapWorktreeHolders = %v, %v; want none, nil", killed, err)
 		}
 	})
 	t.Run("a holder proven to be the task's is killed and the path clears", func(t *testing.T) {
 		homeDir := t.TempDir()
 		pid := startMarkedSleeper(t, "T-1", homeDir)
 		fakeFuser(t, aliveScript(pid))
-		n, err := reapWorktreeHolders(homeDir, "T-1", "/wt")
-		if n != 1 || err != nil {
+		killed, err := reapWorktreeHolders(homeDir, "T-1", "/wt")
+		if n := len(killed); n != 1 || err != nil {
 			t.Fatalf("reapWorktreeHolders = %d, %v; want 1, nil", n, err)
 		}
 		if processAlive(pid) {
@@ -143,8 +143,8 @@ func TestReapWorktreeHolders(t *testing.T) {
 		homeDir := t.TempDir()
 		stranger := startMarkedSleeper(t, "T-2", homeDir)
 		fakeFuser(t, aliveScript(stranger))
-		n, err := reapWorktreeHolders(homeDir, "T-1", "/wt")
-		if n != 0 || err == nil || !strings.Contains(err.Error(), "not provably task T-1's; not signalled") {
+		killed, err := reapWorktreeHolders(homeDir, "T-1", "/wt")
+		if n := len(killed); n != 0 || err == nil || !strings.Contains(err.Error(), "not provably task T-1's; not signalled") {
 			t.Fatalf("reapWorktreeHolders = %d, %v; want the not-provable refusal", n, err)
 		}
 		if !processAlive(stranger) {
@@ -153,15 +153,38 @@ func TestReapWorktreeHolders(t *testing.T) {
 	})
 	t.Run("a fuser failure is returned", func(t *testing.T) {
 		fakeFuser(t, "exit 2")
-		if n, err := reapWorktreeHolders(t.TempDir(), "T-1", "/wt"); n != 0 || err == nil || !strings.Contains(err.Error(), "enumerating holders") {
-			t.Fatalf("reapWorktreeHolders = %d, %v; want the enumeration error", n, err)
+		if killed, err := reapWorktreeHolders(t.TempDir(), "T-1", "/wt"); len(killed) != 0 || err == nil || !strings.Contains(err.Error(), "enumerating holders") {
+			t.Fatalf("reapWorktreeHolders = %v, %v; want the enumeration error", killed, err)
 		}
 	})
 	t.Run("an attribution failure keeps the holder unsignalled", func(t *testing.T) {
 		fakeFuser(t, "echo 1")
-		n, err := reapWorktreeHolders(filepath.Join(t.TempDir(), "missing"), "T-1", "/wt")
-		if n != 0 || err == nil || !strings.Contains(err.Error(), "attributing holders of /wt") {
+		killed, err := reapWorktreeHolders(filepath.Join(t.TempDir(), "missing"), "T-1", "/wt")
+		if n := len(killed); n != 0 || err == nil || !strings.Contains(err.Error(), "attributing holders of /wt") {
 			t.Fatalf("reapWorktreeHolders = %d, %v; want the attribution refusal", n, err)
 		}
 	})
+}
+
+func TestRetireTaskDoesNotReportTheHolderItJustReaped(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "reap-report"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	pid := startMarkedSleeper(t, taskID, homeDir)
+	useTaskProcessFakes(t, fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(pid, taskID, homeDir)}}}, func([]int) map[int]processDetail { return nil })
+	fakeFuser(t, "if kill -0 "+strconv.Itoa(pid)+" 2>/dev/null; then echo "+strconv.Itoa(pid)+"; else exit 1; fi")
+	res, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, &recordingTeardown{alive: false}, fakeRetirementJournals{}, auth)
+	if err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, "killed 1 residual process(es) on worktree") || strings.Contains(steps, "still running") {
+		t.Fatalf("steps = %q, want the reap reported once and no survivor line", res.Steps)
+	}
 }

@@ -134,3 +134,27 @@ func (fakeRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([
 func (fakeRetirementJournals) FinalizeRetirementJournals(string, string) ([]string, error) {
 	return nil, nil
 }
+
+func TestRetireTaskReportsSurvivingTaskProcessWithoutFailingTeardown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		auth func(t *testing.T, homeDir string) *taskauthority.Canonical
+	}{
+		{"with worktree evidence", func(t *testing.T, homeDir string) *taskauthority.Canonical { return mergeTestAuth(t, homeDir, "task") }},
+		{"without worktree evidence", func(t *testing.T, homeDir string) *taskauthority.Canonical {
+			return canonicalMergeTestAuth(t, homeDir, "task")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, _ := teardownFixture(t)
+			useTaskProcessFakes(t, fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(800, "task", opts.HomeDir)}}}, func([]int) map[int]processDetail { return nil })
+			res, err := RetireTask(opts, fakeTeardown{}, fakeRetirementJournals{}, tc.auth(t, opts.HomeDir))
+			if err != nil {
+				t.Fatalf("teardown failed: %v", err)
+			}
+			if want := "task process 800 still running: /usr/bin/node (cwd unknown, listening unknown)"; !strings.Contains(strings.Join(res.Steps, "\n"), want) {
+				t.Fatalf("steps = %q, want one containing %q", res.Steps, want)
+			}
+		})
+	}
+}
