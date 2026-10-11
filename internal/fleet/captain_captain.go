@@ -1665,10 +1665,6 @@ func removeNudgeMarker(parentHome, smID string) {
 	os.Remove(nudgeMarkerPath(parentHome, smID))
 }
 
-// Converge performs a locked convergence sweep over registered captains.
-// Order: lock, validate registry/provenance, flush send outbox, retry pending
-// nudges, safe ff, inheritance push, ownership-backed backend Alive check,
-// watcher status check, and reread nudge only if instruction surface advanced.
 type ConvergeCapabilities struct {
 	Notification any
 	Continuity   CaptainContinuityPort
@@ -1681,6 +1677,14 @@ type ConvergeCapabilities struct {
 	Nudge        NudgeEndpoint
 }
 
+// Converge performs a locked convergence sweep over registered captains. For
+// each captain, in order: validate registry and provenance; retry pending
+// nudges; fast-forward the Captain home when safe (writing a reread nudge only
+// if the instruction surface advanced); push inherited config; refresh the
+// charter; check liveness (a launched-but-dead endpoint is relaunched only when
+// its absence is proven and the relaunch guard is not armed); reconcile pending
+// config-reread, continuity and General-to-Captain mailbox records; and print
+// the watcher status.
 func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (*ConvergeResult, error) {
 	sender := caps.Mailbox
 	if len(registered) > 0 && caps.Notification == nil {

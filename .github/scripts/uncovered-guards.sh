@@ -47,9 +47,9 @@
 # BOTH directions: never uncovered, so no row is demanded, and never covered, so
 # a row waiving one is not called stale for being covered. The stale-row check
 # still counts them as existing sites, so a row for a guard that is gone is red
-# on every platform. Excluding them from one direction only is what would make the file
-# platform-dependent -- red on a laptop, green on the runner, the exact failure
-# deadcode.sh's GOOS union exists to avoid. A coverage profile cannot be unioned
+# on every platform. Excluding them from one direction only is what would make
+# the file platform-dependent -- red on a laptop, green on the runner, the exact
+# failure deadcode.sh's GOOS union exists to avoid. A coverage profile cannot be unioned
 # the same way: tests cannot run for a GOOS they were not built for.
 #
 # The reason column is self-declared. Somebody can waive a brand new guard with a

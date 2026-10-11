@@ -101,10 +101,11 @@ Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 Do not enable `required_pull_request_reviews` on `main` while one account authors
 every PR: GitHub does not let an author approve their own PR, so every merge
 deadlocks and `enforce_admins` leaves no bypass.
-The required checks on `main` are load-bearing: an event raised by `GITHUB_TOKEN`
-starts no workflow run, so a PR opened with that token never gets the required
-checks and stays unmergeable. Relaxing the required checks would hand such a PR a
-merge path.
+The required checks on `main` are load-bearing: a PR that `.github/workflows/auto-update-branch.yml`
+updated with its `GITHUB_TOKEN` merge commit and whose sweep was cancelled before
+it released the parked CI run carries no checks, and stays unmergeable only
+because the four required checks never report on it. Relaxing the required checks
+would give that PR a merge path.
 
 ## Package map
 

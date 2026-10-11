@@ -2,8 +2,8 @@
 // scoped fenced locks, leases and atomic journaled commits.
 //
 // Layout under a home: state/ (task-authority/ documents, fleet-registry/
-// registries, shim/bin, the .meta and .status projections with their .lock
-// files, the .watch.lock and .afk.lock files, wakes and receipts), data/<id>/
+// registries, shim/bin, the .meta and .status projections with the <id>.meta.lock
+// file, the .watch.lock and .afk.lock files, wakes and receipts), data/<id>/
 // brief.md, config/ (typed documents and the published snapshot), projects/
 // (cloned project repositories), captains/ (Captain homes), .journal/ (the
 // write-ahead journal) and .lock/ (scoped lock files). Durable paths are

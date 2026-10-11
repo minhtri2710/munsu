@@ -204,14 +204,14 @@ When implementation is separately authorized, promote: `munsu promote <id>`.
 ## 8. Supervision protocol
 
 Whenever work is in flight, keep exactly one live supervision cycle.
-`munsu watch ensure` returns at once with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue. Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
+`munsu watch ensure` returns within the beacon timeout (3s) with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue. Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
 
 Fundamental loop:
 
 1. Claim: `munsu wake claim --consumer <id>`.
 2. Ensure: `munsu watch ensure`.
 3. The watcher polls every 5s, queues actionable wakes, and stays alive.
-4. Handle each claimed wake by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result), `heartbeat` (review the fleet with `munsu fleet view`).
+4. Handle each claimed wake by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result); `uplink` and `process-event` wakes are handled from their payload.
 5. Repair if needed: `munsu watch ensure`.
 
 Cross-cutting rules:

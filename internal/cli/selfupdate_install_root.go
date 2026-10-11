@@ -1,4 +1,5 @@
-// Package selfupdate provides fast-forward-only self-update for munsu.
+// Fast-forward-only self-update for munsu.
+
 package cli
 
 import (

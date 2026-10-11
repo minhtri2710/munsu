@@ -615,8 +615,9 @@ func (r *Runner) resolveDispatchPolicy() error {
 // execution never starts; --force skips the whole check and is an emergency
 // bypass only. This check passes a queued or a working task; whether spawn may
 // proceed is decided later by beginLaunchIntent, which requires queued and
-// accepts working only to resume a launch that already holds its endpoint, so
-// run `munsu task start` only after spawn, never before.
+// accepts working only to resume a launch that already holds its endpoint.
+// Spawn performs the queued-to-working transition, so do not run
+// `munsu task start` for a task that will be spawned.
 func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.args.Force {
 		return nil
@@ -2010,9 +2011,9 @@ const fenceProbeTimeout = 30 * time.Second
 // Phase 11b: probeFence builds the launch's write fence (F1 for a ship or
 // scout soldier, F2 for a reviewer) and proves, before any pane exists, that the
 // exact profile refuses the writes it must. A fence that cannot be built or whose
-// probe fails refuses the launch; it never
-// falls back to a looser profile. A host with no fence implementation records
-// that with its reason and launches unfenced.
+// probe fails refuses the launch; it never falls back to a looser profile. A
+// host with no fence implementation records that with its reason and launches
+// unfenced.
 func (r *Runner) probeFence(bound BoundWorktree) error {
 	_, gitDir, commonDir, err := ClassifyIdentity(bound.Path())
 	if err != nil {

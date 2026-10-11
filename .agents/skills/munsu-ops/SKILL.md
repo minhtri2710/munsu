@@ -99,7 +99,7 @@ Teardown stops only holders of the task worktree. A task process that survives i
 ### Fleet-wide checks
 
 - `munsu fleet view` — see the full fleet.
-- `munsu captain converge` — flush send outboxes, retry pending nudges, fast-forward Captain homes, push inherited config, and check liveness and watcher status after Captain lifecycle changes.
+- `munsu captain converge` — validate registry entries, retry pending nudges, fast-forward Captain homes, push inherited config, refresh charters, check liveness (relaunching only when absence is proven), reconcile pending mailbox records, and report watcher status after Captain lifecycle changes.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu fleet bearings` — compact resume report.
 - `munsu inbox` — preview pending wakes and captain status lines in one view.

@@ -1,5 +1,5 @@
-// Package mailbox implements rank-aware durable one-hop mailboxes for
-// General-Captain-Soldier communication.
+// Rank-aware durable one-hop mailboxes for General-Captain-Soldier
+// communication.
 //
 // Design:
 //   - Envelopes are receiver-owned: the receiver's state/.inbox/<sender-id>/

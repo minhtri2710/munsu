@@ -470,7 +470,7 @@ func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
-	// Working without live meta/window (task start before spawn) must ALLOW spawn.
+	// Working without live meta/window must pass this pre-check; beginLaunchIntent decides.
 	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: t.TempDir()}
 	if err := r.checkBacklogAuthority(); err != nil {
 		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)

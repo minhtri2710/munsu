@@ -318,8 +318,10 @@ func segmentWords(segment []shellToken) []string {
 // the launch script exported.
 //
 // The shim covers git reached through the launch PATH. An absolute-path git or
-// a reset PATH bypasses it. On macOS the OS fence (internal/fence) refuses those
-// writes at the syscall; on other platforms nothing refuses them.
+// a reset PATH bypasses it. On macOS the OS fence (internal/fence) also refuses
+// those writes at the syscall; on other platforms that syscall-level refusal is
+// absent. The harness hook path (evaluateGitMutationSafety) still refuses the
+// command string wherever the hook runs.
 func evaluateGitArgvSafety(checkPath string, gitArgs []string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))

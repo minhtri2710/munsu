@@ -215,8 +215,8 @@ wrong-branch, invalid-provenance, or unsupported-home (no git worktree).`,
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",
-		Long: `Locked convergence sweep: validate registry/provenance, retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
-surface tracking. State changes tracked in parent state/.captain-converge.lock`,
+		Long: `Locked convergence sweep: validate registry/provenance, retry pending nudges, safe local fast-forward, instruction surface tracking, inheritance push, charter refresh, liveness check, and
+pending config-reread, continuity and mailbox reconciliation. State changes tracked in parent state/.captain-converge.lock`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
@@ -240,7 +240,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	recoverCmd := &cobra.Command{
 		Use:   "recover <captain-id>",
 		Short: "Run structured recovery transaction for a captain",
-		Long: `Run the full recovery transaction for one captain: provenance → config-validation → integration-status → charter-refresh → config-push → launch-readiness → relaunch-pane → watcher-ensure → terminal-reconcile → nudge-retry.
+		Long: `Run the full recovery transaction for one captain: provenance → config-validation → charter-refresh → config-push → integration-status → launch-readiness → relaunch-pane → watcher-ensure → nudge-retry.
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

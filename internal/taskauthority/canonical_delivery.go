@@ -39,8 +39,10 @@ import (
 // operations the canonical foundation authorizes. The sole #414 operation is
 // provider merge; speculative capability tiers are deliberately absent. A new
 // external write adds a kind here: Valid is the single check that authorization
-// issuance and GateRecord.Operation (the Human's recorded words) both apply, so a
-// kind absent from this set can neither be authorized nor recorded at a gate.
+// issuance and GateRecord.Operation both apply, so a kind absent from this set
+// can neither be authorized nor recorded at a gate. That the gate record also
+// carries the Human's words (GateRecord.Words) is a convention for each kind;
+// no code requires a gate record before authorization.
 type DeliveryAuthorizationKind string
 
 const (

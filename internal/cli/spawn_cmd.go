@@ -40,7 +40,7 @@ remote/name heuristics.
 When inference fails, pass the project name explicitly or run 'munsu project add'.
 
 Spawn needs a queued task and performs the queued-to-working transition, so
-run 'munsu task start' only after spawn.`,
+do not run 'munsu task start' for a task you will spawn.`,
 		Args: cobra.MatchAll(MinimumNArgs(1), cobra.MaximumNArgs(2)),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
