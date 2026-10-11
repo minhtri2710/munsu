@@ -106,7 +106,7 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu event append <event-id> --type <type> [--producer <id>] [--key <slug>] [--json <payload>]` | Append a typed event to the event log. |
+| `munsu event append --type <type> [--producer <id>] [--key <slug>] [--json <payload>]` | Append a typed event to the event log. |
 | `munsu stow [text...]` | Capture durable learnings. |
 | `munsu stow --general [text...]` | Capture General preferences in `data/general.md`. |
 | `munsu stow --kind general [text...]` | Same as --general. |

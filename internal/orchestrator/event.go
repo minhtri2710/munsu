@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,7 +36,8 @@ func LogPath(homeDir string) string {
 }
 
 // parseRecord parses one log line, without its newline, into a Record. The line
-// is taken as written, with no trimming.
+// is taken as written, with no trimming; the four text fields are decoded with
+// home.UnescapeLine, the inverse of what Append writes.
 // It reports false when the line has fewer than six tab-separated fields or an
 // ID that is not an unsigned integer. An unparsable timestamp reads as 0.
 func parseRecord(line string) (Record, bool) {
@@ -48,33 +50,82 @@ func parseRecord(line string) (Record, bool) {
 		return Record{}, false
 	}
 	ts, _ := strconv.ParseInt(parts[1], 10, 64)
-	return Record{ID: id, Timestamp: ts, Type: parts[2], Producer: parts[3], Key: parts[4], Payload: parts[5]}, true
+	return Record{
+		ID:        id,
+		Timestamp: ts,
+		Type:      home.UnescapeLine(parts[2]),
+		Producer:  home.UnescapeLine(parts[3]),
+		Key:       home.UnescapeLine(parts[4]),
+		Payload:   home.UnescapeLine(parts[5]),
+	}, true
+}
+
+// highWaterPath names the sidecar that lets nextID skip the part of the log it
+// has already scanned.
+func highWaterPath(homeDir string) string { return LogPath(homeDir) + ".hwm" }
+
+// readHighWater returns the log offset and largest ID the last Append recorded.
+// An absent or unparsable sidecar reads as 0, 0: a full scan.
+func readHighWater(homeDir string) (offset int64, maxID uint64) {
+	data, err := os.ReadFile(highWaterPath(homeDir))
+	if err != nil {
+		return 0, 0
+	}
+	if _, err := fmt.Sscanf(string(data), "%d %d", &offset, &maxID); err != nil || offset < 0 {
+		return 0, 0
+	}
+	return offset, maxID
 }
 
 // nextID returns the next monotonic ID (1-based): one past the largest ID in
-// the log. The caller must hold the event log lock.
-func nextID(homeDir string) (uint64, error) {
-	data, err := os.ReadFile(LogPath(homeDir))
+// the log, and the log size it scanned to. It refuses when the largest ID is already
+// the maximum, rather than wrap to 0. Only the bytes past the recorded
+// high-water offset are read; the maximum is taken over the whole log, so a log
+// whose order is not ID order still yields its true maximum. A log shorter than
+// the recorded offset was replaced and is scanned in full. The caller must hold
+// the event log lock.
+func nextID(homeDir string) (uint64, int64, error) {
+	f, err := os.Open(LogPath(homeDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 1, nil
+			return 1, 0, nil
 		}
-		return 0, fmt.Errorf("reading event log: %w", err)
+		return 0, 0, fmt.Errorf("reading event log: %w", err)
 	}
-	var maxID uint64
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, 0, fmt.Errorf("reading event log: %w", err)
+	}
+	size := info.Size()
+	offset, maxID := readHighWater(homeDir)
+	if offset > size {
+		offset, maxID = 0, 0
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return 0, 0, fmt.Errorf("reading event log: %w", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, size-offset))
+	if err != nil {
+		return 0, 0, fmt.Errorf("reading event log: %w", err)
+	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if r, ok := parseRecord(line); ok && r.ID > maxID {
 			maxID = r.ID
 		}
 	}
-	return maxID + 1, nil
+	if maxID == math.MaxUint64 {
+		return 0, 0, fmt.Errorf("event log %s: largest event ID is already %d, no ID is left to assign", LogPath(homeDir), uint64(math.MaxUint64))
+	}
+	return maxID + 1, size, nil
 }
 
-// Append writes a typed event to the event log and returns its ID. The ID is
-// assigned and written under one exclusive lock, so concurrent writers in any
-// process never share an ID. The lock is a sibling file, not the log itself:
-// on Windows a LockFileEx lock is mandatory and would fail concurrent readers
-// of the log.
+// Append writes a typed event to the event log and returns its ID. The four
+// text fields are stored home.EscapeLine-encoded, so a tab or newline in any of
+// them stays inside its field. The ID is assigned and written under one
+// exclusive lock, so concurrent writers in any process never share an ID. The
+// lock is a sibling file, not the log itself: on Windows a LockFileEx lock is
+// mandatory and would fail concurrent readers of the log.
 func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 	path := LogPath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -83,11 +134,12 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 
 	var id uint64
 	err := home.WithExclusiveFileLock(path+".lock", func() error {
-		next, err := nextID(homeDir)
+		next, scanned, err := nextID(homeDir)
 		if err != nil {
 			return err
 		}
-		line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", next, time.Now().UnixNano(), eventType, producer, key, payload)
+		line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\t%s\n", next, time.Now().UnixNano(),
+			home.EscapeLine(eventType), home.EscapeLine(producer), home.EscapeLine(key), home.EscapeLine(payload))
 
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
@@ -98,6 +150,9 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 			return fmt.Errorf("writing event: %w", err)
 		}
 		id = next
+		// The sidecar is only a scan shortcut: a failed write costs the next
+		// Append a full scan and never the event.
+		_ = os.WriteFile(highWaterPath(homeDir), []byte(fmt.Sprintf("%d %d\n", scanned+int64(len(line)), next)), 0644)
 		return nil
 	})
 	if err != nil {

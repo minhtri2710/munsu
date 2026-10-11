@@ -346,7 +346,7 @@ func decodeWakeRecordLine(line string) (WakeRecord, bool) {
 		Seq:     parts[1],
 		Kind:    parts[2],
 		Key:     parts[3],
-		Payload: decodeWakePayload(parts[4]),
+		Payload: UnescapeLine(parts[4]),
 	}
 	if len(parts) == 6 {
 		record.Ref = parts[5]
@@ -354,54 +354,8 @@ func decodeWakeRecordLine(line string) (WakeRecord, bool) {
 	return record, true
 }
 
-func encodeWakePayload(payload string) string {
-	var b strings.Builder
-	b.Grow(len(payload))
-	for i := 0; i < len(payload); i++ {
-		switch payload[i] {
-		case '\\':
-			b.WriteString("\\\\")
-		case '\t':
-			b.WriteString("\\t")
-		case '\n':
-			b.WriteString("\\n")
-		case '\r':
-			b.WriteString("\\r")
-		default:
-			b.WriteByte(payload[i])
-		}
-	}
-	return b.String()
-}
-
-func decodeWakePayload(encoded string) string {
-	var b strings.Builder
-	b.Grow(len(encoded))
-	for i := 0; i < len(encoded); i++ {
-		if encoded[i] != '\\' || i+1 == len(encoded) {
-			b.WriteByte(encoded[i])
-			continue
-		}
-		i++
-		switch encoded[i] {
-		case '\\':
-			b.WriteByte('\\')
-		case 't':
-			b.WriteByte('\t')
-		case 'n':
-			b.WriteByte('\n')
-		case 'r':
-			b.WriteByte('\r')
-		default:
-			b.WriteByte('\\')
-			b.WriteByte(encoded[i])
-		}
-	}
-	return b.String()
-}
-
 func writeWakeRecord(b *strings.Builder, record WakeRecord) {
-	fmt.Fprintf(b, "%s\t%s\t%s\t%s\t%s", record.Epoch, record.Seq, record.Kind, record.Key, encodeWakePayload(record.Payload))
+	fmt.Fprintf(b, "%s\t%s\t%s\t%s\t%s", record.Epoch, record.Seq, record.Kind, record.Key, EscapeLine(record.Payload))
 	if record.Ref != "" {
 		fmt.Fprintf(b, "\t%s", record.Ref)
 	}
