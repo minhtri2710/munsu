@@ -23,16 +23,15 @@ Pushing through it runs an AI-driven review/test/lint pipeline in an isolated wo
 
 ## Repo conventions
 
-- **Language:** Go. Build with `go build ./...`, lint with `go vet ./...`, test with `go test ./...`.
+- **Language:** Go. Build, lint and test commands are in `AGENTS.md` ("Build / test / lint").
 - **CLI framework:** cobra (github.com/spf13/cobra).
 - **Module path:** github.com/minhtri2710/munsu.
 - **AGENTS.md** is the project conventions file for soldiers working on munsu. `CLAUDE.md` is a symlink to it.
 - Everything personal (`.no-mistakes/`, `state/`, `data/`, `config/`, `projects/`) is gitignored; never commit it.
-- Keep `README.md` a concise overview plus pointers; route detail to `docs/`.
+- Keep `README.md` a concise overview plus pointers.
 
 ## Development
 
-Build, lint, and test per the conventions in `AGENTS.md` ("Build / test / lint").
 CI lane composition (race detector, integration tags) lives in `.github/workflows/ci.yml`; build-tag classification and lane coverage checks live in `.github/build-tags.manifest` and `.github/scripts/build-tags.sh`.
 
 ## Questions
