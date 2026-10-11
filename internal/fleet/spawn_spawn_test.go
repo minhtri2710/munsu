@@ -530,8 +530,9 @@ func TestAuthorizeSpawnRejectsRegularSoldier(t *testing.T) {
 func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing.T) {
 	homeDir := t.TempDir()
 	if err := home.WriteMeta(homeDir, "soldier-1", map[string]string{
-		"kind":          "ship",
-		"herdr_pane_id": "w1:p9",
+		"kind":    "ship",
+		"backend": "herdr",
+		"window":  "default:w1:p9",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -548,8 +549,9 @@ func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing
 func TestCurrentEndpointKindFindsCaptainHerdrPane(t *testing.T) {
 	homeDir := t.TempDir()
 	if err := home.WriteMeta(homeDir, "captain:sm-1", map[string]string{
-		"kind":          "captain",
-		"herdr_pane_id": "w1:p8",
+		"kind":    "captain",
+		"backend": "herdr",
+		"window":  "default:w1:p8",
 	}); err != nil {
 		t.Fatal(err)
 	}

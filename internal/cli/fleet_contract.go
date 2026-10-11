@@ -58,26 +58,23 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 			Detail:         fmt.Sprintf("unsupported bound backend %q", endpoint.Backend),
 		}, fmt.Errorf("unsupported bound backend %q", endpoint.Backend)
 	}
-	if endpoint.Backend == "herdr" && endpoint.SessionOwner != "" {
-		handleSession, _ := backend.ParseWindow(endpoint.Handle)
-		if handleSession != "" && handleSession != endpoint.SessionOwner {
-			return fleet.EndpointStatus{
-				Lifecycle:      fleet.LifecycleUnknown,
-				Responsiveness: fleet.ResponsivenessUnknown,
-				Freshness:      fleet.FreshnessStale,
-				Activity:       fleet.ActivityUnknown,
-				Source:         fleet.SourceDerived,
-				Detail:         "herdr session ownership mismatch",
-			}, nil
-		}
+	if endpoint.Backend == "herdr" && backend.SessionOwnerMismatch(endpoint.Handle, endpoint.SessionOwner) {
+		return fleet.EndpointStatus{
+			Lifecycle:      fleet.LifecycleUnknown,
+			Responsiveness: fleet.ResponsivenessUnknown,
+			Freshness:      fleet.FreshnessStale,
+			Activity:       fleet.ActivityUnknown,
+			Source:         fleet.SourceDerived,
+			Detail:         "herdr session ownership mismatch",
+		}, nil
 	}
 	meta := map[string]string{
-		"backend":            endpoint.Backend,
-		"window":             endpoint.Handle,
-		"herdr_session":      endpoint.SessionOwner,
-		"herdr_workspace_id": endpoint.WorkspaceID,
-		"herdr_tab_id":       endpoint.TabID,
-		"home":               endpoint.Home,
+		"backend":                endpoint.Backend,
+		"window":                 endpoint.Handle,
+		backend.MetaSessionOwner: endpoint.SessionOwner,
+		backend.MetaWorkspaceID:  endpoint.WorkspaceID,
+		backend.MetaTabID:        endpoint.TabID,
+		"home":                   endpoint.Home,
 	}
 	resolve := p.resolve
 	if resolve == nil {

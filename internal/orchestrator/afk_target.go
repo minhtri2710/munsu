@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // generalPaneConfig is the config file path that optionally specifies a hardcoded
@@ -71,17 +73,14 @@ func ValidateTargetOwnership(result *TargetResult) error {
 }
 
 // captainMetaTarget names a captain's pane from its task meta in the parent
-// General home.
+// General home: the window handle its backend recorded at launch and the
+// session that owns it.
 func captainMetaTarget(meta map[string]string) (TargetResult, error) {
-	paneID := strings.TrimSpace(meta["herdr_pane_id"])
-	if paneID == "" {
-		return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+	window := strings.TrimSpace(meta["window"])
+	if window == "" {
+		return TargetResult{}, fmt.Errorf("captain meta has no window")
 	}
-	session := strings.TrimSpace(meta["herdr_session"])
-	if session == "" {
-		session = "default"
-	}
-	return TargetResult{Source: RuntimeSource, Handle: session + ":" + paneID, Session: session}, nil
+	return TargetResult{Source: RuntimeSource, Handle: window, Session: strings.TrimSpace(meta[backend.MetaSessionOwner])}, nil
 }
 
 // ResolveTargetWithSource resolves the general pane handle with source diagnostics.
@@ -96,7 +95,7 @@ func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
 				SourceDetail: "general-pane config is empty",
 			}, nil
 		}
-		session, _ := splitTargetHandle(paneHandle)
+		session := backend.HandleSession(paneHandle)
 		return TargetResult{
 			Source:       ConfigSource,
 			Handle:       paneHandle,
@@ -135,14 +134,4 @@ func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
 		Source:       Unsupported,
 		SourceDetail: "no explicit target or verified runtime pane metadata",
 	}, nil
-}
-
-// splitTargetHandle splits a pane handle on the first colon.
-// Returns (session, paneID). If no colon is found, returns ("", handle).
-func splitTargetHandle(handle string) (string, string) {
-	idx := strings.Index(handle, ":")
-	if idx < 0 {
-		return "", handle
-	}
-	return handle[:idx], handle[idx+1:]
 }

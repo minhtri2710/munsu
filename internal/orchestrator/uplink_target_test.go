@@ -16,8 +16,8 @@ func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
 	// Seed through the production writer: the persisted filename is the
 	// platform durable key for "captain:captain-one", never the logical id.
 	if err := mhome.WriteMeta(generalHome, "captain:captain-one", map[string]string{
-		"herdr_pane_id": "p9",
-		"herdr_session": "fleet",
+		"window":        "fleet:w1:p9",
+		"session_owner": "fleet",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestResolveReceiverTargetCaptainUsesParentMetaNotTaskID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.Handle != "fleet:p9" {
+	if target.Handle != "fleet:w1:p9" {
 		t.Fatalf("handle=%q", target.Handle)
 	}
 }

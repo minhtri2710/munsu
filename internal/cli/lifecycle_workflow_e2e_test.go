@@ -607,8 +607,7 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 	}
 	if err := home.WriteMeta(generalHome, "captain:"+captainID, map[string]string{
 		"kind": "captain", "sm_id": captainID, "home": canonical,
-		"backend": "herdr", "window": "munsu:@captain", "herdr_session": "munsu",
-		"herdr_pane_id": "captain-pane",
+		"backend": "herdr", "window": "munsu:@captain", "session_owner": "munsu",
 	}); err != nil {
 		t.Fatalf("write captain meta: %v", err)
 	}

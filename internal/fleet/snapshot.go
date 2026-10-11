@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -530,7 +531,7 @@ func observeProbe(probe EndpointProbe, parentHome string, meta map[string]string
 	if ownerHome == "" {
 		ownerHome = parentHome
 	}
-	return probe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome, Harness: meta["harness"]})
+	return probe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta[backend.MetaSessionOwner], WorkspaceID: meta[backend.MetaWorkspaceID], TabID: meta[backend.MetaTabID], Home: ownerHome, Harness: meta["harness"]})
 }
 
 // observeEndpointWith is the snapshot-local endpoint observation using the

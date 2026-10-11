@@ -317,11 +317,11 @@ func (b *guardBackend) Teardown(handle string) error {
 // removes exactly the field whose guard it is entering.
 func boundMeta() map[string]string {
 	return map[string]string{
-		"backend":            "herdr",
-		"window":             "sess:p1",
-		"herdr_session":      "sess",
-		"herdr_workspace_id": "ws1",
-		"herdr_tab_id":       "tab1",
+		"backend":       "herdr",
+		"window":        "sess:w1:p1",
+		"session_owner": "sess",
+		"workspace_id":  "ws1",
+		"tab_id":        "tab1",
 	}
 }
 
@@ -412,7 +412,7 @@ func TestGuardDisposeRefusesARequestThatDoesNotMatchTheBoundEndpoint(t *testing.
 		return bk, "herdr", nil
 	}}
 	match := fleet.DisposeRequest{
-		Home: "/home", Backend: "herdr", Handle: "sess:p1",
+		Home: "/home", Backend: "herdr", Handle: "sess:w1:p1",
 		SessionOwner: "sess", WorkspaceID: "ws1", TabID: "tab1",
 	}
 	for _, tc := range []struct {
@@ -437,14 +437,14 @@ func TestGuardDisposeRefusesARequestThatDoesNotMatchTheBoundEndpoint(t *testing.
 	if err := td.Dispose("/home", boundMeta(), match); err != nil {
 		t.Fatalf("Dispose with the matching request = %v, want acceptance", err)
 	}
-	if len(bk.tornDown) != 1 || bk.tornDown[0] != "sess:p1" {
+	if len(bk.tornDown) != 1 || bk.tornDown[0] != "sess:w1:p1" {
 		t.Fatalf("Teardown calls = %v, want exactly the bound handle", bk.tornDown)
 	}
 }
 
 func TestGuardDisposeRefusesWorkspaceCloseDenialOutsideHerdrWithAWorkspace(t *testing.T) {
 	req := fleet.DisposeRequest{
-		Home: "/home", Backend: "herdr", Handle: "sess:p1",
+		Home: "/home", Backend: "herdr", Handle: "sess:w1:p1",
 		SessionOwner: "sess", WorkspaceID: "ws1", TabID: "tab1",
 		DenyWorkspaceClose: true,
 	}
@@ -461,7 +461,7 @@ func TestGuardDisposeRefusesWorkspaceCloseDenialOutsideHerdrWithAWorkspace(t *te
 
 	// Denial on herdr with no workspace to deny.
 	noWorkspaceMeta := boundMeta()
-	noWorkspaceMeta["herdr_workspace_id"] = ""
+	noWorkspaceMeta["workspace_id"] = ""
 	noWorkspaceReq := req
 	noWorkspaceReq.WorkspaceID = ""
 	herdr := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
@@ -478,7 +478,7 @@ func TestGuardDisposeRefusesWorkspaceClosePolicyOnAnAdapterThatCannotCarryIt(t *
 		return &guardBackend{}, "herdr", nil
 	}}
 	req := fleet.DisposeRequest{
-		Home: "/home", Backend: "herdr", Handle: "sess:p1",
+		Home: "/home", Backend: "herdr", Handle: "sess:w1:p1",
 		SessionOwner: "sess", WorkspaceID: "ws1", TabID: "tab1",
 		DenyWorkspaceClose: true,
 	}

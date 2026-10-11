@@ -48,7 +48,7 @@ func TestCLIEndpointProbeTaskProbeRequiresLiveAgent(t *testing.T) {
 		return &captainProbeBackend{alive: true, paneAlive: true, agentAlive: false}, "herdr", nil
 	}}
 
-	alive, err := probe.Probe("/home", map[string]string{"backend": "herdr", "window": "session-1:pane-1", "herdr_session": "session-1"})
+	alive, err := probe.Probe("/home", map[string]string{"backend": "herdr", "window": "session-1:pane-1", "session_owner": "session-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestCLIEndpointProbePreservesBoundMetadata(t *testing.T) {
 	if err != nil || status.Lifecycle != fleet.LifecycleAlive {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
-	if gotHome != "/home" || got["herdr_session"] != "session-1" || got["herdr_workspace_id"] != "workspace-1" || got["herdr_tab_id"] != "tab-1" || got["window"] != "session-1:pane-1" {
+	if gotHome != "/home" || got["session_owner"] != "session-1" || got["workspace_id"] != "workspace-1" || got["tab_id"] != "tab-1" || got["window"] != "session-1:pane-1" {
 		t.Fatalf("home=%q meta=%v", gotHome, got)
 	}
 }
@@ -99,32 +99,44 @@ func TestCLIEndpointProbeRejectsIncompleteAndUnknownIdentity(t *testing.T) {
 }
 
 func TestCLIEndpointProbeRejectsHerdrSessionMismatch(t *testing.T) {
-	probe := cliEndpointProbe{}
-	status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-a:pane-1", SessionOwner: "session-b", Home: "/home"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.State() != fleet.EndpointStaleIdentity {
-		t.Fatalf("status=%+v, want stale-identity", status)
+	probe := cliEndpointProbe{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+		return &captainProbeBackend{paneAlive: true, agentAlive: true}, "herdr", nil
+	}}
+	for _, tc := range []struct {
+		handle    string
+		wantStale bool
+	}{
+		{"session-a:w1:p1", true},
+		{"w1:p1", false},
+	} {
+		status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: tc.handle, SessionOwner: "session-b", Home: "/home"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stale := status.State() == fleet.EndpointStaleIdentity; stale != tc.wantStale {
+			t.Fatalf("handle %q: status=%+v, want stale-identity=%v", tc.handle, status, tc.wantStale)
+		}
 	}
 }
 
 func TestCLIEndpointProbeTaskProbeSessionOwnership(t *testing.T) {
 	tests := []struct {
 		name      string
+		window    string
 		session   string
 		wantAlive bool
 		wantErr   string
 	}{
-		{name: "pane in another herdr session than the task records is refused", session: "session-b", wantErr: "herdr session ownership mismatch"},
-		{name: "pane in the recorded herdr session is probed", session: "session-a", wantAlive: true},
+		{name: "pane in another herdr session than the task records is refused", window: "session-a:w1:p1", session: "session-b", wantErr: "herdr session ownership mismatch"},
+		{name: "pane in the recorded herdr session is probed", window: "session-a:w1:p1", session: "session-a", wantAlive: true},
+		{name: "bare pane id names no session and is probed", window: "w1:p1", session: "session-b", wantAlive: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			probe := cliEndpointProbe{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 				return &captainProbeBackend{paneAlive: true, agentAlive: true}, "herdr", nil
 			}}
-			alive, err := probe.Probe("/home", map[string]string{"backend": "herdr", "window": "session-a:pane-1", "herdr_session": tt.session})
+			alive, err := probe.Probe("/home", map[string]string{"backend": "herdr", "window": tt.window, "session_owner": tt.session})
 			if tt.wantErr != "" {
 				if err == nil || err.Error() != tt.wantErr || alive {
 					t.Fatalf("alive=%v err=%v, want refusal %q", alive, err, tt.wantErr)

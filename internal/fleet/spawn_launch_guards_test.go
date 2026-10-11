@@ -196,10 +196,9 @@ func TestBacklogAuthorityRefusesRecordedLiveSession(t *testing.T) {
 		want    string // refusal text; empty means allowed
 	}{
 		{name: "general working task with a window", phase: taskauthority.PhaseWorking, meta: map[string]string{"window": "@1"}, want: "already in-flight with a live session"},
-		{name: "general queued task with a herdr pane", phase: taskauthority.PhaseQueued, meta: map[string]string{"herdr_pane_id": "%42"}, want: "already has a live soldier session"},
+		{name: "general queued task with a window", phase: taskauthority.PhaseQueued, meta: map[string]string{"window": "default:w1:p1"}, want: "already has a live soldier session"},
 		{name: "general queued task with kind-only meta", phase: taskauthority.PhaseQueued, meta: map[string]string{"kind": "ship"}},
 		{name: "captain task with a window", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"window": "default:w1:p1"}, want: "already has a live soldier session (window=default:w1:p1)"},
-		{name: "captain task with a herdr pane", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"herdr_pane_id": "%42"}, want: "already has a live soldier session (pane=%42)"},
 		{name: "captain queued task with kind-only meta", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"kind": "ship"}},
 	}
 	for _, tc := range cases {

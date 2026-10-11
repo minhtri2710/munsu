@@ -28,8 +28,9 @@ func retireWithPendingCleanup(t *testing.T, taskID string) (string, *taskauthori
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
 	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	if err := home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
-		meta["herdr_session"] = "sess"
-		meta["herdr_pane_id"] = "pane"
+		meta["session_owner"] = "sess"
+		meta["workspace_id"] = "ws"
+		meta["tab_id"] = "tab"
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -66,7 +67,7 @@ func TestAbortReopenThenSpawnPassesBacklogAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"window", "backend", "herdr_session", "herdr_pane_id"} {
+	for _, k := range []string{"window", "backend", "session_owner", "workspace_id", "tab_id"} {
 		if v, ok := meta[k]; ok {
 			t.Errorf("abort kept session key %s=%q", k, v)
 		}

@@ -40,9 +40,7 @@ func (s sessionMailboxSender) Send(home string, meta map[string]string, payload 
 	if err != nil {
 		return mhome.BoundSendResult{Status: "backend-failed", Err: err}
 	}
-	if recognized, ok := bk.(interface {
-		IsRecognizedAgent(string) (bool, string)
-	}); ok {
+	if recognized, ok := bk.(backend.AgentActivityReader); ok {
 		isAgent, status := recognized.IsRecognizedAgent(meta["window"])
 		if !isAgent || !backend.AgentStatusReady(status) {
 			return mhome.BoundSendResult{Status: "deferred", Detail: "agent status: " + status}

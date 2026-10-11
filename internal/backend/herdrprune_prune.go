@@ -56,13 +56,8 @@ func denyListedLabel(label string) bool {
 	return false
 }
 
-// isLiveAgent returns true if the agent_status indicates a live agent.
-func isLiveAgent(status string) bool {
-	return isAgentStatusAlive(status)
-}
-
 // liveWorkspaceIDsFromTaskMeta scans all task meta files in the state directory
-// and returns the set of herdr_workspace_id values found.
+// and returns the set of workspace_id values found.
 func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)
@@ -84,7 +79,7 @@ func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading task meta %s: %w", e.Name(), err)
 		}
-		if wsID := meta["herdr_workspace_id"]; wsID != "" {
+		if wsID := meta[MetaWorkspaceID]; wsID != "" {
 			ids[wsID] = true
 		}
 	}
@@ -154,7 +149,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 		}
 
 		// Safety: never close workspace with live agent.
-		if isLiveAgent(ws.AgentStatus) {
+		if isAgentStatusAlive(ws.AgentStatus) {
 			pw.Action = "skip"
 			pw.Reason = fmt.Sprintf("live agent (status=%q)", ws.AgentStatus)
 			result.Workspaces = append(result.Workspaces, pw)
@@ -164,7 +159,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 		// Safety: never close workspace referenced by live task meta.
 		if liveWSIDs[ws.WorkspaceID] {
 			pw.Action = "skip"
-			pw.Reason = "referenced by live task meta herdr_workspace_id"
+			pw.Reason = "referenced by live task meta workspace_id"
 			result.Workspaces = append(result.Workspaces, pw)
 			continue
 		}

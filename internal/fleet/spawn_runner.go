@@ -542,7 +542,7 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 		if err != nil {
 			continue
 		}
-		if herdrPane != "" && meta["herdr_pane_id"] == herdrPane {
+		if herdrPane != "" && meta["backend"] == "herdr" && strings.HasSuffix(meta["window"], ":"+herdrPane) {
 			return meta["kind"], true, nil
 		}
 		if tmuxWindow != "" {
@@ -628,8 +628,8 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.spawnRole != "captain" {
 		return nil
 	}
-	if field, value := recordedLiveSession(r.homeDir, r.args.ID); field != "" {
-		return fmt.Errorf("captain task authority: task %s already has a live soldier session (%s=%s); refuse duplicate live execution", r.args.ID, field, value)
+	if window := recordedWindow(r.homeDir, r.args.ID); window != "" {
+		return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
 	}
 	agg, err := r.taskAggregate()
 	if err != nil {
@@ -638,21 +638,14 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	return r.checkCaptainBacklogAuthorityForPhase(r.args.ID, agg.Phase)
 }
 
-// recordedLiveSession names the live-session field a task's meta records, its
-// window or else its herdr pane id, and that field's value; both are empty when
-// the meta records neither.
-func recordedLiveSession(homeDir, taskID string) (field, value string) {
+// recordedWindow returns the live-session window a task's meta records, or ""
+// when it records none.
+func recordedWindow(homeDir, taskID string) string {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
-		return "", ""
+		return ""
 	}
-	if win := meta["window"]; win != "" {
-		return "window", win
-	}
-	if pane := meta["herdr_pane_id"]; pane != "" {
-		return "pane", pane
-	}
-	return "", ""
+	return meta["window"]
 }
 
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
@@ -850,8 +843,7 @@ func (r *Runner) checkBacklogAuthority() error {
 	}
 
 	// Check already-live: existing meta with a window or pane means a soldier session exists
-	liveField, _ := recordedLiveSession(r.homeDir, r.args.ID)
-	metaExists := liveField != ""
+	metaExists := recordedWindow(r.homeDir, r.args.ID) != ""
 
 	// State-based checks. Running `munsu task start` first is refused: spawn
 	// needs a queued task. A working task without live meta passes this check
@@ -2620,9 +2612,9 @@ func (r *Runner) writeTaskMeta() error {
 		if r.projectConfigLoaded {
 			put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
 		}
-		for k, v := range r.endpoint.Metadata {
-			put(k, v)
-		}
+		put(backend.MetaSessionOwner, r.endpoint.SessionOwner)
+		put(backend.MetaWorkspaceID, r.endpoint.WorkspaceID)
+		put(backend.MetaTabID, r.endpoint.TabID)
 
 		// The attestation acceptance is NOT recorded here: this pre-transition
 		// side file is runtime observations only (Task 4.2). The accepted

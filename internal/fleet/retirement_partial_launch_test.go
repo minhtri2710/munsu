@@ -69,11 +69,11 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 		t.Fatalf("RetireTask error = %v, want pending cleanup at the pre-return artifact gate", err)
 	}
 	for key, want := range map[string]string{
-		"backend":            agg.AcquiredEndpoint.Backend,
-		"window":             agg.AcquiredEndpoint.Handle,
-		"herdr_session":      agg.AcquiredEndpoint.SessionOwner,
-		"herdr_workspace_id": agg.AcquiredEndpoint.WorkspaceID,
-		"herdr_tab_id":       agg.AcquiredEndpoint.TabID,
+		"backend":       agg.AcquiredEndpoint.Backend,
+		"window":        agg.AcquiredEndpoint.Handle,
+		"session_owner": agg.AcquiredEndpoint.SessionOwner,
+		"workspace_id":  agg.AcquiredEndpoint.WorkspaceID,
+		"tab_id":        agg.AcquiredEndpoint.TabID,
 	} {
 		if teardown.probedMeta[key] != want || teardown.disposedMeta[key] != want {
 			t.Errorf("backend metadata %s: probed=%q disposed=%q, want canonical %q", key, teardown.probedMeta[key], teardown.disposedMeta[key], want)

@@ -2,28 +2,37 @@ package backend
 
 import "testing"
 
-func TestAgentStatusAlive(t *testing.T) {
-	for _, status := range []string{"working", "idle", "busy", "blocked", "unknown", "done"} {
-		if !isAgentStatusAlive(status) {
-			t.Errorf("status %q should be alive", status)
+// TestAgentStatusClassification is the one table of herdr agent-status words:
+// every reader (activity hint, liveness, prompt readiness) classifies through
+// classifyAgentStatus, after case and space normalization.
+func TestAgentStatusClassification(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		activity Activity
+		alive    bool
+		ready    bool
+	}{
+		{"idle", ActivityIdle, true, true},
+		{"done", ActivityIdle, true, true},
+		{"working", ActivityBusy, true, false},
+		{"blocked", ActivityBlocked, true, false},
+		{"unknown", ActivityUnknown, true, false},
+		{"Working", ActivityBusy, true, false},
+		{" idle ", ActivityIdle, true, true},
+		{" Done ", ActivityIdle, true, true},
+		{"BLOCKED", ActivityBlocked, true, false},
+		{"", ActivityUnknown, false, false},
+		{"none", ActivityUnknown, false, false},
+		{"exited", ActivityUnknown, false, false},
+	} {
+		if got := NormalizeActivityHint(tc.status); got != tc.activity {
+			t.Errorf("NormalizeActivityHint(%q) = %v, want %v", tc.status, got, tc.activity)
 		}
-	}
-	for _, status := range []string{"", "none", "failed", "exited", "stopped"} {
-		if isAgentStatusAlive(status) {
-			t.Errorf("status %q should be terminal", status)
+		if got := isAgentStatusAlive(tc.status); got != tc.alive {
+			t.Errorf("isAgentStatusAlive(%q) = %v, want %v", tc.status, got, tc.alive)
 		}
-	}
-}
-
-func TestAgentStatusReady(t *testing.T) {
-	for _, status := range []string{"idle", "done", "Idle", "IDLE", " idle ", " Done "} {
-		if !AgentStatusReady(status) {
-			t.Errorf("status %q should be ready", status)
-		}
-	}
-	for _, status := range []string{"", "working", "busy", "blocked", "unknown", "failed", "exited", "stopped", "Working", " blocked "} {
-		if AgentStatusReady(status) {
-			t.Errorf("status %q should not be ready", status)
+		if got := AgentStatusReady(tc.status); got != tc.ready {
+			t.Errorf("AgentStatusReady(%q) = %v, want %v", tc.status, got, tc.ready)
 		}
 	}
 }

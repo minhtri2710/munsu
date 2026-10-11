@@ -278,8 +278,8 @@ func MarkActivationSeen(captainHome, taskID, termKey string) error {
 // authoritative pane source — NOT the inherited HERDR_PANE_ID from the
 // watcher/launcher environment.
 //
-// Returns the target result with the handle in "session:pane_id" format, or
-// an error if the meta cannot be read or has no herdr_pane_id.
+// Returns the target result with the recorded window handle, or an error if
+// the meta cannot be read or records no window.
 func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResult, error) {
 	if parentHome == "" {
 		return TargetResult{}, fmt.Errorf("no parent home for captain meta lookup")
@@ -368,7 +368,7 @@ type ActivationTransport interface {
 // the captain agent pane.
 //
 // The activation target is resolved from captain task meta in the parent
-// General home (authoritative herdr_pane_id/herdr_session), NOT from the
+// General home (authoritative window/session_owner), NOT from the
 // inherited HERDR_PANE_ID environment variable which may reflect the
 // watcher/launcher pane instead of the captain agent pane.
 //

@@ -201,11 +201,6 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 			WorkspaceID:  "workspace-1",
 			TabID:        "tab-1",
 			Incarnation:  "bind-task-incarnation",
-			Metadata: map[string]string{
-				"herdr_session":      "session",
-				"herdr_workspace_id": "workspace-1",
-				"herdr_tab_id":       "tab-1",
-			},
 		},
 	}
 	// The task meta projection is written before the authoritative working
@@ -246,7 +241,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloadedMeta["backend"] != "herdr" || reloadedMeta["window"] != "session:pane-1" || reloadedMeta["herdr_session"] != "session" {
+	if reloadedMeta["backend"] != "herdr" || reloadedMeta["window"] != "session:pane-1" || reloadedMeta["session_owner"] != "session" || reloadedMeta["workspace_id"] != "workspace-1" || reloadedMeta["tab_id"] != "tab-1" {
 		t.Fatalf("meta=%v", reloadedMeta)
 	}
 }

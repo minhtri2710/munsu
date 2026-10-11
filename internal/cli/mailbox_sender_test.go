@@ -32,7 +32,7 @@ func TestSessionMailboxSenderAliveRequiresLiveAgent(t *testing.T) {
 		return &captainProbeBackend{alive: true, paneAlive: true, agentAlive: false}, "herdr", nil
 	}}
 
-	alive, err := sender.Alive("/home", map[string]string{"backend": "herdr", "window": "session:pane", "herdr_session": "session"})
+	alive, err := sender.Alive("/home", map[string]string{"backend": "herdr", "window": "session:pane", "session_owner": "session"})
 	if err != nil {
 		t.Fatal(err)
 	}

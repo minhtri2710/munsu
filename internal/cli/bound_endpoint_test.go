@@ -54,7 +54,8 @@ func TestBoundEndpointOwnership(t *testing.T) {
 	}{
 		{"backend not recorded", func(m map[string]string) { delete(m, "backend") }, "herdr", "task does not record the pane's backend", 0},
 		{"recorded backend differs from the resolved one", func(m map[string]string) { m["backend"] = "tmux" }, "herdr", `bound backend resolved as "herdr", task records "tmux"`, 1},
-		{"handle in a foreign herdr session", func(m map[string]string) { m["window"] = "other-session:p1" }, "herdr", "herdr session ownership mismatch", 1},
+		{"handle in a foreign herdr session", func(m map[string]string) { m["window"] = "other-session:w1:p1" }, "herdr", "herdr session ownership mismatch", 1},
+		{"bare pane id names no session", func(m map[string]string) { m["window"] = "w1:p1" }, "herdr", "", 1},
 		{"matching backend and session", func(map[string]string) {}, "herdr", "", 1},
 	}
 	for _, a := range adapters {

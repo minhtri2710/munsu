@@ -196,6 +196,7 @@ func TestHerdrEventSource_Wait_IdleAndBlockedNormalization(t *testing.T) {
 		{"done", ActivityIdle},
 		{"blocked", ActivityBlocked},
 		{"working", ActivityBusy},
+		{"Working", ActivityBusy},
 		{"unknown", ActivityUnknown},
 		{"", ActivityUnknown},
 		{"garbage", ActivityUnknown},
@@ -514,25 +515,6 @@ func TestHerdrEventSource_Wait_PaneAbsentIsReaderFailureNotLifecycle(t *testing.
 	_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 	if !errors.Is(err, ErrEventReaderFailure) {
 		t.Errorf("err = %v, want ErrEventReaderFailure (never dead)", err)
-	}
-}
-
-func TestNormalizeActivityHint(t *testing.T) {
-	cases := map[string]Activity{
-		"busy":    ActivityBusy,
-		"working": ActivityBusy,
-		"idle":    ActivityIdle,
-		"done":    ActivityIdle,
-		"blocked": ActivityBlocked,
-		"unknown": ActivityUnknown,
-		"":        ActivityUnknown,
-		"garbage": ActivityUnknown,
-		"WORKING": ActivityUnknown,
-	}
-	for wire, want := range cases {
-		if got := NormalizeActivityHint(wire); got != want {
-			t.Errorf("NormalizeActivityHint(%q) = %v, want %v", wire, got, want)
-		}
 	}
 }
 

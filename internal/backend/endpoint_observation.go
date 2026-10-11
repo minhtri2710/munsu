@@ -23,7 +23,6 @@ package backend
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -372,7 +371,7 @@ func ObserveEndpoint(bk Backend, handle string, matches ProcessMatcher) Endpoint
 			if obs.Lifecycle == LifecycleAlive && recognized {
 				// Activity is the hint axis only: a status read enriches an
 				// already confirmed-alive observation and never concludes liveness.
-				obs.Activity = NormalizeActivityHint(strings.ToLower(strings.TrimSpace(status)))
+				obs.Activity = NormalizeActivityHint(status)
 			}
 			return obs
 		}
@@ -386,7 +385,7 @@ func ObserveEndpoint(bk Backend, handle string, matches ProcessMatcher) Endpoint
 			// confirmed-alive observation and never concludes liveness.
 			if r, ok := bk.(AgentActivityReader); ok {
 				if recognized, status := r.IsRecognizedAgent(handle); recognized {
-					obs.Activity = NormalizeActivityHint(strings.ToLower(strings.TrimSpace(status)))
+					obs.Activity = NormalizeActivityHint(status)
 				}
 			}
 		}

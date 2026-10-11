@@ -1446,6 +1446,31 @@ func TestOtherWorkspaceRefsTreatMissingStateAsNoReferences(t *testing.T) {
 	}
 }
 
+// TestOtherWorkspaceRefsMatchesTheExactWorkspace: a task recording the same
+// workspace denies its close; a task recording a workspace whose id merely
+// starts with it does not.
+func TestOtherWorkspaceRefsMatchesTheExactWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		recorded string
+		want     int
+	}{
+		{"w1", 1},
+		{"w10", 0},
+	} {
+		homeDir := t.TempDir()
+		if err := home.WriteMeta(homeDir, "other", map[string]string{"workspace_id": tc.recorded}); err != nil {
+			t.Fatal(err)
+		}
+		refs, err := otherWorkspaceRefs(homeDir, "task", "w1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(refs) != tc.want {
+			t.Errorf("workspace w1 with another task recording %q: refs = %v, want %d", tc.recorded, refs, tc.want)
+		}
+	}
+}
+
 func TestOtherWorkspaceRefsSkipsVanishedMetaFile(t *testing.T) {
 	homeDir := t.TempDir()
 	stateDir := filepath.Join(homeDir, "state")
@@ -1457,7 +1482,7 @@ func TestOtherWorkspaceRefsSkipsVanishedMetaFile(t *testing.T) {
 	if err := os.Symlink(vanishedTarget, metaPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(homeDir, "zzz-valid", map[string]string{"herdr_workspace_id": "workspace"}); err != nil {
+	if err := home.WriteMeta(homeDir, "zzz-valid", map[string]string{"workspace_id": "workspace"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1477,7 +1502,7 @@ func TestRetirementWorkspaceReferenceReadErrorFailsClosed(t *testing.T) {
 	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktree"))
 
 	otherID := "other-workspace-user"
-	if err := home.WriteMeta(homeDir, otherID, map[string]string{"herdr_workspace_id": "ws-" + taskID}); err != nil {
+	if err := home.WriteMeta(homeDir, otherID, map[string]string{"workspace_id": "ws-" + taskID}); err != nil {
 		t.Fatal(err)
 	}
 	otherMeta, err := home.MetaFilePath(homeDir, otherID)
@@ -1530,7 +1555,7 @@ func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) 
 	}
 
 	otherID := "other-acquired-workspace-user"
-	if err := home.WriteMeta(homeDir, otherID, map[string]string{"herdr_workspace_id": "ws-" + taskID}); err != nil {
+	if err := home.WriteMeta(homeDir, otherID, map[string]string{"workspace_id": "ws-" + taskID}); err != nil {
 		t.Fatal(err)
 	}
 	otherMeta, err := home.MetaFilePath(homeDir, otherID)

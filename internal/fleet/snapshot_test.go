@@ -243,6 +243,25 @@ type snapshotProbe struct {
 
 func (p snapshotProbe) ProbeEndpoint(EndpointRef) (EndpointStatus, error) { return p.status, p.err }
 
+type refRecordingProbe struct{ got EndpointRef }
+
+func (p *refRecordingProbe) ProbeEndpoint(ref EndpointRef) (EndpointStatus, error) {
+	p.got = ref
+	return EndpointStatus{}, nil
+}
+
+// TestObserveProbeCarriesTheRecordedEndpointIdentity: the snapshot probe reads
+// the endpoint identity from the task meta's neutral keys.
+func TestObserveProbeCarriesTheRecordedEndpointIdentity(t *testing.T) {
+	probe := &refRecordingProbe{}
+	if _, err := observeProbe(probe, "/parent", map[string]string{"backend": "herdr", "window": "s:w1:p1", "session_owner": "s", "workspace_id": "ws", "tab_id": "tab"}); err != nil {
+		t.Fatal(err)
+	}
+	if probe.got.SessionOwner != "s" || probe.got.WorkspaceID != "ws" || probe.got.TabID != "tab" || probe.got.Home != "/parent" {
+		t.Fatalf("probed endpoint = %+v", probe.got)
+	}
+}
+
 func TestCaptainStatusTypedObservations(t *testing.T) {
 	tests := []struct {
 		name  string

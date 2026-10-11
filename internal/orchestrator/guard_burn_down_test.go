@@ -198,31 +198,31 @@ func TestResolveCaptainActivationTarget(t *testing.T) {
 	}{
 		{name: "no parent home", noParent: true, setup: func(t *testing.T, c, _ string) { seedProvenance(t, c, "test-captain") }, wantErr: "no parent home for captain meta lookup"},
 		{name: "no provenance marker", setup: func(t *testing.T, _, p string) {
-			setMeta(t, p, "test-captain", map[string]string{"herdr_pane_id": "p1"})
+			setMeta(t, p, "test-captain", map[string]string{"window": "general:w1:p1"})
 		}, wantErr: "has no .munsu-captain-home marker"},
 		{name: "marker with a blank id", setup: func(t *testing.T, c, p string) {
 			writeMarker(t, c, "munsu-v2\n \n"+c+"\n")
-			setMeta(t, p, "test-captain", map[string]string{"herdr_pane_id": "p1"})
+			setMeta(t, p, "test-captain", map[string]string{"window": "general:w1:p1"})
 		}, wantErr: "empty id"},
 		{name: "marker copied from another home", setup: func(t *testing.T, c, p string) {
 			writeMarker(t, c, "munsu-v2\ncopied-captain\n/somewhere/else\n")
-			setMeta(t, p, "copied-captain", map[string]string{"herdr_pane_id": "p1", "herdr_session": "general"})
+			setMeta(t, p, "copied-captain", map[string]string{"window": "general:w1:p1", "session_owner": "general"})
 		}, wantErr: "copied/moved"},
 		{name: "no captain meta", setup: func(t *testing.T, c, _ string) { seedProvenance(t, c, "test-captain") }, wantErr: "reading captain meta captain:test-captain"},
-		{name: "meta with a blank pane", setup: func(t *testing.T, c, p string) {
+		{name: "meta with a blank window", setup: func(t *testing.T, c, p string) {
 			seedProvenance(t, c, "test-captain")
-			setMeta(t, p, "test-captain", map[string]string{"herdr_session": "general", "herdr_pane_id": ""})
-		}, wantErr: "captain meta has no herdr_pane_id"},
-		{name: "meta pane and session, not the watcher env", setup: func(t *testing.T, c, p string) {
+			setMeta(t, p, "test-captain", map[string]string{"session_owner": "general", "window": ""})
+		}, wantErr: "captain meta has no window"},
+		{name: "meta window and session, not the watcher env", setup: func(t *testing.T, c, p string) {
 			seedProvenance(t, c, "test-captain")
-			setMeta(t, p, "test-captain", map[string]string{"herdr_pane_id": "p2", "herdr_session": "w76"})
+			setMeta(t, p, "test-captain", map[string]string{"window": "w76:w2:p2", "session_owner": "w76"})
 			t.Setenv("HERDR_PANE_ID", "w1K:p1")
 			t.Setenv("HERDR_ENV", "1")
-		}, wantHandle: "w76:p2", wantSess: "w76"},
-		{name: "meta without a session", setup: func(t *testing.T, c, p string) {
+		}, wantHandle: "w76:w2:p2", wantSess: "w76"},
+		{name: "meta window without a session owner (a tmux captain)", setup: func(t *testing.T, c, p string) {
 			seedProvenance(t, c, "test-captain")
-			setMeta(t, p, "test-captain", map[string]string{"herdr_pane_id": "p1"})
-		}, wantHandle: "default:p1", wantSess: "default"},
+			setMeta(t, p, "test-captain", map[string]string{"window": "%5"})
+		}, wantHandle: "%5", wantSess: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			captainHome, parentHome := t.TempDir(), t.TempDir()
@@ -292,8 +292,8 @@ func TestActivationReportsCopiedHomeRefusalOnce(t *testing.T) {
 	}
 	if err := mhome.WriteMeta(parentHome, "captain:copied-captain", map[string]string{
 		"kind":          "captain",
-		"herdr_session": "general",
-		"herdr_pane_id": "p1",
+		"session_owner": "general",
+		"window":        "general:w1:p1",
 	}); err != nil {
 		t.Fatal(err)
 	}

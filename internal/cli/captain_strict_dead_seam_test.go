@@ -21,6 +21,9 @@ type seamProbeBackend struct {
 	paneAlive  bool
 	agentAlive bool
 	status     string
+	// secondRead, when set, is what a separate IsRecognizedAgent read reports,
+	// so a caller that reads readiness twice sees a different answer.
+	secondRead string
 	err        error
 	calls      int
 }
@@ -35,11 +38,23 @@ func (b *seamProbeBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.paneAlive, b.agentAlive, b.err
 }
 
+func (b *seamProbeBackend) ObserveAgent(string) (bool, bool, bool, string, error) {
+	b.calls++
+	if b.err != nil {
+		return false, false, false, "", b.err
+	}
+	return b.paneAlive, b.agentAlive, b.status != "", b.status, nil
+}
+
 func (b *seamProbeBackend) IsRecognizedAgent(string) (bool, string) {
-	if b.status == "" {
+	status := b.status
+	if b.secondRead != "" {
+		status = b.secondRead
+	}
+	if status == "" {
 		return false, ""
 	}
-	return true, b.status
+	return true, status
 }
 
 // seamAbsentThenAliveBackend reports authoritative absence on the first probe
@@ -53,11 +68,16 @@ func (b *seamAbsentThenAliveBackend) Capture(string, int) (string, error)      {
 func (b *seamAbsentThenAliveBackend) Alive(string) bool                        { return false }
 func (b *seamAbsentThenAliveBackend) Teardown(string) error                    { return nil }
 func (b *seamAbsentThenAliveBackend) CheckAgentAlive(string) (bool, bool, error) {
+	pane, agent, _, _, err := b.ObserveAgent("")
+	return pane, agent, err
+}
+
+func (b *seamAbsentThenAliveBackend) ObserveAgent(string) (bool, bool, bool, string, error) {
 	b.calls++
 	if b.calls == 1 {
-		return false, false, backend.ErrPaneNotFound
+		return false, false, false, "", backend.ErrPaneNotFound
 	}
-	return true, true, nil
+	return true, true, true, "idle", nil
 }
 
 // seamLaunchEndpoint records launch invocations so causal tests can assert
@@ -136,7 +156,7 @@ func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 	}
 	if err := home.WriteMeta(parent, "captain:"+id, map[string]string{
 		"kind": "captain", "sm_id": id, "home": canon, "window": "dead-window",
-		"backend": "herdr", "herdr_session": "owned",
+		"backend": "herdr", "session_owner": "owned",
 	}); err != nil {
 		t.Fatal(err)
 	}

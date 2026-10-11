@@ -69,25 +69,22 @@ func newSessionProbeEndpoint() sessionProbeEndpoint {
 
 func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.CaptainProbeResult, error) {
 	window := meta["window"]
-	if aware, ok := bk.(backend.AgentAwareBackend); ok {
-		pane, agent, err := aware.CheckAgentAlive(window)
+	if provider, ok := bk.(backend.AgentActivityProvider); ok {
+		// One probe answers liveness and readiness, so the two cannot disagree.
+		pane, agent, recognized, status, err := provider.ObserveAgent(window)
 		if errors.Is(err, backend.ErrPaneNotFound) {
 			// Authoritative pane absence: the sole relaunch authority.
 			return fleet.CaptainProbeResult{Absent: true}, nil
 		}
-		result := fleet.CaptainProbeResult{PaneAlive: pane, AgentAlive: agent, ReadyForPrompt: pane && agent}
-		if recognized, ok := bk.(interface {
-			IsRecognizedAgent(string) (bool, string)
-		}); ok {
-			isAgent, status := recognized.IsRecognizedAgent(window)
-			result.AgentStatus = status
-			// Readiness goes through the backend-owned normalising predicate, never
-			// a raw-string comparison: the backend returns an unnormalized status
-			// ("Idle", " idle "), and comparing it directly to "idle"/"done" made a
-			// healthy captain read not-ready and fail activation.
-			result.ReadyForPrompt = isAgent && backend.AgentStatusReady(status)
+		if err != nil {
+			return fleet.CaptainProbeResult{}, err
 		}
-		return result, err
+		return fleet.CaptainProbeResult{
+			PaneAlive:      pane,
+			AgentAlive:     agent,
+			AgentStatus:    status,
+			ReadyForPrompt: pane && agent && recognized && backend.AgentStatusReady(status),
+		}, nil
 	}
 	obs := backend.ObserveEndpoint(bk, window, harnessProcessMatcher(meta["harness"]))
 	// A non-agent-aware structured backend reports pane presence (Starting) and

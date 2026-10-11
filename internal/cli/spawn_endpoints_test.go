@@ -86,9 +86,9 @@ func TestSpawnSessionEndpointsDerivesWorkspaceLabel(t *testing.T) {
 
 func TestSpawnSessionEndpointsPreservesBackendIdentityAndMetadata(t *testing.T) {
 	bk := &spawnEndpointBackend{window: "window-1", metadata: map[string]string{
-		"herdr_session":      "session-1",
-		"herdr_workspace_id": "workspace-1",
-		"herdr_tab_id":       "tab-1",
+		"session_owner": "session-1",
+		"workspace_id":  "workspace-1",
+		"tab_id":        "tab-1",
 	}}
 	endpoints := &spawnSessionEndpoints{
 		resolve: func(string) (backend.Backend, string, error) { return bk, "herdr", nil },

@@ -707,8 +707,8 @@ func TestActivationSeen_MarkerDirect(t *testing.T) {
 	}
 }
 
-// parentHomeWithMeta creates a parent home with captain meta containing
-// herdr_pane_id and writes a provenance marker to captainHome.
+// parentHomeWithMeta creates a parent home with captain meta recording the
+// window <session>:<paneID> and writes a provenance marker to captainHome.
 func parentHomeWithMeta(t *testing.T, captainHome, captainID, paneID, session string) string {
 	t.Helper()
 	parentHome := t.TempDir()
@@ -719,7 +719,7 @@ func parentHomeWithMeta(t *testing.T, captainHome, captainID, paneID, session st
 
 	// Write captain task meta to parent home (mimics Launch).
 	taskID := "captain:" + captainID
-	metaContent := fmt.Sprintf("kind=captain\nherdr_pane_id=%s\nherdr_session=%s\nbackend=herdr\n", paneID, session)
+	metaContent := fmt.Sprintf("kind=captain\nwindow=%s:%s\nsession_owner=%s\nbackend=herdr\n", session, paneID, session)
 	metaPath, err := home.MetaFilePath(parentHome, taskID)
 	if err != nil {
 		t.Fatal(err)
@@ -830,7 +830,7 @@ func TestActivateOnReceipt_OnlyNewAreActivated(t *testing.T) {
 }
 
 // TestActivateOnReceipt_NoMeta verifies that when no captain meta exists
-// (no parent home or no herdr_pane_id), ActivateOnReceipt returns 0 and
+// (no parent home or no window), ActivateOnReceipt returns 0 and
 // does NOT write activation-seen (retries remain possible).
 func TestActivateOnReceipt_NoMeta(t *testing.T) {
 	captainHome := receiptEnv(t)

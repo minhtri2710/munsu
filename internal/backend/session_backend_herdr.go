@@ -52,7 +52,6 @@ type herdrLastCreate struct {
 	Session     string
 	WorkspaceID string
 	TabID       string
-	PaneID      string
 }
 
 // NewHerdrBackend creates a HerdrBackend with the given session name.
@@ -377,7 +376,6 @@ func (h *HerdrBackend) FindOrCreateWindow(session, name string) (string, error) 
 		Session:     h.Session,
 		WorkspaceID: workspaceID,
 		TabID:       tabID,
-		PaneID:      paneID,
 	}
 	return h.Session + ":" + paneID, nil
 }
@@ -423,21 +421,30 @@ func (h *HerdrBackend) NewWindow(session, name string) (string, error) {
 		Session:     h.Session,
 		WorkspaceID: workspaceID,
 		TabID:       tabID,
-		PaneID:      paneID,
 	}
 
 	// Return "<session>:<pane_id>" for window handle.
 	return h.Session + ":" + paneID, nil
 }
 
-// ParseWindow splits a window handle ("session:pane_id") on the first colon.
-// Returns the session name and the pane ID. If no colon is found, returns "" and the full string.
-func ParseWindow(handle string) (session, paneID string) {
-	idx := strings.Index(handle, ":")
-	if idx < 0 {
-		return "", handle
+// HandleSession returns the session prefix of a herdr window handle
+// ("<session>:<pane_id>"). Herdr pane IDs contain a colon themselves
+// ("w6E:p3"), so only a handle with two or more colons carries a session;
+// a shorter handle is a bare pane ID and has none. herdrPaneID reads the same
+// grammar for the pane part.
+func HandleSession(handle string) string {
+	if strings.Count(handle, ":") < 2 {
+		return ""
 	}
-	return handle[:idx], handle[idx+1:]
+	return handle[:strings.Index(handle, ":")]
+}
+
+// SessionOwnerMismatch reports whether a herdr handle names a session other
+// than the owner the task records. A handle without a session prefix, or an
+// unrecorded owner, is no mismatch.
+func SessionOwnerMismatch(handle, owner string) bool {
+	session := HandleSession(handle)
+	return owner != "" && session != "" && session != owner
 }
 
 // herdrPaneID extracts the pane ID part from a window handle for Herdr CLI calls.
@@ -540,31 +547,19 @@ func (h *HerdrBackend) ObservedAgent(windowID string) string {
 	return h.observedAgents[windowID]
 }
 
+// isAgentStatusAlive reports whether status is a known agent status word.
 func isAgentStatusAlive(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "idle", "done", "working", "busy", "blocked", "unknown":
-		return true
-	default:
-		return false
-	}
+	_, ok := classifyAgentStatus(status)
+	return ok
 }
 
 // AgentStatusReady reports whether a herdr agent status string means the
-// agent is ready for a prompt. It is the single owner of readiness
-// normalisation: readiness for a prompt must be decided through this
-// predicate, never by comparing the raw status string a backend returns.
-// "idle" and "done" are ready, after ToLower+TrimSpace exactly like its live
-// sibling isAgentStatusAlive. The CLI probe path (probeCaptainBackend) is the
-// call site that makes this reachable from the binary: before that
-// fix, readiness was computed inline against the unnormalized string, so a
-// healthy captain reporting "Idle" or " idle " was rejected permanently.
+// agent is ready for a prompt: its word classifies as idle ("idle", "done").
+// Readiness for a prompt must be decided through this predicate, never by
+// comparing the raw status string a backend returns.
 func AgentStatusReady(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "idle", "done":
-		return true
-	default:
-		return false
-	}
+	a, ok := classifyAgentStatus(status)
+	return ok && a == ActivityIdle
 }
 
 // CheckAlive checks whether the pane still exists via herdr pane get.
@@ -690,10 +685,9 @@ func (h *HerdrBackend) MetaExtras() map[string]string {
 		return nil
 	}
 	return map[string]string{
-		"herdr_session":      h.lastCreate.Session,
-		"herdr_workspace_id": h.lastCreate.WorkspaceID,
-		"herdr_tab_id":       h.lastCreate.TabID,
-		"herdr_pane_id":      h.lastCreate.PaneID,
+		MetaSessionOwner: h.lastCreate.Session,
+		MetaWorkspaceID:  h.lastCreate.WorkspaceID,
+		MetaTabID:        h.lastCreate.TabID,
 	}
 }
 
@@ -866,7 +860,7 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 	// Wait for the observed turn start unless the agent is already working
 	// (a working agent cannot show one). Capture preserves stdout even on
 	// non-zero exit (stalled returns exit 1 with JSON error in stdout).
-	queued := strings.EqualFold(strings.TrimSpace(agentStatus), "working")
+	queued := NormalizeActivityHint(agentStatus) == ActivityBusy
 	args := []string{"agent", "prompt", pid, text}
 	class := backendCommandShort
 	if !queued {

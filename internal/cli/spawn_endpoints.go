@@ -43,14 +43,12 @@ func (s *spawnSessionEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.C
 	if err != nil {
 		return fleet.CreatedEndpoint{}, err
 	}
-	ep := fleet.CreatedEndpoint{Backend: name, Handle: handle, Metadata: map[string]string{}}
+	ep := fleet.CreatedEndpoint{Backend: name, Handle: handle}
 	if ex, ok := bk.(backend.BackendMetaExtras); ok {
-		for k, v := range ex.MetaExtras() {
-			ep.Metadata[k] = v
-		}
-		ep.SessionOwner = ep.Metadata["herdr_session"]
-		ep.WorkspaceID = ep.Metadata["herdr_workspace_id"]
-		ep.TabID = ep.Metadata["herdr_tab_id"]
+		extras := ex.MetaExtras()
+		ep.SessionOwner = extras[backend.MetaSessionOwner]
+		ep.WorkspaceID = extras[backend.MetaWorkspaceID]
+		ep.TabID = extras[backend.MetaTabID]
 	}
 	s.bound[spawnEndpointKey(ep)] = bk
 	return ep, nil
@@ -126,14 +124,11 @@ func spawnEndpointHerdrSession(ep fleet.CreatedEndpoint) (string, error) {
 	}
 	// Herdr pane IDs can contain a colon too. Only the three-part form carries
 	// an unambiguous session prefix; a shorter handle needs SessionOwner.
-	var handleSession string
-	if strings.Count(ep.Handle, ":") >= 2 {
-		handleSession, _ = backend.ParseWindow(ep.Handle)
-		if handleSession == "" {
-			return "", fmt.Errorf("herdr endpoint %q has an invalid session prefix", ep.Handle)
-		}
+	handleSession := backend.HandleSession(ep.Handle)
+	if handleSession == "" && strings.Count(ep.Handle, ":") >= 2 {
+		return "", fmt.Errorf("herdr endpoint %q has an invalid session prefix", ep.Handle)
 	}
-	if ep.SessionOwner != "" && handleSession != "" && handleSession != ep.SessionOwner {
+	if backend.SessionOwnerMismatch(ep.Handle, ep.SessionOwner) {
 		return "", fmt.Errorf("herdr session ownership mismatch: endpoint session %q does not match handle session %q", ep.SessionOwner, handleSession)
 	}
 	if ep.SessionOwner != "" {
