@@ -56,8 +56,7 @@ func (s PromptStatus) Acknowledged() bool {
 type PromptResult struct {
 	Status PromptStatus `json:"status"`
 	Detail string       `json:"detail,omitempty"`
-	Err    error        `json:"-"`                // non-nil for backend-failed
-	Legacy bool         `json:"legacy,omitempty"` // true when fallback was used
+	Err    error        `json:"-"` // non-nil for backend-failed
 }
 
 // String returns a human-readable description of the result.
@@ -92,53 +91,16 @@ type PromptSubmitter interface {
 	AgentPrompt(windowID, text string) PromptResult
 }
 
-// LegacyPrompt is an optional interface that Backend implementations
-// can implement to explicitly declare support for legacy SendKeys-based
-// prompt submission when typed prompt is unavailable.
-type LegacyPrompt interface {
-	// LegacyPrompt sends text via SendKeys and returns a PromptResult.
-	// This is used only when the target does NOT support PromptSubmitter
-	// (e.g., an alive non-agent pane) but the backend can still send via
-	// raw keys. The result may have limited diagnostic power compared to
-	// AgentPrompt.
-	LegacyPrompt(windowID, text string) PromptResult
-}
-
-// SubmitPrompt submits a prompt to the target agent using typed prompt
-// submission when available. No content heuristics are applied — the caller
-// is responsible for ensuring the text is a prompt (not a raw shell command).
-//
-// Dispatch rules:
-//   - If the backend implements PromptSubmitter, AgentPrompt is used.
-//   - If AgentPrompt returns PromptUnsupported (e.g., an alive non-agent
-//     pane) AND the backend declares LegacyPrompt, the legacy SendKeys
-//     fallback is invoked.
-//   - AgentPrompt results other than Unsupported (stalled, endpoint-dead,
-//     backend-failed) are NEVER subject to fallback.
-//   - If the backend has neither PromptSubmitter nor LegacyPrompt, the
-//     result is PromptUnsupported.
+// SubmitPrompt submits a prompt to the target agent through the backend's
+// typed AgentPrompt. No content heuristics are applied — the caller is
+// responsible for ensuring the text is a prompt (not a raw shell command).
+// A backend without PromptSubmitter, or a target AgentPrompt reports as
+// unsupported (an alive non-agent pane), yields PromptUnsupported; nothing
+// is ever typed into the pane as raw keys.
 func SubmitPrompt(bk Backend, windowID, text string) PromptResult {
-	// Try typed prompt submission.
 	if submitter, ok := bk.(PromptSubmitter); ok {
-		result := submitter.AgentPrompt(windowID, text)
-		// Only fall back to legacy if typed prompt returned Unsupported
-		// (e.g., an alive non-agent pane).
-		if result.Status == PromptUnsupported {
-			if legacy, ok := bk.(LegacyPrompt); ok {
-				return legacy.LegacyPrompt(windowID, text)
-			}
-		}
-		// For all other statuses (stalled, endpoint-dead, backend-failed),
-		// return as-is — NEVER fall back.
-		return result
+		return submitter.AgentPrompt(windowID, text)
 	}
-
-	// No typed prompt support: fall back to legacy SendKeys if declared.
-	if legacy, ok := bk.(LegacyPrompt); ok {
-		return legacy.LegacyPrompt(windowID, text)
-	}
-
-	// Backend doesn't support prompt submission at all.
 	return PromptResult{
 		Status: PromptUnsupported,
 		Detail: fmt.Sprintf("backend %T does not support prompt submission", bk),

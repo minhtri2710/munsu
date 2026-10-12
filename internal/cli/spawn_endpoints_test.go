@@ -55,17 +55,6 @@ func (*spawnLabelBackend) Capture(string, int) (string, error) { return "ready",
 func (*spawnLabelBackend) Alive(string) bool                   { return true }
 func (*spawnLabelBackend) Teardown(string) error               { return nil }
 
-// unsupportedSpawnBackend implements backend.Backend WITHOUT the real
-// reservation-aware find-or-create contract (FindOrCreateWindow) and WITHOUT
-// MetaExtras, so the factory must fail closed before acquisition.
-type unsupportedSpawnBackend struct{ window string }
-
-func (b *unsupportedSpawnBackend) NewWindow(string, string) (string, error) { return b.window, nil }
-func (*unsupportedSpawnBackend) SendKeys(string, string) error              { return nil }
-func (*unsupportedSpawnBackend) Capture(string, int) (string, error)        { return "ready", nil }
-func (*unsupportedSpawnBackend) Alive(string) bool                          { return true }
-func (*unsupportedSpawnBackend) Teardown(string) error                      { return nil }
-
 func TestSpawnSessionEndpointsDerivesWorkspaceLabel(t *testing.T) {
 	bk := &spawnLabelBackend{window: "window-1"}
 	endpoints := &spawnSessionEndpoints{
@@ -189,25 +178,6 @@ func TestSpawnSessionEndpointsFindOrCreateSameReservationSameEndpoint(t *testing
 	}
 	if bk.findOrCreateCalls != 2 {
 		t.Fatalf("find-or-create contract calls = %d, want 2 (first attempt AND recovery)", bk.findOrCreateCalls)
-	}
-}
-
-// TestSpawnSessionEndpointsUnsupportedBackendFailsClosed proves a backend
-// without the real reservation-aware find-or-create contract fails closed
-// BEFORE acquisition with a typed owner-clean error — never a silently fresh
-// NewWindow, fallback backend, or replacement endpoint.
-func TestSpawnSessionEndpointsUnsupportedBackendFailsClosed(t *testing.T) {
-	bk := &unsupportedSpawnBackend{}
-	endpoints := &spawnSessionEndpoints{
-		resolve: func(string) (backend.Backend, string, error) { return bk, "nofind", nil },
-		bound:   map[string]backend.Backend{},
-	}
-	_, err := endpoints.CreateReserved(fleet.CreateRequest{ReservationID: "epres-x", FenceToken: "epfence-x"})
-	if err == nil {
-		t.Fatal("unsupported backend must fail closed before acquisition")
-	}
-	if !strings.Contains(err.Error(), "no reservation-aware find-or-create") || !strings.Contains(err.Error(), "fail closed") {
-		t.Fatalf("error = %v, want typed fail-closed before acquisition", err)
 	}
 }
 

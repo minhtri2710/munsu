@@ -30,11 +30,12 @@ type fakeAgentAwareBackend struct {
 	err        error
 }
 
-func (b *fakeAgentAwareBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *fakeAgentAwareBackend) SendKeys(string, string) error            { return nil }
-func (b *fakeAgentAwareBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *fakeAgentAwareBackend) Alive(string) bool                        { return true }
-func (b *fakeAgentAwareBackend) Teardown(string) error                    { return nil }
+func (b *fakeAgentAwareBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *fakeAgentAwareBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *fakeAgentAwareBackend) SendKeys(string, string) error                     { return nil }
+func (b *fakeAgentAwareBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *fakeAgentAwareBackend) Alive(string) bool                                 { return true }
+func (b *fakeAgentAwareBackend) Teardown(string) error                             { return nil }
 func (b *fakeAgentAwareBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.paneAlive, b.agentAlive, b.err
 }

@@ -143,10 +143,11 @@ func TestObserveEndpointReturnsRawFreshnessUnknown(t *testing.T) {
 // contractAgentBackendRaw is an agent-aware structured backend fixture.
 type contractAgentBackendRaw struct{ alive, agentAlive bool }
 
-func (b *contractAgentBackendRaw) NewWindow(string, string) (string, error) { return "", nil }
-func (b *contractAgentBackendRaw) SendKeys(string, string) error            { return nil }
-func (b *contractAgentBackendRaw) Capture(string, int) (string, error)      { return "", nil }
-func (b *contractAgentBackendRaw) Teardown(string) error                    { return nil }
+func (b *contractAgentBackendRaw) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *contractAgentBackendRaw) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *contractAgentBackendRaw) SendKeys(string, string) error                     { return nil }
+func (b *contractAgentBackendRaw) Capture(string, int) (string, error)               { return "", nil }
+func (b *contractAgentBackendRaw) Teardown(string) error                             { return nil }
 func (b *contractAgentBackendRaw) CheckAgentAlive(string) (bool, bool, error) {
 	return b.alive, b.agentAlive, nil
 }
@@ -154,16 +155,18 @@ func (b *contractAgentBackendRaw) CheckAgentAlive(string) (bool, bool, error) {
 // contractEndChecker is a non-agent-aware structured backend fixture.
 type contractEndChecker struct{ alive bool }
 
-func (b *contractEndChecker) NewWindow(string, string) (string, error) { return "", nil }
-func (b *contractEndChecker) SendKeys(string, string) error            { return nil }
-func (b *contractEndChecker) Capture(string, int) (string, error)      { return "", nil }
-func (b *contractEndChecker) Teardown(string) error                    { return nil }
-func (b *contractEndChecker) CheckAlive(string) (bool, error)          { return b.alive, nil }
+func (b *contractEndChecker) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *contractEndChecker) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *contractEndChecker) SendKeys(string, string) error                     { return nil }
+func (b *contractEndChecker) Capture(string, int) (string, error)               { return "", nil }
+func (b *contractEndChecker) Teardown(string) error                             { return nil }
+func (b *contractEndChecker) CheckAlive(string) (bool, error)                   { return b.alive, nil }
 
 // contractNoProbe implements Backend with no structured probe surface.
 type contractNoProbe struct{ alive bool }
 
-func (b *contractNoProbe) NewWindow(string, string) (string, error) { return "", nil }
-func (b *contractNoProbe) SendKeys(string, string) error            { return nil }
-func (b *contractNoProbe) Capture(string, int) (string, error)      { return "", nil }
-func (b *contractNoProbe) Teardown(string) error                    { return nil }
+func (b *contractNoProbe) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *contractNoProbe) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *contractNoProbe) SendKeys(string, string) error                     { return nil }
+func (b *contractNoProbe) Capture(string, int) (string, error)               { return "", nil }
+func (b *contractNoProbe) Teardown(string) error                             { return nil }

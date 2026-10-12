@@ -21,11 +21,12 @@ type captainProbeBackend struct {
 	promptCalls int
 }
 
-func (b *captainProbeBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *captainProbeBackend) SendKeys(string, string) error            { return nil }
-func (b *captainProbeBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *captainProbeBackend) Alive(string) bool                        { return b.alive }
-func (b *captainProbeBackend) Teardown(string) error                    { return nil }
+func (b *captainProbeBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *captainProbeBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *captainProbeBackend) SendKeys(string, string) error                     { return nil }
+func (b *captainProbeBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *captainProbeBackend) Alive(string) bool                                 { return b.alive }
+func (b *captainProbeBackend) Teardown(string) error                             { return nil }
 func (b *captainProbeBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.paneAlive, b.agentAlive, b.agentErr
 }
@@ -63,8 +64,11 @@ func (b *ordinaryCaptainProbeBackend) ForegroundProcess(string) (string, error) 
 }
 
 func (b *ordinaryCaptainProbeBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *ordinaryCaptainProbeBackend) SendKeys(string, string) error            { b.sendCalls++; return b.sendErr }
-func (b *ordinaryCaptainProbeBackend) Capture(string, int) (string, error)      { return "", nil }
+func (b *ordinaryCaptainProbeBackend) FindOrCreateWindow(string, string) (string, error) {
+	return "", nil
+}
+func (b *ordinaryCaptainProbeBackend) SendKeys(string, string) error       { b.sendCalls++; return b.sendErr }
+func (b *ordinaryCaptainProbeBackend) Capture(string, int) (string, error) { return "", nil }
 func (b *ordinaryCaptainProbeBackend) Alive(string) bool {
 	result := b.alive
 	if b.aliveCalls < len(b.aliveResults) {
@@ -204,10 +208,11 @@ func (c *labelCaptureBackend) NewWindow(label, name string) (string, error) {
 	c.gotLabel = label
 	return "win", nil
 }
-func (c *labelCaptureBackend) SendKeys(string, string) error       { return nil }
-func (c *labelCaptureBackend) Capture(string, int) (string, error) { return "", nil }
-func (c *labelCaptureBackend) Alive(string) bool                   { return false }
-func (c *labelCaptureBackend) Teardown(string) error               { return nil }
+func (c *labelCaptureBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (c *labelCaptureBackend) SendKeys(string, string) error                     { return nil }
+func (c *labelCaptureBackend) Capture(string, int) (string, error)               { return "", nil }
+func (c *labelCaptureBackend) Alive(string) bool                                 { return false }
+func (c *labelCaptureBackend) Teardown(string) error                             { return nil }
 
 func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
 	makeEndpoint := func(c *labelCaptureBackend) sessionLaunchEndpoint {
