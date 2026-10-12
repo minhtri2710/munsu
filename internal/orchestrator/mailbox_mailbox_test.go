@@ -424,7 +424,7 @@ func TestStore_WriteAck_AndRead(t *testing.T) {
 		t.Fatalf("WriteAck: %v", err)
 	}
 
-	got, err := store.ReadAck("soldier-1", "msg-1")
+	got, err := store.ReadOwnerAck("soldier-1", "msg-1")
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}
@@ -457,7 +457,8 @@ func TestStore_IsAcked(t *testing.T) {
 		Outcome:        "done",
 	}
 
-	if store.IsAcked("soldier-1", "msg-1") {
+	env := &mhome.Envelope{MessageID: "msg-1", SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain}
+	if store.IsAcked(env) {
 		t.Error("should not be acked before WriteAck")
 	}
 
@@ -465,7 +466,7 @@ func TestStore_IsAcked(t *testing.T) {
 		t.Fatalf("WriteAck: %v", err)
 	}
 
-	if !store.IsAcked("soldier-1", "msg-1") {
+	if !store.IsAcked(env) {
 		t.Error("should be acked after WriteAck")
 	}
 }
@@ -842,7 +843,7 @@ func TestStore_WriteAck_Idempotent(t *testing.T) {
 		t.Fatalf("second WriteAck: %v", err)
 	}
 
-	got, err := store.ReadAck("soldier-1", "msg-1")
+	got, err := store.ReadOwnerAck("soldier-1", "msg-1")
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}
@@ -1111,7 +1112,7 @@ func TestStore_FullFlow(t *testing.T) {
 	}
 
 	// Validate ack on sender side.
-	readAck, err := receiverStore.ReadAck("soldier-1", env.MessageID)
+	readAck, err := receiverStore.ReadOwnerAck("soldier-1", env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}

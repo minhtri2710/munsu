@@ -248,7 +248,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			if _, err := r.Ack(ref); err != nil {
 				t.Fatalf("Ack refused a hop the topology produces: %v", err)
 			}
-			if !NewStore(dir).IsAcked(env.SenderIdentity, env.MessageID) {
+			if !NewStore(dir).IsAcked(env) {
 				t.Fatal("no ack was written")
 			}
 		})
@@ -558,7 +558,7 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			} else if !strings.Contains(err.Error(), tc.wantSub) {
 				t.Fatalf("ack error = %v, want %q", err, tc.wantSub)
 			}
-			if NewStore(dir).IsAcked(env.SenderIdentity, env.MessageID) {
+			if NewStore(dir).IsAcked(env) {
 				t.Fatal("a refused envelope received an ack")
 			}
 		})

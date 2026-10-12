@@ -12,26 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// currentTaskGeneration returns the current canonical generation of one task
-// from the home's Task Authority. It re-expresses the legacy
-// home.CurrentTaskGeneration over the canonical authority: an uninitialized
-// home or missing task fails closed instead of silently initializing state.
-func currentTaskGeneration(homeDir, taskID string) (string, error) {
-	auth, err := taskAuthorityForRead(homeDir)
-	if err != nil {
-		return "", err
-	}
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		return "", err
-	}
-	agg, err := auth.Get(tid)
-	if err != nil {
-		return "", err
-	}
-	return agg.Generation.String(), nil
-}
-
 // resolveCurrentTaskID resolves one requested task ID against canonical
 // current ownership across the primary home and every captain sub-home
 // (re-expression of the legacy home.ResolveCurrentTaskID over the canonical

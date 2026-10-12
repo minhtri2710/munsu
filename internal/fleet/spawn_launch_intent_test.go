@@ -312,7 +312,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
-		PathDirs: r.seatPath,
+		PathDirs: r.seatPath, TaskKind: r.kind,
 	})
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)
@@ -466,6 +466,19 @@ func TestVerifyRecordedLaunchArtifactsRefusesUnmatchedAuthority(t *testing.T) {
 			t.Fatalf("verifyRecordedLaunchArtifacts error = %v, want command-digest refusal", err)
 		}
 	})
+}
+
+// A soldier's report reads its task kind from the launch environment, never
+// from its dispatcher's home: the prepared script exports the task's kind.
+func TestLaunchScriptExportsTheTaskKind(t *testing.T) {
+	f := newLaunchFixture(t, "launch-exports-task-kind")
+	if err := runLaunchPhases(f, "manifest"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("launch phases = %v, want simulated stop after the manifest", err)
+	}
+	script := string(f.runner.preparedFiles.files[LaunchScriptName])
+	if want := "export MUNSU_TASK_KIND=" + shQuote(taskauthority.KindShip) + "\n"; !strings.Contains(script, want) {
+		t.Fatalf("launch script does not export %q:\n%s", want, script)
+	}
 }
 
 func TestSubmitLaunchRefusesMissingPreparedArtifacts(t *testing.T) {

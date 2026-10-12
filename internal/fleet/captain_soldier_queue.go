@@ -1,11 +1,9 @@
 package fleet
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -195,10 +193,9 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 
 	// Already acked? If so, remove pending and return.
-	if store.IsAcked(senderIdentity, targetEnv.MessageID) {
-		ack, ackErr := store.ReadAck(senderIdentity, targetEnv.MessageID)
-		if ackErr == nil && ack != nil {
-			_ = store.RemovePendingAfterAck(senderIdentity, targetEnv.MessageID, ack)
+	if ack, ackErr := store.ReadAck(targetEnv); ackErr == nil && ack != nil {
+		if store.RemovePendingAfterAck(senderIdentity, targetEnv.MessageID, ack) == nil {
+			store.RemoveAckedPayload(targetEnv)
 		}
 		return result
 	}
@@ -232,7 +229,7 @@ func ReconcileSoldierPending(senderHome, senderIdentity string) error {
 		return fmt.Errorf("listing pending: %w", err)
 	}
 	for _, env := range pending {
-		ack, ackErr := store.ReadAck(env.SenderIdentity, env.MessageID)
+		ack, ackErr := store.ReadAck(env)
 		if ackErr != nil {
 			return fmt.Errorf("reading ack for %s: %w", env.MessageID, ackErr)
 		}
@@ -242,149 +239,13 @@ func ReconcileSoldierPending(senderHome, senderIdentity string) error {
 		if err := store.RemovePendingAfterAck(senderIdentity, env.MessageID, ack); err != nil {
 			return fmt.Errorf("removing pending for %s: %w", env.MessageID, err)
 		}
+		store.RemoveAckedPayload(env)
 		// Clean up dispatched marker if the pending was acked.
 		if env.TaskID != "" {
 			_ = cleanDispatched(senderHome, env.TaskID, env.MessageID)
 		}
 	}
 	return nil
-}
-
-// EmitReadyEvent writes a durable ready event marker for a soldier task.
-//
-// The ready marker is stored at state/.ready/<taskID>/<event-id>.ready
-// and contains the JSON-serialized ReadyEvent with a monotonic event ID,
-// task ID, endpoint generation, and timestamp.
-//
-// Returns the ReadyEvent that was persisted. Idempotent: calling with the
-// same event ID is a no-op. The caller (typically the soldier agent at a
-// review-ready/idle turn boundary) must ensure unique event IDs — use
-// time.Now().UnixNano() for the simplest unique key.
-//
-// After writing the marker, the caller should inject a lightweight
-// notification to the captain's pane so the captain knows to scan for
-// ready events. The notification should be a simple text line:
-// "ready-event: <taskID> event=<eventID>"
-func EmitReadyEvent(homeDir, taskID, eventID, metaGeneration string) (*ReadyEvent, error) {
-	if homeDir == "" {
-		return nil, fmt.Errorf("emit ready: empty home")
-	}
-	if taskID == "" {
-		return nil, fmt.Errorf("emit ready: empty task ID")
-	}
-	if eventID == "" {
-		eventID = fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-
-	// Parse meta generation for endpoint generation validation.
-	var endpointGen int64
-	if metaGeneration != "" {
-		if _, err := fmt.Sscanf(metaGeneration, "%d", &endpointGen); err != nil {
-			endpointGen = 0
-		}
-	}
-
-	event := &ReadyEvent{
-		EventID:            eventID,
-		TaskID:             taskID,
-		EndpointGeneration: endpointGen,
-		Timestamp:          time.Now().UnixNano(),
-	}
-
-	// Write marker file atomically (temp-file + rename).
-	p := readyEventPath(homeDir, taskID, eventID)
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return nil, fmt.Errorf("emit ready: creating dir: %w", err)
-	}
-
-	data, err := json.MarshalIndent(event, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("emit ready: marshal: %w", err)
-	}
-
-	// Check for existing marker — idempotent.
-	if existing, err := os.ReadFile(p); err == nil && len(existing) > 0 {
-		// Parse the existing event to preserve original timestamp.
-		var existingEvent ReadyEvent
-		if jsonErr := json.Unmarshal(existing, &existingEvent); jsonErr == nil {
-			// Same eventID means the same turn boundary — idempotent.
-			return &existingEvent, nil
-		}
-		// Corrupt file: overwrite.
-	}
-
-	if err := home.AtomicWrite(p, data, 0600); err != nil {
-		return nil, fmt.Errorf("emit ready: %w", err)
-	}
-
-	return event, nil
-}
-
-// readyEventPath returns the path for a ready event marker file.
-func readyEventPath(homeDir, taskID, eventKey string) string {
-	safeID := strings.NewReplacer("/", "_", ":", "_", "\\", "_").Replace(taskID)
-	safeKey := strings.NewReplacer("/", "_", ":", "_", "\\", "_", ".", "_").Replace(eventKey)
-	return filepath.Join(homeDir, "state", ".ready", safeID, safeKey+".ready")
-}
-
-// readyEventDir returns the directory for ready events for a specific task.
-func readyEventDir(homeDir, taskID string) string {
-	safeID := strings.NewReplacer("/", "_", ":", "_", "\\", "_").Replace(taskID)
-	return filepath.Join(homeDir, "state", ".ready", safeID)
-}
-
-// ScanReadyEvents reads all ready event markers for a given task and returns
-// them ordered by timestamp (oldest first). Returns nil, nil if no ready
-// events exist. After reading, markers are NOT removed — they are left for
-// the consumer to clean up after processing.
-func ScanReadyEvents(homeDir, taskID string) ([]*ReadyEvent, error) {
-	dir := readyEventDir(homeDir, taskID)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("scan ready: reading dir: %w", err)
-	}
-
-	var events []*ReadyEvent
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ready") {
-			continue
-		}
-		data, readErr := os.ReadFile(filepath.Join(dir, e.Name()))
-		if readErr != nil {
-			continue // skip unreadable
-		}
-		event, parseErr := ParseReadyEvent(string(data))
-		if parseErr != nil {
-			continue // skip malformed
-		}
-		events = append(events, event)
-	}
-
-	// Sort by timestamp (oldest first).
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].Timestamp < events[j].Timestamp
-	})
-
-	return events, nil
-}
-
-// CleanReadyEvent removes a single ready event marker after processing.
-// Idempotent: returns nil if marker doesn't exist.
-func CleanReadyEvent(homeDir, taskID, eventKey string) error {
-	err := os.Remove(readyEventPath(homeDir, taskID, eventKey))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-// CleanAllReadyEvents removes all ready event markers for a given task.
-// Idempotent: returns nil if directory doesn't exist.
-func CleanAllReadyEvents(homeDir, taskID string) error {
-	return os.RemoveAll(readyEventDir(homeDir, taskID))
 }
 
 func matchesSoldierTask(env *home.Envelope, taskID string) bool {
@@ -394,101 +255,57 @@ func matchesSoldierTask(env *home.Envelope, taskID string) bool {
 		env.TaskID == taskID
 }
 
-// ConsumeAllReadyEvents scans for ready events for a task and flushes pending
-// commands for each valid ready event. After flush, the ready event marker is
-// cleaned up. Returns the number of commands flushed and any errors.
+// ConsumeReady flushes one pending command to a soldier whose last status
+// line is review-ready: the soldier's own report is its ready signal. It
+// returns the number of commands flushed (0 or 1).
 //
-// This is the captain-side entry point for consuming ready events.
-// Idempotent: calling with no ready events or no pending is a no-op.
-// Stale events (by timestamp) are rejected and cleaned up.
-func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGeneration string, endpoint SoldierEndpointCapabilities) (int, error) {
-	events, err := ScanReadyEvents(senderHome, soldierTaskID)
+// This is the captain-side entry point. Idempotent: a soldier that is not
+// review-ready, no pending command, or a command already dispatched and
+// awaiting its ack is a no-op.
+func ConsumeReady(senderHome, soldierTaskID, senderIdentity string, endpoint SoldierEndpointCapabilities) (int, error) {
+	lines, err := home.ReadStatus(senderHome, soldierTaskID)
 	if err != nil {
-		return 0, fmt.Errorf("consume ready: scan: %w", err)
+		return 0, fmt.Errorf("consume ready: reading status: %w", err)
 	}
-	if len(events) == 0 {
+	if len(lines) == 0 || !strings.HasPrefix(lines[len(lines)-1], string(DeliveryStateReviewReady)+":") {
 		return 0, nil
 	}
 
-	if _, metaErr := home.ReadMeta(senderHome, soldierTaskID); metaErr != nil {
-		// If meta doesn't exist (task never spawned), there's nothing to flush.
-		// Clean up any stale ready events and return.
-		_ = CleanAllReadyEvents(senderHome, soldierTaskID)
+	store := home.NewStore(senderHome)
+	pending, err := store.ListPending(senderIdentity)
+	if err != nil {
+		return 0, fmt.Errorf("consume ready: list pending: %w", err)
+	}
+	var pendingEnv *home.Envelope
+	for _, p := range pending {
+		if matchesSoldierTask(p, soldierTaskID) {
+			pendingEnv = p
+			break
+		}
+	}
+	if pendingEnv == nil {
+		return 0, nil
+	}
+	if isDispatched(senderHome, soldierTaskID, pendingEnv.MessageID) {
+		// NotificationRef sent, awaiting ack: never re-send.
 		return 0, nil
 	}
 
-	var flushed int
-	for _, ev := range events {
-		// Validate the ready event against the durable task ID and generation.
-		if err := ValidateReadyEvent(ev, soldierTaskID, metaGeneration); err != nil {
-			// Stale or invalid: clean up and continue.
-			_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
-			continue
-		}
-
-		// Check if the pending command has already been dispatched (marked
-		// by a .dispatched marker). This prevents re-sending the same
-		// NotificationRef on duplicate ready events.
-		store := home.NewStore(senderHome)
-		pending, listErr := store.ListPending(senderIdentity)
-		if listErr != nil {
-			return flushed, fmt.Errorf("consume ready: list pending: %w", listErr)
-		}
-
-		// Filter to pending targeting this exact soldier task.
-		var pendingEnv *home.Envelope
-		for _, p := range pending {
-			if matchesSoldierTask(p, soldierTaskID) {
-				pendingEnv = p
-				break
-			}
-		}
-
-		if pendingEnv != nil && store.IsAcked(senderIdentity, pendingEnv.MessageID) {
-			// Already acked — remove pending and clean up ready event.
-			ack, ackErr := store.ReadAck(senderIdentity, pendingEnv.MessageID)
-			if ackErr == nil && ack != nil {
-				_ = store.RemovePendingAfterAck(senderIdentity, pendingEnv.MessageID, ack)
-			}
-			_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
-			continue
-		}
-
-		if pendingEnv != nil && isDispatched(senderHome, soldierTaskID, pendingEnv.MessageID) {
-			// Already dispatched (NotificationRef sent, awaiting ack).
-			// This duplicate ready event is harmless — clean up and skip.
-			// The pending remains until exact ack reconciles.
-			_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
-			continue
-		}
-
-		// Flush one pending command.
-		flushResult := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity, endpoint)
-		if flushResult.Err != nil {
-			// If flush failed, leave the ready event for retry.
-			return flushed, fmt.Errorf("consume ready: flush: %w", flushResult.Err)
-		}
-
-		if flushResult.Sent {
-			// Mark as dispatched so duplicate ready events don't re-send.
-			_ = markDispatched(senderHome, soldierTaskID, flushResult.MessageID)
-			flushed++
-		}
-
-		// Clean up the ready event marker.
-		_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
-
-		// Only flush one command per scan — the first ready event triggered one flush.
-		// If more pending exist, the next ready event will flush them.
-		break
+	flushResult := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity, endpoint)
+	if flushResult.Err != nil {
+		return 0, fmt.Errorf("consume ready: flush: %w", flushResult.Err)
 	}
-
-	return flushed, nil
+	if !flushResult.Sent {
+		return 0, nil
+	}
+	// Mark as dispatched so a repeated consume does not re-send.
+	_ = markDispatched(senderHome, soldierTaskID, flushResult.MessageID)
+	return 1, nil
 }
 
 // dispatchedPath returns the path for a dispatch marker file.
 // Dispatch markers track that a NotificationRef was sent for a pending
-// message, preventing duplicate sends on duplicate ready events.
+// message, preventing a duplicate send on a repeated consume-ready.
 func dispatchedPath(senderHome, taskID, messageID string) string {
 	safeID := strings.NewReplacer("/", "_", ":", "_", "\\", "_").Replace(taskID)
 	safeMsg := strings.NewReplacer("/", "_", ":", "_", "\\", "_", ".", "_").Replace(messageID)
@@ -524,62 +341,4 @@ func cleanDispatched(senderHome, taskID, messageID string) error {
 		return nil
 	}
 	return err
-}
-
-// ReadyEvent carries the durable ready signal from a soldier.
-type ReadyEvent struct {
-	EventID            string `json:"event_id"`
-	TaskID             string `json:"task_id"`
-	EndpointGeneration int64  `json:"endpoint_generation"`
-	Timestamp          int64  `json:"timestamp"`
-}
-
-// ValidateReadyEvent verifies that a ready event is not stale, matches the
-// expected task, and has a valid endpoint generation against the current
-// window metadata. Returns an error on any mismatch (fail closed).
-func ValidateReadyEvent(event *ReadyEvent, curTaskID, metaGeneration string) error {
-	if event == nil {
-		return fmt.Errorf("ready event: nil")
-	}
-	if event.EventID == "" {
-		return fmt.Errorf("ready event: empty event ID")
-	}
-	if event.TaskID != curTaskID {
-		return fmt.Errorf("ready event: task ID mismatch %q != %q", event.TaskID, curTaskID)
-	}
-	// Validate endpoint generation (fail closed on mismatch).
-	if metaGeneration != "" {
-		var gen int64
-		if _, err := fmt.Sscanf(metaGeneration, "%d", &gen); err == nil && gen != 0 {
-			if event.EndpointGeneration != gen {
-				return fmt.Errorf("ready event: generation mismatch %d != %d (stale event)", event.EndpointGeneration, gen)
-			}
-		}
-	}
-
-	// Reject stale events (more than 5 minutes old).
-	now := time.Now().UnixNano()
-	if event.Timestamp > 0 && now-event.Timestamp > int64(5*time.Minute) {
-		return fmt.Errorf("ready event: stale (age=%dns)", now-event.Timestamp)
-	}
-
-	return nil
-}
-
-// Encode serializes ReadyEvent to canonical JSON.
-func (e *ReadyEvent) Encode() string {
-	data, _ := json.Marshal(e)
-	return string(data)
-}
-
-// ParseReadyEvent deserializes a ReadyEvent from JSON.
-func ParseReadyEvent(s string) (*ReadyEvent, error) {
-	var e ReadyEvent
-	if err := json.Unmarshal([]byte(s), &e); err != nil {
-		return nil, fmt.Errorf("parse ready event: %w", err)
-	}
-	if e.EventID == "" {
-		return nil, fmt.Errorf("ready event: empty event ID after parse")
-	}
-	return &e, nil
 }

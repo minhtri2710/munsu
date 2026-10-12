@@ -12,17 +12,13 @@ import (
 func newConsumeReadyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "consume-ready <task-id>",
-		Short: "Consume ready events and flush pending commands for a soldier task",
-		Long: `Consume ready events for a soldier task. This scans for durable ready event
-markers, validates them, and flushes one pending command per valid ready event.
+		Short: "Flush one pending command to a review-ready soldier task",
+		Long: `Flush one pending command to a soldier task whose last status line is
+review-ready: the soldier's 'munsu report review-ready' is its ready signal.
+A command already sent and awaiting the soldier's ack is never sent again.
 
-Call this when the captain receives a "ready-event:" notification from a soldier
-(typically injected at turn boundaries). This is the captain-side handler for
-event-driven busy soldier delivery.
-
-Recovery path: captain converge also scans for ready events automatically.
-The converge path is recovery-only — the primary path is the soldier's
-'munsu ready' call which injects a pulse and this command consumes it.
+Call this when a soldier reports review-ready. This is the captain-side handler
+for busy soldier delivery.
 
 Flags:
   --sender <identity>  Override sender identity (default: home basename)`,
@@ -39,13 +35,7 @@ Flags:
 				}
 			}
 
-			// Read generation from the authoritative aggregate.
-			metaGeneration, err := currentTaskGeneration(ctx.Home, taskID)
-			if err != nil {
-				return fmt.Errorf("consume-ready: reading aggregate for %s: %w", taskID, err)
-			}
-
-			flushed, err := fleet.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration, newSessionSoldierEndpoints())
+			flushed, err := fleet.ConsumeReady(ctx.Home, taskID, senderIdentity, newSessionSoldierEndpoints())
 			if err != nil {
 				return fmt.Errorf("consume-ready: %w", err)
 			}
@@ -60,7 +50,7 @@ Flags:
 				Kind:          "consume-ready",
 				Status:        "success",
 				Data: MessageResult{
-					Message: fmt.Sprintf("consumed ready events for %s: %d command(s) flushed", taskID, flushed),
+					Message: fmt.Sprintf("consumed ready for %s: %d command(s) flushed", taskID, flushed),
 				},
 			})
 		}),

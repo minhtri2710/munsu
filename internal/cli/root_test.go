@@ -53,7 +53,6 @@ var canonicalCommands = []struct {
 	{name: "inbox", use: "inbox"},
 	{name: "turnend", use: "turnend"},
 	{name: "soldier-flush", use: "soldier-flush <id>"},
-	{name: "ready", use: "ready"},
 	{name: "consume-ready", use: "consume-ready <task-id>"},
 	{name: "context", use: "context"},
 	{name: "dashboard", use: "dashboard"},

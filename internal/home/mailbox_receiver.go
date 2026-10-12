@@ -281,6 +281,15 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 	if r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID) {
 		return nil, fmt.Errorf("receive envelope superseded: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
 	}
+	// An acked envelope stays until its sender reconciles; it is never
+	// delivered twice.
+	acked, err := r.store.readAck(r.rank, r.taskID, ref.SenderIdentity, ref.MessageID)
+	if err != nil {
+		return nil, fmt.Errorf("receive read ack: %w", err)
+	}
+	if acked != nil {
+		return nil, fmt.Errorf("receive envelope already acked: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
+	}
 
 	// 2. Load envelope from own inbox.
 	env, err := r.store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
@@ -362,7 +371,7 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 //  9. Envelope SenderRank is proven by the claim-directed durable provenance
 //     check (see verifySenderRank); current provenance is required before
 //     writing a new ack
-//  10. Write "accepted" ack and garbage-collect its payload
+//  10. Write "accepted" ack into the receiver's own ack log
 func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 1. Validate ref.
 	if err := ref.Validate(); err != nil {
@@ -374,7 +383,7 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 
 	// 2. Read the durable ack before the payload. A retained accepted ack is
 	// sufficient to replay a message whose payload was garbage-collected.
-	existing, err := r.store.ReadAck(ref.SenderIdentity, ref.MessageID)
+	existing, err := r.store.readAck(r.rank, r.taskID, ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		return nil, fmt.Errorf("ack read existing ack: %w", err)
 	}
@@ -396,9 +405,6 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 		if existing.Outcome != OutcomeAccepted {
 			return nil, fmt.Errorf("ack conflicting: existing outcome %q != %q",
 				existing.Outcome, OutcomeAccepted)
-		}
-		if existing.SenderIdentity != ref.SenderIdentity {
-			return nil, fmt.Errorf("ack existing record sender identity mismatch")
 		}
 		if existing.ReceiverID != r.identity {
 			return nil, fmt.Errorf("ack existing record receiver identity mismatch")
@@ -451,9 +457,7 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 			}
 			// Idempotent: same outcome, return existing ack preserving
 			// the original ProcessedAt timestamp. This validated replay
-			// does not require current sender provenance. A payload left by
-			// a crash after tombstone publication is safe to remove now.
-			r.store.removeInboxPayload(env.SenderIdentity, env.MessageID)
+			// does not require current sender provenance.
 			return existing, nil
 		}
 		// Conflicting outcome: fail closed.
@@ -481,10 +485,11 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        OutcomeAccepted,
 	}
+	// The ack goes to the receiver's own ack log; the payload stays for the
+	// sender's reconcile to remove (see RemoveAckedPayload).
 	if err := r.store.WriteAck(ack); err != nil {
 		return nil, fmt.Errorf("ack write ack: %w", err)
 	}
-	r.store.removeInboxPayload(env.SenderIdentity, env.MessageID)
 	return ack, nil
 }
 

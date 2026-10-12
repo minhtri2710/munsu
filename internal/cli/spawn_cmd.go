@@ -457,7 +457,8 @@ func newSoldierFlushCmd() *cobra.Command {
 		Short: "Flush one pending command to a soldier",
 		Long: `Read the captain's pending outbox for the given soldier and
 send the oldest pending command via SubmitPrompt, but only if the soldier
-is not busy. This is triggered by a review-ready event from the soldier.
+is not busy. Nothing runs it automatically: the dispatcher runs it, or
+'munsu consume-ready <id>', by hand.
 
 Idempotent: calling when no pending exists is a no-op.
 Calling when the soldier is busy returns with "still busy".

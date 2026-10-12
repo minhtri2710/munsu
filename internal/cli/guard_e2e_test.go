@@ -28,17 +28,27 @@ func TestGuardE2E_StaleBeatWarns(t *testing.T) {
 	}
 }
 
+// A missing beat warns the dispatcher; a soldier, which cannot repair its
+// dispatcher's watcher, skips the pre-run guard without opening the home.
 func TestGuardE2E_MissingBeatWarns(t *testing.T) {
-	tmpDir := t.TempDir()
-	initCLITestHome(t, tmpDir)
-	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "test-task", "scout")
-	stderr := captureStderr(func() { _ = guardWarnWatcher() })
-	if !strings.Contains(stderr, "WARNING:") {
-		t.Errorf("expected WARNING on stderr for missing beat, got: %s", stderr)
-	}
-	if !strings.Contains(stderr, "missing") {
-		t.Errorf("expected 'missing' status in warning, got: %s", stderr)
+	for _, tc := range []struct {
+		role string
+		warn bool
+	}{
+		{"general", true},
+		{"soldier", false},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			initCLITestHome(t, tmpDir)
+			t.Setenv("MUNSU_HOME", tmpDir)
+			t.Setenv("MUNSU_ROLE", tc.role)
+			writeTaskMeta(t, tmpDir, "test-task", "scout")
+			stderr := captureStderr(func() { _ = guardWarnWatcher() })
+			if got := strings.Contains(stderr, "WARNING:") && strings.Contains(stderr, "missing"); got != tc.warn {
+				t.Errorf("missing-beat warning = %v, want %v; stderr: %s", got, tc.warn, stderr)
+			}
+		})
 	}
 }
 

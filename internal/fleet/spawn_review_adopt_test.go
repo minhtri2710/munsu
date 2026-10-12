@@ -271,6 +271,9 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 	if !strings.Contains(script, "MUNSU_VERDICT_FILE") || !strings.HasPrefix(rr.launchDir, filepath.Join(f.homeDir, "review", "review-1")) {
 		t.Fatalf("launch dir %q script lacks the verdict file export", rr.launchDir)
 	}
+	if want := "export MUNSU_TASK_KIND=" + shQuote(taskauthority.KindReview) + "\n"; !strings.Contains(script, want) {
+		t.Fatalf("review launch script does not export %q:\n%s", want, script)
+	}
 	ship, err := f.auth.Get(mustFleetTaskID(t, "ship-1"))
 	if err != nil || ship.Worktree == nil || ship.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("reviewed task = %+v, %v; want it still working with its worktree", ship, err)

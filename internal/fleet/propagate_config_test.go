@@ -1351,7 +1351,7 @@ func TestPropagateConfig_AckedRequirementNotResent(t *testing.T) {
 		ProcessedAt:    1000,
 	})
 
-	if !captainStore.IsAcked(senderIdentity, envID) {
+	if ack, _ := captainStore.ReadOwnerAck(senderIdentity, envID); ack == nil {
 		t.Fatal("ack should be visible")
 	}
 

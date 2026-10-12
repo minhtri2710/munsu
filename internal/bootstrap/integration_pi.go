@@ -89,6 +89,8 @@ export default function (pi: ExtensionAPI) {
   // 1. Session-start: exactly once per native Pi session (including /reload).
   //    Invokes 'munsu session-start --output json' after safety check passes.
   pi.on("session_start", async (_event, ctx) => {
+    // A soldier seat runs no dispatcher session: munsu session-start refuses there.
+    if (process.env.MUNSU_ROLE === "soldier") return;
     // Restore pending wake state from persistent entry.
     // Scan NEWEST-TO-OLDEST, honor the newest entry per lease/generation.
     // An acknowledged tombstone (deliveryState === "acknowledged") or
@@ -173,6 +175,8 @@ export default function (pi: ExtensionAPI) {
   //    follow-up messages are exhausted. agent_end is NOT sufficient for
   //    status integration because Pi may still continue running.
   pi.on("agent_settled", async (_event, ctx) => {
+    // A soldier seat claims no wakes: munsu wake claim refuses there.
+    if (process.env.MUNSU_ROLE === "soldier") return;
     if (!ctx.isIdle() || pendingWake || claimInFlight) return;
     const modeResult = await pi.exec(MUNSU_BIN, ["config", "get", "wake-delivery-mode", "--output", "json"]);
     // Claim only when the mode is native or unset (exit 0, no output); a failed read never claims.

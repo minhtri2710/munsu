@@ -62,7 +62,7 @@ func TestResolvingOrAckingAnUplinkWakeAcceptsItsReport(t *testing.T) {
 			if err != nil || len(unaccepted) != 0 {
 				t.Fatalf("settling the wake: unaccepted = %v err = %v", unaccepted, err)
 			}
-			ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID)
+			ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", res.MessageID)
 			if err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
 				t.Fatalf("ack = %+v err = %v, want an accepted ack for message %s", ack, err, res.MessageID)
 			}
@@ -148,7 +148,7 @@ func TestResolveNormalizesBeforeAccepting(t *testing.T) {
 		if _, err := ResolveWake(generalHome, " "+claim.LeaseID+" ", " "+wakeEventID(wake)+" ", " seen "); err != nil {
 			t.Fatalf("ResolveWake with padded ids: %v", err)
 		}
-		if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack == nil {
+		if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", res.MessageID); err != nil || ack == nil {
 			t.Fatalf("ack = %+v err = %v, want the padded resolve to accept the report", ack, err)
 		}
 	})
@@ -166,7 +166,7 @@ func TestResolveNormalizesBeforeAccepting(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "claim-id, event-id, and summary are required") || len(unaccepted) != 0 {
 				t.Fatalf("unaccepted = %v err = %v, want the existing required refusal", unaccepted, err)
 			}
-			if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
+			if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", res.MessageID); err != nil || ack != nil {
 				t.Fatalf("ack = %+v err = %v, want none from a refused request", ack, err)
 			}
 			if held, _ := ListClaimedWakes(generalHome, time.Now()); len(held) == 0 {
@@ -198,7 +198,7 @@ func TestSettlingAWakeAcceptsOnlyTheReportItNames(t *testing.T) {
 	if _, err := ResolveWake(generalHome, claim.LeaseID, wakeEventID(signal), "seen"); err != nil {
 		t.Fatalf("ResolveWake: %v", err)
 	}
-	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
+	if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", res.MessageID); err != nil || ack != nil {
 		t.Fatalf("ack = %+v err = %v, want none: the uplink wake was not settled", ack, err)
 	}
 }
@@ -219,10 +219,10 @@ func TestSettlingTheWakeOfASupersededReportSucceeds(t *testing.T) {
 			t.Fatalf("resolving %s: unaccepted = %v err = %v, want a superseded report skipped, not listed", wakeEventID(w), unaccepted, err)
 		}
 	}
-	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", second.MessageID); err != nil || ack == nil {
+	if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", second.MessageID); err != nil || ack == nil {
 		t.Fatalf("the live report must be accepted: ack = %+v err = %v", ack, err)
 	}
-	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", first.MessageID); err != nil || ack != nil {
+	if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", first.MessageID); err != nil || ack != nil {
 		t.Fatalf("the superseded report must stay unacked: ack = %+v err = %v", ack, err)
 	}
 }

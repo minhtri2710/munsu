@@ -88,7 +88,7 @@ func TestAFKReturnAcceptsTheDrainedUplinkReports(t *testing.T) {
 		t.Fatalf("routine reports = %q, want %q printed in:\n%s", report.RoutineReports, wantRoutine, report.String())
 	}
 	for state, id := range ids {
-		if ack, err := home.NewStore(generalHome).ReadAck("direct-task", id); err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
+		if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", id); err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
 			t.Fatalf("%s report ack = %+v err = %v, want accepted", state, ack, err)
 		}
 	}
@@ -120,7 +120,7 @@ func TestAFKReturnAcceptsNothingForAnEntryWithoutARef(t *testing.T) {
 	if report.DigestedCount != 1 || len(report.UnacceptedReports) != 0 {
 		t.Fatalf("report = %+v, want the signal entry drained and nothing unaccepted", report)
 	}
-	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", res.MessageID); err != nil || ack != nil {
+	if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", res.MessageID); err != nil || ack != nil {
 		t.Fatalf("ack = %+v err = %v, want none for an envelope no digest entry names", ack, err)
 	}
 }
@@ -146,7 +146,7 @@ func TestAFKReturnReportsAConflictingAckAndKeepsTheDigest(t *testing.T) {
 	if !report.HasActionable() || !strings.Contains(report.String(), "not accepted") {
 		t.Fatalf("a failed accept must be actionable and printed:\n%s", report.String())
 	}
-	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", ids["failed"]); err != nil || ack == nil || ack.Outcome != home.OutcomeDone {
+	if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", ids["failed"]); err != nil || ack == nil || ack.Outcome != home.OutcomeDone {
 		t.Fatalf("existing ack = %+v err = %v, want it untouched", ack, err)
 	}
 }
@@ -217,7 +217,7 @@ func TestAFKReturnKeepsTheDigestUntilItsReportsAreAccepted(t *testing.T) {
 	if !failed.HasActionable() || !strings.Contains(failed.String(), "digest not removed") {
 		t.Fatalf("a leftover digest must be actionable and printed:\n%s", failed.String())
 	}
-	if ack, err := home.NewStore(generalHome).ReadAck("direct-task", ids["done"]); err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
+	if ack, err := home.NewStore(generalHome).ReadOwnerAck("direct-task", ids["done"]); err != nil || ack == nil || ack.Outcome != home.OutcomeAccepted {
 		t.Fatalf("ack = %+v err = %v, want the report accepted before the removal was attempted", ack, err)
 	}
 	if _, err := os.Stat(digestPath); err != nil {

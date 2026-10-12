@@ -41,7 +41,6 @@ func TestCaptainHomeCommandsIdentityGuard(t *testing.T) {
 	}{
 		{"task", "resolving task owner", map[string]string{"MUNSU_ROLE": "general"}, []string{"task", "add", "t1", "desc"}, false},
 		{"consume-ready", "consume-ready: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"consume-ready", "t1"}, false},
-		{"soldier report", "report: deriving sender identity", map[string]string{"MUNSU_ROLE": "soldier", "MUNSU_TASK_ID": "t1"}, []string{"report", "review-ready", "ready", "--ring", "no-ring"}, false},
 		{"captain report", "report: deriving sender identity", map[string]string{"MUNSU_ROLE": "captain", "MUNSU_TASK_ID": "t1"}, []string{"report", "done", "finished", "--ring", "no-ring"}, false},
 		{"send", "send: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"send", "t1", "line"}, true},
 		{"soldier-flush", "soldier-flush: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"soldier-flush", "t1"}, false},
