@@ -355,9 +355,8 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			continue
 		}
 		ts := TaskSnapshot{
-			ID: id, Project: meta["project"], Kind: "captain", Home: homeLabel, Source: source,
-			Harness: meta["harness"], Model: meta["model"], Mode: meta["mode"], Yolo: meta["yolo"],
-			Window: meta["window"], Worktree: meta["worktree"], PaneAliveUnknown: true,
+			ID: id, Kind: "captain", Home: homeLabel, Source: source,
+			Harness: meta["harness"], Window: meta["window"], PaneAliveUnknown: true,
 		}
 		tasks = append(tasks, ts)
 	}
@@ -510,9 +509,6 @@ type EndpointRef struct {
 	WorkspaceID  string
 	TabID        string
 	Home         string
-	// Incarnation is the opaque generation-bound endpoint identity (when known)
-	// used to freshness cross-check observations of the exact binding.
-	Incarnation string
 	// Harness is the task's harness name; a backend without agent registration
 	// needs it to match the pane's foreground process.
 	Harness string

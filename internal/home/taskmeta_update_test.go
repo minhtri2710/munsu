@@ -45,7 +45,7 @@ func TestUpdateMetaRefusesUnreadableMeta(t *testing.T) {
 	}
 	beforeHash := sha256.Sum256(before)
 	err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
-		meta["attestation_generation"] = "1"
+		meta["sample"] = "1"
 		return nil
 	})
 	if err == nil {
@@ -64,13 +64,13 @@ func TestUpdateMetaRefusesUnreadableMeta(t *testing.T) {
 	if !strings.Contains(string(raw), "worktree=/tmp/wt") {
 		t.Error("pre-existing worktree key was erased by a refused update")
 	}
-	if strings.Contains(string(raw), "attestation_generation") {
+	if strings.Contains(string(raw), "sample") {
 		t.Error("refused update wrote its own key anyway")
 	}
 	if string(before) != string(raw) || beforeHash != afterHash {
 		t.Fatalf("refused update changed meta: before=%x after=%x", beforeHash, afterHash)
 	}
-	t.Logf("attempted projection key absent: attestation_generation")
+	t.Logf("attempted projection key absent: sample")
 }
 
 // TestReadMetaFileToleratesOversizedLine pins the deliberate contract split
@@ -130,7 +130,7 @@ func TestUpdateMetaPreservesUnmutatedKeys(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
-		meta["attestation_generation"] = "1"
+		meta["sample"] = "1"
 		delete(meta, "worktree")
 		return nil
 	}); err != nil {
@@ -144,13 +144,13 @@ func TestUpdateMetaPreservesUnmutatedKeys(t *testing.T) {
 	if meta["project"] != "munsu" {
 		t.Errorf("project = %q, want %q", meta["project"], "munsu")
 	}
-	if meta["attestation_generation"] != "1" {
-		t.Errorf("attestation_generation = %q, want %q", meta["attestation_generation"], "1")
+	if meta["sample"] != "1" {
+		t.Errorf("sample = %q, want %q", meta["sample"], "1")
 	}
 	if _, ok := meta["worktree"]; ok {
 		t.Error("a key the mutation deleted survived the update")
 	}
-	t.Logf("merged persisted state: project=%q, attestation_generation=%q, worktree absent", meta["project"], meta["attestation_generation"])
+	t.Logf("merged persisted state: project=%q, sample=%q, worktree absent", meta["project"], meta["sample"])
 }
 
 // TestUpdateMetaSerializesConcurrentUpdates proves the advisory lock covers
@@ -242,7 +242,7 @@ func TestUpdateMetaUnchangedLeavesExistingFileByte(t *testing.T) {
 	}
 
 	if err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
-		meta["attestation_generation"] = "1"
+		meta["sample"] = "1"
 		return ErrMetaUnchanged
 	}); err != nil {
 		t.Fatalf("UpdateMeta: %v", err)
@@ -255,7 +255,7 @@ func TestUpdateMetaUnchangedLeavesExistingFileByte(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatalf("abandoned update changed meta: before=%q after=%q", before, after)
 	}
-	if strings.Contains(string(after), "attestation_generation") {
+	if strings.Contains(string(after), "sample") {
 		t.Error("abandoned update persisted the key the callback set before abandoning")
 	}
 }
@@ -272,7 +272,7 @@ func TestUpdateMetaCallbackErrorRefusesWrite(t *testing.T) {
 
 	sentinel := errors.New("precondition not met")
 	err := UpdateMeta(homeDir, id, func(meta map[string]string) error {
-		meta["attestation_generation"] = "1"
+		meta["sample"] = "1"
 		return sentinel
 	})
 	if !errors.Is(err, sentinel) {
@@ -283,7 +283,7 @@ func TestUpdateMetaCallbackErrorRefusesWrite(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("ReadMeta: %v", readErr)
 	}
-	if _, ok := meta["attestation_generation"]; ok {
+	if _, ok := meta["sample"]; ok {
 		t.Error("a refused update persisted the key the callback set before refusing")
 	}
 	if meta["project"] != "munsu" {

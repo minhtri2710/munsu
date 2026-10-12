@@ -4,15 +4,11 @@ package fleet
 
 import (
 	"encoding/json"
-	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -217,57 +213,6 @@ func TestCheckCapabilityAttestationBlocksReadyToUnsupportedLoss(t *testing.T) {
 	changed, detail := CheckCapabilityAttestation(att)
 	if !changed || !strings.Contains(detail, `capability "no-mistakes" changed from`) {
 		t.Fatalf("CheckCapabilityAttestation = %v, %q; want a Ready -> Unsupported loss", changed, detail)
-	}
-}
-
-// --- projectAttestationEvidence projection tests ---
-
-func TestProjectAttestationEvidence_PreservesExistingMeta(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-preserve"
-
-	// Write initial meta with existing fields.
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{
-		"project": "existing-project",
-		"kind":    "ship",
-	}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	if projErr := projectAttestationEvidence(homeDir, taskID, taskauthority.Generation(1)); projErr != nil {
-		t.Fatalf("projectAttestationEvidence: %v", projErr)
-	}
-
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if meta["kind"] != "ship" {
-		t.Errorf("kind should be preserved, got %q", meta["kind"])
-	}
-	if meta["attestation_generation"] != "1" {
-		t.Errorf("attestation_generation = %q, want %q", meta["attestation_generation"], "1")
-	}
-}
-
-// TestProjectAttestationEvidence_TypedPartialError proves a projection
-// failure returns a typed partial error.
-func TestProjectAttestationEvidence_TypedPartialError(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-projection-failure"
-
-	// Make the state path unwritable so the projection write fails.
-	if err := os.WriteFile(filepath.Join(homeDir, "state"), []byte("block"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	projErr := projectAttestationEvidence(homeDir, taskID, taskauthority.Generation(1))
-	var typed *AttestationProjectionError
-	if !errors.As(projErr, &typed) {
-		t.Fatalf("projection error = %v, want *AttestationProjectionError", projErr)
-	}
-	if typed.TaskID != taskID {
-		t.Fatalf("typed error task = %q, want %q", typed.TaskID, taskID)
 	}
 }
 

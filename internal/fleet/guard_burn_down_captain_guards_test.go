@@ -143,40 +143,32 @@ func TestEmitReadyEvent_EmptyTaskID(t *testing.T) {
 	}
 }
 
-func TestValidateReadyEvent_KeyMismatch(t *testing.T) {
-	ev := &ReadyEvent{EventID: "e1", TaskID: "t1", Key: "actual-key"}
-	err := ValidateReadyEvent(ev, "t1", "expected-key", "")
-	if err == nil || !strings.Contains(err.Error(), "ready event: key mismatch") {
-		t.Fatalf("ValidateReadyEvent err = %v, want key mismatch", err)
-	}
-}
-
 func TestValidateReadyEvent_NilEvent(t *testing.T) {
-	err := ValidateReadyEvent(nil, "t1", "k1", "1")
+	err := ValidateReadyEvent(nil, "t1", "1")
 	if err == nil || !strings.Contains(err.Error(), "ready event: nil") {
 		t.Fatalf("ValidateReadyEvent err = %v, want nil event", err)
 	}
 }
 
 func TestValidateReadyEvent_GenerationMismatch(t *testing.T) {
-	ev := &ReadyEvent{EventID: "e1", TaskID: "t1", Key: "k1", EndpointGeneration: 1}
-	err := ValidateReadyEvent(ev, "t1", "k1", "2")
+	ev := &ReadyEvent{EventID: "e1", TaskID: "t1", EndpointGeneration: 1}
+	err := ValidateReadyEvent(ev, "t1", "2")
 	if err == nil || !strings.Contains(err.Error(), "ready event: generation mismatch 1 != 2 (stale event)") {
 		t.Fatalf("ValidateReadyEvent err = %v, want generation mismatch", err)
 	}
 }
 
 func TestValidateReadyEvent_EmptyEventID(t *testing.T) {
-	ev := &ReadyEvent{EventID: "", TaskID: "t1", Key: "k1"}
-	err := ValidateReadyEvent(ev, "t1", "k1", "")
+	ev := &ReadyEvent{EventID: "", TaskID: "t1"}
+	err := ValidateReadyEvent(ev, "t1", "")
 	if err == nil || !strings.Contains(err.Error(), "ready event: empty event ID") {
 		t.Fatalf("ValidateReadyEvent err = %v, want empty event ID", err)
 	}
 }
 
 func TestValidateReadyEvent_TaskIDMismatch(t *testing.T) {
-	ev := &ReadyEvent{EventID: "e1", TaskID: "task-actual", Key: "k1"}
-	err := ValidateReadyEvent(ev, "task-expected", "k1", "")
+	ev := &ReadyEvent{EventID: "e1", TaskID: "task-actual"}
+	err := ValidateReadyEvent(ev, "task-expected", "")
 	if err == nil || !strings.Contains(err.Error(), "ready event: task ID mismatch") {
 		t.Fatalf("ValidateReadyEvent err = %v, want task ID mismatch", err)
 	}

@@ -148,7 +148,7 @@ func runFleetSnapshot(cmd *cobra.Command, ctx Ctx) error {
 		}
 		row := Soldier{TaskID: entry.ID, Status: status}
 		if fields["branch"] {
-			row.Branch = branchFor(map[string]string{"worktree": entry.Worktree})
+			row.Branch = branchFor(entry.Worktree)
 		}
 		soldiers = append(soldiers, row)
 	}

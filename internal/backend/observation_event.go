@@ -25,19 +25,16 @@ import (
 type EventCursor string
 
 // ObservationSignal is the normalized wake/activity hint produced by a native
-// event source. It carries endpoint identity, the opaque
-// incarnation the adapter can attest (empty when it cannot — P1a rule: an
-// adapter never fabricates incarnation), the activity hint, source, timestamp
-// and cursor. It has NO lifecycle axis: an event hint is never dead/alive and
-// never a Task phase.
+// event source. It carries endpoint identity, the activity hint, source,
+// timestamp and cursor. It has NO lifecycle axis: an event hint is never
+// dead/alive and never a Task phase.
 type ObservationSignal struct {
-	Endpoint    EndpointRef
-	Incarnation string            // opaque; empty when the adapter cannot attest it
-	Activity    Activity          // busy/idle/blocked/unknown hint
-	Source      ObservationSource // SourceEvent
-	ObservedAt  time.Time
-	Cursor      EventCursor
-	Detail      string
+	Endpoint   EndpointRef
+	Activity   Activity          // busy/idle/blocked/unknown hint
+	Source     ObservationSource // SourceEvent
+	ObservedAt time.Time
+	Cursor     EventCursor
+	Detail     string
 }
 
 // Valid reports whether every axis of the signal is usable. A usable signal

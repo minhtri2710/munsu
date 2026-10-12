@@ -206,7 +206,7 @@ func TestSendCmd_CaptainSendFailsGracefully(t *testing.T) {
 	// fail gracefully (not hit the uplink guard). No outbox for new sends;
 	// pending is retained durably until converge reconciles the ack.
 	tmpDir := t.TempDir()
-	metaContent := "window=@dead\nbackend=herdr\nkind=captain\nsm_id=munsu\nhome=/tmp/captain-home\n"
+	metaContent := "kind=captain\nsm_id=munsu\nhome=" + filepath.Join(tmpDir, "captain-home") + "\n"
 	writeRawTaskMeta(t, tmpDir, "captain:munsu", metaContent)
 
 	root := NewRootCommand()
@@ -428,7 +428,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	}
 
 	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs the generation's report)
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
+	metaContent := "kind=scout\nworktree=/nonexistent\n"
 	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 
 	// Create status with material state so uplinkCheck can detect it
@@ -495,7 +495,7 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	// spawn.
 	seedRetireAuthority(t, tmpDir, soldierID)
 
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
+	metaContent := "kind=scout\nworktree=/nonexistent\n"
 	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
@@ -547,7 +547,7 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	seedRetireAuthority(t, tmpDir, soldierID)
 	termKey := "uplink"
 
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
+	metaContent := "kind=scout\nworktree=/nonexistent\n"
 	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
 	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)

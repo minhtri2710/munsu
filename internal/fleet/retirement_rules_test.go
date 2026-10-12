@@ -27,7 +27,6 @@ func TestRetirementRules(t *testing.T) {
 		{"outcome of its own authorization does not block", deliveryReauthorizedBlock, deliveryOwnOutcomeAllow},
 		{"another task's delivery lock does not hold an unrelated task", deliveryLockHeldOwnBlock, unrelatedTaskNoWaitAllow},
 		{"review names no worktree, even with force", reviewWorktreeBlock, reviewWorktreeAllow},
-		{"review names no branch, force overrides", reviewBranchBlock, reviewBranchForceAllow},
 		{"abort needs the endpoint proven absent", abortLiveEndpointBlock, abortAbsentEndpointAllow},
 		{"stale teardown never retires a reopened generation", staleRetryBlock, explicitGenerationAllow},
 		{"terminal cleanup claim is never resumed", terminalCleanupClaimBlock, activeCleanupClaimAllow},

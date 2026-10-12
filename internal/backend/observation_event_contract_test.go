@@ -167,9 +167,6 @@ func TestHerdrEventSource_Wait_NormalizedSignal(t *testing.T) {
 	if sig.Cursor != "42" {
 		t.Errorf("Cursor = %q, want 42", sig.Cursor)
 	}
-	if sig.Incarnation != "" {
-		t.Errorf("Incarnation = %q, want empty (adapter cannot attest opaque incarnation)", sig.Incarnation)
-	}
 	if sig.ObservedAt.IsZero() {
 		t.Error("ObservedAt must be set")
 	}

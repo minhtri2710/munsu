@@ -55,7 +55,7 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}
-	dirs, files, binDirs, err := harnessState(l.Harness, userHome, p.stateDir)
+	dirs, binDirs, err := harnessState(l.Harness, userHome, p.stateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,6 @@ func New(l Launch) (*Fence, error) {
 		allow(&b, "subpath", paths...)
 	}
 	allowRoots(append([]string{"/private/tmp", "/private/var/folders", "/dev"}, dirs...)...)
-	allowFiles(&b, files...)
 	deny(&b, "subpath", protected...)
 	if l.Role == RoleReviewer && p.home != "" {
 		// A reviewer's home roots stay refused even under a temp root; only its
@@ -113,6 +112,21 @@ func New(l Launch) (*Fence, error) {
 		allow(&b, "literal", gitBranchFiles(p.commonDir, branch)...)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
+	}
+	if p.home != "" {
+		// After every allow, so they hold wherever the home lives, a temp root
+		// included. The unfenced munsu builds what a claude or pi process loads
+		// in the seat build dir. Every task's seat dir in state/ is refused, so
+		// a seat cannot plant or change the config another task's seat (its own
+		// reviewer included) starts from; only its own dir is allowed back.
+		// Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1085 (quoted at
+		// harnessState); Supervisor decision G1099.
+		deny(&b, "subpath", harness.SeatBuildDir(p.home))
+		denySeatDirs(&b, filepath.Join(p.home, "state"))
+		if p.stateDir != "" {
+			allowRoots(p.stateDir)
+		}
 	}
 	// Last, so nothing above reopens it: a seat's PATH directories, and every
 	// ancestor's own name so a directory cannot be renamed or removed away and
@@ -386,33 +400,37 @@ func gitBranchFiles(commonDir, branch string) []string {
 	return out
 }
 
-// harnessState returns the writable state of a harness kind, including the
-// launch's own state dir for a kind that has one: directories and single files
-// (with their atomic temp siblings). binDirs are the directories inside those
-// roots that the harness itself puts on its commands' PATH, which the seat must
-// not write. An unmodeled kind fails closed.
+// harnessState returns the writable directories of a harness kind, and for pi
+// the launch's own state dir. binDirs are the directories inside those roots
+// that the harness itself puts on its commands' PATH, which the seat must not
+// write. An unmodeled kind fails closed.
+//
+// A claude seat writes its own config dir (CLAUDE_CONFIG_DIR, the launch's
+// state dir, which New opens inside state/) and claude's log cache, never ~/.claude or ~/.claude.json: the
+// unfenced General's claude loads hooks, settings, skills, plugins and memory
+// from those. The seat's dir links the Human's config read-only (the fence
+// resolves links). Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1085: "Quy tắc chung (Recommended):
+// Seat có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
+// fence sẽ chạy, và không gửi input vào session ngoài session của nó."
 //
 // Claude puts none on PATH (2.1.296 appends only a host-supplied dir the CLI
 // never sets). Pi prepends <agent dir>/bin to every command its bash tool runs,
 // where the agent dir is PI_CODING_AGENT_DIR (the launch's state dir) or
 // ~/.pi/agent, which also holds the user's pi launcher.
-func harnessState(kind, userHome, stateDir string) (dirs, files, binDirs []string, err error) {
-	if stateDir != "" && kind != harness.Pi {
-		return nil, nil, nil, fmt.Errorf("fence: harness %q has no per-launch state dir", kind)
-	}
+func harnessState(kind, userHome, stateDir string) (dirs, binDirs []string, err error) {
 	switch kind {
 	case harness.Claude:
-		return []string{filepath.Join(userHome, ".claude"), filepath.Join(userHome, "Library", "Caches", "claude-cli-nodejs")},
-			[]string{filepath.Join(userHome, ".claude.json")}, nil, nil
+		return []string{filepath.Join(userHome, "Library", "Caches", "claude-cli-nodejs")}, nil, nil
 	case harness.Pi:
 		agent := filepath.Join(userHome, ".pi", "agent")
 		dirs, binDirs = []string{agent}, []string{filepath.Join(agent, "bin")}
 		if stateDir != "" {
 			dirs, binDirs = append(dirs, stateDir), append(binDirs, filepath.Join(stateDir, "bin"))
 		}
-		return dirs, nil, binDirs, nil
+		return dirs, binDirs, nil
 	}
-	return nil, nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
+	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
 }
 
 // goCaches returns the Go build cache, module cache (with the checksum db) and
@@ -514,6 +532,14 @@ func rule(b *strings.Builder, verb, op, filter string, paths []string) {
 		b.WriteString(" (" + filter + " " + quote(p) + ")")
 	}
 	b.WriteString(")\n")
+}
+
+// denySeatDirs refuses creating, or writing inside, any per-task seat dir in
+// state: <durable key>.<harness.ClaudeConfigDirSuffix or PiAgentDirSuffix>.
+func denySeatDirs(b *strings.Builder, state string) {
+	suffixes := regexp.QuoteMeta(harness.ClaudeConfigDirSuffix) + "|" + regexp.QuoteMeta(harness.PiAgentDirSuffix)
+	b.WriteString(`(deny file-write* (regex (string-append "^" (regex-quote ` + quote(state+"/") + `) ` +
+		quote(`[^/]+\.(`+suffixes+`)(/|$)`) + `)))` + "\n")
 }
 
 // allowFiles allows each exact file and its atomic-write temp siblings

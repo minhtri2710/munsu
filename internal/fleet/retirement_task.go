@@ -1290,13 +1290,10 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 // manifest or merge, so there is nothing to land and no proof to emit. The
 // reviewed worktree belongs to the reviewed ship task; retirement releases
 // only evidence.Worktree, which a review never has, so it cannot release it.
-// A worktree in the meta is refused even with --force; a branch only without.
+// A worktree in the meta is refused even with --force.
 func reviewSafetyCheck(opts Options, meta map[string]string) error {
 	if meta["worktree"] != "" {
 		return fmt.Errorf("review task %s meta names a worktree; a review owns none", opts.ID)
-	}
-	if !opts.Force && meta["branch"] != "" {
-		return fmt.Errorf("review task %s meta names a branch; a review owns none (use --force to override)", opts.ID)
 	}
 	return nil
 }

@@ -124,7 +124,8 @@ var Adapters = map[string]Adapter{
 			SkillDeny: []string{"--disallowedTools", "Skill(" + OrchestrationSkill + ")"},
 			Separator: "--",
 		},
-		QuestionDeny: []string{"--disallowedTools", "AskUserQuestion"},
+		QuestionDeny:   []string{"--disallowedTools", "AskUserQuestion"},
+		StateArtifacts: []string{ClaudeConfigDirSuffix},
 	},
 	Codex: {
 		Name:       Codex,
