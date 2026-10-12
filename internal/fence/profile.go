@@ -73,7 +73,8 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
-	denySessionSockets(&b, sessionSocketDirs())
+	socketDirs, keepSockets := sessionSocketDirs(userHome)
+	denySessionSockets(&b, socketDirs)
 	// Later rules win in a sandbox profile: broad allows first, then the
 	// protected denies, then the seat's own roots and git carve-outs.
 	var roots []string // every subpath this profile makes writable
@@ -168,6 +169,7 @@ func New(l Launch) (*Fence, error) {
 	deny(&b, "subpath", pathDirs...)
 	deny(&b, "literal", locked...)
 	denyUnlink(&b, removable...)
+	denySocketRemoval(&b, keepSockets)
 
 	// The probe proves the home roots refused: every soldier root (G1058,
 	// quoted above), and a reviewer's state/. For a no-mistakes soldier it also
@@ -519,45 +521,91 @@ func harnessState(kind, userHome, stateDir string) (dirs, binDirs []string, err 
 	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
 }
 
-// The parents of other sessions' input sockets, as variables so tests point them
-// into scratch: claude's per-process message sockets, and the directory tmux
-// makes its tmux-<uid> socket dir in when TMUX_TMPDIR is unset.
-var (
-	claudeSocketDir = "/private/tmp/cc-socks"
-	tmuxTempDir     = "/private/tmp"
-)
+// socketTempDir is the temp root claude and tmux make their socket dirs in when
+// no environment variable moves them; a variable so tests point it into scratch.
+var socketTempDir = "/private/tmp"
 
-// sessionSocketDirs are the directories that hold another session's input
-// socket: claude's message sockets, and tmux's server sockets under its default
-// dir and under TMUX_TMPDIR as munsu's own environment sets it.
-func sessionSocketDirs() []string {
-	tmux := "tmux-" + strconv.Itoa(os.Getuid())
-	dirs := []string{claudeSocketDir, filepath.Join(tmuxTempDir, tmux)}
-	if d := os.Getenv("TMUX_TMPDIR"); d != "" {
-		if r, err := resolvePath(filepath.Join(d, tmux), false); err == nil {
-			dirs = append(dirs, r)
+// sessionSocketDirs returns the directories that hold another session's input
+// socket, as munsu's own environment places them, and the subset whose entries
+// a seat may not remove or replace:
+//   - claude's message sockets: cc-socks under the temp root, XDG_RUNTIME_DIR or
+//     CLAUDE_CODE_TMPDIR, and its per-uid fallback cc-socks-<uid>;
+//   - tmux's server sockets: tmux-<uid> under the temp root or TMUX_TMPDIR;
+//   - herdr's server and client sockets: herdr under ~/.config or
+//     XDG_CONFIG_HOME, and the dirs HERDR_SOCKET_PATH and
+//     HERDR_CLIENT_SOCKET_PATH name.
+//
+// A variable that resolvePath refuses (relative, say) is left out without
+// error. claude's explicit --messaging-socket-path can name any dir; no rule
+// covers it. Only cc-socks and tmux-<uid> are kept from removal (G1149's
+// letter); cc-socks-<uid> and the claude dirs the variables move stay open.
+func sessionSocketDirs(userHome string) (connect, keep []string) {
+	uid := strconv.Itoa(os.Getuid())
+	resolved := func(p string) []string {
+		if r, err := resolvePath(p, false); err == nil {
+			return []string{r}
 		}
+		return nil
 	}
-	return dedupe(dirs)
+	env := func(name, elem string) []string {
+		v := os.Getenv(name)
+		if v == "" {
+			return nil
+		}
+		if elem == "" {
+			return resolved(filepath.Dir(v))
+		}
+		return resolved(filepath.Join(v, elem))
+	}
+	keep = dedupe(slices.Concat([]string{filepath.Join(socketTempDir, "cc-socks"), filepath.Join(socketTempDir, "tmux-"+uid)},
+		env("TMUX_TMPDIR", "tmux-"+uid)))
+	connect = dedupe(slices.Concat(keep, []string{filepath.Join(socketTempDir, "cc-socks-"+uid)},
+		env("XDG_RUNTIME_DIR", "cc-socks"), env("CLAUDE_CODE_TMPDIR", "cc-socks"),
+		resolved(filepath.Join(userHome, ".config", "herdr")), env("XDG_CONFIG_HOME", "herdr"),
+		env("HERDR_SOCKET_PATH", ""), env("HERDR_CLIENT_SOCKET_PATH", "")))
+	return connect, keep
 }
 
 // denySessionSockets refuses connecting to any unix socket under dirs, so a
-// seat cannot inject messages into another claude session or type into another
-// tmux pane. Each dir is its own remote term: two path filters inside one term
-// match only together, so the second would never refuse. Human words
-// (domain.Words): grantor the Human, channel supervisor-relay:dialog,
-// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không
-// bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và
-// không gửi input vào session ngoài session của nó."
+// seat cannot inject messages into another claude session, type into another
+// tmux pane, or drive any herdr pane, its own included. Each dir is its own
+// remote term: two path filters inside one term match only together, so the
+// second would never refuse. Human words (domain.Words), each grantor the
+// Human, channel supervisor-relay:dialog, words=selected: G1085: "Quy tắc
+// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu
+// hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào session
+// ngoài session của nó." G1148: "Chặn hẳn (Recommended): deny the herdr socket
+// entirely for fenced seats".
 //
-// The herdr socket stays reachable pending Human words on own-pane self-report
-// (fence-session-socket part 2).
+// Deny-all (G1150) waits on the Human's ruling on the no-mistakes daemon
+// socket, which a no-mistakes soldier's gate push and axi commands dial; when
+// the ruling lands, a deny of every unix-socket connect with its carve-outs
+// replaces this per-dir list.
 func denySessionSockets(b *strings.Builder, dirs []string) {
 	b.WriteString("(deny network-outbound")
 	for _, d := range dirs {
 		b.WriteString(" (remote unix-socket (subpath " + quote(d) + "))")
 	}
 	b.WriteString(")\n")
+}
+
+// denySocketRemoval refuses unlinking or renaming each dir, anything in it, and
+// each ancestor's own name, so a seat cannot remove another session's socket
+// and bind its own in its place, nor move the dir or a parent away and plant a
+// tree of its own. Creating a socket stays allowed: the seat's own claude binds
+// its socket in cc-socks. Its own socket stays behind at exit, which the words
+// accept. Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1149: "Chặn (Recommended): deny
+// unlink/rename/replace of sockets in /tmp/cc-socks and the tmux dir".
+func denySocketRemoval(b *strings.Builder, dirs []string) {
+	rule(b, "deny", "file-write-unlink", "subpath", dirs)
+	var ancestors []string
+	for _, d := range dirs {
+		for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
+			ancestors = append(ancestors, a)
+		}
+	}
+	denyUnlink(b, dedupe(ancestors)...)
 }
 
 // goCaches returns the Go build cache, module cache (with the checksum db) and

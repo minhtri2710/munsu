@@ -625,29 +625,42 @@ func connects(t *testing.T, f *Fence, sock string) (bool, error) {
 	return <-got == "typed", runErr
 }
 
-// A seat, soldier or reviewer, connects to no other session's input socket:
-// claude's message sockets, or a tmux server under its default dir or under
-// TMUX_TMPDIR (G1085). The allow rows are the nearest valid connects: a socket
-// in a sibling temp dir, and the herdr socket, which part 2 has not fenced yet.
-// The dirs sit in short scratch paths (a unix socket path is capped near 104
-// bytes), never the live ones.
-func TestSeatCannotReachAnotherSessionsSocket(t *testing.T) {
-	scratch, err := os.MkdirTemp("/tmp", "fsock-")
+// socketScratch points the socket temp root, HOME and every variable that moves
+// a session socket dir into scratch, never the live dirs. The temp root sits in
+// a short path: a unix socket path is capped near 104 bytes.
+func socketScratch(t *testing.T) (tmp, uhome string) {
+	t.Helper()
+	tmp, err := os.MkdirTemp("/tmp", "fsock-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(scratch) })
-	if scratch, err = filepath.EvalSymlinks(scratch); err != nil {
+	t.Cleanup(func() { os.RemoveAll(tmp) })
+	if tmp, err = filepath.EvalSymlinks(tmp); err != nil {
 		t.Fatal(err)
 	}
-	origClaude, origTmux := claudeSocketDir, tmuxTempDir
-	t.Cleanup(func() { claudeSocketDir, tmuxTempDir = origClaude, origTmux })
-	claudeSocketDir, tmuxTempDir = filepath.Join(scratch, "cc-socks"), filepath.Join(scratch, "tmp")
-	t.Setenv("TMUX_TMPDIR", filepath.Join(scratch, "tmuxtmp"))
-	herdrSock := filepath.Join(scratch, "herdr", "herdr.sock")
-	t.Setenv("HERDR_SOCKET_PATH", herdrSock)
-	tmux := "tmux-" + strconv.Itoa(os.Getuid())
+	orig := socketTempDir
+	t.Cleanup(func() { socketTempDir = orig })
+	socketTempDir = tmp
+	uhome = seatEnv(t, outsideDir(t))
+	for k, v := range map[string]string{
+		"XDG_RUNTIME_DIR": filepath.Join(tmp, "run"), "CLAUDE_CODE_TMPDIR": filepath.Join(tmp, "cct"),
+		"TMUX_TMPDIR": filepath.Join(tmp, "tmuxtmp"), "XDG_CONFIG_HOME": filepath.Join(tmp, "xdg"),
+		"HERDR_SOCKET_PATH": filepath.Join(tmp, "hs", "s.sock"), "HERDR_CLIENT_SOCKET_PATH": filepath.Join(tmp, "hc", "c.sock"),
+	} {
+		t.Setenv(k, v)
+	}
+	return tmp, uhome
+}
 
+// A seat, soldier or reviewer, connects to no other session's input socket:
+// claude's message sockets wherever claude puts them, a tmux server under its
+// default dir or TMUX_TMPDIR, or herdr's server and client sockets, which
+// reach every pane, the seat's own included (G1085, G1148). The allow rows are
+// the nearest valid connects: a socket in a sibling temp dir, and one beside
+// herdr's dir.
+func TestSeatCannotReachAnotherSessionsSocket(t *testing.T) {
+	tmp, uhome := socketScratch(t)
+	uid := strconv.Itoa(os.Getuid())
 	l := newLayout(t)
 	for _, role := range []struct {
 		name string
@@ -658,11 +671,18 @@ func TestSeatCannotReachAnotherSessionsSocket(t *testing.T) {
 			sock    string
 			refused bool
 		}{
-			{"another claude session's message socket", filepath.Join(claudeSocketDir, "1.sock"), true},
-			{"a tmux server under its default dir", filepath.Join(tmuxTempDir, tmux, "default"), true},
-			{"a tmux server under TMUX_TMPDIR, the third term of one deny", filepath.Join(scratch, "tmuxtmp", tmux, "default"), true},
-			{"a socket in a sibling temp dir", filepath.Join(tmuxTempDir, "other", "s.sock"), false},
-			{"the herdr socket until part 2", herdrSock, false},
+			{"another claude session's message socket", filepath.Join(tmp, "cc-socks", "1.sock"), true},
+			{"claude's per-uid fallback socket", filepath.Join(tmp, "cc-socks-"+uid, "1.sock"), true},
+			{"claude's socket under XDG_RUNTIME_DIR", filepath.Join(tmp, "run", "cc-socks", "1.sock"), true},
+			{"claude's socket under CLAUDE_CODE_TMPDIR", filepath.Join(tmp, "cct", "cc-socks", "1.sock"), true},
+			{"a tmux server under its default dir", filepath.Join(tmp, "tmux-"+uid, "default"), true},
+			{"a tmux server under TMUX_TMPDIR", filepath.Join(tmp, "tmuxtmp", "tmux-"+uid, "default"), true},
+			{"the herdr server under ~/.config", filepath.Join(uhome, ".config", "herdr", "herdr.sock"), true},
+			{"the herdr server under XDG_CONFIG_HOME", filepath.Join(tmp, "xdg", "herdr", "herdr.sock"), true},
+			{"the herdr socket HERDR_SOCKET_PATH names", filepath.Join(tmp, "hs", "s.sock"), true},
+			{"the herdr client socket HERDR_CLIENT_SOCKET_PATH names", filepath.Join(tmp, "hc", "c.sock"), true},
+			{"a socket in a sibling temp dir", filepath.Join(tmp, "other", "s.sock"), false},
+			{"a socket beside herdr's dir", filepath.Join(uhome, ".config", "other", "s.sock"), false},
 		} {
 			t.Run(role.name+"/"+tt.name, func(t *testing.T) {
 				ok, err := connects(t, role.f, tt.sock)
@@ -671,6 +691,88 @@ func TestSeatCannotReachAnotherSessionsSocket(t *testing.T) {
 				}
 				if !tt.refused && (!ok || err != nil) {
 					t.Errorf("connect to %s was refused: connected=%v nc=%v", tt.sock, ok, err)
+				}
+			})
+		}
+	}
+}
+
+// plantSocket leaves a bound socket file at path with no listener behind it,
+// the shape a session's socket has to a seat that would remove or replace it.
+func plantSocket(t *testing.T, path string) {
+	t.Helper()
+	mkdirs(t, filepath.Dir(path))
+	if _, err := os.Lstat(path); err == nil {
+		return
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+}
+
+// A seat, soldier or reviewer, cannot remove, move away or replace another
+// session's socket in claude's cc-socks or a tmux socket dir, nor move the dir
+// or a parent of it away (G1149). The allow rows are the nearest valid acts:
+// its own claude binding a new socket in cc-socks, and removing, moving or
+// replacing a socket in a sibling temp dir.
+func TestSeatCannotRemoveOrReplaceAnotherSessionsSocket(t *testing.T) {
+	tmp, _ := socketScratch(t)
+	uid := strconv.Itoa(os.Getuid())
+	cc, tmuxDir, tmuxEnv, other := filepath.Join(tmp, "cc-socks"), filepath.Join(tmp, "tmux-"+uid),
+		filepath.Join(tmp, "tmuxtmp", "tmux-"+uid), filepath.Join(tmp, "other")
+	bind := []string{"/usr/bin/perl", "-MSocket", "-e",
+		`socket(my $s, AF_UNIX, SOCK_STREAM, 0) or die "$!\n"; bind($s, pack_sockaddr_un($ARGV[0])) or die "$!\n"`}
+	l := newLayout(t)
+	for _, role := range []struct {
+		name string
+		f    *Fence
+	}{{"soldier", mustNew(t, l.soldier())}, {"reviewer", mustNew(t, l.reviewer())}} {
+		for _, tt := range []struct {
+			name    string
+			argv    []string
+			kept    string // refused: still in place afterwards
+			refused bool
+		}{
+			{"unlink another claude session's socket", []string{"/bin/rm", filepath.Join(cc, "1.sock")}, filepath.Join(cc, "1.sock"), true},
+			{"rename another claude session's socket away", []string{"/bin/mv", filepath.Join(cc, "1.sock"), filepath.Join(other, "moved.sock")}, filepath.Join(cc, "1.sock"), true},
+			{"replace another claude session's socket", []string{"/bin/mv", filepath.Join(other, "mine.sock"), filepath.Join(cc, "1.sock")}, filepath.Join(other, "mine.sock"), true},
+			{"rename cc-socks away", []string{"/bin/mv", cc, filepath.Join(other, "cc-moved")}, cc, true},
+			{"unlink a tmux server socket under its default dir", []string{"/bin/rm", filepath.Join(tmuxDir, "default")}, filepath.Join(tmuxDir, "default"), true},
+			{"unlink a tmux server socket under TMUX_TMPDIR", []string{"/bin/rm", filepath.Join(tmuxEnv, "default")}, filepath.Join(tmuxEnv, "default"), true},
+			{"rename TMUX_TMPDIR, a parent of the tmux dir, away", []string{"/bin/mv", filepath.Dir(tmuxEnv), filepath.Join(other, "tt-moved")}, filepath.Dir(tmuxEnv), true},
+			{"bind a new socket in cc-socks", append(bind, filepath.Join(cc, "2.sock")), "", false},
+			{"unlink a socket in a sibling temp dir", []string{"/bin/rm", filepath.Join(other, "x.sock")}, "", false},
+			{"replace a socket in a sibling temp dir", []string{"/bin/mv", filepath.Join(other, "mine.sock"), filepath.Join(other, "x.sock")}, "", false},
+			{"rename a sibling of TMUX_TMPDIR away", []string{"/bin/mv", filepath.Join(tmp, "sib"), filepath.Join(other, "sib-moved")}, "", false},
+		} {
+			t.Run(role.name+"/"+tt.name, func(t *testing.T) {
+				for _, s := range []string{filepath.Join(cc, "1.sock"), filepath.Join(tmuxDir, "default"), filepath.Join(tmuxEnv, "default"),
+					filepath.Join(other, "mine.sock"), filepath.Join(other, "x.sock")} {
+					plantSocket(t, s)
+				}
+				mkdirs(t, filepath.Join(tmp, "sib"))
+				os.Remove(filepath.Join(cc, "2.sock"))
+				os.RemoveAll(filepath.Join(other, "sib-moved"))
+				wrapped, err := role.f.Wrap(tt.argv)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command(wrapped[0], wrapped[1:]...)
+				cmd.Env = []string{"PATH=/usr/bin:/bin"}
+				out, runErr := cmd.CombinedOutput()
+				if !tt.refused && runErr != nil {
+					t.Errorf("%q was refused: %v %s", tt.argv, runErr, out)
+				}
+				if tt.refused {
+					if runErr == nil || !strings.Contains(string(out), "Operation not permitted") {
+						t.Errorf("%q was not refused by the fence: %v %s", tt.argv, runErr, out)
+					}
+					if _, err := os.Lstat(tt.kept); err != nil {
+						t.Errorf("%s is gone after a refused %q: %v", tt.kept, tt.argv, err)
+					}
 				}
 			})
 		}

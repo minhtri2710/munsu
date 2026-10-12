@@ -1,9 +1,10 @@
 // Package fence confines a launched seat's whole process tree to a set of
 // writable roots with an OS sandbox (macOS sandbox-exec), and refuses a
-// connect to another claude or tmux session's socket. It is defense in depth
-// beside the shell lexer and the git shim: those refuse
-// by reading argv; the fence refuses at the syscall, so a wrapped program, an
-// absolute-path git, or a reset PATH cannot write outside the roots.
+// connect to a claude, tmux or herdr session's socket and the removal or
+// replacement of a claude or tmux socket. It is defense in depth beside the
+// shell lexer and the git shim: those refuse by reading argv; the fence refuses
+// at the syscall, so a wrapped program, an absolute-path git, or a reset PATH
+// cannot write outside the roots.
 //
 // New validates one launch's facts and builds the profile. Wrap turns the launch
 // argv into the fenced argv. Probe proves, before the launch is trusted, that
