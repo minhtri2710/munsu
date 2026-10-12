@@ -399,7 +399,7 @@ func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonica
 		return bound, fmt.Errorf("locking the delivery scope: %w", err)
 	}
 	defer lk.Release()
-	recoveryErr := recoverPendingDeliveryJournals(h, lk, opts.ID)
+	_, recoveryErr := recoverPendingDeliveryJournals(h, lk, opts.ID)
 	// Recovery may commit an outcome or a release, which advances the
 	// revision the retirement is fenced to; nothing else may move.
 	agg, err := authority.Get(taskID)

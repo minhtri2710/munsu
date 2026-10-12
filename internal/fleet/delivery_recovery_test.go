@@ -479,3 +479,21 @@ func readDeliveryIndexFile(t *testing.T, homeDir, taskID string) (struct {
 	}
 	return out, nil
 }
+
+// TestRecoverDeliveryOutcomesReportsANonCompletedResume: a journal resumed by
+// recovery that commits a retryable outcome must be returned to the operator,
+// not dropped behind a nil error.
+func TestRecoverDeliveryOutcomesReportsANonCompletedResume(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
+	installScriptedProviderFor(t, "open")
+	runDeliveryCrashHelper(t, homeDir, taskID, "authorized", "open")
+	outcomes, err := RecoverDeliveryOutcomes(homeDir)
+	if err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
+	}
+	if len(outcomes) != 1 || outcomes[0].TaskID != taskID || outcomes[0].Status != taskauthority.DeliveryOutcomeRetryable {
+		t.Fatalf("outcomes = %+v, want one retryable outcome for %s", outcomes, taskID)
+	}
+}

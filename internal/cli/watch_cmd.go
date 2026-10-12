@@ -226,11 +226,15 @@ func newWatchRunCmd() *cobra.Command {
 			// pending journals itself before it creates a new one. Failing the
 			// cycle here would emit no wakes at all for as long as somebody is
 			// merging -- so the gate is reported as skipped and the cycle runs.
-			if err := fleet.RecoverDeliveryJournals(ctx.Home); err != nil {
+			outcomes, err := fleet.RecoverDeliveryOutcomes(ctx.Home)
+			if err != nil {
 				if !errors.Is(err, home.ErrLockTimeout) {
 					return err
 				}
 				fmt.Fprintln(cmd.ErrOrStderr(), "delivery recovery gate skipped: another process holds the delivery scope and converges its own journals")
+			}
+			for _, o := range outcomes {
+				fmt.Fprintf(cmd.ErrOrStderr(), "delivery recovery: task %s committed outcome %s: %s\n", o.TaskID, o.Status, o.Detail)
 			}
 
 			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetReviewVerdictPort{}, runtimeTaskStatePort{})

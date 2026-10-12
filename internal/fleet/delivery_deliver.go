@@ -247,7 +247,7 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 	// Converge any pending delivery journals before creating a new one, so an
 	// interrupted delivery completes first and the new delivery observes
 	// truthful state (the accepted Task Transfer journal mechanics).
-	if err := recoverPendingDeliveryJournals(h, lk, ""); err != nil {
+	if _, err := recoverPendingDeliveryJournals(h, lk, ""); err != nil {
 		return nil, fmt.Errorf("deliver %s: recovering pending delivery journals: %w", taskID, err)
 	}
 
