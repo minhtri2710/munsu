@@ -98,8 +98,34 @@ func New(l Launch) (*Fence, error) {
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
-		allowRoots(p.gateRepo)
 		allowFiles(&b, p.gateState, p.gateState+"-wal", p.gateState+"-shm", p.gateState+"-journal")
+		// Only what a push writes is writable in the gate: objects/, refs/ and
+		// logs/. The whole gate is refused first, after the temp-root allow, so
+		// this holds wherever the gate lives, and its root cannot be renamed
+		// away. Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1151: "Allowlist
+		// (Recommended): only objects/, refs/, logs/ writable in the
+		// no-mistakes gate repo". objects/info (alternates) is refused, and so
+		// are the names objects, refs and logs themselves (rename, removal,
+		// chmod, creating one that is absent), so none can be swapped for a
+		// tree of the seat's own whose info/alternates the next unfenced push
+		// and the daemon read. Human words (domain.Words): grantor the Human,
+		// channel supervisor-relay:dialog, words=selected, G1085: "Quy tắc
+		// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay
+		// cấu hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
+		// session ngoài session của nó." Bound: a gate with no logs/ and
+		// core.logAllRefUpdates true or always takes no push; no-mistakes
+		// never sets it. Residual: a seat can plant a symlink under logs/ that
+		// an unfenced push then appends through; tracked as
+		// fence-reflog-symlink-deputy. A temp-root NM_HOME keeps its other
+		// files writable through the temp-root allow; no lane runs that, and
+		// the temp-root allow covers it.
+		g := p.gateRepo
+		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
+		deny(&b, "subpath", g)
+		allowRoots(obj, refs, logs)
+		deny(&b, "subpath", filepath.Join(obj, "info"))
+		deny(&b, "literal", obj, refs, logs)
 	}
 	if l.Role == RoleSoldier {
 		branch, err := soldierBranch(l.Branch)
@@ -148,7 +174,8 @@ func New(l Launch) (*Fence, error) {
 	denyUnlink(&b, removable...)
 
 	// The probe proves the home roots refused: every soldier root (G1058,
-	// quoted above), and a reviewer's state/.
+	// quoted above), and a reviewer's state/. For a no-mistakes soldier it also
+	// proves the gate's hooks refused (G1085, quoted at the gate denies).
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
 		refuse = append(refuse, p.worktree, p.gitDir)
@@ -157,6 +184,9 @@ func New(l Launch) (*Fence, error) {
 		}
 	} else {
 		refuse = append(refuse, homeRoots(p.home)...)
+		if p.gateRepo != "" {
+			refuse = append(refuse, filepath.Join(p.gateRepo, "hooks"))
+		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return &Fence{
