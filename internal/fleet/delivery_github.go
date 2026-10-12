@@ -4,6 +4,8 @@
 package fleet
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -12,6 +14,30 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
+
+// forgeCallTimeout bounds each gh, gh-axi and glab run, so a hung forge call
+// fails instead of holding the command that made it.
+var forgeCallTimeout = 2 * time.Minute
+
+// runForgeCommand runs one forge CLI invocation for at most forgeCallTimeout
+// and returns stdout; a failure carries stderr, prefixed with label.
+func runForgeCommand(label, path string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), forgeCallTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("%s: timed out after %s", label, forgeCallTimeout)
+	}
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("%s: %s", label, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("%s: %w", label, err)
+	}
+	return out, nil
+}
 
 // GitHubClient defines the typed read-only GitHub capability behind the
 // provider-neutral status and identity seams. The delivery observation and the
@@ -63,15 +89,7 @@ func ghAxiAPI(args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gh-axi not found on PATH: %w", err)
 	}
-	cmd := exec.Command(ghAxiPath, append([]string{"api"}, args...)...)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh-axi api: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("gh-axi api: %w", err)
-	}
-	return out, nil
+	return runForgeCommand("gh-axi api", ghAxiPath, append([]string{"api"}, args...)...)
 }
 
 // parseGhAxiKeyValues parses gh-axi's "key: value" line output into a map.
@@ -103,15 +121,7 @@ func (c *ghAxiClient) ViewPRJSON(owner, repo string, number int, fields string) 
 		"--repo", fmt.Sprintf("%s/%s", owner, repo),
 		"--json", fields,
 	}
-	cmd := exec.Command(ghPath, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh pr view: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("gh pr view: %w", err)
-	}
-	return out, nil
+	return runForgeCommand("gh pr view", ghPath, args...)
 }
 
 // CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL via

@@ -1561,75 +1561,46 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}
 
-	// Check for refused states
-	if status.Closed && !status.Merged {
+	landed, err := classifyLanding(*status, *ident)
+	switch landed {
+	case landingClosed:
 		return "", fmt.Errorf("PR #%d is closed but not merged (use --force to override)", ident.Number)
-	}
-
-	if !status.Merged && status.State == "OPEN" {
+	case landingOpen:
 		return "", fmt.Errorf("PR #%d is still open and not merged (use --force to override)", ident.Number)
+	case landingUnknown:
+		return "", fmt.Errorf("%w (use --force to override)", err)
 	}
 
-	// PR is confirmed merged. Verify head SHA consistency for ALL merged
-	// topologies, including deleted remote head (squash/rebase).
-	// The live provider HeadSHA must be nonempty and exactly equal to the
-	// stored ident.HeadSHA before accepting. A wrong head must fail even
-	// when the remote head has been deleted.
-	// Require non-empty MergedSHA as merge-result evidence.
-	if status.Merged {
-		if status.HeadSHA == "" {
-			return "", fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
+	// Build the exact proof used, augmented with topology details below.
+	proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
+	// For deleted remote head (squash/rebase), the provider-confirmed merge is
+	// sufficient proof. If the remote branch still exists, add ancestry detail.
+	remoteBranchExists := false
+	if ident.HeadRef != "" {
+		checkCmd := exec.Command("git", "ls-remote", "--exit-code", "origin", "refs/heads/"+ident.HeadRef)
+		checkCmd.Dir = wtPath
+		if checkCmd.Run() == nil {
+			remoteBranchExists = true
 		}
-		if status.MergedSHA == "" {
-			return "", fmt.Errorf("provider returned no merge-result evidence for merged PR #%d (use --force to override)", ident.Number)
-		}
-		if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
-			return "", fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
-		}
-
-		// Build the exact proof used, augmented with topology details below.
-		proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
-
-		// For deleted remote head (squash/rebase), confirm the PR IS merged
-		// — that's sufficient proof. The remote branch may be gone.
-		// Check: if the remote branch still exists, we can do a stronger check.
-		remoteBranchExists := false
-		if ident.HeadRef != "" {
-			checkCmd := exec.Command("git", "ls-remote", "--exit-code", "origin", "refs/heads/"+ident.HeadRef)
-			checkCmd.Dir = wtPath
-			if checkCmd.Run() == nil {
-				remoteBranchExists = true
-			}
-		}
-
-		if remoteBranchExists {
-			baseRef := ident.BaseRef
-			if baseRef != "" {
-				// For squash/rebase merges, MergedSHA (merge commit on target)
-				// is an ancestor of origin/main, but HeadSHA is not. Prefer
-				// MergedSHA when it differs from HeadSHA.
-				ancestrySHA := status.HeadSHA
-				if status.MergedSHA != "" && status.MergedSHA != status.HeadSHA {
-					ancestrySHA = status.MergedSHA
-				}
-				ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", ancestrySHA, "origin/"+baseRef)
-				ancestorCmd.Dir = wtPath
-				if err := ancestorCmd.Run(); err != nil {
-					// Ancestry check is an additional verification, not a blocker.
-					// Provider-confirmed MERGED + head SHA match is sufficient.
-					proof += fmt.Sprintf("; ancestry check inconclusive: %s is not ancestor of origin/%s", ancestrySHA, baseRef)
-				} else {
-					proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", ancestrySHA, baseRef)
-				}
-			}
-		}
-
-		// PR is confirmed merged by the provider — accept as landed and
-		// return the exact proof used.
-		return proof, nil
 	}
-
-	return "", fmt.Errorf("PR #%d is in an unexpected state: merged=%v closed=%v (use --force to override)", ident.Number, status.Merged, status.Closed)
+	if remoteBranchExists && ident.BaseRef != "" {
+		// For squash/rebase merges, MergedSHA (merge commit on target) is an
+		// ancestor of origin/main, but HeadSHA is not. Prefer MergedSHA when it
+		// differs from HeadSHA.
+		ancestrySHA := status.HeadSHA
+		if status.MergedSHA != status.HeadSHA {
+			ancestrySHA = status.MergedSHA
+		}
+		ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", ancestrySHA, "origin/"+ident.BaseRef)
+		ancestorCmd.Dir = wtPath
+		if err := ancestorCmd.Run(); err != nil {
+			// Ancestry check is an additional verification, not a blocker.
+			proof += fmt.Sprintf("; ancestry check inconclusive: %s is not ancestor of origin/%s", ancestrySHA, ident.BaseRef)
+		} else {
+			proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", ancestrySHA, ident.BaseRef)
+		}
+	}
+	return proof, nil
 }
 
 // checkRemoteBranch proves the worktree's task branch head is on origin: the

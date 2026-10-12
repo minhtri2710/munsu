@@ -266,7 +266,7 @@ func TestShipSafetyCheck_Topology_MergedPRWithDeletedHead(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
-		MergedSHA: "abc123def456",
+		MergedSHA: "0123456789abcdef0123456789abcdef01234567",
 		HeadSHA:   "abc123def456",
 		State:     "MERGED",
 	}, nil)
@@ -395,7 +395,7 @@ func wrongPRHeadBlock(t *testing.T) {
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
-		MergedSHA: "newsha0000000000000000000000000000000000",
+		MergedSHA: "0123456789abcdef0123456789abcdef01234567",
 		HeadSHA:   "newsha0000000000000000000000000000000000",
 		State:     "MERGED",
 	}, nil)
@@ -422,7 +422,7 @@ func TestShipSafetyCheck_Topology_EmitProof(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
-		MergedSHA: "abc123def456",
+		MergedSHA: "0123456789abcdef0123456789abcdef01234567",
 		HeadSHA:   "abc123def456",
 		State:     "MERGED",
 	}, nil)
@@ -534,7 +534,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedDeletedHead(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
-		MergedSHA: "abc123def456",
+		MergedSHA: "0123456789abcdef0123456789abcdef01234567",
 		HeadSHA:   "abc123def456",
 		State:     "MERGED",
 	}, nil)

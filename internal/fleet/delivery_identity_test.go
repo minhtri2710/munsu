@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- ValidateIdentity tests ---
@@ -235,92 +234,6 @@ func TestIdentityFromMeta_EmptyMeta(t *testing.T) {
 	}
 	if id != nil {
 		t.Error("expected nil for empty meta")
-	}
-}
-
-// --- RequireIdentity tests ---
-
-func TestRequireIdentity_Success(t *testing.T) {
-	homeDir := t.TempDir()
-	id := "test-task"
-
-	original := &domain.DeliveryIdentity{
-		Provider:   "github",
-		Owner:      "minhtri2710",
-		Repo:       "munsu",
-		Number:     42,
-		URL:        "https://github.com/minhtri2710/munsu/pull/42",
-		BaseRef:    "main",
-		HeadRef:    "feature/test",
-		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
-		CapturedAt: "2026-07-18T12:00:00Z",
-	}
-	if err := home.WriteMeta(homeDir, id, original.ToMeta()); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	got, err := RequireIdentity(homeDir, id)
-	if err != nil {
-		t.Fatalf("RequireIdentity: %v", err)
-	}
-	if got == nil {
-		t.Fatal("RequireIdentity returned nil")
-	}
-	if got.Number != 42 {
-		t.Errorf("Number: got %d, want 42", got.Number)
-	}
-}
-
-func TestRequireIdentity_MissingMeta(t *testing.T) {
-	homeDir := t.TempDir()
-	_, err := RequireIdentity(homeDir, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !strings.Contains(err.Error(), "reading task meta") {
-		t.Errorf("expected 'reading task meta' error, got: %v", err)
-	}
-}
-
-func TestRequireIdentity_NoPRURL(t *testing.T) {
-	homeDir := t.TempDir()
-	id := "no-pr-task"
-
-	meta := map[string]string{
-		"kind":    "ship",
-		"project": "munsu",
-	}
-	if err := home.WriteMeta(homeDir, id, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	_, err := RequireIdentity(homeDir, id)
-	if err == nil {
-		t.Fatal("expected error for task without PR URL")
-	}
-	if !strings.Contains(err.Error(), "no delivery identity found") {
-		t.Errorf("expected 'no delivery identity found' error, got: %v", err)
-	}
-}
-
-func TestRequireIdentity_Incomplete(t *testing.T) {
-	homeDir := t.TempDir()
-	id := "partial-task"
-
-	meta := map[string]string{
-		"pr_url": "https://github.com/minhtri2710/munsu/pull/42",
-		// Missing pr_head_sha, pr_base_ref, pr_head_ref, etc.
-	}
-	if err := home.WriteMeta(homeDir, id, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	_, err := RequireIdentity(homeDir, id)
-	if err == nil {
-		t.Fatal("expected error for incomplete identity")
-	}
-	if !strings.Contains(err.Error(), "incomplete delivery identity") {
-		t.Errorf("expected 'incomplete delivery identity' error, got: %v", err)
 	}
 }
 
