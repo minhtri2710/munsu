@@ -178,7 +178,30 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(gateRepo, "info", "attributes"), filepath.Join(gateRepo, "no-mistakes-gate-config"),
 		filepath.Join(gateRepo, "worktrees", "x", "config.worktree"), filepath.Join(gateRepo, "objects", "info", "alternates"),
 		filepath.Join(gateRepo, "remotes", "origin"), filepath.Join(gateRepo, "branches", "x"),
+		// Files that redirect git to another repository's hooks and config.
+		filepath.Join(gateRepo, "commondir"), filepath.Join(gateRepo, ".git"), filepath.Join(gateRepo, "gitdir"),
+		filepath.Join(gateRepo, "modules"),
 	)
+	// The gate root cannot be renamed away (into a writable temp root) and
+	// replaced; a rename inside the gate, as git makes for its objects and
+	// refs, still works.
+	dest, err := os.MkdirTemp("/tmp", "fence-gate-dest-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dest) })
+	if o, err := fenced(t, f, "/bin/mv", gateRepo, filepath.Join(dest, "moved.git")); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("renaming the gate root away was not refused by the fence: %v %s", err, o)
+	}
+	if fi, err := os.Lstat(gateRepo); err != nil || !fi.IsDir() {
+		t.Fatalf("the gate root is gone after a rename the fence must refuse: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gateRepo, "objects", "tmp"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := fenced(t, f, "/bin/mv", filepath.Join(gateRepo, "objects", "tmp"), filepath.Join(gateRepo, "objects", "f")); err != nil {
+		t.Errorf("a rename inside the gate's objects was refused: %v %s", err, o)
+	}
 	// The seat's settings.json links the Human's file. The fence resolves the
 	// link, so a write through it is refused and the Human's file is unchanged.
 	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", filepath.Join(launch.HarnessStateDir, "settings.json")); err == nil || !strings.Contains(o, "Operation not permitted") {

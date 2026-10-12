@@ -57,8 +57,8 @@ type Launch struct {
 	HarnessStateDir string
 	// GateRepo and GateState are the no-mistakes write set of a soldier that
 	// drives a gate run: this project's gate repository (writable subtree, except
-	// its hooks, info, worktrees, objects/info, remotes and branches dirs and its
-	// config, config.worktree and no-mistakes-gate-config files) and
+	// its programs, its configuration, the files that redirect git elsewhere
+	// and the removal of its root; New lists them) and
 	// the gate's state database (writable with its -wal, -shm and -journal
 	// files). Both or neither; a reviewer has none.
 	GateRepo  string
