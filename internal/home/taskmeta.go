@@ -294,39 +294,21 @@ func ReadMetaFile(path string) (map[string]string, error) {
 // The line is stored EscapeLine-encoded, so a line holding a newline stays one
 // record; ReadStatus decodes it.
 func AppendStatus(homeDir string, id, line string) error {
-	_, err := appendStatus(homeDir, id, line, false)
-	return err
-}
-
-// AppendStatusOnce appends line unless the status file already holds it, and
-// reports whether it appended. The duplicate check and the append run under
-// the same meta lock, so two concurrent callers publish the line once.
-func AppendStatusOnce(homeDir string, id, line string) (bool, error) {
-	return appendStatus(homeDir, id, line, true)
-}
-
-func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 	_, unlock, err := acquireMetaLock(homeDir, id)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer unlock()
 
-	if once {
-		has, err := StatusHasLine(homeDir, id, line)
-		if err != nil || has {
-			return false, err
-		}
-	}
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := validateStatePath(homeDir, p, true); err != nil {
-		return false, err
+		return err
 	}
 	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
-		return false, fmt.Errorf("creating state directory: %w", err)
+		return fmt.Errorf("creating state directory: %w", err)
 	}
 	// A soldier writes its own status file and so can replace it. An unfenced
 	// append must not follow what it put there into another task's documents
@@ -338,19 +320,19 @@ func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 	// (projects.json, captains.json)."
 	f, err := openRegular(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return false, fmt.Errorf("opening status file: %w", err)
+		return fmt.Errorf("opening status file: %w", err)
 	}
 	defer f.Close()
 	if err := secureOpened(f); err != nil {
-		return false, fmt.Errorf("securing status file: %w", err)
+		return fmt.Errorf("securing status file: %w", err)
 	}
 	if _, err := f.WriteString(EscapeLine(line) + "\n"); err != nil {
-		return false, fmt.Errorf("writing status line: %w", err)
+		return fmt.Errorf("writing status line: %w", err)
 	}
 	if err := f.Sync(); err != nil {
-		return false, fmt.Errorf("syncing status file: %w", err)
+		return fmt.Errorf("syncing status file: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status,
@@ -394,21 +376,6 @@ func ReadRegularFile(path string) ([]byte, error) {
 	}
 	defer f.Close()
 	return io.ReadAll(f)
-}
-
-// StatusHasLine reports whether the task's status holds line. A status that
-// cannot be read is an error, never "absent".
-func StatusHasLine(homeDir, id, line string) (bool, error) {
-	lines, err := ReadStatus(homeDir, id)
-	if err != nil {
-		return false, err
-	}
-	for _, existing := range lines {
-		if existing == line {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.

@@ -7,7 +7,6 @@ package orchestrator
 import (
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +46,7 @@ func TestRunCycleWithProbeAndSenderLogsObservation(t *testing.T) {
 	}
 	previous := os.Stderr
 	os.Stderr = writer
-	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{})
+	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, testTaskStatePort{})
 	_ = writer.Close()
 	os.Stderr = previous
 	if cycleErr != nil {
@@ -145,23 +144,19 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 
 func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
 	home := t.TempDir()
-	checksDir := filepath.Join(home, "state", "checks")
-	if err := os.MkdirAll(checksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checksDir, "global.check"), []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	resetRecovery()
+	port := &scriptedActiveDeliveryPort{replies: []activeDeliveryReply{
+		{active: []ActiveDelivery{{ID: "dj-1", TaskID: "task-1", Stage: "authorized"}}},
+		{active: []ActiveDelivery{{ID: "dj-1", TaskID: "task-1", Stage: "authorized"}}},
+	}, last: func() {}}
 	obs1 := newCycleObservation()
-	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, obs1); err != nil {
+	if err := wakeActiveDeliveries(home, port, obs1); err != nil {
 		t.Fatalf("cycle 1: %v", err)
 	}
 	if obs1.suppressedDuplicates != 0 {
 		t.Fatalf("cycle 1 suppressed = %d, want 0", obs1.suppressedDuplicates)
 	}
 	obs2 := newCycleObservation()
-	if _, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, &testRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, obs2); err != nil {
+	if err := wakeActiveDeliveries(home, port, obs2); err != nil {
 		t.Fatalf("cycle 2: %v", err)
 	}
 	if obs2.suppressedDuplicates != 1 {
@@ -226,7 +221,7 @@ func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 
 // runCycleObs runs one full scan/enqueue cycle with the observation capture.
 func runCycleObs(home string, obs *cycleObservation) (*cycleObservation, error) {
-	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, obs)
+	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, testTaskStatePort{}, obs)
 	return obs, err
 }
 

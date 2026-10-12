@@ -353,7 +353,7 @@ func TestLockScopedExclusiveAndFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lk1.FenceToken() == 0 {
+	if lk1.token == 0 {
 		t.Error("fence token is zero")
 	}
 	if err := lk1.Release(); err != nil {
@@ -363,8 +363,8 @@ func TestLockScopedExclusiveAndFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lk2.FenceToken() <= lk1.FenceToken() {
-		t.Errorf("fence token did not advance: %d <= %d", lk2.FenceToken(), lk1.FenceToken())
+	if lk2.token <= lk1.token {
+		t.Errorf("fence token did not advance: %d <= %d", lk2.token, lk1.token)
 	}
 	if err := lk2.Release(); err != nil {
 		t.Fatal(err)

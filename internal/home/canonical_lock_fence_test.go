@@ -68,7 +68,7 @@ func TestLockFenceRoundTripsThroughSiblingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := lk1.FenceToken()
+	first := lk1.token
 	if first == 0 {
 		t.Fatal("first token is zero")
 	}
@@ -81,7 +81,7 @@ func TestLockFenceRoundTripsThroughSiblingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk2.Release()
-	second := lk2.FenceToken()
+	second := lk2.token
 	if second != first+1 {
 		t.Fatalf("second token = %d, want %d (fence value from prior holder)", second, first+1)
 	}

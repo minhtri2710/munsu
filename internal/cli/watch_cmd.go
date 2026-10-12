@@ -8,7 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -234,8 +233,7 @@ func newWatchRunCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "delivery recovery gate skipped: another process holds the delivery scope and converges its own journals")
 			}
 
-			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
-			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, fleetReviewVerdictPort{}, fleetCheckValidationPort{}, runtimeTaskStatePort{})
+			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetReviewVerdictPort{}, runtimeTaskStatePort{})
 			if err != nil {
 				return err
 			}

@@ -2,31 +2,10 @@
 package domain
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
-
-// ErrCheckValidationRefused indicates that a check artifact failed validation
-// during retirement.
-var ErrCheckValidationRefused = errors.New("check validation refused")
-
-// ErrCheckInvalidAfterPublication indicates that post-publication
-// revalidation refused the check artifact. It also matches
-// ErrCheckValidationRefused because this is a validation refusal.
-var ErrCheckInvalidAfterPublication = fmt.Errorf("%w: check invalid after publication", ErrCheckValidationRefused)
-
-// ErrAlreadyRetired indicates that a merged-poll retirement re-entered after
-// it had already completed: the artifact is gone, no retirement journal is
-// pending and the publication line is durable. The consumer acks the
-// process event; nothing is published twice.
-var ErrAlreadyRetired = errors.New("merged poll already retired")
-
-// ErrStaleCapture indicates that the captured merge result no longer matches
-// the task's delivery identity, so the action must not act on it; the
-// process event has to be re-registered so the resolver captures afresh.
-var ErrStaleCapture = errors.New("captured merge result is stale")
 
 // MetaKeys returns the task meta keys used to persist this identity.
 func (id *DeliveryIdentity) MetaKeys() []string {

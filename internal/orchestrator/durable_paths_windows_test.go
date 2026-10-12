@@ -42,44 +42,6 @@ func TestPrepareForcedRetirementEvidenceEncodedID(t *testing.T) {
 	}
 }
 
-func TestDiscoverPerTaskChecksDecodesDurableTaskStem(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	taskID := "captain:api"
-	checkPath, err := home.DurableFilePath(stateDir, taskID, ".check")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	plugins, err := DiscoverPerTaskChecks(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plugins) != 1 || plugins[0].Label != taskID || plugins[0].Path != checkPath {
-		t.Fatalf("plugins = %+v, want logical label and durable path %q", plugins, checkPath)
-	}
-}
-
-func TestDiscoverPerTaskChecksRejectsMalformedDurableStem(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "captain%ZZ.check"), []byte("#!/bin/sh\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DiscoverPerTaskChecks(tmp); err == nil {
-		t.Fatal("DiscoverPerTaskChecks accepted malformed durable stem")
-	}
-}
-
 func TestPausedResurfaceEncodedID(t *testing.T) {
 	tmp := t.TempDir()
 	if _, err := home.Init(tmp); err != nil {

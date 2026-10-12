@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -87,67 +86,6 @@ func canonicalRetireTask(t *testing.T, auth *taskauthority.Canonical, taskID str
 	}
 	if _, err := auth.Retire(op, req); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Group A: retirement_poll.go
-// ----------------------------------------------------------------------------
-
-func TestRequireCanonicalCompletedOutcome_NilAuthority(t *testing.T) {
-	err := requireCanonicalCompletedOutcome(nil, "some-task")
-	if err == nil {
-		t.Fatal("expected error for nil authority, got nil")
-	}
-	if !strings.Contains(err.Error(), "canonical merged truth requires a composed task authority") {
-		t.Fatalf("requireCanonicalCompletedOutcome err = %v, want composed task authority error", err)
-	}
-}
-
-func TestRequireRetirementIdentity_NoDeliveryMeta(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "task-no-ident"
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := requireRetirementIdentity(homeDir, taskID)
-	if err == nil {
-		t.Fatal("expected no delivery identity error, got nil")
-	}
-	if !strings.Contains(err.Error(), "no delivery identity found for task") {
-		t.Fatalf("requireRetirementIdentity err = %v, want no delivery identity found", err)
-	}
-}
-
-func TestPremiseRetirementRecordPathCannotEscape(t *testing.T) {
-	homeDir := t.TempDir()
-	expectedDir := retirementDirPath(homeDir)
-	absDir, err := filepath.Abs(expectedDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	traversalIDs := []string{
-		"../../etc/passwd",
-		"..\\..\\windows\\system32",
-		"/root",
-		"task/with/slashes",
-		"",
-		" ",
-		"....",
-	}
-	for _, id := range traversalIDs {
-		recPath := retirementRecordPath(homeDir, id)
-		absPath, err := filepath.Abs(recPath)
-		if err != nil {
-			t.Fatalf("filepath.Abs(%s): %v", recPath, err)
-		}
-		if !strings.HasPrefix(absPath, absDir+string(filepath.Separator)) {
-			t.Fatalf("retirementRecordPath(%q) = %q escaped %q", id, absPath, absDir)
-		}
 	}
 }
 

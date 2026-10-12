@@ -5,7 +5,7 @@ import (
 )
 
 // This file retains the provider-neutral merge-status read seam (MergeStatus
-// and its typed error) used by watcher .check scripts. The pr-check routing
+// and its typed error) behind munsu delivery merge-status. The pr-check routing
 // (RoutePRCheck / PRCheck / MRLiveCheck) and its delivery preparation were
 // removed with the legacy delivery path (#414 B); delivery execution now
 // runs exclusively through the journaled Deliver operation. No delivery
@@ -22,7 +22,6 @@ func (e *MergeStatusError) Unwrap() error { return e.Err }
 
 // MergeStatus reports the merge status for a task with a delivery identity.
 // Exit status: 0 = merged, 1 = not merged, 2 = error/unverifiable.
-// Used as the provider-neutral watcher seam invoked by .check scripts.
 func MergeStatus(homeDir, id string) error {
 	ident, err := RequireIdentity(homeDir, id)
 	if err != nil {
