@@ -543,14 +543,6 @@ func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
 	if agg.Definition.Kind != "ship" {
 		t.Fatalf("canonical kind = %q, want ship", agg.Definition.Kind)
 	}
-	// The post-commit .meta write copies no task field.
-	meta, err := home.ReadMeta(homeDir, "scout-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(meta) != 0 {
-		t.Fatalf("promote copied task fields into meta: %v", meta)
-	}
 }
 
 // TestPromoteRefusesNonTerminalScout proves `promote` fails closed through

@@ -659,9 +659,7 @@ func workflowSupervisionCycle(t *testing.T, homeDir string) bool {
 	t.Helper()
 	emitted, err := orchestrator.RunCycleWithProbeAndSender(homeDir,
 		runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(),
-		fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) {
-			return taskauthority.NewCanonical(mustOpenHome(t, h))
-		}}, fleetReviewVerdictPort{}, fleetCheckValidationPort{}, runtimeTaskStatePort{})
+		fleetReviewVerdictPort{}, runtimeTaskStatePort{})
 	if err != nil {
 		t.Fatalf("supervision cycle on %s: %v", homeDir, err)
 	}

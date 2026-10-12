@@ -2293,12 +2293,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	// After successful prompt submission, re-validate the captain binding
 	// against the meta as it stands now, not the snapshot validated above: the
 	// send is a network round-trip, and a replacement captain may have bound
-	// during it. The rewrite changes no key; it bumps the .meta mtime.
-	//
-	// Constraint: .meta mtime is the staleness witness for AcceptOrRefuseStale
-	// (orchestrator/supervision_check.go), and an acknowledged nudge has always
-	// advanced it; removal condition: task check-staleness-canonical-witness
-	// moves the staleness rule to a canonical witness.
+	// during it. The rewrite changes no key.
 	if metaErr := home.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
 		return validateCaptainBinding(current, sm, binding)
 	}); metaErr != nil {

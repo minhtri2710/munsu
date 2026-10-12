@@ -14,24 +14,6 @@ func (NoopTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, erro
 	return nil, fmt.Errorf("task state capability unavailable")
 }
 
-type NoopRetirementPort struct{}
-
-func (NoopRetirementPort) ObserveMergedPoll(string, string) (bool, []byte, error) {
-	return false, nil, fmt.Errorf("retirement capability unavailable")
-}
-func (NoopRetirementPort) RetireMergedPoll(string, string, string, []byte) error {
-	return fmt.Errorf("retirement capability unavailable")
-}
-
-// acceptingCheckValidationPort is the check-validation capability for tests
-// that do not exercise validation itself: present, and accepting every
-// artifact. There is deliberately no "noop" counterpart — a watcher that
-// cannot validate is expressed by supplying no port at all, and the cycle
-// refuses to run then.
-type acceptingCheckValidationPort struct{}
-
-func (acceptingCheckValidationPort) ValidateCheck(string) error { return nil }
-
 // NoopActiveDeliveryPort reports no active delivery journals.
 type NoopActiveDeliveryPort struct{}
 

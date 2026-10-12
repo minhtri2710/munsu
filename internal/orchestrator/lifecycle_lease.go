@@ -163,9 +163,6 @@ func completeScoutOnReport(h, taskID, payload string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := auth.Complete(op, req); err != nil {
-		return err
-	}
-	// The .meta mtime is the staleness witness of the task's check artifacts.
-	return home.UpdateMeta(h, taskID, func(map[string]string) error { return nil })
+	_, err = auth.Complete(op, req)
+	return err
 }

@@ -210,7 +210,7 @@ Fundamental loop:
 
 1. Ensure: `munsu watch ensure`.
 2. The watcher polls every 5s, queues actionable wakes, and stays alive.
-3. Receive each wake (below), then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result); `report` and `process-event` wakes are handled from their payload.
+3. Receive each wake (below), then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named endpoint probe failure or interrupted delivery journal); `report` and `process-event` wakes are handled from their payload.
 4. Repair if needed: `munsu watch ensure`.
 
 Receiving wakes. Soldier and captain reports reach you only as queued wakes; nothing writes a report into your pane.

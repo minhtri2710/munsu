@@ -2,8 +2,6 @@
 package orchestrator
 
 import (
-	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,62 +58,6 @@ type TaskStatePort interface {
 	ReadTaskState(homeDir, taskID string) (*ObservedTaskState, error)
 }
 
-// RetirementPort retires the poll artifact of a task whose PR has merged, as
-// the resolver/action pair of one durable process event per task.
-// ObserveMergedPoll is the resolver: it reports whether the PR merged at the
-// task's identity head and captures the result the action needs; it writes
-// nothing. RetireMergedPoll is the action. It owns validation of the artifact
-// it is given: it must apply the check-validation rule to checkPath before it
-// records or mutates anything, and report a refusal as
-// domain.ErrCheckValidationRefused. That is why the watcher does not validate
-// again on its behalf — the guard nearest the destructive act is the only one
-// that can close the window, and a copy in the caller would be a second
-// disposition to keep in step for no gain. The action is re-entered until the
-// watcher acks the event, so it is journal-aware on entry, reports a completed
-// retirement it re-enters as domain.ErrAlreadyRetired, and reports a capture
-// whose head no longer matches the task identity as domain.ErrStaleCapture.
-type RetirementPort interface {
-	ObserveMergedPoll(homeDir, taskID string) (bool, []byte, error)
-	RetireMergedPoll(homeDir, taskID, checkPath string, result []byte) error
-}
-
-// mergedPollEventPrefix keys the merged-poll process event of a task; the
-// event payload is the task id.
-const mergedPollEventPrefix = "merged-poll:"
-
-func mergedPollEventID(taskID string) string { return mergedPollEventPrefix + taskID }
-
-// mergedPollResolver adapts the port's resolver to the process-event source.
-func mergedPollResolver(retirement RetirementPort, homeDir, taskID string) ProcessEventResolver {
-	return func(context.Context) (bool, []byte, error) {
-		return retirement.ObserveMergedPoll(homeDir, taskID)
-	}
-}
-
-// ensureMergedPollRegistered registers the task's merged-poll event when it
-// has no record, when its record is already acked (the artifact is present
-// again, so this is a new poll for the same task) or when the action found
-// the last capture stale. A registered, unacked event is left as it is.
-func ensureMergedPollRegistered(homeDir, eventID, taskID string, stale bool) error {
-	rec, err := readProcessEventRecord(homeDir, eventID)
-	if err != nil {
-		return err
-	}
-	if rec != nil && !stale && rec.Generation != rec.AckedGeneration {
-		return nil
-	}
-	_, err = RegisterProcessEvent(homeDir, eventID, taskID)
-	return err
-}
-
-// mergedPollInFlight reports whether the task's event is resolved and
-// announced but not yet acked: its wake is queued and the action runs when
-// the wake is consumed, so no check wake is due.
-func mergedPollInFlight(homeDir, eventID string) bool {
-	rec, err := readProcessEventRecord(homeDir, eventID)
-	return err == nil && rec != nil && rec.Resolved && rec.Generation != rec.AckedGeneration
-}
-
 type processEventWakeKey struct {
 	eventID    string
 	generation uint64
@@ -128,13 +70,12 @@ type processEventWakeKey struct {
 // action must be idempotent on re-entry. A wake whose prefix has no owner is
 // logged and dropped and never re-queued -- a prefix nothing owns would
 // re-queue forever -- and its record stays resolved and unacked for restart
-// recovery. Merged-poll outcomes are returned per task for the plugin loop.
-func consumeProcessEventWakes(homeDir string, retirement RetirementPort, reviews ReviewVerdictPort) (map[string]error, error) {
+// recovery.
+func consumeProcessEventWakes(homeDir string, reviews ReviewVerdictPort) error {
 	wakes, err := home.DrainWakesOfKind(homeDir, home.ProcessEventWakeKind)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	outcomes := map[string]error{}
 	seen := map[processEventWakeKey]bool{}
 	for _, wake := range wakes {
 		var announced ProcessEventWake
@@ -168,62 +109,13 @@ func consumeProcessEventWakes(homeDir string, retirement RetirementPort, reviews
 			continue
 		}
 		switch {
-		case strings.HasPrefix(announced.EventID, mergedPollEventPrefix):
-			retireMergedPollWake(homeDir, retirement, wake, announced, rec, outcomes)
 		case strings.HasPrefix(announced.EventID, reviewVerdictEventPrefix):
 			recordReviewVerdictWake(homeDir, reviews, announced, rec)
 		default:
 			fmt.Fprintf(os.Stderr, "process-event wake %q dropped: no owner for this event prefix\n", announced.EventID)
 		}
 	}
-	return outcomes, nil
-}
-
-// retireMergedPollWake is the merged-poll arm of the dispatcher. The event is
-// acked only after the action reports completion; a stale capture is neither
-// acked nor re-queued (the plugin loop re-registers it), and every other
-// failure re-queues the same wake so the action runs again next cycle.
-func retireMergedPollWake(homeDir string, retirement RetirementPort, wake WakeRecord, announced ProcessEventWake, rec *ProcessEventRecord, outcomes map[string]error) {
-	taskID := rec.Payload
-	if announced.EventID != mergedPollEventID(taskID) {
-		fmt.Fprintf(os.Stderr, "process-event wake %q dropped: not a merged-poll event\n", announced.EventID)
-		return
-	}
-	checkPath, err := home.DurableFilePath(home.StateDir(homeDir), taskID, ".check")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "process-event wake %q dropped: %v\n", announced.EventID, err)
-		return
-	}
-	actErr := retirement.RetireMergedPoll(homeDir, taskID, checkPath, rec.Result)
-	switch {
-	case actErr == nil || errors.Is(actErr, domain.ErrAlreadyRetired):
-		outcomes[taskID] = nil
-		if err := AckProcessEvent(homeDir, announced.EventID, announced.Generation); err != nil {
-			fmt.Fprintf(os.Stderr, "process-event %q ack failed (re-announced on restart): %v\n", announced.EventID, err)
-		}
-	case errors.Is(actErr, domain.ErrStaleCapture):
-		outcomes[taskID] = actErr
-	default:
-		outcomes[taskID] = actErr
-		if err := home.EnqueueWake(homeDir, wake.Kind, wake.Key, wake.Payload); err != nil {
-			fmt.Fprintf(os.Stderr, "process-event %q re-enqueue failed (re-announced on restart): %v\n", announced.EventID, err)
-		}
-		if errors.Is(actErr, domain.ErrCheckInvalidAfterPublication) || !errors.Is(actErr, domain.ErrCheckValidationRefused) {
-			fmt.Fprintf(os.Stderr, "merged poll retirement for task %s failed (retrying next cycle): %v\n", taskID, actErr)
-		}
-	}
-}
-
-// CheckValidationPort validates a check artifact before the watcher surfaces it.
-// Retirement validates its own artifact at the destructive boundary through
-// RetirementPort; this port is separate because the watcher must still validate
-// checks that will never be retired. Supplying an implementation asserts the
-// capability exists, so a returned error can only mean "this artifact is
-// invalid" — skip it and keep scanning. The capability being absent is a
-// different failure and is expressed differently: a nil check validation port
-// fails the whole cycle, loudly, instead of quietly emitting no checks at all.
-type CheckValidationPort interface {
-	ValidateCheck(path string) error
+	return nil
 }
 
 // ActiveDelivery names one delivery journal an interrupted delivery left
@@ -272,10 +164,9 @@ func wakeActiveDeliveries(homeDir string, port ActiveDeliveryPort, obs *cycleObs
 // bounded native observation event lane: a validated event hint
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil observation
-// event port keeps the watcher on pure polling; a nil check-validation port is refused as a
-// fatal cycle capability error.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events, deliveries)
+// event port keeps the watcher on pure polling.
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, reviews, states, events, deliveries)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -284,7 +175,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -337,7 +228,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		if err := wakeActiveDeliveries(homeDir, deliveries, obs); err != nil {
 			return err
 		}
-		if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
+		if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, states, obs); err != nil {
 			return err
 		}
 		logCycleObservation(obs)
@@ -725,9 +616,9 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort) (bool, error) {
 	obs := newCycleObservation()
-	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs)
+	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, states, obs)
 	if err == nil {
 		logCycleObservation(obs)
 	}
@@ -736,8 +627,7 @@ func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 
 // runRecovery executes the one-shot recovery on watcher startup.
 // It retries pending inbox envelopes once with fingerprint dedup,
-// runs the mailbox recovery hook (if any) once,
-// then completes any pending poll retirements.
+// runs the mailbox recovery hook (if any) once.
 func runRecovery(homeDir string, sender home.BoundSender, hooks WatcherHooks) error {
 	if sender == nil {
 		return fmt.Errorf("mailbox recovery sender capability is required")
@@ -780,15 +670,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
-	// A watcher with no way to validate a check artifact cannot decide anything
-	// about one, and skipping every check would make that look like "no checks
-	// are ready". Fail the cycle instead: the capability is required, and its
-	// absence is not a per-check outcome.
-	if checks == nil {
-		return false, fmt.Errorf("check validation capability is required")
-	}
-
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
 	lv, err := config.ReadSeatLiveness(homeDir)
 	if err != nil {
 		return false, err
@@ -804,9 +686,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	}
 
 	// Process-event recovery: re-announce resolved, unacked events. One-shot
-	// per home per process; a failed run is retried next cycle. This is the
-	// only recovery path for a crashed merged-poll retirement: the
-	// re-announced wake re-enters the journal-aware action.
+	// per home per process; a failed run is retried next cycle.
 	if reannounced, err := RecoverProcessEvents(homeDir); err != nil {
 		fmt.Fprintf(os.Stderr, "process-event recovery error: %v\n", err)
 	} else if reannounced > 0 {
@@ -857,137 +737,9 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	}
 	popupHumanNeeded(homeDir, humanNeeded)
 
-	// Consume this cycle's process-event wakes before discovery, so the plugin
-	// loop sees this cycle's action outcomes and a retired poll is not found.
+	// Consume this cycle's process-event wakes.
 	registerReviewVerdictEvents(homeDir, reviews)
-	outcomes, err := consumeProcessEventWakes(homeDir, retirement, reviews)
-	if err != nil {
-		return emitted, err
-	}
-
-	// Discover and emit check plugin wakes (per-task .check files + global checks).
-	// These cover PR merge polls and custom checks registered under state/checks/.
-	plugins, err := DiscoverAllChecks(homeDir)
-	if err != nil {
-		return emitted, err
-	}
-	for _, plugin := range plugins {
-		artifactGeneration := checkArtifactGeneration(plugin.Path)
-		// Validate the check artifact before surfacing. The port exists, so
-		// this error is about this artifact and nothing else: drop this check,
-		// keep scanning the rest, and say so rather than swallowing it.
-		if err := checks.ValidateCheck(plugin.Path); err != nil {
-			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, err), fmt.Sprintf("poll check invalid (skipped): %v", err)); repErr != nil {
-				return emitted, repErr
-			}
-			continue
-		}
-		// Acceptance refusal leaves the externally authored artifact exactly
-		// where it is and emits no wake; the refusal is reported for the
-		// operator to resolve.
-		if err := AcceptOrRefuseStale(plugin.Path); err != nil {
-			if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, err), fmt.Sprintf("poll check refused (left in place): %v", err)); repErr != nil {
-				return emitted, repErr
-			}
-			continue
-		}
-
-		checkID := plugin.Label
-		msg := fmt.Sprintf("check ready: %s", plugin.Label)
-		if plugin.Kind == CheckPerTask {
-			// Include PR URL in message if available
-			if meta, err := home.ReadMeta(homeDir, plugin.Label); err == nil {
-				if prURL, ok := meta["pr_url"]; ok && prURL != "" {
-					msg = fmt.Sprintf("PR poll ready for task %s: %s", plugin.Label, prURL)
-				}
-			}
-
-			// Crash-safe retirement for merged polls runs as a durable process
-			// event: the resolver is evaluated here, a resolved capture is
-			// announced as a process-event wake, and the action runs when
-			// consumeMergedPollEvents drains that wake next cycle. The loop
-			// does not re-validate the artifact: the action applies the same
-			// rule to the same path as its first act, before any record or
-			// mutation, and reports a refusal as ErrCheckValidationRefused —
-			// handled below with the disposition a caller-side check would
-			// have produced. A second copy here could only ever agree, and
-			// would be one more disposition to keep in step with the one at
-			// the top of this loop.
-			//
-			// On successful retirement, the poll is removed and a durable
-			// status line is published as an audit projection. The check wake
-			// is NOT emitted, and the merged line is not attention.
-			outcome, acted := outcomes[plugin.Label]
-			eventID := mergedPollEventID(plugin.Label)
-			evalErr := ensureMergedPollRegistered(homeDir, eventID, plugin.Label, acted && errors.Is(outcome, domain.ErrStaleCapture))
-			if evalErr == nil {
-				evalErr = EvaluateProcessEvent(context.Background(), homeDir, eventID, mergedPollResolver(retirement, homeDir, plugin.Label))
-			}
-			switch {
-			case evalErr != nil && errors.Is(evalErr, domain.ErrCheckValidationRefused):
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, evalErr), fmt.Sprintf("poll check refused (wake suppressed): %v", evalErr)); repErr != nil {
-					return emitted, repErr
-				}
-				continue
-			case evalErr != nil:
-				// Resolver failures retain the normal check wake so the poll
-				// can be tried again.
-			case acted && outcome == nil:
-				// Poll retired this cycle (or the retirement was re-entered
-				// after completion). Skip wake emission; the publication is an
-				// audit projection.
-				if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
-					return emitted, err
-				}
-				continue
-			case acted && errors.Is(outcome, domain.ErrCheckInvalidAfterPublication):
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, outcome), fmt.Sprintf("poll check invalid after publication: %v", outcome)); repErr != nil {
-					return emitted, repErr
-				}
-				continue
-			case acted && errors.Is(outcome, domain.ErrCheckValidationRefused):
-				if repErr := reportCheckRefusal(homeDir, plugin.Path, checkRefusalMarkerState(artifactGeneration, outcome), fmt.Sprintf("poll check refused (wake suppressed): %v", outcome)); repErr != nil {
-					return emitted, repErr
-				}
-				continue
-			case acted && errors.Is(outcome, domain.ErrStaleCapture):
-				// Re-registered above and re-observed this cycle; the fresh
-				// capture is in flight.
-				if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
-					return emitted, err
-				}
-				continue
-			case acted:
-				// Other action failures retain the normal check wake so the
-				// poll can be tried again.
-			case mergedPollInFlight(homeDir, eventID):
-				// Resolved and announced; the action runs when the wake is
-				// consumed. No check wake is due.
-				if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
-					return emitted, err
-				}
-				continue
-			}
-		}
-
-		// The artifact is accepted and about to be surfaced. Drop any refusal
-		// it is still carrying so that if it is refused again later — for the
-		// same reason or a new one — that refusal is reported as the new state
-		// it is.
-		if err := clearCheckRefusalMarker(homeDir, plugin.Path); err != nil {
-			return emitted, err
-		}
-
-		queued, err := enqueueCheckWakeOnce(homeDir, checkID, msg, obs)
-		if err != nil {
-			return emitted, err
-		}
-		if queued {
-			emitted = true
-		}
-	}
-
-	if err := reconcileCheckRefusalMarkers(homeDir, plugins); err != nil {
+	if err := consumeProcessEventWakes(homeDir, reviews); err != nil {
 		return emitted, err
 	}
 
@@ -1037,120 +789,6 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 		}
 	}
 	return reason.Kind + "\n" + message + "\n" + status
-}
-
-// checkRefusalMarkerPath records the refusal the loop last reported for one
-// check artifact, so the report follows the artifact's state rather than the
-// poll cadence: the loop revisits every artifact every cycle, and an artifact
-// that is refused stays refused until somebody acts on it.
-//
-// Keyed by the hash of the artifact path, not by its label. The label is not a
-// unique identity — a per-task check named "global:foo.check" and the global
-// check "checks/foo.check" both label as global:foo — and sanitizing one for
-// use as a filename collides further ("a.b" and "a_b" land on the same name).
-// Two artifacts sharing a marker would overwrite each other's refusal every
-// cycle, which is the volume this whole mechanism exists to bound. The path is
-// unique by construction. The refusal text stays in the file, so an operator
-// grepping state/ still sees which artifact and why.
-func checkRefusalMarkerPath(homeDir, artifactPath string) string {
-	suffix := fmt.Sprintf("%x", sha256.Sum256([]byte(artifactPath)))
-	return filepath.Join(homeDir, "state", ".watcher-refused-"+suffix)
-}
-
-// reportCheckRefusal writes message to stderr the first time this artifact is
-// refused for this state and stays silent while that answer is unchanged. A
-// different state reports again; so does the same state after the artifact has
-// been accepted once, because the loop clears the marker when it accepts.
-//
-// Marker-write failure fails the cycle rather than degrading to unbounded
-// reporting: persist before printing so an unwritable state directory cannot
-// turn each retry into another refusal line. Losing a report to a crash after
-// persistence but before printing is cheaper than restoring poll-volume logs.
-func reportCheckRefusal(homeDir, artifactPath, state, message string) error {
-	marker := checkRefusalMarkerPath(homeDir, artifactPath)
-	if data, err := os.ReadFile(marker); err == nil && string(data) == state {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(marker, []byte(state), 0644); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, message)
-	return nil
-}
-
-// checkArtifactGeneration captures the checked artifact itself rather than a
-// symlink target. This lookup is not a new cost class: validation and stale
-// acceptance already stat the artifact during each cycle. Size and mtime avoid
-// hashing or rereading artifacts, which matters when an artifact is unreadable.
-func checkArtifactGeneration(artifactPath string) string {
-	fi, err := os.Lstat(artifactPath)
-	if err != nil {
-		return "gone"
-	}
-	return fmt.Sprintf("%d %d", fi.Size(), fi.ModTime().UnixNano())
-}
-
-// checkRefusalMarkerState combines the generation captured before validation
-// with its refusal reason. Capturing first means a replacement between the
-// observation and validation can only make the marker stale, never falsely
-// fresh: (generation A, reason from B) is followed by (generation B, same
-// reason), which reports again. A replacement with identical size and a
-// deliberately forged identical nanosecond mtime remains the accepted
-// residual case; hashing every cycle would also require rereading unreadable
-// artifacts.
-func checkRefusalMarkerState(generation string, err error) string {
-	return fmt.Sprintf("%s %s", generation, refusalState(err))
-}
-
-// refusalState reduces a refusal error to the fact that identifies it, with the
-// classification the retirement path wraps around it stripped off. The loop can
-// notice one refusal from two vantage points — the validation at the top of the
-// cycle, and RetireMergedPoll applying the same rule to the same path as its
-// first action — and prints a different message at each. Those are one state,
-// so the marker keys on the cause and the message stays free to say where the
-// loop was standing when it noticed.
-func refusalState(err error) string {
-	if multi, ok := err.(interface{ Unwrap() []error }); ok {
-		for _, e := range multi.Unwrap() {
-			if !errors.Is(e, domain.ErrCheckValidationRefused) {
-				return refusalState(e)
-			}
-		}
-	}
-	return err.Error()
-}
-
-func clearCheckRefusalMarker(homeDir, artifactPath string) error {
-	err := os.Remove(checkRefusalMarkerPath(homeDir, artifactPath))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-func reconcileCheckRefusalMarkers(homeDir string, plugins []CheckPlugin) error {
-	active := make(map[string]struct{}, len(plugins))
-	for _, plugin := range plugins {
-		active[filepath.Base(checkRefusalMarkerPath(homeDir, plugin.Path))] = struct{}{}
-	}
-	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
-	if err != nil {
-		return nil
-	}
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), ".watcher-refused-") {
-			continue
-		}
-		if _, ok := active[entry.Name()]; !ok {
-			if err := os.Remove(filepath.Join(homeDir, "state", entry.Name())); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func clearWakeMarker(homeDir, id string) {
