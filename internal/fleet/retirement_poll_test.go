@@ -425,16 +425,16 @@ func retirementPollAuthFor(t *testing.T, homeDir string, taskIDs ...string) *tas
 		if out, err := auth.DeliveryOutcome(mustTaskID(t, taskID)); err == nil && out.Status == taskauthority.DeliveryOutcomeCompleted {
 			continue
 		}
-		seedPollCompletedOutcome(t, auth, homeDir, taskID)
+		seedPollOutcome(t, auth, homeDir, taskID, taskauthority.DeliveryOutcomeCompleted)
 	}
 	return auth
 }
 
-// seedPollCompletedOutcome binds worktree/endpoint and commits a canonical
-// completed provider-merge delivery outcome for the task, under the identity
-// head stored in the task meta projection. Operation IDs carry a random
+// seedPollOutcome binds worktree/endpoint and commits a canonical
+// provider-merge delivery outcome with the given status for the task, under the
+// identity head stored in the task meta projection. Operation IDs carry a random
 // suffix so repeated seeding for the same task never collides.
-func seedPollCompletedOutcome(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string) {
+func seedPollOutcome(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string, status taskauthority.DeliveryOutcomeStatus) {
 	t.Helper()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	meta, err := mhome.ReadMeta(homeDir, taskID)
@@ -484,10 +484,12 @@ func seedPollCompletedOutcome(t *testing.T, auth *taskauthority.Canonical, homeD
 		TaskID:                   mustTaskID(t, taskID),
 		Precondition:             domain.Of(uint64(agg2.Generation), uint64(agg2.Revision)),
 		AuthorizationOperationID: authOpID,
-		Status:                   taskauthority.DeliveryOutcomeCompleted,
-		Detail:                   "provider confirms merged",
+		Status:                   status,
+		Detail:                   "provider confirms " + string(status),
 		HeadSHA:                  ident.HeadSHA,
-		MergedSHA:                "aaaabbbbccccddddeeeeffff0000111122223333",
+	}
+	if status == taskauthority.DeliveryOutcomeCompleted {
+		outReq.MergedSHA = "aaaabbbbccccddddeeeeffff0000111122223333"
 	}
 	if _, err := auth.CommitDeliveryOutcome(mustFleetOperation(t, "op-poll-out-"+taskID+"-"+suffix, outReq), outReq); err != nil {
 		t.Fatalf("CommitDeliveryOutcome(%s): %v", taskID, err)
@@ -2357,7 +2359,7 @@ func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
 
 	// With the canonical completed outcome seeded, retirement proceeds and
 	// the canonical outcome is the merged truth.
-	seedPollCompletedOutcome(t, auth, home, taskID)
+	seedPollOutcome(t, auth, home, taskID, taskauthority.DeliveryOutcomeCompleted)
 	if err := observeAndRetire(t, home, taskID, checkPath, auth); err != nil {
 		t.Fatalf("RetireMergedPoll: %v", err)
 	}
@@ -2603,5 +2605,46 @@ func TestRetireMergedPoll_RefusesEveryShapeTheCheckValidatorRefuses(t *testing.T
 				t.Fatal("a step-0 refusal must not persist a retirement record")
 			}
 		})
+	}
+}
+
+// mergedPollWithOutcome runs one merged-poll retirement of a provider-merged
+// PR whose task carries a canonical delivery outcome with the given status.
+func mergedPollWithOutcome(t *testing.T, status taskauthority.DeliveryOutcomeStatus) (home, taskID, checkPath string, err error) {
+	t.Helper()
+	home, taskID, checkPath, _ = setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	t.Cleanup(installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333"))
+	auth, aerr := taskauthority.NewCanonical(mustHome(t, home))
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	seedPollOutcome(t, auth, home, taskID, status)
+	return home, taskID, checkPath, observeAndRetire(t, home, taskID, checkPath, auth)
+}
+
+func mergedPollPartialOutcomeBlock(t *testing.T) {
+	home, taskID, checkPath, err := mergedPollWithOutcome(t, taskauthority.DeliveryOutcomePartial)
+	want := `canonical merged truth required (pending record exists): task test-ship canonical delivery outcome is "partial"; a committed completed outcome is required`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("RetireMergedPoll err = %v, want %q", err, want)
+	}
+	if _, serr := os.Stat(checkPath); serr != nil {
+		t.Fatalf("refused retirement removed the poll: %v", serr)
+	}
+	if n := publicationCount(t, home, taskID); n != 0 {
+		t.Fatalf("refused retirement published %d line(s)", n)
+	}
+}
+
+func mergedPollCompletedOutcomeAllow(t *testing.T) {
+	home, taskID, checkPath, err := mergedPollWithOutcome(t, taskauthority.DeliveryOutcomeCompleted)
+	if err != nil {
+		t.Fatalf("RetireMergedPoll: %v", err)
+	}
+	if _, serr := os.Stat(checkPath); !os.IsNotExist(serr) {
+		t.Fatalf("poll still present after retirement: %v", serr)
+	}
+	if n := publicationCount(t, home, taskID); n != 1 {
+		t.Fatalf("publication count = %d, want 1", n)
 	}
 }
