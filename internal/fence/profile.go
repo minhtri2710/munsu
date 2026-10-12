@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -72,6 +73,7 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	denySessionSockets(&b, sessionSocketDirs())
 	// Later rules win in a sandbox profile: broad allows first, then the
 	// protected denies, then the seat's own roots and git carve-outs.
 	var roots []string // every subpath this profile makes writable
@@ -450,10 +452,10 @@ func gitBranchFiles(commonDir, branch string) []string {
 	return out
 }
 
-// harnessState returns the writable directories of a harness kind, and for pi
-// the launch's own state dir. binDirs are the directories inside those roots
-// that the harness itself puts on its commands' PATH, which the seat must not
-// write. An unmodeled kind fails closed.
+// harnessState returns the writable directories of a harness kind beyond the
+// launch's own state dir, which New allows. binDirs are the directories in the
+// harness's agent dirs that the harness itself puts on its commands' PATH,
+// which the seat must not write. An unmodeled kind fails closed.
 //
 // A claude seat writes its own config dir (CLAUDE_CONFIG_DIR, the launch's
 // state dir, which New opens inside state/) and claude's log cache, never ~/.claude or ~/.claude.json: the
@@ -464,6 +466,15 @@ func gitBranchFiles(commonDir, branch string) []string {
 // Seat có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
 // fence sẽ chạy, và không gửi input vào session ngoài session của nó."
 //
+// A pi seat writes only its own agent dir (PI_CODING_AGENT_DIR, the launch's
+// state dir, which New opens inside state/), never ~/.pi/agent: the unfenced
+// pi runs its install, launcher, extensions and packages from there, executes
+// commands named in auth.json and models.json, and reads its settings, trust
+// answers, model catalog and extension data there. The seat's dir links them
+// read-only (the fence resolves links); its sessions, settings and trust
+// answers are its own. Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1085, quoted above.
+//
 // Claude puts none on PATH (2.1.296 appends only a host-supplied dir the CLI
 // never sets). Pi prepends <agent dir>/bin to every command its bash tool runs,
 // where the agent dir is PI_CODING_AGENT_DIR (the launch's state dir) or
@@ -473,14 +484,54 @@ func harnessState(kind, userHome, stateDir string) (dirs, binDirs []string, err 
 	case harness.Claude:
 		return []string{filepath.Join(userHome, "Library", "Caches", "claude-cli-nodejs")}, nil, nil
 	case harness.Pi:
-		agent := filepath.Join(userHome, ".pi", "agent")
-		dirs, binDirs = []string{agent}, []string{filepath.Join(agent, "bin")}
+		binDirs = []string{filepath.Join(userHome, ".pi", "agent", "bin")}
 		if stateDir != "" {
-			dirs, binDirs = append(dirs, stateDir), append(binDirs, filepath.Join(stateDir, "bin"))
+			binDirs = append(binDirs, filepath.Join(stateDir, "bin"))
 		}
-		return dirs, binDirs, nil
+		return nil, binDirs, nil
 	}
 	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
+}
+
+// The parents of other sessions' input sockets, as variables so tests point them
+// into scratch: claude's per-process message sockets, and the directory tmux
+// makes its tmux-<uid> socket dir in when TMUX_TMPDIR is unset.
+var (
+	claudeSocketDir = "/private/tmp/cc-socks"
+	tmuxTempDir     = "/private/tmp"
+)
+
+// sessionSocketDirs are the directories that hold another session's input
+// socket: claude's message sockets, and tmux's server sockets under its default
+// dir and under TMUX_TMPDIR as munsu's own environment sets it.
+func sessionSocketDirs() []string {
+	tmux := "tmux-" + strconv.Itoa(os.Getuid())
+	dirs := []string{claudeSocketDir, filepath.Join(tmuxTempDir, tmux)}
+	if d := os.Getenv("TMUX_TMPDIR"); d != "" {
+		if r, err := resolvePath(filepath.Join(d, tmux), false); err == nil {
+			dirs = append(dirs, r)
+		}
+	}
+	return dedupe(dirs)
+}
+
+// denySessionSockets refuses connecting to any unix socket under dirs, so a
+// seat cannot inject messages into another claude session or type into another
+// tmux pane. Each dir is its own remote term: two path filters inside one term
+// match only together, so the second would never refuse. Human words
+// (domain.Words): grantor the Human, channel supervisor-relay:dialog,
+// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không
+// bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và
+// không gửi input vào session ngoài session của nó."
+//
+// The herdr socket stays reachable pending Human words on own-pane self-report
+// (fence-session-socket part 2).
+func denySessionSockets(b *strings.Builder, dirs []string) {
+	b.WriteString("(deny network-outbound")
+	for _, d := range dirs {
+		b.WriteString(" (remote unix-socket (subpath " + quote(d) + "))")
+	}
+	b.WriteString(")\n")
 }
 
 // goCaches returns the Go build cache, module cache (with the checksum db) and
