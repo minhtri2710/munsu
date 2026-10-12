@@ -314,9 +314,10 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 
 // In its dispatcher's home a soldier writes only its own status file, ack log
 // and current scout report (Files) and its harness state dir; every other path
-// under state/, data/, .journal/ and .lock/ is refused, and so is renaming a
-// root away to plant a tree of its own (G1058). Each refused row names its
-// nearest allowed neighbour. The table runs for a home outside the temp roots
+// under state/, data/, .journal/, .lock/, config/ and projects/ is refused, and
+// so is renaming a root away to plant a tree of its own (G1058; G1085 for
+// config/ and projects/). Each refused row names its nearest allowed
+// neighbour. The table runs for a home outside the temp roots
 // and for one inside a temp root (shim set, as a launch sets it), where only the
 // profile's home-root deny refuses.
 func TestSoldierFenceHomeWrites(t *testing.T) {
@@ -351,9 +352,14 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 			// A later launch of a task whose ack log the seat replaced with a link
 			// to the project registry.
 			registry := filepath.Join(state, "fleet-registry", "projects.json")
-			if err := os.WriteFile(registry, []byte("{}\n"), 0o600); err != nil {
-				t.Fatal(err)
+			overlays := filepath.Join(l.home, "config", "project-overlays.json")
+			for _, f := range []string{registry, overlays} {
+				if err := os.WriteFile(f, []byte("{}\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
+			hook := filepath.Join(l.home, "projects", "p1", ".git", "hooks", "post-checkout")
+			mkdirs(t, filepath.Dir(hook))
 			linkedAcks := filepath.Join(state, "T-3.acks")
 			if err := os.Symlink(registry, linkedAcks); err != nil {
 				t.Fatal(err)
@@ -404,6 +410,9 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 				{"chmod of state/, even to its own mode (allowed: chmod of own status)", chmod("0700", state), true, "", nil},
 				{"chmod of own status", chmod("0600", status), false, "", nil},
 				{"renaming state/ away (allowed: own status atomic rename)", []string{"/bin/mv", state, state + ".x"}, true, state + ".x", nil},
+				{"a project overlay in config/ (allowed: own status append)", sh(`printf x >> ` + overlays), true, overlays, nil},
+				{"renaming config/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "config"), filepath.Join(l.home, "config.x")}, true, filepath.Join(l.home, "config.x"), nil},
+				{"a hook in a cloned project under projects/ (allowed: own status append)", []string{touchBin, hook}, true, hook, nil},
 				{"renaming data/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "data"), filepath.Join(l.home, "data.x")}, true, filepath.Join(l.home, "data.x"), nil},
 				{"own harness state dir", sh(`/bin/mkdir -p ` + launch.HarnessStateDir + ` && printf x > ` + launch.HarnessStateDir + `/f`), false, "", nil},
 			}
@@ -521,6 +530,7 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 		filepath.Join(l.common, "HEAD"),
 		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
+		filepath.Join(l.home, "config", "f"), filepath.Join(l.home, "projects", "f"),
 		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, ".pi", "agent", "f"), verdict+"2",
 	)
 
