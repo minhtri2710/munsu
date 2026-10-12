@@ -305,7 +305,7 @@ func ConsumeReady(senderHome, soldierTaskID, senderIdentity string, endpoint Sol
 
 // dispatchedPath returns the path for a dispatch marker file.
 // Dispatch markers track that a NotificationRef was sent for a pending
-// message, preventing duplicate sends on duplicate ready events.
+// message, preventing a duplicate send on a repeated consume-ready.
 func dispatchedPath(senderHome, taskID, messageID string) string {
 	safeID := strings.NewReplacer("/", "_", ":", "_", "\\", "_").Replace(taskID)
 	safeMsg := strings.NewReplacer("/", "_", ":", "_", "\\", "_", ".", "_").Replace(messageID)

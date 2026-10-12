@@ -650,3 +650,63 @@ func TestStoreAckLogBelongsToItsReceiver(t *testing.T) {
 		})
 	}
 }
+
+// An ack is keyed by (sender, message) in its receiver's log: a different ack
+// for an acked message is refused and the stored one stands, the same ack is
+// accepted without a second line, and another sender's message with the same
+// ID stays unacked and listed.
+func TestStoreWriteAckKeysTheLogBySenderAndMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		second  func(*ProcessingAck)
+		wantErr string
+	}{
+		{"a different ack for the same message is refused", func(a *ProcessingAck) { a.Outcome = OutcomeDone }, "already has a different ack"},
+		{"the same ack again is accepted", func(*ProcessingAck) {}, ""},
+		{"the same message ID from another sender stays unacked", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			first := validGuardAck()
+			if err := store.WriteAck(&first); err != nil {
+				t.Fatalf("WriteAck: %v", err)
+			}
+			if tc.second == nil {
+				other := validGuardEnvelope()
+				other.SenderIdentity = "other-home"
+				if err := store.WriteEnvelope(&other); err != nil {
+					t.Fatalf("WriteEnvelope: %v", err)
+				}
+				if store.IsAcked(&other) {
+					t.Fatal("another sender's message with the same ID reads as acked")
+				}
+				listed, err := store.ListInbox(other.SenderIdentity)
+				if err != nil || len(listed) != 1 {
+					t.Fatalf("ListInbox(other sender) = (%d, %v), want the unacked message listed", len(listed), err)
+				}
+				return
+			}
+			path, err := store.ackLogPath(first.ReceiverRank, first.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second := validGuardAck()
+			tc.second(&second)
+			err = store.WriteAck(&second)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("WriteAck = %v, want %q", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("WriteAck: %v", err)
+			}
+			if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+				t.Fatalf("ack log = (%s, %v), want unchanged:\n%s", after, err, before)
+			}
+		})
+	}
+}

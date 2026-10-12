@@ -138,22 +138,40 @@ func TestDeliveryRecordVerdictRecordsTheReviewTasksVerdictFile(t *testing.T) {
 }
 
 // TestReportRefusesAReviewTask: a review soldier's outcome is its verdict file,
-// so `report` from a review task fails and writes no status.
+// so `report` from a review task fails and writes no status. The kind comes
+// from the launch env, never from the canonical record in the dispatcher's home.
 func TestReportRefusesAReviewTask(t *testing.T) {
-	homeDir := deliveryGuardShip(t, "t-ship")
-	workingGuardReview(t, cliCanonicalForHome(t, homeDir), "t-ship", "rev-1")
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "rev-1")
-	t.Setenv("MUNSU_ROLE", "soldier")
-	t.Setenv("MUNSU_TASK_KIND", "review")
-	t.Setenv("MUNSU_PARENT_STATUS", homeDir)
+	for _, tc := range []struct {
+		name, taskID, envKind string
+		refused               bool
+	}{
+		{"the launch env names a review task over a ship record", "t-ship", "review", true},
+		{"a review record with no kind in the env", "rev-1", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := deliveryGuardShip(t, "t-ship")
+			workingGuardReview(t, cliCanonicalForHome(t, homeDir), "t-ship", "rev-1")
+			t.Setenv("MUNSU_HOME", homeDir)
+			t.Setenv("MUNSU_TASK_ID", tc.taskID)
+			t.Setenv("MUNSU_ROLE", "soldier")
+			t.Setenv("MUNSU_TASK_KIND", tc.envKind)
+			t.Setenv("MUNSU_PARENT_STATUS", homeDir)
 
-	out, err := runTaskCommand(t, []string{"report", "done", "looks fine", "--key", "rev-1", "--ring", "no-ring"})
-	if err == nil || !strings.Contains(err.Error(), "task rev-1 is a review task") {
-		t.Fatalf("err = %v, want the review-task refusal\n%s", err, out)
-	}
-	if _, statErr := os.Stat(filepath.Join(homeDir, "state", "rev-1.status")); !os.IsNotExist(statErr) {
-		t.Fatalf("a refused report wrote a status file: %v", statErr)
+			out, err := runTaskCommand(t, []string{"report", "blocked", "looks fine", "--key", tc.taskID, "--ring", "no-ring"})
+			_, statErr := os.Stat(filepath.Join(homeDir, "state", tc.taskID+".status"))
+			if !tc.refused {
+				if err != nil || statErr != nil {
+					t.Fatalf("report = %v (status file: %v), want the status written\n%s", err, statErr, out)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "task "+tc.taskID+" is a review task") {
+				t.Fatalf("err = %v, want the review-task refusal\n%s", err, out)
+			}
+			if !os.IsNotExist(statErr) {
+				t.Fatalf("a refused report wrote a status file: %v", statErr)
+			}
+		})
 	}
 }
 
