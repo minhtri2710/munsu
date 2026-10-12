@@ -2048,11 +2048,18 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 		if launch.Files, err = r.soldierFiles(); err != nil {
 			return fmt.Errorf("launch fence: %w", err)
 		}
+		// The brief's first action is a fenced `git checkout -b mu/<id>` on a
+		// detached worktree, which must append to the common-dir branch reflog
+		// the fence refuses to create (B1). Pre-create it, unfenced, for every
+		// soldier.
+		if err := ensureBranchReflog(commonDir, launch.Branch); err != nil {
+			return fmt.Errorf("launch fence: %w", err)
+		}
 		if r.effectiveMode == "no-mistakes" {
 			if launch.GateRepo, err = projectGate(primary); err != nil {
 				return fmt.Errorf("launch fence: %w", err)
 			}
-			if err := ensureGateBranchReflog(launch.GateRepo, launch.Branch); err != nil {
+			if err := ensureBranchReflog(launch.GateRepo, launch.Branch); err != nil {
 				return fmt.Errorf("launch fence: %w", err)
 			}
 		}

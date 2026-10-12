@@ -148,7 +148,7 @@ func New(l Launch) (*Fence, error) {
 		// logs/ is not a root (that let a seat plant a symlink an unfenced push
 		// then appended through: fence-reflog-symlink-deputy). The seat may only
 		// append to its own gate branch reflog, which munsu pre-creates at spawn
-		// (ensureGateBranchReflog); it cannot create, unlink or rename any reflog,
+		// (ensureBranchReflog); it cannot create, unlink or rename any reflog,
 		// so it cannot swap one for a link. Human words (domain.Words): grantor
 		// the Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
 		// (Recommended): B on the seat branch reflog, worktree HEAD and gate
@@ -165,23 +165,28 @@ func New(l Launch) (*Fence, error) {
 		allow(&b, "literal", gitBranchRefFiles(p.commonDir, branch)...)
 		// The seat appends to its own reflogs but cannot swap one for a symlink
 		// an unfenced push or fetch then writes through (fence-reflog-symlink-
-		// deputy): its worktree HEAD reflog and its common-dir branch reflog,
-		// both created by `git worktree add`, are append-only, with create,
-		// unlink and rename refused under their logs/. The gitDir deny comes
-		// after the gitDir root allow so it wins. <common>/logs/refs/remotes
-		// stays a root (fetch creates its remote-tracking reflogs on the fly);
-		// that residual is the separate task fence-reflog-remotes-residual.
-		// Human words (domain.Words): grantor the Human, channel
-		// supervisor-relay:dialog, words=selected, G1168: "B1 (Recommended): B
-		// on the seat branch reflog, worktree HEAD and gate reflog; munsu
-		// pre-creates the gate branch reflog at spawn (probe first);
-		// logs/refs/remotes residual becomes its own task", building on G1167:
-		// "B: dò trước rồi làm (Recommended): munsu pre-creates the soldier's
-		// own branch reflog files; fence allows data writes to exactly those,
-		// refuses create/unlink/rename elsewhere in logs/".
+		// deputy): its worktree HEAD reflog (created by the detached `git
+		// worktree add`) and its common-dir branch reflog (pre-created by munsu
+		// at spawn, ensureBranchReflog, then appended by the seat's first `git
+		// checkout -b`) are append-only, with create, unlink and rename refused
+		// under their logs/. The gitDir logs deny comes after the gitDir root
+		// allow so it wins. The gitDir is itself a writable root, so its own name
+		// is denied too: without it the seat could rename the gitDir away, swap
+		// logs/HEAD inside the moved copy, and rename it back. <common>/logs/
+		// refs/remotes stays a root (fetch creates its remote-tracking reflogs
+		// on the fly); that residual is the separate task
+		// fence-reflog-remotes-residual. Human words (domain.Words): grantor the
+		// Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
+		// (Recommended): B on the seat branch reflog, worktree HEAD and gate
+		// reflog; munsu pre-creates the gate branch reflog at spawn (probe
+		// first); logs/refs/remotes residual becomes its own task", building on
+		// G1167: "B: dò trước rồi làm (Recommended): munsu pre-creates the
+		// soldier's own branch reflog files; fence allows data writes to exactly
+		// those, refuses create/unlink/rename elsewhere in logs/".
 		deny(&b, "subpath", filepath.Join(p.gitDir, "logs"))
 		allowData(&b, filepath.Join(p.gitDir, "logs", "HEAD"),
 			filepath.Join(p.commonDir, "logs", "refs", "heads", filepath.FromSlash(branch)))
+		deny(&b, "literal", p.gitDir)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
 	}

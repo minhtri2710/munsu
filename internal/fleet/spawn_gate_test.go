@@ -38,27 +38,27 @@ func (f gateFixture) remote(t *testing.T, url string) {
 	gitInWorktree(t, f.primary, "remote", "add", "no-mistakes", url)
 }
 
-// ensureGateBranchReflog pre-creates the gate branch reflog as an empty regular
-// file so the fence can allow the seat to append to it while refusing the
-// create the first push would otherwise need (B1, fence-reflog-symlink-deputy).
-// It fails closed when the path is not a regular file, and never writes through
-// a planted symlink.
-func TestEnsureGateBranchReflog(t *testing.T) {
+// ensureBranchReflog pre-creates a branch reflog as an empty regular file so the
+// fence can allow the seat to append to it while refusing the create the first
+// checkout -b or push would otherwise need (B1, fence-reflog-symlink-deputy). It
+// fails closed when the reflog or any parent under logs/ is a symlink or not the
+// expected type, and never follows a planted link to write the victim.
+func TestEnsureBranchReflog(t *testing.T) {
 	victim := filepath.Join(t.TempDir(), "victim")
 	if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	reflogIn := func(gate string) string {
-		return filepath.Join(gate, "logs", "refs", "heads", "mu", "T-1")
+	reflogIn := func(gitDir string) string {
+		return filepath.Join(gitDir, "logs", "refs", "heads", "mu", "T-1")
 	}
 	for _, tc := range []struct {
 		name    string
-		seed    func(t *testing.T, gate string) // state before the call
-		wantErr string                          // substring; "" means it must succeed
+		seed    func(t *testing.T, gitDir string) // state before the call
+		wantErr string                            // substring; "" means it must succeed
 	}{
 		{name: "absent: creates an empty regular reflog and its parents"},
-		{name: "regular file: kept", seed: func(t *testing.T, gate string) {
-			p := reflogIn(gate)
+		{name: "regular file: kept", seed: func(t *testing.T, gitDir string) {
+			p := reflogIn(gitDir)
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -66,8 +66,8 @@ func TestEnsureGateBranchReflog(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "symlink: refused, victim untouched", wantErr: "not a regular file", seed: func(t *testing.T, gate string) {
-			p := reflogIn(gate)
+		{name: "symlink leaf: refused, victim untouched", wantErr: "not a regular file", seed: func(t *testing.T, gitDir string) {
+			p := reflogIn(gitDir)
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -75,26 +75,46 @@ func TestEnsureGateBranchReflog(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "directory: refused", wantErr: "not a regular file", seed: func(t *testing.T, gate string) {
-			if err := os.MkdirAll(reflogIn(gate), 0o755); err != nil {
+		{name: "directory leaf: refused", wantErr: "not a regular file", seed: func(t *testing.T, gitDir string) {
+			if err := os.MkdirAll(reflogIn(gitDir), 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}},
+		{name: "symlinked parent: refused (F3), nothing created in the target", wantErr: "not a directory", seed: func(t *testing.T, gitDir string) {
+			// logs/refs/heads/mu is a symlink to a real dir; a create through it
+			// would land in that dir.
+			target := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(gitDir, "logs", "refs", "heads"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(gitDir, "logs", "refs", "heads", "mu")); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if ents, _ := os.ReadDir(target); len(ents) != 0 {
+					t.Errorf("a reflog was created through the symlinked parent: %v", ents)
+				}
+			})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			gate := filepath.Join(t.TempDir(), "g.git")
-			if tc.seed != nil {
-				tc.seed(t, gate)
+			gitDir := filepath.Join(t.TempDir(), "g.git")
+			// The gitDir (common dir or gate repo) always exists in production.
+			if err := os.Mkdir(gitDir, 0o755); err != nil {
+				t.Fatal(err)
 			}
-			err := ensureGateBranchReflog(gate, "mu/T-1")
+			if tc.seed != nil {
+				tc.seed(t, gitDir)
+			}
+			err := ensureBranchReflog(gitDir, "mu/T-1")
 			switch {
 			case tc.wantErr == "" && err != nil:
-				t.Fatalf("ensureGateBranchReflog = %v, want success", err)
+				t.Fatalf("ensureBranchReflog = %v, want success", err)
 			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
-				t.Fatalf("ensureGateBranchReflog = %v, want an error containing %q", err, tc.wantErr)
+				t.Fatalf("ensureBranchReflog = %v, want an error containing %q", err, tc.wantErr)
 			}
 			if tc.wantErr == "" {
-				if fi, err := os.Lstat(reflogIn(gate)); err != nil || !fi.Mode().IsRegular() {
+				if fi, err := os.Lstat(reflogIn(gitDir)); err != nil || !fi.Mode().IsRegular() {
 					t.Fatalf("reflog is not a regular file: %v", err)
 				}
 			}

@@ -293,9 +293,12 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	if _, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "refs", "heads", "rogue")); err == nil {
 		t.Error("a namespace dir other than the task's branch was created")
 	}
-	// The common-dir branch reflog and the worktree HEAD reflog (B1): both
-	// pre-created by `git worktree add`, append-only, with no swap; the seat
-	// cannot create another reflog or a new logs namespace dir. (G1168, G1167.)
+	// The common-dir branch reflog and the worktree HEAD reflog (B1): the HEAD
+	// reflog is created by the detached `git worktree add`, the branch reflog is
+	// pre-created by munsu (ensureBranchReflog); both are set up here as empty
+	// regular files, exactly as that pre-create leaves them. Both are
+	// append-only, with no swap; the seat cannot create another reflog or a new
+	// logs namespace dir. (G1168, G1167.)
 	for _, reflog := range []string{
 		filepath.Join(l.common, "logs", "refs", "heads", "mu", "T-1"),
 		filepath.Join(l.gitDir, "logs", "HEAD"),
@@ -313,11 +316,30 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	if o, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "logs", "refs", "heads", "rogue")); err == nil {
 		t.Errorf("a reflog namespace dir was created under the common logs/ despite B1: %s", o)
 	}
+	// F2: the gitDir is a writable root, but its own name is denied, so the seat
+	// cannot rename it away (break-2's first step) to swap logs/HEAD through a
+	// parent rename, nor remove it. Nearest allow: ordinary writes inside the
+	// gitDir still work.
+	headReflog := filepath.Join(l.gitDir, "logs", "HEAD")
+	if o, err := fenced(t, f, "/bin/mv", l.gitDir, filepath.Join(l.root, "gitdir-swap")); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("renaming the gitDir away was not refused by the fence: %v %s", err, o)
+	}
+	if fi, err := os.Lstat(l.gitDir); err != nil || !fi.IsDir() {
+		t.Errorf("the gitDir is gone after a rename the fence must refuse: %v", err)
+	}
+	if fi, err := os.Lstat(headReflog); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("the worktree HEAD reflog is no longer a regular file: %v", err)
+	}
+	mustWrite(t, f, filepath.Join(l.gitDir, "ORIG_HEAD"), filepath.Join(l.gitDir, "index.new"))
 }
 
-// A no-mistakes soldier's push into its gate succeeds under the fence after the
-// gate denies, and appends to the branch reflog the daemon already keeps there.
-// The gate's hooks are stubs, so no no-mistakes binary runs.
+// The production sequence under the fence: a detached `git worktree add`
+// (internal/backend/worktree.go), munsu's unfenced pre-create of the common-dir
+// and gate branch reflogs (ensureBranchReflog), then the seat's own fenced
+// `git checkout -b mu/<id>`, commit and push (brief.go). All must succeed and
+// append to the pre-created reflogs; the fence refuses to let the seat create
+// them, so a test that used `worktree add -b` or hand-made the reflogs would
+// hide the break. The gate's hooks are stubs, so no no-mistakes binary runs.
 func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	out := outsideDir(t)
 	uhome := seatEnv(t, out)
@@ -335,6 +357,7 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	}
 	primary, wt, gate := filepath.Join(out, "primary"), filepath.Join(out, "wt"), filepath.Join(out, "nm", "repos", "g.git")
 	home := filepath.Join(out, "home")
+	common := filepath.Join(primary, ".git")
 	mkdirs(t, homeRoots(home)...)
 	git("init", "-q", "-b", "main", primary)
 	git("-C", primary, "commit", "-q", "--allow-empty", "-m", "init")
@@ -345,31 +368,46 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 		}
 	}
 	git("-C", primary, "remote", "add", "no-mistakes", gate)
-	git("-C", primary, "worktree", "add", "-q", "-b", "mu/T-1", wt)
-	git("-C", wt, "commit", "-q", "--allow-empty", "-m", "work")
-	reflog := filepath.Join(gate, "logs", "refs", "heads", "mu", "T-1")
-	mkdirs(t, filepath.Dir(reflog))
-	if err := os.WriteFile(reflog, nil, 0o644); err != nil {
-		t.Fatal(err)
+	// Production creates the worktree detached, so mu/T-1 and its reflog do not
+	// exist yet; the seat makes the branch itself with a fenced `checkout -b`.
+	git("-C", primary, "worktree", "add", "--detach", "-q", wt, "main")
+	// munsu's unfenced pre-create, replicated: an empty regular reflog file and
+	// its parent dirs, in the common dir (for checkout -b) and the gate (for the
+	// push). This is exactly what ensureBranchReflog does.
+	gateReflog := filepath.Join(gate, "logs", "refs", "heads", "mu", "T-1")
+	commonReflog := filepath.Join(common, "logs", "refs", "heads", "mu", "T-1")
+	for _, r := range []string{gateReflog, commonReflog} {
+		mkdirs(t, filepath.Dir(r))
+		if err := os.WriteFile(r, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, Primary: primary, Worktree: wt,
-		GitDir: filepath.Join(primary, ".git", "worktrees", "wt"), CommonDir: filepath.Join(primary, ".git"), Branch: "mu/T-1",
+		GitDir: filepath.Join(common, "worktrees", "wt"), CommonDir: common, Branch: "mu/T-1",
 		GateRepo: gate})
+	fencedGit := func(args ...string) {
+		t.Helper()
+		wrapped, err := f.Wrap(append([]string{"/usr/bin/git", "-c", "user.name=t", "-c", "user.email=t@t"}, args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(wrapped[0], wrapped[1:]...)
+		cmd.Env = env
+		if o, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fenced git %q failed: %v %s", args, err, o)
+		}
+	}
+	fencedGit("-C", wt, "checkout", "-b", "mu/T-1")
+	fencedGit("-C", wt, "commit", "-q", "--allow-empty", "-m", "work")
+	fencedGit("-C", wt, "push", "no-mistakes", "HEAD:refs/heads/mu/T-1")
 
-	wrapped, err := f.Wrap([]string{"/usr/bin/git", "-C", wt, "push", "no-mistakes", "HEAD:refs/heads/mu/T-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(wrapped[0], wrapped[1:]...)
-	cmd.Env = env
-	if o, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the fenced push into the gate failed: %v %s", err, o)
-	}
 	if got, want := git("-C", gate, "rev-parse", "refs/heads/mu/T-1"), git("-C", wt, "rev-parse", "HEAD"); got != want {
 		t.Errorf("gate mu/T-1 = %s, want the pushed head %s", got, want)
 	}
-	if b, err := os.ReadFile(reflog); err != nil || len(b) == 0 {
-		t.Errorf("the gate's branch reflog was not appended: %q, %v", b, err)
+	for _, r := range []string{commonReflog, gateReflog, filepath.Join(common, "worktrees", "wt", "logs", "HEAD")} {
+		if b, err := os.ReadFile(r); err != nil || len(b) == 0 {
+			t.Errorf("reflog %s was not appended: %q, %v", r, b, err)
+		}
 	}
 }
 
