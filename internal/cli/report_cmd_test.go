@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,10 +116,11 @@ func TestARepeatedReportIsAReportOfItsOwn(t *testing.T) {
 		settleFirst bool
 		wantLines   int
 		wantWakes   int
+		wantNoop    bool
 	}{
-		{"soldier repeat after the first was settled", "soldier", true, 2, 1},
-		{"soldier repeat before the first was settled", "soldier", false, 2, 2},
-		{"dispatcher repeat", "general", false, 1, 0},
+		{"soldier repeat after the first was settled", "soldier", true, 2, 1, false},
+		{"soldier repeat before the first was settled", "soldier", false, 2, 2, false},
+		{"dispatcher repeat", "general", false, 1, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -129,12 +131,15 @@ func TestARepeatedReportIsAReportOfItsOwn(t *testing.T) {
 			if tc.settleFirst {
 				settleReports(t, homeDir)
 			}
-			out, err := runRoot(t, "report", "failed", "CI red")
+			out, err := runRoot(t, "report", "failed", "CI red", "--output", "json")
 			if err != nil {
 				t.Fatalf("repeat: %v\n%s", err, out)
 			}
-			if noop := strings.Contains(out, "not appended"); noop != (tc.wantLines == 1) {
-				t.Fatalf("repeat output = %s, want not-appended=%v", out, tc.wantLines == 1)
+			if noop := strings.Contains(out, "not appended"); noop != tc.wantNoop {
+				t.Fatalf("repeat output = %s, want not-appended=%v", out, tc.wantNoop)
+			}
+			if !strings.Contains(out, fmt.Sprintf(`"noop": %t`, tc.wantNoop)) {
+				t.Fatalf("repeat output = %s, want noop=%v", out, tc.wantNoop)
 			}
 			if lines, _ := home.ReadStatus(homeDir, "t-1"); len(lines) != tc.wantLines {
 				t.Fatalf("status lines = %q, want %d", lines, tc.wantLines)
