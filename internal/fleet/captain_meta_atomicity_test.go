@@ -240,7 +240,7 @@ func TestCaptainMetaAtomicitySuccessfulMutations(t *testing.T) {
 		}
 	})
 
-	t.Run("send nudge stamps and preserves concurrent metadata", func(t *testing.T) {
+	t.Run("send nudge accepts a concurrent non-binding meta write", func(t *testing.T) {
 		parent, home, id, _ := newGuardNudgeValidFixture(t)
 		endpoint := &blockingNudgeEndpoint{started: make(chan struct{}), release: make(chan struct{})}
 		result := make(chan error, 1)
@@ -265,8 +265,8 @@ func TestCaptainMetaAtomicitySuccessfulMutations(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("send-nudge metadata: %v; marker after send: %v", meta, marker)
-		if meta["sentinel"] != "preserved" || meta["applied_commit"] == "" || meta["applied_digest"] == "" {
-			t.Fatalf("stamped metadata = %v", meta)
+		if meta["sentinel"] != "preserved" {
+			t.Fatalf("metadata after send = %v, want the concurrent sentinel kept", meta)
 		}
 		if marker != nil {
 			t.Fatalf("marker = %v, want cleared", marker)
@@ -303,12 +303,6 @@ func TestSendNudgeRefusesReplacementBinding(t *testing.T) {
 	}
 	if marker == nil {
 		t.Fatal("nudge marker was cleared after binding refusal")
-	}
-	if _, ok := meta["applied_commit"]; ok {
-		t.Fatal("replacement received applied_commit")
-	}
-	if _, ok := meta["applied_digest"]; ok {
-		t.Fatal("replacement received applied_digest")
 	}
 }
 

@@ -169,12 +169,11 @@ func (s *HerdrEventSource) parseAgentWait(endpoint EndpointRef, raw []byte) (Obs
 		return ObservationSignal{}, fmt.Errorf("unparseable agent-wait response: %v", err)
 	}
 	sig := ObservationSignal{
-		Endpoint:    endpoint,
-		Incarnation: "", // an adapter cannot attest the opaque launch incarnation (P1a rule)
-		Activity:    NormalizeActivityHint(res.AgentStatus),
-		Source:      SourceEvent,
-		ObservedAt:  time.Now().UTC(),
-		Detail:      "herdr agent wait: " + res.AgentStatus,
+		Endpoint:   endpoint,
+		Activity:   NormalizeActivityHint(res.AgentStatus),
+		Source:     SourceEvent,
+		ObservedAt: time.Now().UTC(),
+		Detail:     "herdr agent wait: " + res.AgentStatus,
 	}
 	if res.StateChangeSeq > 0 {
 		sig.Cursor = EventCursor(strconv.FormatUint(res.StateChangeSeq, 10))
