@@ -8,7 +8,7 @@ import (
 )
 
 func statusLines(path string) []string {
-	b, e := os.ReadFile(path)
+	b, e := ReadRegularFile(path)
 	if e != nil {
 		return nil
 	}

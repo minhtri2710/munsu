@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,8 +12,11 @@ import (
 	"testing"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -101,81 +105,132 @@ func TestProbeFenceRefusesTheSeatsPathDirs(t *testing.T) {
 	}
 }
 
-// fencedAppendStatusHome names the home the child process below appends to.
-const fencedAppendStatusHome = "MUNSU_TEST_FENCED_APPEND_STATUS_HOME"
+// fencedSoldierHome names the home the child processes below work in.
+const fencedSoldierHome = "MUNSU_TEST_FENCED_SOLDIER_HOME"
 
-// TestFencedAppendStatusChild is the body TestFencedSoldierAppendsItsStatus
-// runs inside the fence: the real status append every soldier report makes.
-func TestFencedAppendStatusChild(t *testing.T) {
-	dir := os.Getenv(fencedAppendStatusHome)
+// TestFencedSoldierWritesChild is the body TestFencedSoldierWritesOnlyItsOwnFiles
+// runs inside the fence: the home writes of a soldier's munsu report (its
+// status append) and munsu inbox ack (its ack log append).
+func TestFencedSoldierWritesChild(t *testing.T) {
+	dir := os.Getenv(fencedSoldierHome)
 	if dir == "" {
-		t.Skip("runs only as the child of TestFencedSoldierAppendsItsStatus")
+		t.Skip("runs only as the child of TestFencedSoldierWritesOnlyItsOwnFiles")
 	}
-	if err := home.AppendStatus(dir, "task-1", "running: x"); err != nil {
+	if _, err := orchestrator.AppendReportStatus(dir, "task-1", domain.ReportStatusLine("done", "x", "default")); err != nil {
+		t.Fatal(err)
+	}
+	ack := &home.ProcessingAck{MessageID: "m1", SenderRank: home.RankGeneral, SenderIdentity: "general",
+		ReceiverRank: home.RankSoldier, ReceiverID: "task-1", TaskID: "task-1", PayloadHash: "h", ProcessedAt: 1, Outcome: home.OutcomeAccepted}
+	if err := home.NewStore(dir).WriteAck(ack); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// A soldier's own status append chmods the state dir, a fence writable root:
-// the PATH-dir protection must leave that mode change alone.
-func TestFencedSoldierAppendsItsStatus(t *testing.T) {
-	isolateHuman(t)
-	f := newFenceFixture(t)
-	state := filepath.Join(f.home, "state")
-	if err := os.MkdirAll(state, 0o755); err != nil {
+// homeTree records every path under dir with its type, mode and content.
+func homeTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		v := fi.Mode().String()
+		if fi.Mode().IsRegular() {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			v += " " + string(b)
+		}
+		tree[p] = v
+		return nil
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(state, 0o755); err != nil {
+	return tree
+}
+
+// Under the real launch fence a soldier's report and ack succeed and change
+// nothing in its dispatcher's home but its own status file and ack log: the
+// launch creates the meta lock the append locks, and the append leaves the
+// private state dir's mode alone (a chmod of it, even to its own mode, is
+// refused; TestSoldierFenceHomeWrites).
+func TestFencedSoldierWritesOnlyItsOwnFiles(t *testing.T) {
+	isolateHuman(t)
+	f := newFenceFixture(t)
+	if _, err := home.Init(f.home); err != nil {
 		t.Fatal(err)
 	}
 	r := f.runner("direct-PR")
 	if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
 		t.Fatal(err)
 	}
-	argv, err := r.fence.Wrap([]string{os.Args[0], "-test.run=^TestFencedAppendStatusChild$"})
+	before := homeTree(t, f.home)
+	argv, err := r.fence.Wrap([]string{os.Args[0], "-test.run=^TestFencedSoldierWritesChild$"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), fencedAppendStatusHome+"="+f.home)
+	cmd.Env = append(os.Environ(), fencedSoldierHome+"="+f.home)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the status append failed under the fence: %v\n%s", err, out)
+		t.Fatalf("the soldier's report and ack failed under the fence: %v\n%s", err, out)
 	}
-	if fi, err := os.Stat(state); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("state dir = %v, %v; want the append to have restricted it to 0700", fi, err)
+	after := homeTree(t, f.home)
+	status := filepath.Join(f.home, "state", "task-1.status")
+	acks := filepath.Join(f.home, "state", "task-1.acks")
+	for p, v := range after {
+		if before[p] != v && p != status && p != acks {
+			t.Errorf("%s changed under the fence: %q -> %q", p, before[p], v)
+		}
 	}
-	lines, err := home.ReadStatus(f.home, "task-1")
-	if err != nil || len(lines) != 1 || lines[0] != "running: x" {
-		t.Fatalf("status = %q, %v; want the appended line", lines, err)
+	for p := range before {
+		if _, ok := after[p]; !ok {
+			t.Errorf("%s was removed under the fence", p)
+		}
+	}
+	if lines, err := home.ReadStatus(f.home, "task-1"); err != nil || len(lines) != 1 || !domain.IsReportLine(lines[0]) {
+		t.Fatalf("status = %q, %v; want the one report line", lines, err)
+	}
+	if acked, err := home.NewStore(f.home).ReadAck(&home.Envelope{MessageID: "m1", SenderIdentity: "general", ReceiverRank: home.RankSoldier, TaskID: "task-1"}); err != nil || acked == nil {
+		t.Fatalf("ack = %v, %v; want the soldier's ack", acked, err)
 	}
 }
 
-// fencedOpenHome names the home the child process below opens; the child
-// prints fencedHomeOpened once the open succeeded.
-const (
-	fencedOpenHome   = "MUNSU_TEST_FENCED_OPEN_HOME"
-	fencedHomeOpened = "munsu-test: fenced home opened"
-)
-
-// TestFencedOpenHomeChild is the body TestFencedSoldierOpensItsHome runs inside
-// the fence: the home open every soldier-side munsu command makes.
-func TestFencedOpenHomeChild(t *testing.T) {
-	dir := os.Getenv(fencedOpenHome)
+// TestFencedCommittedReadChild is the body
+// TestFencedSoldierReadsCommittedTaskDocuments runs inside the fence: the home
+// open the git guard makes before it reads the task's worktree binding.
+func TestFencedCommittedReadChild(t *testing.T) {
+	dir := os.Getenv(fencedSoldierHome)
 	if dir == "" {
-		t.Skip("runs only as the child of TestFencedSoldierOpensItsHome")
+		t.Skip("runs only as the child of TestFencedSoldierReadsCommittedTaskDocuments")
 	}
-	if _, err := home.Open(dir); err != nil {
+	h, err := home.OpenCommitted(dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := domain.NewTaskID("task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Get(id); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("Get = %v; want the task not found", err)
 	}
 	fmt.Println(fencedHomeOpened)
 }
 
-// The fence locks every ancestor of the git shim, the home included, so that
-// lock holds only while munsu never chmods the home on a seat's path: only
-// createHome does, before any seat exists. A seat-side chmod of the home (even
-// to its own mode) fails here with "operation not permitted". The home sits in
-// a temp root, so the roots-included case is the one checked.
-func TestFencedSoldierOpensItsHome(t *testing.T) {
+const fencedHomeOpened = "munsu-test: fenced home opened"
+
+// A soldier's git guard reads its task's binding while a dispatcher commit is
+// in flight: journal recovery would write .journal and .lock, which its fence
+// refuses, so the read opens the home as last committed. The home sits in a
+// temp root, so the roots-included case is the one checked; the git shim
+// locks the home itself against a chmod.
+func TestFencedSoldierReadsCommittedTaskDocuments(t *testing.T) {
 	isolateHuman(t)
 	f := newFenceFixture(t)
 	if _, err := home.Init(f.home); err != nil {
@@ -184,27 +239,38 @@ func TestFencedSoldierOpensItsHome(t *testing.T) {
 	if _, err := provisionGitShim(f.home); err != nil {
 		t.Fatal(err)
 	}
+	journal := filepath.Join(f.home, ".journal")
+	if err := os.MkdirAll(journal, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"txn_id":"t1","scope":"task-x","fence_token":1,"expected_revision":0,"new_revision":1,"items":[]}`
+	if err := os.WriteFile(filepath.Join(journal, "task-x.t1.json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	r := f.runner("direct-PR")
 	if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
 		t.Fatal(err)
 	}
-	argv, err := r.fence.Wrap([]string{os.Args[0], "-test.run=^TestFencedOpenHomeChild$"})
+	argv, err := r.fence.Wrap([]string{os.Args[0], "-test.run=^TestFencedCommittedReadChild$"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), fencedOpenHome+"="+f.home)
+	cmd.Env = append(os.Environ(), fencedSoldierHome+"="+f.home)
 	// The marker, not the exit status alone: a child that skipped or matched no
 	// test exits 0 without opening the home.
 	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), fencedHomeOpened) {
-		t.Fatalf("the home open did not succeed under the fence: %v\n%s", err, out)
+		t.Fatalf("the committed read did not succeed under the fence: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(journal, "task-x.t1.json")); err != nil {
+		t.Fatalf("the in-flight record = %v; want it left for its writer", err)
 	}
 }
 
 // Taking the shim dir off the seat's PATH would let `git` resolve past the git
 // guard: a directory the shell cannot enter is skipped. None of the shim dir,
 // its parent or the home (here inside a temp root, a writable root) may be
-// chmod'ed to hide it; the state dir the seat writes is not above the shim. The home sits directly in /private/tmp, a
+// chmod'ed to hide it; the state dir holding the seat's own files is not above the shim. The home sits directly in /private/tmp, a
 // writable root, so that root is itself an ancestor of the shim.
 func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 	isolateHuman(t)
@@ -239,6 +305,8 @@ func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 	for _, d := range hidden {
 		script += "/bin/chmod 000 " + shQuote(d) + " 2>/dev/null; command -v git; /bin/chmod 755 " + shQuote(d) + " 2>/dev/null\n"
 	}
+	// Every chmod above is refused, so the script's status is not theirs.
+	script += "exit 0\n"
 	argv, err := r.fence.Wrap([]string{"/bin/sh", "-c", script})
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +335,7 @@ func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 
 // A claude reviewer's fence carries its config dir: the reviewer writes its
 // own sessions there, while every other path in the home stays refused. A
-// soldier writes all of state/, so only the reviewer shows the carve-out.
+// soldier's home writes are pinned by TestSoldierFenceHomeWrites (fence).
 func TestFencedClaudeReviewerWritesItsOwnConfigDir(t *testing.T) {
 	isolateHuman(t)
 	f := newFenceFixture(t)

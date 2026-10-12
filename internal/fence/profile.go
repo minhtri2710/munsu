@@ -62,18 +62,11 @@ func New(l Launch) (*Fence, error) {
 	dirs = append(dirs, goCaches(userHome)...)
 	dirs = append(dirs, p.roots...)
 
-	// Only a soldier writes the home: its munsu commands commit canonical
-	// documents in-process. A reviewer has no home root, so it cannot write a
-	// task's documents or its ReviewVerdict.
-	var seat []string
-	if l.Role == RoleSoldier {
-		seat = homeRoots(p.home)
-	}
 	protected := []string{p.primary, p.commonDir, p.gitDir}
 	if l.Role == RoleReviewer {
 		protected = append(protected, p.worktree)
 	}
-	if err := checkSeatRoots(append(append([]string{}, seat...), p.files...), protected); err != nil {
+	if err := checkSeatRoots(p.files, protected); err != nil {
 		return nil, err
 	}
 
@@ -88,15 +81,19 @@ func New(l Launch) (*Fence, error) {
 	}
 	allowRoots(append([]string{"/private/tmp", "/private/var/folders", "/dev"}, dirs...)...)
 	deny(&b, "subpath", protected...)
-	if l.Role == RoleReviewer && p.home != "" {
-		// A reviewer's home roots stay refused even under a temp root; only its
-		// own harness state dir, inside state/, is carved back out.
+	if p.home != "" {
+		// No seat has a home root, even under a temp root: a soldier writes only
+		// its own files (Files, allowed below) and its harness state dir (allowed
+		// back further down). The subpath deny also refuses renaming a root
+		// away, so a seat cannot replace state/ with a tree of its own.
+		// Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1058: "A soldier's write
+		// fence lets it write only its own task's status, report and request
+		// files; it can never write another task's documents, any review
+		// verdict, delivery authorization or gate record, or the fleet
+		// registries (projects.json, captains.json)."
 		deny(&b, "subpath", homeRoots(p.home)...)
-		if p.stateDir != "" {
-			allowRoots(p.stateDir)
-		}
 	}
-	allowRoots(seat...)
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
 		allowRoots(p.gateRepo)
@@ -133,8 +130,8 @@ func New(l Launch) (*Fence, error) {
 	// replaced. An ancestor of a PATH dir that is not itself a writable root is
 	// locked: chmod, unlink and rename are all refused, because a mode of 000
 	// would take the PATH dir off the seat's PATH. A writable root refuses only
-	// unlink (a rename is an unlink of the source name), because munsu chmods
-	// and fills it (<home>/state). The git shim dir is stricter: every ancestor
+	// unlink (a rename is an unlink of the source name), because the seat fills
+	// it (a pi seat's agent dir). The git shim dir is stricter: every ancestor
 	// of it, roots and temp roots included, is locked, so a home under a
 	// writable root cannot be chmod'ed to hide the shim. That holds only while
 	// munsu never chmods, renames or removes a directory above the shim (the
@@ -148,12 +145,16 @@ func New(l Launch) (*Fence, error) {
 	deny(&b, "literal", locked...)
 	denyUnlink(&b, removable...)
 
+	// The probe proves the home roots refused: every soldier root (G1058,
+	// quoted above), and a reviewer's state/.
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
 		refuse = append(refuse, p.worktree, p.gitDir)
 		if p.home != "" {
 			refuse = append(refuse, filepath.Join(p.home, "state"))
 		}
+	} else {
+		refuse = append(refuse, homeRoots(p.home)...)
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return &Fence{
@@ -243,12 +244,24 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 		}
 		p.home = r
 	}
+	// A Files entry's parent is resolved and its leaf kept literal: a seat can
+	// replace its own file with a link, and the allow must never name the
+	// link's target. A write through the link reaches the target, which the
+	// sandbox checks on its own.
 	for _, f := range l.Files {
-		r, err := resolvePath(f, false)
+		if err := lexicalPath(f); err != nil {
+			return p, fmt.Errorf("fence: file: %w", err)
+		}
+		dir, err := resolvePath(filepath.Dir(f), false)
 		if err != nil {
 			return p, fmt.Errorf("fence: file: %w", err)
 		}
-		p.files = append(p.files, r)
+		p.files = append(p.files, filepath.Join(dir, filepath.Base(f)))
+	}
+	if p.home != "" {
+		if err := realHomeRoots(p.home); err != nil {
+			return p, err
+		}
 	}
 	if err := resolveStateDir(l, &p); err != nil {
 		return p, err
@@ -290,10 +303,36 @@ func resolveWritableRoots(l Launch, p *launchPaths) error {
 	return nil
 }
 
-// homeRoots are the munsu home directories a soldier writes and a reviewer must
-// not: its durable state, data, journal and lock roots.
+// homeRoots are the munsu home directories no seat writes beyond its own
+// files: its durable state, data, journal and lock roots.
 func homeRoots(home string) []string {
 	return []string{filepath.Join(home, "state"), filepath.Join(home, "data"), filepath.Join(home, ".journal"), filepath.Join(home, ".lock")}
+}
+
+// realHomeRoots refuses a home root that is a symlink or not a directory. The
+// profile denies each root by its name, and the sandbox matches resolved
+// paths, so a root linked elsewhere (into a temp root, say) would escape the
+// deny while the seat's own files, resolved through the link, stay allowed. A
+// missing root is fine: the seat cannot create it. It runs for every seat
+// with a home. Human words (domain.Words): for a soldier, G1058, quoted in
+// New; for a reviewer, grantor the Human, channel supervisor-relay:dialog,
+// words=selected, G1122: "Áp cho cả reviewer (Recommended): reviewer launch
+// refuses when home state/, data/, .journal/ or .lock/ is a symlink or not a
+// directory; same code path as soldiers".
+func realHomeRoots(home string) error {
+	for _, r := range homeRoots(home) {
+		fi, err := os.Lstat(r)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("fence: home root: %w", err)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("fence: home root %s is a symlink or not a directory", r)
+		}
+	}
+	return nil
 }
 
 // resolveStateDir validates the per-launch harness state directory: a proper
@@ -305,6 +344,17 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 	}
 	if p.home == "" {
 		return fmt.Errorf("fence: harness state dir %s needs the home it lives under", l.HarnessStateDir)
+	}
+	// A link would be resolved and allowed wherever it points inside state/.
+	// Human words (domain.Words): grantor the Human, channel
+	// supervisor-relay:dialog, words=selected, G1086, whose section 1
+	// conditions include "resolveStateDir no symlink": "Duyệt, có R3
+	// (Recommended): option 1 + 3 PRs with section 1 conditions; R3 worded as
+	// an accident guard (not a boundary), error names munsu report <state>;
+	// gate record = munsu task-authority gates, no-mistakes gate state a
+	// separate fence task."
+	if fi, err := os.Lstat(l.HarnessStateDir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("fence: harness state dir %s is a symlink", l.HarnessStateDir)
 	}
 	r, err := resolvePath(l.HarnessStateDir, false)
 	if err != nil {

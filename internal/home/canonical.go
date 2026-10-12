@@ -138,6 +138,26 @@ func initWithLstat(root string, lstat func(string) (os.FileInfo, error)) (*Home,
 // matching identity. Incompatible or malformed state fails closed. Any
 // incomplete write-ahead journal is recovered mechanically before returning.
 func Open(root string) (*Home, error) {
+	h, err := openVerified(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.recover(); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// OpenCommitted opens an existing home as Open does but never recovers its
+// journal, so it writes nothing. It is for a fenced soldier's reads of
+// committed documents: recovery writes .journal and .lock, which its fence
+// refuses, and would fail whenever a dispatcher commit is in flight. A read
+// through it sees each document as last committed by atomic rename.
+func OpenCommitted(root string) (*Home, error) {
+	return openVerified(root)
+}
+
+func openVerified(root string) (*Home, error) {
 	if root == "" {
 		return nil, ErrEmptyRoot
 	}
@@ -160,11 +180,7 @@ func Open(root string) (*Home, error) {
 	if err := verifyHomeProtection(abs); err != nil {
 		return nil, err
 	}
-	h := &Home{root: id.CanonicalRoot, id: id}
-	if err := h.recover(); err != nil {
-		return nil, err
-	}
-	return h, nil
+	return &Home{root: id.CanonicalRoot, id: id}, nil
 }
 
 // RootFor returns the verified on-disk path for a logical root name.

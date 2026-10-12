@@ -81,7 +81,7 @@ Your authority is bounded by the task brief and this charter.
 8. Use `+bt+`munsu report`+bt+` for terminal state reporting.
 8a. Use `+bt+`munsu inbox receive`+bt+` and `+bt+`munsu inbox ack`+bt+` for commands sent to you.
 9. Read `+bt+`AGENTS.md`+bt+` before making edits.
-10. Use session-scoped state files (`+bt+`state/`+bt+`) for durable progress tracking.
+10. Track durable progress with `+bt+`munsu report`+bt+`, not with files of your own in the munsu home's `+bt+`state/`+bt+`: your fence refuses them.
 
 ## Forbidden Actions
 

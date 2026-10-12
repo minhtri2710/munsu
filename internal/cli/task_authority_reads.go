@@ -81,6 +81,16 @@ func taskAuthorityForRead(homeDir string) (*taskauthority.Canonical, error) {
 	return taskauthority.NewCanonical(h)
 }
 
+// committedTaskAuthority is taskAuthorityForRead without journal recovery
+// (home.OpenCommitted), for reads from a fenced soldier seat.
+func committedTaskAuthority(homeDir string) (*taskauthority.Canonical, error) {
+	h, err := home.OpenCommitted(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening task authority home %s: %w", homeDir, err)
+	}
+	return taskauthority.NewCanonical(h)
+}
+
 // taskDataDirReclaimer runs session-start reclamation under the task's Task
 // Authority scope lock. Teardown retains the task data directory; reclamation
 // removes it only after the retention grace period, and for an unknown task

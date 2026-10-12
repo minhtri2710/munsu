@@ -1322,11 +1322,17 @@ func safetyCheckGeneration(authority *taskauthority.Canonical, taskID domain.Tas
 // generation's report never satisfies a later generation's check.
 func scoutSafetyCheck(opts Options, meta map[string]string, gen taskauthority.Generation) error {
 	reportPath := ReportPath(opts.HomeDir, opts.ID, gen)
-	if _, err := os.Stat(reportPath); err != nil {
+	fi, err := os.Lstat(reportPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("scout task %s has no generation %s report at %s (use --force to override)", opts.ID, gen, reportPath)
 		}
 		return fmt.Errorf("checking generation %s report: %w", gen, err)
+	}
+	// The scout writes its report, so it can put a link, a FIFO or a directory
+	// there. Human words (domain.Words): G1086, quoted at home.ReadRegularFile.
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("scout task %s generation %s report %s is not a regular file (use --force to override)", opts.ID, gen, reportPath)
 	}
 
 	// After report exists, check for unresolved decision holds. The decision

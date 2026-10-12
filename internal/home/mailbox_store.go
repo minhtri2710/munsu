@@ -386,7 +386,7 @@ func (s *Store) readAck(rank Rank, taskID, senderIdentity, messageID string) (*P
 	if err != nil {
 		return nil, err
 	}
-	content, err := os.ReadFile(path)
+	content, err := ReadRegularFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
