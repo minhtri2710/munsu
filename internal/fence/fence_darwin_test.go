@@ -480,13 +480,15 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 			// to the project registry.
 			registry := filepath.Join(state, "fleet-registry", "projects.json")
 			overlays := filepath.Join(l.home, "config", "project-overlays.json")
-			for _, f := range []string{registry, overlays} {
+			identity, agents := filepath.Join(l.home, "identity.json"), filepath.Join(l.home, "AGENTS.md")
+			for _, f := range []string{registry, overlays, identity, agents} {
 				if err := os.WriteFile(f, []byte("{}\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			hook := filepath.Join(l.home, "projects", "p1", ".git", "hooks", "post-checkout")
-			mkdirs(t, filepath.Dir(hook))
+			otherWT := filepath.Join(l.home, ".worktrees", "abc123")
+			mkdirs(t, filepath.Dir(hook), otherWT)
 			linkedAcks := filepath.Join(state, "T-3.acks")
 			if err := os.Symlink(registry, linkedAcks); err != nil {
 				t.Fatal(err)
@@ -540,6 +542,10 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 				{"a project overlay in config/ (allowed: own status append)", sh(`printf x >> ` + overlays), true, overlays, nil},
 				{"renaming config/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "config"), filepath.Join(l.home, "config.x")}, true, filepath.Join(l.home, "config.x"), nil},
 				{"a hook in a cloned project under projects/ (allowed: own status append)", []string{touchBin, hook}, true, hook, nil},
+				{"the home identity (allowed: own status append)", sh(`printf x >> ` + identity), true, identity, nil},
+				{"the home AGENTS.md (allowed: own status append)", sh(`printf x >> ` + agents), true, agents, nil},
+				{"a new top-level name in the home (allowed: own status)", []string{touchBin, filepath.Join(l.home, "x")}, true, filepath.Join(l.home, "x"), nil},
+				{"another task's worktree under .worktrees/ (allowed: own status)", []string{touchBin, filepath.Join(otherWT, "f")}, true, filepath.Join(otherWT, "f"), nil},
 				{"renaming data/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "data"), filepath.Join(l.home, "data.x")}, true, filepath.Join(l.home, "data.x"), nil},
 				{"own harness state dir", sh(`/bin/mkdir -p ` + launch.HarnessStateDir + ` && printf x > ` + launch.HarnessStateDir + `/f`), false, "", nil},
 			}
@@ -642,7 +648,7 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 	launch.Files = []string{verdict}
 	// A git dir apart from the common dir and the worktree is protected on its own.
 	launch.GitDir = filepath.Join(l.root, "gitdir-apart")
-	mkdirs(t, launch.HarnessStateDir, launch.GitDir)
+	mkdirs(t, launch.HarnessStateDir, launch.GitDir, filepath.Join(l.home, ".worktrees", "abc123"))
 	f := mustNew(t, launch)
 
 	mustWrite(t, f,
@@ -658,6 +664,8 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
 		filepath.Join(l.home, "config", "f"), filepath.Join(l.home, "projects", "f"),
+		filepath.Join(l.home, "identity.json"), filepath.Join(l.home, "AGENTS.md"),
+		filepath.Join(l.home, ".worktrees", "abc123", "f"),
 		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, ".pi", "agent", "f"), verdict+"2",
 	)
 

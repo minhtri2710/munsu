@@ -115,6 +115,17 @@ func New(l Launch) (*Fence, error) {
 		// không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence
 		// sẽ chạy, và không gửi input vào session ngoài session của nó."
 		deny(&b, "subpath", homeRoots(p.home)...)
+		if l.Role == RoleSoldier {
+			// G1058 (quoted above): a soldier writes nothing else in its
+			// home either; its worktree is allowed back below.
+			deny(&b, "subpath", p.home)
+		} else {
+			// identity.json, AGENTS.md and the tasks' worktrees are
+			// configuration and programs that unfenced munsu, the General
+			// and the daemon read and run: G1085 (quoted above).
+			deny(&b, "literal", filepath.Join(p.home, "identity.json"), filepath.Join(p.home, "AGENTS.md"))
+			deny(&b, "subpath", filepath.Join(p.home, ".worktrees"))
+		}
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
