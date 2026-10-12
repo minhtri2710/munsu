@@ -22,7 +22,7 @@ The dispatch profiles live in the fleet base document at $MUNSU_HOME/config/base
 and select harness/model/effort from ordered profiles (match/when rules).
 
 Spawn precedence: CLI --harness/--model/--effort > matched profile >
-adapter template defaults.
+project Soldier harness and model.
 
 Subcommands:
   show         Print the active dispatch config
