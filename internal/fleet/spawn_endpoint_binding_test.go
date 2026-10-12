@@ -159,7 +159,8 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 		EndpointReservationID: epRes,
 		EndpointFenceToken:    epFence,
 		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID,
-		Reason: "spawn",
+		SeatEnv: testSeatEnv(),
+		Reason:  "spawn",
 	}
 	op, err := domain.NewOperation(mustOpID(t, "spawn-begin-"+taskID+"-1"), req)
 	if err != nil {

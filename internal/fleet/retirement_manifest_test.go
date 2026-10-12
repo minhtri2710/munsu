@@ -511,6 +511,7 @@ func seedRetirementManifestEvidence(t *testing.T, auth *taskauthority.Canonical,
 		WindowLabel: "window-" + taskID, WorktreeReservationID: wtLease,
 		WorktreeFenceToken: wtFence, EndpointReservationID: epLease,
 		EndpointFenceToken: epFence, SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
+		SeatEnv: testSeatEnv(),
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-manifest-"+taskID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn: %v", err)

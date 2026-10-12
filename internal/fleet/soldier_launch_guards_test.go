@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // The refusal branches of the soldier launch builders. Every case here builds
@@ -133,6 +135,7 @@ func launchArtifactInputForGuards(t *testing.T) LaunchArtifactInput {
 		LaunchDir:      wtDir,
 		HomeDir:        homeDir,
 		PathDirs:       seatPathDirs(homeDir),
+		SeatEnv:        testSeatEnv(),
 		TaskID:         "guard-task",
 		SnapshotDigest: "sha256:snapshot",
 		LaunchBin:      "pi",
@@ -141,6 +144,15 @@ func launchArtifactInputForGuards(t *testing.T) LaunchArtifactInput {
 		Generation:     "3",
 		EndpointFence:  "fence-1",
 	}
+}
+
+// testSeatEnv is the seat's launch environment as the test process sees it.
+func testSeatEnv() taskauthority.SeatEnv {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+	return taskauthority.SeatEnv{TempDir: os.TempDir(), UserHome: home}
 }
 
 // A harness with no prompt-arg delivery yields an empty bin or arg list. The

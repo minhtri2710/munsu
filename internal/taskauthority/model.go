@@ -236,7 +236,25 @@ type LaunchIntent struct {
 	// it, so a resumed launch rebuilds the same bytes whatever PATH the
 	// resuming process has.
 	SeatPathDirs []string `json:"seat_path_dirs"`
-	PlannedAt    int64    `json:"planned_at"`
+	// SeatEnv is the launch environment the script and fence profile are built
+	// from, fixed with the intent: a resumed launch adopts it, never the
+	// resuming process's TMPDIR or home.
+	SeatEnv   SeatEnv `json:"seat_env"`
+	PlannedAt int64   `json:"planned_at"`
+}
+
+// SeatEnv holds the temp dir (the run's TMPDIR) and the Human's home a launch
+// reads from its environment; the committed values rebuild the same bytes.
+type SeatEnv struct {
+	TempDir  string `json:"temp_dir"`
+	UserHome string `json:"user_home"`
+}
+
+func validateSeatEnv(e SeatEnv) error {
+	if !filepath.IsAbs(e.TempDir) || !filepath.IsAbs(e.UserHome) {
+		return validationError("launch seat env must hold absolute temp and user home dirs")
+	}
+	return nil
 }
 
 // AcquiredEndpoint is the durable record of the exact endpoint identity Fleet
@@ -785,6 +803,9 @@ func validateLaunchIntent(l LaunchIntent) error {
 		return validationError("launch intent missing operation id")
 	}
 	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken, l.EndpointIncarnation, l.SeatPathDirs); err != nil {
+		return err
+	}
+	if err := validateSeatEnv(l.SeatEnv); err != nil {
 		return err
 	}
 	if l.PlannedAt <= 0 {

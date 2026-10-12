@@ -184,6 +184,7 @@ func validLaunchIntent() LaunchIntent {
 		EndpointFenceToken:    "ep-fence-1",
 		EndpointIncarnation:   "inc-1",
 		SeatPathDirs:          []string{"/usr/bin"},
+		SeatEnv:               SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"},
 		PlannedAt:             1700000000,
 	}
 }

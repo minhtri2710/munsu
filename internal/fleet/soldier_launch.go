@@ -312,6 +312,9 @@ type LaunchArtifactInput struct {
 	// PathDirs is the seat's PATH, shim first: the launch intent's committed
 	// list, the one the fence was built from.
 	PathDirs []string
+	// SeatEnv is the seat's launch environment, read once and committed with
+	// the intent: the seat temp is built from its TempDir.
+	SeatEnv taskauthority.SeatEnv
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
@@ -415,6 +418,9 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	if len(in.PathDirs) == 0 {
 		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: the seat PATH is required")
 	}
+	if in.SeatEnv.TempDir == "" {
+		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: the seat temp dir is required")
+	}
 	b.WriteString("export PATH=")
 	b.WriteString(shQuote(strings.Join(in.PathDirs, string(os.PathListSeparator))))
 	b.WriteString("\n")
@@ -427,7 +433,7 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không bao
 	// giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và không
 	// gửi input vào session ngoài session của nó."
-	seatTemp := filepath.Join(os.TempDir(), "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
+	seatTemp := filepath.Join(in.SeatEnv.TempDir, "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
 	caches := []struct{ name, dir string }{
 		{"npm_config_cache", "npm-cache"}, {"npm_config_store_dir", "npm-store"},
 		{"PIP_CACHE_DIR", "pip-cache"}, {"UV_CACHE_DIR", "uv-cache"}, {"XDG_CACHE_HOME", "xdg-cache"},

@@ -48,11 +48,10 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, err
 	}
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("fence: resolving user home: %w", err)
+	if !filepath.IsAbs(l.UserHome) {
+		return nil, fmt.Errorf("fence: user home must be absolute: %q", l.UserHome)
 	}
-	userHome, err = resolvePath(userHome, true)
+	userHome, err := resolvePath(l.UserHome, true)
 	if err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}

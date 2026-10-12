@@ -53,13 +53,23 @@ func newSplitLayout(t *testing.T, out string) layout {
 }
 
 func (l layout) soldier() Launch {
-	return Launch{Role: RoleSoldier, Harness: harness.Claude, Home: l.home, Primary: l.primary,
+	return Launch{Role: RoleSoldier, Harness: harness.Claude, Home: l.home, UserHome: testUserHome(), Primary: l.primary,
 		Worktree: l.worktree, GitDir: l.gitDir, CommonDir: l.common, Branch: "mu/T-1"}
 }
 
 func (l layout) reviewer() Launch {
-	return Launch{Role: RoleReviewer, Harness: harness.Claude, Home: l.home, Primary: l.primary,
+	return Launch{Role: RoleReviewer, Harness: harness.Claude, Home: l.home, UserHome: testUserHome(), Primary: l.primary,
 		Worktree: l.worktree, GitDir: l.gitDir, CommonDir: l.common}
+}
+
+// testUserHome is the Human's home as the test process sees it; the fence
+// takes it from its Launch, never from the environment.
+func testUserHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+	return home
 }
 
 func (l layout) stateDir() string { return filepath.Join(l.home, "state", "T-1.pi-agent") }
