@@ -24,7 +24,7 @@ func (c sessionBoundCapture) Capture(homeDir string, meta map[string]string, lin
 		return "", err
 	}
 	switch name {
-	case "tmux", "herdr", "zellij", "cmux", "orca":
+	case "tmux", "herdr":
 	default:
 		return "", fmt.Errorf("unsupported bound backend %q", name)
 	}

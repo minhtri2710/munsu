@@ -72,29 +72,6 @@ func lookBackendBin(name string) (string, error) {
 	return path, nil
 }
 
-// backendOutput runs the named backend binary with args and returns trimmed stdout.
-func backendOutput(name string, args ...string) (string, error) {
-	bin, err := lookBackendBin(name)
-	if err != nil {
-		return "", err
-	}
-	out, stderr, err := runBackendCommand(bin, args, "", nil)
-	if err != nil {
-		return "", wrapBackendCommandError(fmt.Sprintf("%s %v", name, args), out, stderr, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// parsePipeHandle splits a "<container>|<pane>" window handle at its last
-// "|"; a handle without one is a bare pane id.
-func parsePipeHandle(handle string) (container, pane string) {
-	idx := strings.LastIndex(handle, "|")
-	if idx < 0 {
-		return "", handle
-	}
-	return handle[:idx], handle[idx+1:]
-}
-
 func runBackendCommandClass(parent context.Context, class backendCommandClass, bin string, args []string, dir string, env []string) ([]byte, []byte, error) {
 	return runBackendCommandWithTimeout(parent, backendCommandTimeoutFor(class), bin, args, dir, env)
 }

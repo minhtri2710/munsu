@@ -199,7 +199,7 @@ func TestSpawnSessionEndpointsFindOrCreateSameReservationSameEndpoint(t *testing
 func TestSpawnSessionEndpointsUnsupportedBackendFailsClosed(t *testing.T) {
 	bk := &unsupportedSpawnBackend{}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string) (backend.Backend, string, error) { return bk, "orca", nil },
+		resolve: func(string) (backend.Backend, string, error) { return bk, "nofind", nil },
 		bound:   map[string]backend.Backend{},
 	}
 	_, err := endpoints.CreateReserved(fleet.CreateRequest{ReservationID: "epres-x", FenceToken: "epfence-x"})

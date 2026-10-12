@@ -22,8 +22,6 @@ func FixCommand(tool string) string {
 		return "Install psmisc: apt install psmisc  |  dnf install psmisc (macOS ships fuser)"
 	case "herdr":
 		return "Install herdr from the herdr repository, or set HERDR_ENV=1 if already installed"
-	case "zellij":
-		return "Install zellij: brew install zellij  |  see https://zellij.dev/documentation/installation" + "\n\tExperimental: set backend zellij in the fleet base config or --backend zellij. Not auto-detected."
 	default:
 		return ""
 	}
