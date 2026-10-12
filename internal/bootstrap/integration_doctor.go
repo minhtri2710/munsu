@@ -2,12 +2,15 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -88,6 +91,9 @@ func scanGeneral(homeDir string) []StatusEntry {
 
 	// Go toolchain
 	entries = append(entries, checkGoToolchain())
+
+	// Per project: the refusal a soldier launch would hit, probed without spawning
+	entries = append(entries, checkProjectReadiness(homeDir)...)
 
 	return entries
 }
@@ -181,6 +187,46 @@ func checkGoToolchain() StatusEntry {
 		Status:    StatusCurrent,
 		Detail:    strings.TrimSpace(string(out)),
 	}
+}
+
+// checkProjectReadiness predicts, for each configured project, whether a
+// General-direct soldier launch would pass spawn's delivery and harness
+// preflights. It probes and reports; it refuses nothing.
+func checkProjectReadiness(homeDir string) []StatusEntry {
+	overlays, err := config.LoadProjectOverlays(homeDir)
+	if err != nil {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusStale, Detail: fmt.Sprintf("cannot read project overlays: %v", err)}}
+	}
+	if len(overlays) == 0 {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusCurrent, Detail: "no projects configured"}}
+	}
+	names := make([]string, 0, len(overlays))
+	for name := range overlays {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var entries []StatusEntry
+	for _, name := range names {
+		subsystem := "project " + name
+		pr, err := fleet.ProbeProjectReadiness(homeDir, name)
+		if err != nil {
+			entries = append(entries, StatusEntry{Subsystem: subsystem, Status: StatusStale, Detail: fmt.Sprintf("cannot resolve project: %v", err)})
+			continue
+		}
+		if pr.Err == nil {
+			entries = append(entries, StatusEntry{Subsystem: subsystem, Status: StatusCurrent,
+				Detail: fmt.Sprintf("launch would pass: delivery %s, harness %s", pr.Mode, pr.Harness)})
+			continue
+		}
+		entry := StatusEntry{Subsystem: subsystem, Status: StatusAbsent,
+			Detail: fmt.Sprintf("launch would be refused: %v", pr.Err)}
+		var gate *fleet.GateBlockerError
+		if errors.As(pr.Err, &gate) {
+			entry.RepairCmd = gate.Guidance
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 // ---------------------------------------------------------------------------

@@ -1085,27 +1085,7 @@ func (r *Runner) preflightHarness() error {
 			return err
 		}
 	}
-
-	// A fenced claude seat logs in from a config dir of its own; ask the way it will.
-	var claudeSeat *harness.ClaudeSeat
-	if r.harness == harness.Claude && fence.Supported() == nil {
-		cfg, err := harness.HumanClaudeConfig(home.StateDir(r.homeDir))
-		if err != nil {
-			return err
-		}
-		claudeSeat = &harness.ClaudeSeat{Config: cfg, BuildDir: harness.SeatBuildDir(r.homeDir)}
-	}
-	result, err := harness.Preflight(r.harness, claudeSeat)
-	if err != nil {
-		return err
-	}
-	if result.BinaryOnPath == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "binary-absent"}
-	}
-	if result.AuthConfigured == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "auth-absent"}
-	}
-	return nil
+	return SoldierHarnessPreflight(r.homeDir, r.harness)
 }
 
 // beginLaunchIntent resolves the current canonical Task aggregate/Generation
