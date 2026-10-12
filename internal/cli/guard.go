@@ -66,20 +66,30 @@ func guardClearCooldown(path string) {
 // as an empty fleet. A home that is simply not initialized has no fleet to
 // guard and yields zero in-flight tasks (not an error).
 func guardInFlight(homeDir string) (int, error) {
+	inFlight, _, err := guardTaskCounts(homeDir)
+	return inFlight, err
+}
+
+// guardTaskCounts returns the soldier tasks in flight (queued or working) and
+// the subset already working.
+func guardTaskCounts(homeDir string) (inFlight, working int, err error) {
 	snap, err := fleet.Snapshot(homeDir, snapshotDeps())
 	if err != nil {
 		if errors.Is(err, home.ErrNotInitialized) {
-			return 0, nil
+			return 0, 0, nil
 		}
-		return 0, err
+		return 0, 0, err
 	}
-	inFlight := 0
 	for _, ts := range snap.Tasks {
-		if taskauthority.SoldierKind(ts.Kind) {
-			inFlight++
+		if !taskauthority.SoldierKind(ts.Kind) {
+			continue
+		}
+		inFlight++
+		if ts.CurrentState == string(taskauthority.PhaseWorking) {
+			working++
 		}
 	}
-	return inFlight, nil
+	return inFlight, working, nil
 }
 
 func guardWatcherPreRunE() func(*cobra.Command, []string) error {
@@ -133,7 +143,7 @@ func guardWarnWatcher() error {
 		return nil
 	}
 
-	inFlight, err := guardInFlight(homeDir)
+	_, inFlight, err := guardTaskCounts(homeDir) // the warning counts only working soldiers; queued ones are not yet in flight
 	if err != nil {
 		// Fail loud, never silent: surface the unreadable Task truth without
 		// blocking the invoking command.
@@ -170,7 +180,7 @@ func guardWarnWatcher() error {
 	} else if beat.Stale {
 		status = "stale"
 	}
-	fmt.Fprintf(os.Stderr, "\nWARNING: %d task(s) in flight but watcher is %s (last beat: %s)\n",
+	fmt.Fprintf(os.Stderr, "\nWARNING: %d task(s) working but watcher is %s (last beat: %s); stale means no beat within the watcher threshold, so wakes may go unhandled\n",
 		inFlight, status, ageStr)
 	fmt.Fprintf(os.Stderr, "  Repair with 'munsu watch ensure' or set MUNSU_GUARD_SKIP=1 to silence.\n\n")
 	return nil

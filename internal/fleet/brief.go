@@ -140,7 +140,7 @@ You are in a disposable git worktree of %s, at a detached HEAD on a clean defaul
 The path check is authoritative: `+"`"+`git rev-parse --git-dir`+"`"+` and `+"`"+`git rev-parse --git-common-dir`+"`"+` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append `+"`"+`blocked: launched in primary checkout, not an isolated worktree`+"`"+` to the status file and stop.
 
-1. First action: create your branch: `+"`"+`git checkout -b mu/%s`+"`"+`
+1. First action: create your branch, or switch to it if it already exists at this base: `+"`"+`git checkout -b mu/%[3]s || git checkout mu/%[3]s`+"`"+`
 %s
 %s
 
@@ -160,6 +160,9 @@ If the top-level path is the primary checkout or not the worktree you were launc
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
 Record only project knowledge useful to almost every future session.
+
+## Task
+{TASK}
 
 ## Test-impact map
 The dispatcher fills this before spawn: for each path the task will change, the existing tests that exercise it, found by code search. Start from them.

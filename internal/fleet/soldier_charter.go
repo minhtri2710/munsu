@@ -122,6 +122,8 @@ fixtures-only change.
 Each check row pastes the ran and skipped counts its command printed, and a
 check that did not run is a failed row.
 
+Per edit, run the fast read-only check of the edited Go package: gofmt -l and go vet on that package. Full suites run on CI.
+
 ## Tests
 
 A test you add or change follows these rules:
@@ -133,12 +135,17 @@ A test you add or change follows these rules:
 - Your parent Captain is at %[5]s$MUNSU_PARENT_STATUS%[5]s.
 - Your task ID is %[5]s$MUNSU_TASK_ID%[5]s.
 - Your home is at %[5]s$MUNSU_HOME%[5]s.
+- After any context compaction, re-read %[5]s.soldier-charter.md%[5]s before your next action.
 - Terminal reporting: %[5]smunsu report <state> "<msg>" --key <slug>%[5]s
   - Report material phases with --key <slug> so later done/failed/resolved supersede them.
   - States: working, needs-decision, blocked, paused, done, failed, resolved.
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
   - Use %[5]smunsu report needs-decision "{summary}"%[5]s when a human decision is required.
   - Terminal report: %[5]smunsu report done "%[6]s"%[5]s — %[7]s.
+
+## Git Lock Noise
+
+A line like "Unable to create '.../packed-refs.lock': Operation not permitted" is expected and harmless. Your fence refuses .git/packed-refs.lock by design, and checkout and push still succeed. It is fatal only when you delete a packed ref or when auto-gc runs pack-refs; then report blocked with the exact message.
 
 ## Incoming Commands
 
