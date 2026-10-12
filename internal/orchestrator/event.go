@@ -63,6 +63,11 @@ func parseRecord(line string) (Record, bool) {
 // nextID returns the next monotonic ID (1-based): one past the largest ID in
 // the log. It refuses when the largest ID is already the maximum, rather than
 // wrap to 0. The caller must hold the event log lock.
+//
+// The full scan runs on every Append. Measured 2026-10-11: 0.5 ms at 1k lines,
+// 1.7 ms at 10k, 11.5 ms at 100k. A high-water sidecar was built and deleted:
+// review found it reused IDs once the log was torn or replaced. Any speedup
+// must keep IDs unique under torn writes, crashes and log replacement.
 func nextID(homeDir string) (uint64, error) {
 	data, err := os.ReadFile(LogPath(homeDir))
 	if err != nil {

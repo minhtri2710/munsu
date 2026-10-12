@@ -771,16 +771,8 @@ func (r *Runner) resolveEffectiveIdentity() error {
 }
 
 // resolveModelAndEffort resolves the effective model/effort with the same
-// precedence as the launch: adapter template defaults, then project config,
-// then explicit CLI flags.
+// precedence as the launch: project config, then explicit CLI flags.
 func (r *Runner) resolveModelAndEffort() {
-	adapter, ok := harness.GetAdapter(r.harness)
-	if !ok {
-		return
-	}
-	tmpl := adapter.LaunchTemplate
-	r.model = tmpl.DefaultModel
-	r.effort = tmpl.DefaultEffort
 	if r.projectConfigLoaded {
 		if r.projectConfig.Soldier.Model != "" {
 			r.model = r.projectConfig.Soldier.Model

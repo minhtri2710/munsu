@@ -24,8 +24,8 @@ type Args struct {
 	Force               bool                 // --force flag; bypass captain task authority checks
 	Backend             string               // --backend flag value — optional assertion against the resolved project snapshot
 	HarnessFlag         string               // --harness flag value; empty = resolve from config
-	ModelFlag           string               // --model flag; empty = dispatch/template default
-	EffortFlag          string               // --effort flag; empty = dispatch/template default
+	ModelFlag           string               // --model flag; empty = matched profile, then project model
+	EffortFlag          string               // --effort flag; empty = matched profile, else none
 	TaskDescription     string               // optional dispatch matching text; empty = brief/id fallback
 	HomeDir             string               // if empty, resolved via home.Resolve
 	Endpoints           EndpointCapabilities // required endpoint lifecycle capability
