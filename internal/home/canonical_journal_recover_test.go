@@ -219,7 +219,7 @@ func TestJournalWritesOnlyTheStateRoot(t *testing.T) {
 				}
 				_, err := Open(h.root)
 				if refused {
-					want := `journal record fleet-projects.forged'1.json writes root "config"; a journal writes only state; remove it: rm '` +
+					want := `journal record "fleet-projects.forged'1.json" writes root "config"; a journal writes only state; remove it: rm '` +
 						strings.ReplaceAll(record, "'", `'\''`) + `'`
 					if err == nil || !strings.Contains(err.Error(), want) {
 						t.Fatalf("Open = %v, want the refusal %q", err, want)

@@ -475,7 +475,7 @@ func TestPreflightHarnessRefusesUnconfiguredAuth(t *testing.T) {
 	// An API key in the environment is no evidence of readiness: claude says no.
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 
-	r := &Runner{args: Args{ID: "auth-absent"}, harness: "claude"}
+	r := &Runner{args: Args{ID: "auth-absent"}, harness: "claude", homeDir: t.TempDir()}
 	err := r.preflightHarness()
 	if err == nil {
 		t.Fatal("preflight passed a harness with no configured auth")

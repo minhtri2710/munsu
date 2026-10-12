@@ -81,3 +81,50 @@ func TestBuildLaunchArtifactRefusesAnArgvTheFenceCannotWrap(t *testing.T) {
 		t.Fatalf("a launch script was written for an argv the fence cannot wrap: %v", err)
 	}
 }
+
+// A fenced claude seat runs from its own config dir and logs in with the
+// Human's keychain item; an unfenced one keeps the Human's config.
+func TestFencedClaudeLaunchRunsFromItsOwnConfigDir(t *testing.T) {
+	isolateHuman(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	for _, tc := range []struct {
+		name   string
+		fenced bool
+	}{
+		{"a fenced claude launch exports its own config dir", true},
+		{"an unfenced claude launch exports none", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := launchArtifactInputForGuards(t)
+			in.LaunchBin = "claude"
+			if tc.fenced {
+				in.Fence = launchFenceForTest(t)
+			}
+			dir, err := claudeConfigDirPath(in.HomeDir, in.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leftover := plantSeatBuildLeftover(t, in.HomeDir, dir)
+			art, err := buildLaunchArtifact(in)
+			if err != nil {
+				t.Fatalf("buildLaunchArtifact: %v", err)
+			}
+			script := readFile(t, art.ScriptPath)
+			want := "export CLAUDE_CONFIG_DIR=" + shQuote(dir) + "\nexport CLAUDE_SECURESTORAGE_CONFIG_DIR=''\n"
+			_, statErr := os.Stat(filepath.Join(dir, ".claude.json"))
+			if !tc.fenced {
+				if strings.Contains(script, "CLAUDE_") || !os.IsNotExist(statErr) {
+					t.Fatalf("an unfenced launch got a seat config dir (stat err = %v):\n%s", statErr, script)
+				}
+				return
+			}
+			if !strings.Contains(script, want) || statErr != nil {
+				t.Fatalf("script lacks %q or the dir was not built (stat err = %v):\n%s", want, statErr, script)
+			}
+			if strings.Index(script, want) > strings.Index(script, "\nexec ") {
+				t.Fatal("the config dir is exported after the harness exec")
+			}
+			requireBuiltInSeatBuildDir(t, leftover, dir)
+		})
+	}
+}

@@ -1100,7 +1100,16 @@ func (r *Runner) preflightHarness() error {
 		}
 	}
 
-	result, err := harness.Preflight(r.harness)
+	// A fenced claude seat logs in from a config dir of its own; ask the way it will.
+	var claudeSeat *harness.ClaudeSeat
+	if r.harness == harness.Claude && fence.Supported() == nil {
+		cfg, err := harness.HumanClaudeConfig(home.StateDir(r.homeDir))
+		if err != nil {
+			return err
+		}
+		claudeSeat = &harness.ClaudeSeat{Config: cfg, BuildDir: harness.SeatBuildDir(r.homeDir)}
+	}
+	result, err := harness.Preflight(r.harness, claudeSeat)
 	if err != nil {
 		return err
 	}
@@ -2026,8 +2035,13 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 		Worktree: bound.Path(), GitDir: gitDir, CommonDir: commonDir, Branch: "mu/" + r.args.ID,
 		PathDirs: r.seatPath, ShimDir: gitShimDir(r.homeDir),
 	}
-	if r.launchBin == harness.Pi {
+	switch r.launchBin {
+	case harness.Pi:
 		if launch.HarnessStateDir, err = piAgentDirPath(r.homeDir, r.args.ID); err != nil {
+			return err
+		}
+	case harness.Claude:
+		if launch.HarnessStateDir, err = claudeConfigDirPath(r.homeDir, r.args.ID); err != nil {
 			return err
 		}
 	}

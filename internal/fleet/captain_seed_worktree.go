@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -26,6 +27,7 @@ const (
 var worktreeExcludeContent = []string{
 	"state/",
 	"git-shim/",
+	harness.SeatBuildDirName + "/",
 	"tmp/",
 	"sessions/",
 	"holds/",

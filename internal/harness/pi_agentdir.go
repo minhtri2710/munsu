@@ -54,34 +54,19 @@ func HumanPiAgentDir(stateDir string) (string, error) {
 // extensions, skills, prompts and themes resolve as the Human's do) except
 // settings.json, a private copy whose skills array blocks OrchestrationSkill.
 // Relative local paths in the copy are rewritten absolute against src, because
-// pi resolves them from the agent dir. An existing dst is kept: it may belong to
-// a live soldier, and dst is only ever renamed into place complete.
-func BuildPiAgentDir(src, dst string) error {
-	if _, err := os.Lstat(dst); err == nil {
+// pi resolves them from the agent dir. It is built in buildDir (SeatBuildDir)
+// and renamed into place; an existing dst is kept (see installSeatDir).
+func BuildPiAgentDir(src, buildDir, dst string) error {
+	return installSeatDir("pi agent dir", buildDir, dst, func(dir string) error {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			err = fillPiAgentDir(src, dir, dst, home)
+		}
+		if err != nil {
+			return fmt.Errorf("building pi agent dir from %s: %w", src, err)
+		}
 		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("checking pi agent dir %s: %w", dst, err)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("building pi agent dir: %w", err)
-	}
-	tmp := dst + ".building"
-	if err := os.RemoveAll(tmp); err != nil {
-		return fmt.Errorf("clearing %s: %w", tmp, err)
-	}
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		return fmt.Errorf("building pi agent dir: %w", err)
-	}
-	if err := fillPiAgentDir(src, tmp, dst, home); err != nil {
-		os.RemoveAll(tmp)
-		return fmt.Errorf("building pi agent dir from %s: %w", src, err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		os.RemoveAll(tmp)
-		return fmt.Errorf("installing pi agent dir %s: %w", dst, err)
-	}
-	return nil
+	})
 }
 
 func fillPiAgentDir(src, dir, dst, home string) error {
@@ -105,7 +90,7 @@ func fillPiAgentDir(src, dir, dst, home string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "settings.json"), out, 0o600)
+	return writeNewFile(filepath.Join(dir, "settings.json"), out)
 }
 
 // piSettingsCopy returns the Human's settings (raw, nil when absent) with the

@@ -328,8 +328,8 @@ func (h *Home) validateRecord(scope, path string, rec journalRecord) error {
 	for _, it := range rec.Items {
 		if _, err := h.journalItemPath(it); err != nil {
 			if errors.Is(err, ErrJournalRoot) {
-				// The record name is the writer's choice: quote it for the shell.
-				return fmt.Errorf("home: journal record %s writes root %q; a journal writes only state; remove it: rm '%s'",
+				// The record name is the writer's choice: quote it, and quote its path for the shell.
+				return fmt.Errorf("home: journal record %q writes root %q; a journal writes only state; remove it: rm '%s'",
 					name, it.Root, strings.ReplaceAll(path, "'", `'\''`))
 			}
 			return fmt.Errorf("home: journal record %s: %w", name, err)
