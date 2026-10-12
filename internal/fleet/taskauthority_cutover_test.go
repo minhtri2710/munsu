@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -167,62 +166,6 @@ func TestReadWithProbeFailsClosedOnMetaOnlyTask(t *testing.T) {
 	}
 	if !testutil.PathInMessage(err.Error(), homeDir) {
 		t.Errorf("clean-break error must carry home context, got: %v", err)
-	}
-}
-
-// TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence proves the
-// fleet-level --force derivation path fails closed: an identity-bearing task
-// under --force with no committed canonical completed delivery outcome is
-// refused and never retired (#414 B hard cut: no .meta projection ever
-// authorizes merged truth).
-func TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "force-no-evidence"
-	head := "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	meta := map[string]string{
-		"kind":                 "ship",
-		"backend":              "tmux",
-		"window":               "@1",
-		"pr_provider":          "github",
-		"pr_owner":             "testowner",
-		"pr_repo":              "testrepo",
-		"pr_number":            "42",
-		"pr_url":               "https://github.com/testowner/testrepo/pull/42",
-		"pr_base_ref":          "main",
-		"pr_head_ref":          "feature",
-		"pr_head_sha":          head,
-		"pr_timestamp":         "2024-01-01T00:00:00Z",
-		"pr_identity_revision": "1",
-	}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatal(err)
-	}
-	auth := mergeTestAuth(t, homeDir, taskID) // created + bound; no canonical delivery outcome
-
-	result, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
-	if err == nil {
-		t.Fatalf("RetireTask --force without canonical outcome succeeded: %+v", result)
-	}
-	if !strings.Contains(err.Error(), "canonical delivery outcome") {
-		t.Fatalf("error = %v, want canonical delivery outcome refusal (no .meta merged truth)", err)
-	}
-	agg, aggErr := auth.Get(mustTaskID(t, taskID))
-	if aggErr != nil {
-		t.Fatal(aggErr)
-	}
-	if agg.Phase == taskauthority.PhaseRetired {
-		t.Fatal("task was retired without canonical merged truth")
-	}
-	// The meta is never removed on a refused retirement.
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, statErr := os.Stat(metaPath); statErr != nil {
-		t.Fatalf("meta removed on refused retirement: %v", statErr)
 	}
 }
 

@@ -257,25 +257,21 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 // When the task reopened to a newer generation while a prior generation's
 // retirement cleanup was pending, recovery resumes that SAME retirement (the
 // committed evidence of the exact prior generation) and never retires the
-// reopened generation. The verified-delivery prerequisite is derived from the
-// task meta's delivery identity: an identity-bearing task is only
-// retired-eligible with provider-verified merged evidence in its delivery
-// projection (the calling flow's safety checks verified the provider evidence
-// and committed the canonical completed delivery outcome via the merge flow
-// or the merged-poll MarkMerged path); a task without a delivery identity retires under the
-// baseline prerequisite (exact generation, not already retired). Production
-// callers always supply the canonical Authority; nil fails closed.
-func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Canonical) (taskauthority.Outcome, error) {
+// reopened generation. Without --force the commit runs under the delivery lock
+// (holdDeliveryForRetirement); the returned steps report a failed delivery
+// recovery that did not refuse. Production callers always supply the canonical
+// Authority; nil fails closed.
+func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical) (taskauthority.Outcome, []string, error) {
 	if authority == nil {
-		return taskauthority.Outcome{}, fmt.Errorf("retirement requires a composed task authority")
+		return taskauthority.Outcome{}, nil, fmt.Errorf("retirement requires a composed task authority")
 	}
 	taskID, err := domain.NewTaskID(opts.ID)
 	if err != nil {
-		return taskauthority.Outcome{}, fmt.Errorf("resolving task identity: %w", err)
+		return taskauthority.Outcome{}, nil, fmt.Errorf("resolving task identity: %w", err)
 	}
 	agg, err := authority.Get(taskID)
 	if err != nil {
-		return taskauthority.Outcome{}, fmt.Errorf("resolving task generation: %w", err)
+		return taskauthority.Outcome{}, nil, fmt.Errorf("resolving task generation: %w", err)
 	}
 	// Invocation binding: a teardown invocation is bound to the
 	// generation it intends to retire. With an explicit ExpectedGeneration the
@@ -291,7 +287,7 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 	// invocation stale — it must NEVER implicitly retire the reopened
 	// generation, which requires its own explicit teardown request.
 	if opts.ExpectedGeneration != nil && agg.Generation != *opts.ExpectedGeneration {
-		return taskauthority.Outcome{}, &RetirementTargetConflictError{TaskID: opts.ID, Target: *opts.ExpectedGeneration, Current: agg.Generation}
+		return taskauthority.Outcome{}, nil, &RetirementTargetConflictError{TaskID: opts.ID, Target: *opts.ExpectedGeneration, Current: agg.Generation}
 	}
 	// A retry after a committed receipt observes the retired generation: the
 	// canonical receipt replays the original outcome, so the committed state
@@ -300,11 +296,11 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 	// unpinned continuation arrives at an already-retired generation only as
 	// the retry of THAT generation's own retirement.
 	if agg.Phase == taskauthority.PhaseRetired {
-		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
+		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil, nil
 	}
 	if opts.ExpectedGeneration == nil {
 		if prior, ok, err := mostRecentPriorRetirement(authority, taskID, agg.Generation); err != nil {
-			return taskauthority.Outcome{}, fmt.Errorf("resolving prior retirement: %w", err)
+			return taskauthority.Outcome{}, nil, fmt.Errorf("resolving prior retirement: %w", err)
 		} else if ok {
 			if prior.claim != nil && prior.claim.Status == taskauthority.CleanupActive {
 				// Defensive: an active-claim prior generation cannot coexist with a
@@ -318,9 +314,9 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 					Revision:   prior.revision,
 					Phase:      prior.phase,
 					Replayed:   true,
-				}, nil
+				}, nil, nil
 			}
-			return taskauthority.Outcome{}, &RetirementStaleTeardownError{
+			return taskauthority.Outcome{}, nil, &RetirementStaleTeardownError{
 				TaskID:            opts.ID,
 				PriorGeneration:   prior.generation,
 				CurrentGeneration: agg.Generation,
@@ -328,18 +324,24 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 			}
 		}
 	}
-	partial := partialLaunchRetirement(agg)
-	// An identity-bearing task is only retired-eligible with a committed
-	// canonical completed delivery outcome; otherwise the operation fails
-	// closed (the .meta projection never authorizes merged
-	// truth). A retry after a committed receipt observes the retired
-	// generation before this gate.
-	if ident, identErr := domain.IdentityFromMeta(meta); identErr == nil && ident != nil {
-		if partial {
-			return taskauthority.Outcome{}, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
+	// Without --force, the retirement commits under the delivery lock after
+	// pending delivery journals are recovered, and refuses while the task holds
+	// a delivery authorization that nothing has answered. A retry after a
+	// committed receipt observes the retired generation before this gate.
+	var steps []string
+	if !opts.Force {
+		release, recoveryErr, err := holdDeliveryForRetirement(opts.HomeDir, authority, taskID)
+		if err != nil {
+			return taskauthority.Outcome{}, nil, err
 		}
-		if err := requireCanonicalCompletedOutcome(authority, opts.ID); err != nil {
-			return taskauthority.Outcome{}, err
+		defer release()
+		if recoveryErr != nil {
+			steps = append(steps, fmt.Sprintf("delivery recovery: %v", recoveryErr))
+		}
+		// Recovery may commit an outcome or a release, which advances the
+		// revision the retirement is fenced to.
+		if agg, err = authority.Get(taskID); err != nil {
+			return taskauthority.Outcome{}, nil, fmt.Errorf("resolving task generation: %w", err)
 		}
 	}
 	req := taskauthority.CanonicalRetireRequest{
@@ -350,13 +352,68 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 	}
 	opID, err := domain.NewOperationID(taskRetireOperationID(opts.ID, agg.Generation))
 	if err != nil {
-		return taskauthority.Outcome{}, fmt.Errorf("retirement operation identity: %w", err)
+		return taskauthority.Outcome{}, nil, fmt.Errorf("retirement operation identity: %w", err)
 	}
 	op, err := domain.NewOperation(opID, req)
 	if err != nil {
-		return taskauthority.Outcome{}, fmt.Errorf("retirement operation: %w", err)
+		return taskauthority.Outcome{}, nil, fmt.Errorf("retirement operation: %w", err)
 	}
-	return authority.Retire(op, req)
+	out, err := authority.Retire(op, req)
+	return out, steps, err
+}
+
+// holdDeliveryForRetirement takes the home's delivery lock, recovers pending
+// delivery journals under it, and refuses while the task holds an unanswered
+// delivery authorization (unansweredDeliveryAuthorization). Every canonical
+// delivery mutation runs under this lock, so the task's delivery state cannot
+// change until release is called after the retirement commits. A recovery
+// error does not refuse on its own: it is returned for the caller to report,
+// and appended to the refusal when the task is refused.
+func holdDeliveryForRetirement(homeDir string, authority *taskauthority.Canonical, taskID domain.TaskID) (release func(), recoveryErr error, err error) {
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening home for the delivery lock: %w", err)
+	}
+	lk, err := h.Lock(deliveryLockScope)
+	if errors.Is(err, home.ErrLockTimeout) {
+		// The holder may be this task's own delivery, or another task's.
+		if err := unansweredDeliveryAuthorization(authority, taskID, nil); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, fmt.Errorf("another delivery in this home holds the delivery lock; retry munsu teardown %s when it finishes, or retire anyway with munsu teardown --force %s", taskID, taskID)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("locking the delivery scope: %w", err)
+	}
+	recoveryErr = recoverPendingDeliveryJournals(h, lk)
+	if err := unansweredDeliveryAuthorization(authority, taskID, recoveryErr); err != nil {
+		_ = lk.Release()
+		return nil, nil, err
+	}
+	return func() { _ = lk.Release() }, recoveryErr, nil
+}
+
+// unansweredDeliveryAuthorization refuses while the task's current delivery
+// authorization is neither revoked nor answered by an outcome committed
+// against it: a merge may be in flight, and retiring now would drop its
+// outcome. A revoked (released) authorization and one with its own outcome,
+// retryable included, do not refuse. The outcome must be this authorization's:
+// a re-authorization leaves the index pointing at the previous outcome.
+func unansweredDeliveryAuthorization(authority *taskauthority.Canonical, taskID domain.TaskID, recoveryErr error) error {
+	cur, err := authority.DeliveryCurrency(taskID)
+	if err != nil {
+		return fmt.Errorf("reading the delivery authorization: %w", err)
+	}
+	answered := cur.Outcome != nil && cur.Authorization != nil && cur.Outcome.AuthorizationOperationID == cur.Authorization.OperationID
+	if cur.Authorization != nil && !isRevokedCurrency(cur) && !answered {
+		id := taskID.Value()
+		msg := fmt.Sprintf("delivery authorization %s has no outcome yet, so a merge may be in flight; check munsu delivery merge-status %s, re-run munsu delivery pr-merge %s <pr-url> to finish it, or retire anyway with munsu teardown --force %s", cur.Authorization.OperationID, id, id, id)
+		if recoveryErr != nil {
+			msg += fmt.Sprintf(" (delivery recovery failed: %v)", recoveryErr)
+		}
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // priorRetirement is the most recent retired generation before the current
@@ -712,18 +769,13 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// and cleanup runs strictly after it and never re-runs
 	// merge/reconciliation. A retry after a committed receipt observes the
 	// retired generation (Replayed outcome) and resumes cleanup without
-	// re-committing. An identity-bearing task is only retired-eligible with
-	// provider-verified merged evidence in its delivery projection; otherwise
-	// the operation fails closed with a typed precondition error. nil fails
-	// closed.
-	retirementMeta := meta
-	if worktree != nil {
-		retirementMeta = retirementMetaForEvidence(meta, &taskauthority.RetirementEvidence{Worktree: worktree})
-	}
-	committed, err := retireTaskAuthoritatively(opts, retirementMeta, authority)
+	// re-committing. Without --force it refuses while the task holds an
+	// unanswered delivery authorization. nil fails closed.
+	committed, retireSteps, err := retireTaskAuthoritatively(opts, authority)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 	}
+	result.Steps = append(result.Steps, retireSteps...)
 
 	// cleanupPending wraps a saga-side cleanup failure after the durable
 	// receipt: the retired phase and typed audit stand, cleanup is resumable

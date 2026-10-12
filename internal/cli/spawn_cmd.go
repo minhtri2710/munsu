@@ -377,6 +377,9 @@ Safety checks require a scout to have its own generation's report
 (report-g<generation>.md) with no unresolved decision holds before teardown
 proceeds. Use --force to skip all safety checks.
 
+Teardown refuses a task whose delivery authorization is not revoked and has
+no outcome yet, since a merge may be in flight; --force retires it anyway.
+
 With --force:
   - Skips report and decision-hold checks
   - Use when the scout completed without a formal report

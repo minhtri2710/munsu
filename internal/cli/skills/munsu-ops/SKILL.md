@@ -92,6 +92,8 @@ For the standalone path, only run after the task is already done and fully lande
 munsu teardown <id> [--force]
 ```
 
+Teardown refuses a task whose delivery authorization is not revoked and has no outcome yet, since a merge may be in flight; the error names `munsu delivery merge-status <id>` and re-running `munsu delivery pr-merge`, and `munsu teardown --force <id>` retires it anyway.
+
 **Completion:** `munsu teardown <id>` succeeds.
 
 Teardown stops only holders of the task worktree. A task process that survives it (a dev server under `/tmp`, a `setsid` watcher) is listed as a `task process <pid> still running` step with its executable, cwd and listening ports; teardown never stops it and still succeeds. Stop it by hand or inspect it with `munsu doctor --orphans`. A process whose environment munsu cannot read (on macOS, Apple platform binaries) is not listed, so no line does not prove no leftover.
