@@ -31,7 +31,7 @@ const (
 
 // Launch carries the facts one fenced launch needs. Every path must be absolute
 // and exist (except Files and HarnessStateDir, whose parent must exist); New
-// resolves symlinks.
+// resolves symlinks, for Files in the parent only.
 type Launch struct {
 	Role    Role
 	Harness string // harness kind; selects the harness state directories

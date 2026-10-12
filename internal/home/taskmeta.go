@@ -534,9 +534,6 @@ func lockPath(homeDir, id string) (string, error) {
 	return p + ".lock", nil
 }
 
-// acquireMetaLock acquires an exclusive advisory lock on the meta lock file.
-// Uses flock(2) which is automatically released when the process exits.
-// Returns the locked file and a cleanup function.
 // SoldierFiles returns the only files a soldier of task id writes in this
 // home: its status file and its ack log (see Store.ackLogPath). It first
 // creates the task's meta lock if it is missing: the soldier's status append
@@ -553,6 +550,9 @@ func SoldierFiles(homeDir, id string) ([]string, error) {
 	return []string{status, acks}, nil
 }
 
+// acquireMetaLock acquires an exclusive advisory lock on the meta lock file.
+// Uses flock(2) which is automatically released when the process exits.
+// Returns the locked file and a cleanup function.
 func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 	lp, err := lockPath(homeDir, id)
 	if err != nil {

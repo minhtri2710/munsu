@@ -231,6 +231,20 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 			launch.Files = []string{status, acks, report}
 			launch.PathDirs, launch.ShimDir = []string{shim, "/usr/bin"}, shim
 			f := mustNew(t, launch)
+			// A later launch of a task whose ack log the seat replaced with a link
+			// to the project registry.
+			registry := filepath.Join(state, "fleet-registry", "projects.json")
+			if err := os.WriteFile(registry, []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			linkedAcks := filepath.Join(state, "T-3.acks")
+			if err := os.Symlink(registry, linkedAcks); err != nil {
+				t.Fatal(err)
+			}
+			relaunch := launch
+			relaunch.Branch = "mu/T-3"
+			relaunch.Files = []string{filepath.Join(state, "T-3.status"), linkedAcks}
+			linked := mustNew(t, relaunch)
 			chmod := func(mode, path string) []string {
 				return []string{"/usr/bin/perl", "-e", "chmod(" + mode + ", $ARGV[0]) or die \"$!\\n\"", path}
 			}
@@ -238,42 +252,61 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 				`sysopen(F, $ARGV[0], O_RDONLY|O_CREAT) or die "$!\n"; flock(F, LOCK_EX) or die "$!\n"`, metaLock}
 			sh := func(script string) []string { return []string{"/bin/sh", "-c", script} }
 			tests := []struct {
-				name    string
-				argv    []string
-				refused bool
-				absent  string // a path a refused write must not have created
+				name      string
+				argv      []string
+				refused   bool
+				unchanged string // a path a refused write must leave as it was (absent stays absent)
+				fence     *Fence // nil: f
 			}{
-				{"another task's status (allowed: own status append)", []string{touchBin, filepath.Join(state, "T-2.status")}, true, filepath.Join(state, "T-2.status")},
-				{"own status append", sh(`printf 'working: x\n' >> ` + status), false, ""},
-				{"a new directory in state/ (allowed: own status atomic rename)", []string{"/bin/mkdir", filepath.Join(state, "x")}, true, filepath.Join(state, "x")},
-				{"own status atomic rename through its temp sibling", sh(`printf 'y\n' > ` + status + `.tmp.1.ab && /bin/mv ` + status + `.tmp.1.ab ` + status), false, ""},
-				{"an ack in the dispatcher's inbox (allowed: own ack log)", []string{touchBin, filepath.Join(state, ".inbox", "general", "m1.ack")}, true, filepath.Join(state, ".inbox", "general", "m1.ack")},
-				{"own ack log, created", []string{touchBin, acks}, false, ""},
-				{"next generation's report (allowed: own current report)", []string{touchBin, filepath.Join(data, "report-g2.md")}, true, filepath.Join(data, "report-g2.md")},
-				{"own brief (allowed: own current report)", []string{touchBin, filepath.Join(data, "brief.md")}, true, filepath.Join(data, "brief.md")},
-				{"own current report", []string{touchBin, report}, false, ""},
-				{"own task document, which holds its review verdict (allowed: own status)", []string{touchBin, filepath.Join(state, "task-authority", "tasks", "T-1", "current.json")}, true, filepath.Join(state, "task-authority", "tasks", "T-1", "current.json")},
-				{"a delivery authorization (allowed: own status)", []string{"/bin/mkdir", "-p", filepath.Join(state, "task-authority", "delivery", "T-1")}, true, filepath.Join(state, "task-authority", "delivery")},
-				{"a gate record (allowed: own status)", []string{"/bin/mkdir", "-p", filepath.Join(state, "task-authority", "gates", "T-1")}, true, filepath.Join(state, "task-authority", "gates")},
-				{"the project registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "projects.json")}, true, filepath.Join(state, "fleet-registry", "projects.json")},
-				{"the captain registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "captains.json")}, true, filepath.Join(state, "fleet-registry", "captains.json")},
-				{"the binding registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "bindings.json")}, true, filepath.Join(state, "fleet-registry", "bindings.json")},
-				{"own meta (allowed: own status)", []string{touchBin, filepath.Join(state, "T-1.meta")}, true, filepath.Join(state, "T-1.meta")},
-				{"own report cursor (allowed: own status)", []string{touchBin, filepath.Join(state, "T-1.report-cursor")}, true, filepath.Join(state, "T-1.report-cursor")},
-				{"the wake queue (allowed: own status)", []string{touchBin, filepath.Join(state, ".wake-queue")}, true, filepath.Join(state, ".wake-queue")},
-				{"the event log (allowed: own status)", []string{touchBin, filepath.Join(state, ".event-log")}, true, filepath.Join(state, ".event-log")},
-				{"a journal record (allowed: own status)", []string{touchBin, filepath.Join(l.home, ".journal", "fleet-projects.x.json")}, true, filepath.Join(l.home, ".journal", "fleet-projects.x.json")},
-				{"a scope lock, created (allowed: flock of own existing meta lock)", []string{touchBin, filepath.Join(l.home, ".lock", "dispatch.lock")}, true, filepath.Join(l.home, ".lock", "dispatch.lock")},
-				{"flock of own existing meta lock", flock, false, ""},
-				{"chmod of state/, even to its own mode (allowed: chmod of own status)", chmod("0700", state), true, ""},
-				{"chmod of own status", chmod("0600", status), false, ""},
-				{"renaming state/ away (allowed: own status atomic rename)", []string{"/bin/mv", state, state + ".x"}, true, state + ".x"},
-				{"renaming data/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "data"), filepath.Join(l.home, "data.x")}, true, filepath.Join(l.home, "data.x")},
-				{"own harness state dir", sh(`/bin/mkdir -p ` + launch.HarnessStateDir + ` && printf x > ` + launch.HarnessStateDir + `/f`), false, ""},
+				{"another task's status (allowed: own status append)", []string{touchBin, filepath.Join(state, "T-2.status")}, true, filepath.Join(state, "T-2.status"), nil},
+				{"own status append", sh(`printf 'working: x\n' >> ` + status), false, "", nil},
+				{"a new directory in state/ (allowed: own status atomic rename)", []string{"/bin/mkdir", filepath.Join(state, "x")}, true, filepath.Join(state, "x"), nil},
+				{"own status atomic rename through its temp sibling", sh(`printf 'y\n' > ` + status + `.tmp.1.ab && /bin/mv ` + status + `.tmp.1.ab ` + status), false, "", nil},
+				{"an ack in the dispatcher's inbox (allowed: own ack log)", []string{touchBin, filepath.Join(state, ".inbox", "general", "m1.ack")}, true, filepath.Join(state, ".inbox", "general", "m1.ack"), nil},
+				{"own ack log, created", []string{touchBin, acks}, false, "", nil},
+				{"own ack log appended", sh(`printf '{}\n' >> ` + acks), false, "", nil},
+				{"next generation's report (allowed: own current report)", []string{touchBin, filepath.Join(data, "report-g2.md")}, true, filepath.Join(data, "report-g2.md"), nil},
+				{"own brief (allowed: own current report)", []string{touchBin, filepath.Join(data, "brief.md")}, true, filepath.Join(data, "brief.md"), nil},
+				{"own current report", []string{touchBin, report}, false, "", nil},
+				{"own task document, which holds its review verdict (allowed: own status)", []string{touchBin, filepath.Join(state, "task-authority", "tasks", "T-1", "current.json")}, true, filepath.Join(state, "task-authority", "tasks", "T-1", "current.json"), nil},
+				{"a delivery authorization (allowed: own status)", []string{"/bin/mkdir", "-p", filepath.Join(state, "task-authority", "delivery", "T-1")}, true, filepath.Join(state, "task-authority", "delivery"), nil},
+				{"a gate record (allowed: own status)", []string{"/bin/mkdir", "-p", filepath.Join(state, "task-authority", "gates", "T-1")}, true, filepath.Join(state, "task-authority", "gates"), nil},
+				{"the project registry (allowed: own status)", sh(`printf x >> ` + registry), true, registry, nil},
+				{"the project registry through own ack log, a link planted before launch (allowed: own ack log appended)", sh(`printf x >> ` + linkedAcks), true, registry, linked},
+				{"the project registry under a launch whose ack log is that link (allowed: own ack log appended)", sh(`printf x >> ` + registry), true, registry, linked},
+				{"own status under a launch whose ack log is a link", sh(`printf 'working: x\n' >> ` + filepath.Join(state, "T-3.status")), false, "", linked},
+				{"the captain registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "captains.json")}, true, filepath.Join(state, "fleet-registry", "captains.json"), nil},
+				{"the binding registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "bindings.json")}, true, filepath.Join(state, "fleet-registry", "bindings.json"), nil},
+				{"own meta (allowed: own status)", []string{touchBin, filepath.Join(state, "T-1.meta")}, true, filepath.Join(state, "T-1.meta"), nil},
+				{"own report cursor (allowed: own status)", []string{touchBin, filepath.Join(state, "T-1.report-cursor")}, true, filepath.Join(state, "T-1.report-cursor"), nil},
+				{"the wake queue (allowed: own status)", []string{touchBin, filepath.Join(state, ".wake-queue")}, true, filepath.Join(state, ".wake-queue"), nil},
+				{"the event log (allowed: own status)", []string{touchBin, filepath.Join(state, ".event-log")}, true, filepath.Join(state, ".event-log"), nil},
+				{"a journal record (allowed: own status)", []string{touchBin, filepath.Join(l.home, ".journal", "fleet-projects.x.json")}, true, filepath.Join(l.home, ".journal", "fleet-projects.x.json"), nil},
+				{"a scope lock, created (allowed: flock of own existing meta lock)", []string{touchBin, filepath.Join(l.home, ".lock", "dispatch.lock")}, true, filepath.Join(l.home, ".lock", "dispatch.lock"), nil},
+				{"flock of own existing meta lock", flock, false, "", nil},
+				{"chmod of state/, even to its own mode (allowed: chmod of own status)", chmod("0700", state), true, "", nil},
+				{"chmod of own status", chmod("0600", status), false, "", nil},
+				{"renaming state/ away (allowed: own status atomic rename)", []string{"/bin/mv", state, state + ".x"}, true, state + ".x", nil},
+				{"renaming data/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "data"), filepath.Join(l.home, "data.x")}, true, filepath.Join(l.home, "data.x"), nil},
+				{"own harness state dir", sh(`/bin/mkdir -p ` + launch.HarnessStateDir + ` && printf x > ` + launch.HarnessStateDir + `/f`), false, "", nil},
 			}
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
-					o, err := fenced(t, f, tt.argv...)
+					seat := f
+					if tt.fence != nil {
+						seat = tt.fence
+					}
+					// What a path is: absent, or its mode and content.
+					snap := func(path string) string {
+						fi, err := os.Lstat(path)
+						if err != nil {
+							return "absent"
+						}
+						b, _ := os.ReadFile(path)
+						return fi.Mode().String() + string(b)
+					}
+					before := snap(tt.unchanged)
+					o, err := fenced(t, seat, tt.argv...)
 					if !tt.refused {
 						if err != nil {
 							t.Fatalf("%q was refused: %v %s", tt.argv, err, o)
@@ -283,8 +316,8 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 					if err == nil || !strings.Contains(o, "not permitted") {
 						t.Errorf("%q was not refused by the fence: %v %s", tt.argv, err, o)
 					}
-					if _, statErr := os.Lstat(tt.absent); tt.absent != "" && statErr == nil {
-						t.Errorf("%s exists after a write the fence must refuse", tt.absent)
+					if tt.unchanged != "" && snap(tt.unchanged) != before {
+						t.Errorf("%s changed after a write the fence must refuse", tt.unchanged)
 					}
 				})
 			}

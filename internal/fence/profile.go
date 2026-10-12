@@ -244,12 +244,19 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 		}
 		p.home = r
 	}
+	// A Files entry's parent is resolved and its leaf kept literal: a seat can
+	// replace its own file with a link, and the allow must never name the
+	// link's target. A write through the link reaches the target, which the
+	// sandbox checks on its own.
 	for _, f := range l.Files {
-		r, err := resolvePath(f, false)
+		if err := lexicalPath(f); err != nil {
+			return p, fmt.Errorf("fence: file: %w", err)
+		}
+		dir, err := resolvePath(filepath.Dir(f), false)
 		if err != nil {
 			return p, fmt.Errorf("fence: file: %w", err)
 		}
-		p.files = append(p.files, r)
+		p.files = append(p.files, filepath.Join(dir, filepath.Base(f)))
 	}
 	if p.home != "" {
 		if err := realHomeRoots(p.home); err != nil {
