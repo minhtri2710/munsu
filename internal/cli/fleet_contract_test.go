@@ -15,10 +15,11 @@ type probeBackend struct {
 
 func (p probeBackend) ForegroundProcess(string) (string, error) { return p.process, nil }
 
-func (p probeBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (p probeBackend) SendKeys(string, string) error            { return nil }
-func (p probeBackend) Capture(string, int) (string, error)      { return "", nil }
-func (p probeBackend) Alive(handle string) bool                 { return handle == p.aliveHandle }
+func (p probeBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (p probeBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (p probeBackend) SendKeys(string, string) error                     { return nil }
+func (p probeBackend) Capture(string, int) (string, error)               { return "", nil }
+func (p probeBackend) Alive(handle string) bool                          { return handle == p.aliveHandle }
 func (p probeBackend) CheckAlive(handle string) (bool, error) {
 	if p.checkErr != nil {
 		return false, p.checkErr

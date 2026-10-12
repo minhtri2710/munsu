@@ -21,6 +21,7 @@ func (f *fakeBackend) NewWindow(session, name string) (string, error) {
 	}
 	return "win-1", nil
 }
+func (f *fakeBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
 
 func (f *fakeBackend) SendKeys(windowID, text string) error {
 	if f.sendKeys != nil {

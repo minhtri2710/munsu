@@ -55,10 +55,11 @@ type activityFakeBackend struct {
 	status     string
 }
 
-func (b *activityFakeBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *activityFakeBackend) SendKeys(string, string) error            { return nil }
-func (b *activityFakeBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *activityFakeBackend) Teardown(string) error                    { return nil }
+func (b *activityFakeBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *activityFakeBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *activityFakeBackend) SendKeys(string, string) error                     { return nil }
+func (b *activityFakeBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *activityFakeBackend) Teardown(string) error                             { return nil }
 func (b *activityFakeBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.paneAlive, b.agentAlive, nil
 }
@@ -70,10 +71,11 @@ func (b *activityFakeBackend) IsRecognizedAgent(string) (bool, string) {
 // so its alive observation must keep Activity unknown.
 type agentAwareOnlyBackend struct{}
 
-func (agentAwareOnlyBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (agentAwareOnlyBackend) SendKeys(string, string) error            { return nil }
-func (agentAwareOnlyBackend) Capture(string, int) (string, error)      { return "", nil }
-func (agentAwareOnlyBackend) Teardown(string) error                    { return nil }
+func (agentAwareOnlyBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (agentAwareOnlyBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (agentAwareOnlyBackend) SendKeys(string, string) error                     { return nil }
+func (agentAwareOnlyBackend) Capture(string, int) (string, error)               { return "", nil }
+func (agentAwareOnlyBackend) Teardown(string) error                             { return nil }
 func (agentAwareOnlyBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return true, true, nil
 }

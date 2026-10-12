@@ -10,11 +10,12 @@ type contractBackend struct {
 	checkErr error
 }
 
-func (b *contractBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *contractBackend) SendKeys(string, string) error            { return nil }
-func (b *contractBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *contractBackend) Teardown(string) error                    { return nil }
-func (b *contractBackend) CheckAlive(string) (bool, error)          { return b.alive, b.checkErr }
+func (b *contractBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *contractBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *contractBackend) SendKeys(string, string) error                     { return nil }
+func (b *contractBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *contractBackend) Teardown(string) error                             { return nil }
+func (b *contractBackend) CheckAlive(string) (bool, error)                   { return b.alive, b.checkErr }
 
 type contractAgentBackend struct {
 	alive      bool
@@ -22,10 +23,11 @@ type contractAgentBackend struct {
 	checkErr   error
 }
 
-func (b contractAgentBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b contractAgentBackend) SendKeys(string, string) error            { return nil }
-func (b contractAgentBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b contractAgentBackend) Teardown(string) error                    { return nil }
+func (b contractAgentBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b contractAgentBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b contractAgentBackend) SendKeys(string, string) error                     { return nil }
+func (b contractAgentBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b contractAgentBackend) Teardown(string) error                             { return nil }
 func (b contractAgentBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.alive, b.agentAlive, b.checkErr
 }
