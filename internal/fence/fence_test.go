@@ -116,7 +116,8 @@ func TestHarnessStateRefusals(t *testing.T) {
 		t.Errorf("unmodeled harness: err = %v", err)
 	}
 	dirs, bins, err := harnessState(harness.Pi, "/u", "/state/x")
-	if err != nil || strings.Join(dirs, " ") != "/u/.pi/agent /state/x" || strings.Join(bins, " ") != "/u/.pi/agent/bin /state/x/bin" {
+	// Never ~/.pi/agent; New allows the seat's own agent dir. Its bin dirs stay refused.
+	if err != nil || len(dirs) != 0 || strings.Join(bins, " ") != "/u/.pi/agent/bin /state/x/bin" {
 		t.Errorf("pi state = %q, %q, %v", dirs, bins, err)
 	}
 	// Never ~/.claude or ~/.claude.json: only the log cache. The seat's own

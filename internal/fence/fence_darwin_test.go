@@ -325,16 +325,56 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 	}
 }
 
+// A pi seat writes its own agent dir, built by munsu, and nothing in the
+// Human's ~/.pi/agent, directly or through the links its own dir holds.
 func TestSoldierFenceWithPiStateDir(t *testing.T) {
 	out := outsideDir(t)
 	uhome := seatEnv(t, out)
 	l := newSplitLayout(t, out)
+	agent := filepath.Join(uhome, ".pi", "agent")
+	mkdirs(t, filepath.Join(agent, "install"), filepath.Join(agent, "sessions"))
+	for _, name := range []string{"auth.json", "trust.json", "install/current-version"} {
+		if err := os.WriteFile(filepath.Join(agent, name), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	launch := l.soldier()
 	launch.Harness = harness.Pi
 	launch.HarnessStateDir = l.stateDir()
-	mkdirs(t, launch.HarnessStateDir)
+	if err := harness.BuildPiAgentDir(agent, harness.SeatBuildDir(l.home), launch.HarnessStateDir); err != nil {
+		t.Fatal(err)
+	}
 	f := mustNew(t, launch)
-	mustWrite(t, f, filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, ".pi", "agent", "f"))
+	own := launch.HarnessStateDir
+	sh := func(script string) []string { return []string{"/bin/sh", "-c", script} }
+	for _, tt := range []struct {
+		name      string
+		argv      []string
+		refused   bool
+		unchanged string // the Human's file a refused write must leave as it was
+	}{
+		{"a file in the Human's agent dir (allowed: own sessions)", []string{touchBin, filepath.Join(agent, "f")}, true, filepath.Join(agent, "f")},
+		{"the Human's installed pi version (allowed: own sessions)", sh(`printf x >> ` + filepath.Join(agent, "install", "current-version")), true, filepath.Join(agent, "install", "current-version")},
+		{"the Human's auth.json through own dir's link (allowed: own auth lock)", sh(`printf x >> ` + filepath.Join(own, "auth.json")), true, filepath.Join(agent, "auth.json")},
+		{"own sessions", sh(`/bin/mkdir -p ` + own + `/sessions/--wt-- && printf x > ` + own + `/sessions/--wt--/s.jsonl`), false, ""},
+		{"own auth lock", []string{"/bin/mkdir", filepath.Join(own, "auth.json.lock")}, false, ""},
+		{"own trust answer", sh(`printf x >> ` + filepath.Join(own, "trust.json")), false, filepath.Join(agent, "trust.json")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before, _ := os.ReadFile(tt.unchanged)
+			o, err := fenced(t, f, tt.argv...)
+			if !tt.refused {
+				if err != nil {
+					t.Fatalf("%q was refused: %v %s", tt.argv, err, o)
+				}
+			} else if err == nil || !strings.Contains(o, "not permitted") {
+				t.Errorf("%q was not refused by the fence: %v %s", tt.argv, err, o)
+			}
+			if after, _ := os.ReadFile(tt.unchanged); tt.unchanged != "" && string(after) != string(before) {
+				t.Errorf("the Human's %s changed", tt.unchanged)
+			}
+		})
+	}
 	mustRefuse(t, f, filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"))
 }
 
@@ -353,7 +393,7 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 	f := mustNew(t, launch)
 
 	mustWrite(t, f,
-		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, ".pi", "agent", "f"),
+		filepath.Join(launch.HarnessStateDir, "f"),
 		verdict, verdict+".tmp.9.ff", filepath.Join(out, "gocache", "f"),
 		filepath.Join(l.root, "temp-elsewhere-f"),
 	)
@@ -364,7 +404,7 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 		filepath.Join(l.common, "HEAD"),
 		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
-		filepath.Join(uhome, "other", "f"), verdict+"2",
+		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, ".pi", "agent", "f"), verdict+"2",
 	)
 
 	// A claude reviewer writes its own config dir, carved out of the refused
@@ -546,7 +586,6 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"pi soldier creates a file in the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(piAgentBin, "pi")}, true, filepath.Join(piAgentBin, "pi"), ""},
 		{"pi reviewer creates a file in its agent dir's bin", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "bin", "gh")}, true, filepath.Join(l.stateDir(), "bin", "gh"), ""},
 		{"pi soldier writes its agent dir", piSoldier, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
-		{"pi soldier writes beside the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(uhome, ".pi", "agent", "f")}, false, "", ""},
 		{"pi reviewer writes its agent dir", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
 		{"soldier chmods a harness root that holds a PATH dir", soldier, []string{"/bin/chmod", "700", claudeCache}, false, "", ""},
 		{"pi soldier chmods its own state dir", piSoldier, []string{"/bin/chmod", "700", l.stateDir()}, false, "", ""},
