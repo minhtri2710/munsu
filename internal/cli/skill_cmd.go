@@ -16,9 +16,10 @@ func newSkillCmd() *cobra.Command {
 		Short: "Inspect embedded munsu skills",
 		Long: `Inspect the munsu skills embedded in the binary.
 
-munsu ships the munsu-ops skill on disk (installed by 'munsu init') plus several
-auxiliary skills that are read on demand via this command. munsu-ops points to
-them with "Context pointer" notes telling you which skill to read for each situation.`,
+munsu ships the munsu-ops skill on disk (installed by 'munsu init --skill
+<global|local>' or MUNSU_INIT_SKILL) plus several auxiliary skills that are read
+on demand via this command. munsu-ops points to them with "Context pointer"
+notes telling you which skill to read for each situation.`,
 	}
 	cmd.AddCommand(newSkillListCmd())
 	cmd.AddCommand(newSkillShowCmd())
