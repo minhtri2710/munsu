@@ -8,8 +8,8 @@
 | codex | none | none | none |
 | opencode | none | none | none |
 | pi | `--model` | `--thinking` | none |
-| grok | `--model` | `--reasoning-effort` | none |
-| agy | `--model` | none | `--dangerously-skip-permissions` |
+| grok | none | none | none |
+| agy | none | none | none |
 
 Harness detection checks environment markers, then process ancestry. Dispatch precedence is CLI override, matched dispatch profile, then the project's Soldier harness and model. Manage profiles with `munsu config dispatch`.
 
