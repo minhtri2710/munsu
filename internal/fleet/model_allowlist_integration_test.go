@@ -299,8 +299,9 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 // TestSpawn_UnresolvedModelFailsClosed verifies blocker 1: with a policy
 // present, an effective model that cannot be resolved to a concrete value must
 // fail closed instead of passing unvalidated. A pi spawn without
-// --model/dispatch/project model leaves the identity unresolved; the policy must deny it because the runtime default cannot be
-// verified against the allowlist.
+// --model/dispatch/project model leaves the identity unresolved; the policy
+// must deny it because the runtime default cannot be verified against the
+// allowlist.
 func TestSpawn_UnresolvedModelFailsClosed(t *testing.T) {
 	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
