@@ -78,7 +78,7 @@ func TestWakeSettleOutputListsAnUnacceptedReport(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			initCLITestHome(t, homeDir)
-			if out, err := runTaskCommand(t, []string{"task", "add", "sc-1", "explore", "--kind", "scout", "--scope", "investigate report", "--budget", "300", "--home", homeDir}); err != nil {
+			if out, err := runTaskCommand(t, []string{"task", "add", "sc-1", "explore", "--kind", "scout", "--scope", "investigate report", "--home", homeDir}); err != nil {
 				t.Fatalf("task add: %v\n%s", err, out)
 			}
 			current := filepath.Join(homeDir, "state", "task-authority", "tasks", "sc-1", "current.json")

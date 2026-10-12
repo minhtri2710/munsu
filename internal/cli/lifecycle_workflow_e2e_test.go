@@ -187,14 +187,13 @@ func workflowCreateTask(t *testing.T, auth *taskauthority.Canonical, taskID, pro
 		t.Fatal(err)
 	}
 	req := taskauthority.CanonicalCreateRequest{
-		HomeID:                 auth.HomeID(),
-		TaskID:                 tid,
-		Owner:                  "owner",
-		Kind:                   "scout",
-		Project:                pid,
-		ScoutScope:             "walk the full lifecycle for this dispatch policy",
-		ScoutRuntimeBudgetSecs: 300,
-		Reason:                 "create",
+		HomeID:     auth.HomeID(),
+		TaskID:     tid,
+		Owner:      "owner",
+		Kind:       "scout",
+		Project:    pid,
+		ScoutScope: "walk the full lifecycle for this dispatch policy",
+		Reason:     "create",
 	}
 	opID, err := domain.NewOperationID("op-create-" + taskID)
 	if err != nil {
@@ -312,7 +311,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	workflowCreateTask(t, auth, taskID, "alpha")
 	// Spawn lints the brief against the scaffold's own sections, so the brief is
 	// the scaffolded scout brief of the task's own contract.
-	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: spawnHome, ID: taskID, Repo: "alpha", Mode: "local-only", Scout: true, ScoutScope: "walk the full lifecycle for this dispatch policy", ScoutRuntimeBudgetSecs: 300, Generation: 1}); err != nil {
+	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: spawnHome, ID: taskID, Repo: "alpha", Mode: "local-only", Scout: true, ScoutScope: "walk the full lifecycle for this dispatch policy", Generation: 1}); err != nil {
 		t.Fatalf("scaffold brief: %v", err)
 	}
 

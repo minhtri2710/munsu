@@ -392,13 +392,12 @@ func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
 		t.Fatal(err)
 	}
 	req := taskauthority.CanonicalCreateRequest{
-		HomeID:                 auth.HomeID(),
-		TaskID:                 tid,
-		Owner:                  "owner",
-		Kind:                   "scout",
-		ScoutScope:             "investigate the requested question",
-		ScoutRuntimeBudgetSecs: 300,
-		Reason:                 "create",
+		HomeID:     auth.HomeID(),
+		TaskID:     tid,
+		Owner:      "owner",
+		Kind:       "scout",
+		ScoutScope: "investigate the requested question",
+		Reason:     "create",
 	}
 	if _, err := auth.Create(mustCanonicalOp(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatal(err)
@@ -471,14 +470,13 @@ func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *tas
 	auth := testAuthorityFor(t, homeDir)
 	tid := mustTaskIDFor(t, taskID)
 	createReq := taskauthority.CanonicalCreateRequest{
-		HomeID:                 auth.HomeID(),
-		TaskID:                 tid,
-		Owner:                  "owner",
-		Description:            "explore",
-		Kind:                   "scout",
-		ScoutScope:             "investigate the requested question",
-		ScoutRuntimeBudgetSecs: 300,
-		Reason:                 "test",
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
+		Owner:       "owner",
+		Description: "explore",
+		Kind:        "scout",
+		ScoutScope:  "investigate the requested question",
+		Reason:      "test",
 	}
 	if pid, err := domain.NewProjectID(project); err == nil {
 		createReq.Project = pid
@@ -547,14 +545,13 @@ func TestPromoteRefusesNonTerminalScout(t *testing.T) {
 	auth := testAuthorityFor(t, homeDir)
 	tid := mustTaskIDFor(t, "scout-b")
 	createReq := taskauthority.CanonicalCreateRequest{
-		HomeID:                 auth.HomeID(),
-		TaskID:                 tid,
-		Owner:                  "owner",
-		Description:            "explore",
-		Kind:                   "scout",
-		ScoutScope:             "investigate the requested question",
-		ScoutRuntimeBudgetSecs: 300,
-		Reason:                 "test",
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
+		Owner:       "owner",
+		Description: "explore",
+		Kind:        "scout",
+		ScoutScope:  "investigate the requested question",
+		Reason:      "test",
 	}
 	if _, err := auth.Create(mustCanonicalOp(t, "op-create-scout-b", createReq), createReq); err != nil {
 		t.Fatal(err)

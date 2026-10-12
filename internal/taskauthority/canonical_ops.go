@@ -17,15 +17,14 @@ import (
 // CreateRequest creates one new queued task at Generation 1, Revision 1. The
 // request is the typed intent for the operation digest.
 type CanonicalCreateRequest struct {
-	HomeID                 domain.HomeID
-	TaskID                 domain.TaskID
-	Owner                  string
-	Description            string
-	Kind                   string
-	Project                domain.ProjectID
-	ParentTaskID           domain.TaskID
-	ScoutScope             string
-	ScoutRuntimeBudgetSecs int64
+	HomeID       domain.HomeID
+	TaskID       domain.TaskID
+	Owner        string
+	Description  string
+	Kind         string
+	Project      domain.ProjectID
+	ParentTaskID domain.TaskID
+	ScoutScope   string
 	// ReviewTaskID is the ship task a review task reads; ReviewHead is the head
 	// of that task's bound worktree, read by the caller from git (the bound
 	// worktree head is the launch-time head and does not follow commits).
@@ -36,19 +35,18 @@ type CanonicalCreateRequest struct {
 
 func (r CanonicalCreateRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID                 string `json:"home_id"`
-		TaskID                 string `json:"task_id"`
-		Owner                  string `json:"owner"`
-		Description            string `json:"description"`
-		Kind                   string `json:"kind"`
-		Project                string `json:"project"`
-		ParentTaskID           string `json:"parent_task_id"`
-		ScoutScope             string `json:"scout_scope,omitempty"`
-		ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
-		ReviewTaskID           string `json:"review_task_id,omitempty"`
-		ReviewHead             string `json:"review_head,omitempty"`
-		Reason                 string `json:"reason"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Owner, r.Description, r.Kind, r.Project.Value(), r.ParentTaskID.Value(), r.ScoutScope, r.ScoutRuntimeBudgetSecs, r.ReviewTaskID, r.ReviewHead, r.Reason})
+		HomeID       string `json:"home_id"`
+		TaskID       string `json:"task_id"`
+		Owner        string `json:"owner"`
+		Description  string `json:"description"`
+		Kind         string `json:"kind"`
+		Project      string `json:"project"`
+		ParentTaskID string `json:"parent_task_id"`
+		ScoutScope   string `json:"scout_scope,omitempty"`
+		ReviewTaskID string `json:"review_task_id,omitempty"`
+		ReviewHead   string `json:"review_head,omitempty"`
+		Reason       string `json:"reason"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Owner, r.Description, r.Kind, r.Project.Value(), r.ParentTaskID.Value(), r.ScoutScope, r.ReviewTaskID, r.ReviewHead, r.Reason})
 }
 
 // Create is the canonical operation that creates one queued Task Generation.
@@ -62,7 +60,7 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	if strings.TrimSpace(req.Owner) == "" {
 		return Outcome{}, validationError("create requires an owner")
 	}
-	if err := validateScoutContract(TaskDefinition{Kind: req.Kind, ScoutScope: req.ScoutScope, ScoutRuntimeBudgetSecs: req.ScoutRuntimeBudgetSecs}); err != nil {
+	if err := validateScoutContract(TaskDefinition{Kind: req.Kind, ScoutScope: req.ScoutScope}); err != nil {
 		return Outcome{}, err
 	}
 	if err := validateReviewContract(TaskDefinition{Kind: req.Kind, ReviewTaskID: req.ReviewTaskID, ReviewHead: req.ReviewHead}); err != nil {
@@ -98,7 +96,6 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	agg, err := NewAggregate(req.TaskID.Value(), req.Owner, req.Description, req.Kind, req.Project.Value(), req.ParentTaskID.Value())
 	if err == nil {
 		agg.Definition.ScoutScope = strings.TrimSpace(req.ScoutScope)
-		agg.Definition.ScoutRuntimeBudgetSecs = req.ScoutRuntimeBudgetSecs
 		agg.Definition.ReviewTaskID = req.ReviewTaskID
 		agg.Definition.ReviewHead = req.ReviewHead
 		err = validateScoutContract(agg.Definition)

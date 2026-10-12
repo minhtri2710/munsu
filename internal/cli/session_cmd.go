@@ -77,7 +77,7 @@ func newBriefCmd() *cobra.Command {
 				return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 			}
 
-			scoutScope, scoutBudget := "", int64(0)
+			scoutScope := ""
 			var scoutGeneration taskauthority.Generation
 			if scout {
 				if !canonicalExists {
@@ -87,7 +87,6 @@ func newBriefCmd() *cobra.Command {
 					return fmt.Errorf("task %q is not a scout", id)
 				}
 				scoutScope = agg.Definition.ScoutScope
-				scoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 				scoutGeneration = agg.Generation
 			}
 			review := canonicalExists && agg.Definition.Kind == taskauthority.KindReview
@@ -95,7 +94,7 @@ func newBriefCmd() *cobra.Command {
 				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
 				Review: review, ReviewTask: agg.Definition.ReviewTaskID, ReviewHead: agg.Definition.ReviewHead,
 				Mode: resolvedMode, Yolo: projYolo,
-				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
+				ScoutScope: scoutScope,
 				Generation: scoutGeneration, TamperCheck: tamperCheck,
 			}
 

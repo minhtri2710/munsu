@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -88,15 +87,6 @@ Use 'munsu send' to steer down; 'munsu report' to report up.`,
 				}
 				if kind == taskauthority.KindShip {
 					return fmt.Errorf("report: ship task %s cannot use 'resolved' as delivery completion; use 'done' instead", taskID)
-				}
-			}
-
-			if role == "soldier" && state == "done" && taskKind == taskauthority.KindScout {
-				if err := enforceScoutReportBudget(parentHome, taskID, time.Now()); err != nil {
-					if budgetErr := new(orchestrator.ScoutBudgetError); errors.As(err, &budgetErr) {
-						_ = home.AppendStatus(parentHome, taskID, "failed: scout runtime deadline evidence: "+formatScoutBudgetEvidence(budgetErr.Evidence))
-					}
-					return fmt.Errorf("report: scout completion rejected: %w", err)
 				}
 			}
 
@@ -189,41 +179,4 @@ func canonicalTaskKind(homeDir, taskID string) (string, error) {
 		return "", err
 	}
 	return agg.Definition.Kind, nil
-}
-
-func formatScoutBudgetEvidence(e orchestrator.ScoutBudgetEvidence) string {
-	return fmt.Sprintf("outcome=%s budget_secs=%d started_at_unix=%d observed_at_unix=%d elapsed_secs=%d", e.Outcome, e.BudgetSecs, e.StartedAtUnix, e.ObservedAtUnix, e.ElapsedSecs)
-}
-
-func enforceScoutReportBudget(homeDir, taskID string, now time.Time) error {
-	h, err := home.Open(homeDir)
-	if err != nil {
-		return err
-	}
-	auth, err := taskauthority.NewCanonical(h)
-	if err != nil {
-		return err
-	}
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		return err
-	}
-	agg, err := auth.Get(tid)
-	if err != nil {
-		return err
-	}
-	if agg.Definition.Kind != taskauthority.KindScout {
-		return nil
-	}
-	// Task-only/local report flows may not have a launch submission record; keep
-	// their existing report semantics. When launch evidence exists, its timestamp
-	// is authoritative and malformed evidence fails closed.
-	if agg.LaunchEvidence == nil {
-		return nil
-	}
-	if agg.LaunchEvidence.SubmittedAt <= 0 {
-		return fmt.Errorf("%w: task=%s", orchestrator.ErrScoutBudgetMissingTimestamp, taskID)
-	}
-	_, err = orchestrator.EnforceScoutRuntimeBudget(agg.Definition.ScoutRuntimeBudgetSecs, agg.LaunchEvidence.SubmittedAt, now.Unix(), now)
-	return err
 }

@@ -130,7 +130,7 @@ func TestSettlingAReportCompletesOnlyAScoutsDone(t *testing.T) {
 			initCLITestHome(t, homeDir)
 			addArgs := []string{"task", "add", "t-1", "work", "--kind", tc.kind, "--home", homeDir}
 			if tc.kind == taskauthority.KindScout {
-				addArgs = append(addArgs, "--scope", "investigate report", "--budget", "300")
+				addArgs = append(addArgs, "--scope", "investigate report")
 			}
 			if out, err := runTaskCommand(t, addArgs); err != nil {
 				t.Fatalf("task add: %v\n%s", err, out)
@@ -217,11 +217,11 @@ func TestReportResolvedRefusalReadsTheTaskKind(t *testing.T) {
 		corrupt bool
 		want    string
 	}{
-		{"soldier whose launch names ship is refused", "soldier", "ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "scout"}, false, shipRefusal},
+		{"soldier whose launch names ship is refused", "soldier", "ship", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "scout"}, false, shipRefusal},
 		{"soldier whose launch names scout passes over a corrupt record", "soldier", "scout", []string{"--kind", "ship"}, map[string]string{"kind": "ship"}, true, ""},
 		{"canonical ship is refused with no meta kind", "general", "", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, shipRefusal},
-		{"unreadable canonical record is refused", "general", "", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "scout"}, true, readRefusal},
-		{"canonical scout passes although meta claims ship", "general", "", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false, ""},
+		{"unreadable canonical record is refused", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "scout"}, true, readRefusal},
+		{"canonical scout passes although meta claims ship", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "ship"}, false, ""},
 		{"task with no canonical record and no meta is allowed", "general", "", nil, nil, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

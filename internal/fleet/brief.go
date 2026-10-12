@@ -14,18 +14,17 @@ import (
 
 // ScaffoldOptions controls brief generation.
 type ScaffoldOptions struct {
-	HomeDir                string // munsu home directory
-	ID                     string // task ID
-	Repo                   string // project/repo name
-	Scout                  bool   // generate scout brief instead of ship brief
-	Review                 bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
-	Mode                   string // delivery mode (no-mistakes / direct-PR / local-only)
-	Yolo                   bool   // yolo mode
-	ScoutScope             string
-	ScoutRuntimeBudgetSecs int64
-	ReviewTask             string // the ship task a reviewer reads
-	ReviewHead             string // the one head the reviewer judges
-	TamperCheck            string // the project's tamper command, named in the review brief when set
+	HomeDir     string // munsu home directory
+	ID          string // task ID
+	Repo        string // project/repo name
+	Scout       bool   // generate scout brief instead of ship brief
+	Review      bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
+	Mode        string // delivery mode (no-mistakes / direct-PR / local-only)
+	Yolo        bool   // yolo mode
+	ScoutScope  string
+	ReviewTask  string // the ship task a reviewer reads
+	ReviewHead  string // the one head the reviewer judges
+	TamperCheck string // the project's tamper command, named in the review brief when set
 	// Generation is the task generation the brief launches. A scout brief
 	// binds the report contract to it: the soldier writes report-g<N>.md for
 	// exactly the generation being launched. It must be positive for scouts.
@@ -80,7 +79,7 @@ func buildBrief(opts ScaffoldOptions) (string, error) {
 		return b.String(), nil
 	}
 	if opts.Scout {
-		tmpl, err := scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo, opts.ScoutScope, opts.ScoutRuntimeBudgetSecs, opts.Generation)
+		tmpl, err := scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo, opts.ScoutScope, opts.Generation)
 		if err != nil {
 			return "", err
 		}
@@ -184,7 +183,7 @@ Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: 
 // scout never delivers, but its brief still names the contract the task is
 // launched under, and an empty or unrecognized mode is a resolution failure
 // upstream rather than a line to omit.
-func scoutBriefTemplate(id, repo, mode string, yolo bool, scope string, budget int64, gen taskauthority.Generation) (string, error) {
+func scoutBriefTemplate(id, repo, mode string, yolo bool, scope string, gen taskauthority.Generation) (string, error) {
 	if !taskauthority.DeliveryModes[mode] {
 		return "", fmt.Errorf("scout brief for %s: unknown delivery mode %q", id, mode)
 	}
@@ -198,7 +197,6 @@ func scoutBriefTemplate(id, repo, mode string, yolo bool, scope string, budget i
 
 ## Contract
 Scope: %s
-Maximum runtime (seconds): %d
 
 ## Setup
 You are in a disposable git worktree of %s, at a detached HEAD on a clean default branch.
@@ -221,7 +219,7 @@ that answers for this generation; never read or reuse another generation's.
 4. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
-`, id, scope, budget, repo, id, ReportName(gen), modeLine), nil
+`, id, scope, repo, id, ReportName(gen), modeLine), nil
 }
 
 // reviewBriefTemplate returns the reviewer brief. The contract names the one

@@ -89,7 +89,7 @@ func TestMetaMtimeWitnessesTaskStateAdvance(t *testing.T) {
 			tid := mustTaskIDFor(t, "w-promote")
 			req := taskauthority.CanonicalCreateRequest{
 				HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "explore", Kind: "scout",
-				ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+				ScoutScope: "investigate the requested question", Reason: "test",
 			}
 			if _, err := auth.Create(mustCanonicalOp(t, "op-create-w-promote", req), req); err != nil {
 				t.Fatal(err)
@@ -115,7 +115,7 @@ func TestMetaMtimeWitnessesTaskStateAdvance(t *testing.T) {
 			auth := testAuthorityFor(t, homeDir)
 			req := taskauthority.CanonicalCreateRequest{
 				HomeID: auth.HomeID(), TaskID: mustTaskIDFor(t, "w-scout"), Owner: "owner", Description: "explore", Kind: "scout",
-				ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+				ScoutScope: "investigate the requested question", Reason: "test",
 			}
 			if _, err := auth.Create(mustCanonicalOp(t, "op-create-w-scout", req), req); err != nil {
 				t.Fatal(err)

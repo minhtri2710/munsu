@@ -61,7 +61,6 @@ func TestValidateScoutContractRefusesScoutFieldsOnShipTask(t *testing.T) {
 		validateScoutContract,
 		[]guardCase[TaskDefinition]{
 			{"scout scope on a ship task", func(d *TaskDefinition) { d.ScoutScope = "map the lane" }, "scout-only fields are not valid for ship tasks"},
-			{"scout budget on a ship task", func(d *TaskDefinition) { d.ScoutRuntimeBudgetSecs = 900 }, "scout-only fields are not valid for ship tasks"},
 		})
 }
 

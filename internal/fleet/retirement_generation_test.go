@@ -1981,7 +1981,7 @@ func canonicalScoutTestAuth(t *testing.T, homeDir, taskID string) *taskauthority
 	}
 	req := taskauthority.CanonicalCreateRequest{
 		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Owner: "general", Description: "Ready", Kind: taskauthority.KindScout,
-		ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+		ScoutScope: "investigate the requested question", Reason: "test",
 	}
 	if _, err := auth.Create(mustOp(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatalf("Create(%s): %v", taskID, err)

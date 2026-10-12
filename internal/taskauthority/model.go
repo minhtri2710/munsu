@@ -87,13 +87,12 @@ func (p Phase) Valid() bool {
 
 // TaskDefinition carries the durable definition of one Task Generation.
 type TaskDefinition struct {
-	Owner                  string `json:"owner"`
-	Description            string `json:"description,omitempty"`
-	Kind                   string `json:"kind,omitempty"`
-	Project                string `json:"project,omitempty"`
-	ParentTaskID           string `json:"parent_task_id,omitempty"`
-	ScoutScope             string `json:"scout_scope,omitempty"`
-	ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
+	Owner        string `json:"owner"`
+	Description  string `json:"description,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	Project      string `json:"project,omitempty"`
+	ParentTaskID string `json:"parent_task_id,omitempty"`
+	ScoutScope   string `json:"scout_scope,omitempty"`
 	// ReviewTaskID and ReviewHead bind a review task to the ship task it reads
 	// and to the one head it reviews. Create checks the reviewed task; munsu
 	// reads the head from git, never from the reviewer. Only kind review has them.
@@ -469,16 +468,13 @@ func validateReviewContract(def TaskDefinition) error {
 
 func validateScoutContract(def TaskDefinition) error {
 	if def.Kind != KindScout {
-		if strings.TrimSpace(def.ScoutScope) != "" || def.ScoutRuntimeBudgetSecs != 0 {
+		if strings.TrimSpace(def.ScoutScope) != "" {
 			return validationError("scout-only fields are not valid for ship tasks")
 		}
 		return nil
 	}
 	if strings.TrimSpace(def.ScoutScope) == "" {
 		return validationError("scout task requires non-empty scope")
-	}
-	if def.ScoutRuntimeBudgetSecs <= 0 {
-		return validationError("scout task requires positive runtime budget seconds")
 	}
 	return nil
 }
