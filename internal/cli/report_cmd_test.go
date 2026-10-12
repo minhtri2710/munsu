@@ -52,23 +52,25 @@ func TestReportWritesOneLine(t *testing.T) {
 		task       = "t-1"
 		emptyMsg   = "message is required"
 		invalidKey = "invalid terminal key"
+		ship       = taskauthority.KindShip
 	)
 	marked := func(state, msg, key string) string { return domain.ReportStatusLine(state, msg, key) }
 	for _, tc := range []struct {
 		name    string
 		role    string
+		kind    string
 		args    []string
-		repeat  bool
 		want    []string // lines in the status file the parent reads
 		wantErr string
 	}{
-		{"soldier material report", "soldier", []string{"done", "PR landed"}, false, []string{marked("done", "PR landed", "default")}, ""},
-		{"soldier report repeated", "soldier", []string{"failed", "red"}, true, []string{marked("failed", "red", "default")}, ""},
-		{"captain material report", "captain", []string{"blocked", "waiting", "--key", "gate"}, false, []string{marked("blocked", "waiting", "gate")}, ""},
-		{"dispatcher report", "general", []string{"done", "merged"}, false, []string{"done: merged [key=default]"}, ""},
-		{"empty message", "soldier", []string{"done", ""}, false, nil, emptyMsg},
-		{"key outside the slug on a progress report", "soldier", []string{"working", "build", "--key", "a.b"}, false, nil, invalidKey},
-		{"key outside the slug on a material report", "soldier", []string{"done", "PR landed", "--key", "a.b"}, false, []string{marked("done", "PR landed", "a.b")}, ""},
+		{"soldier material report", "soldier", ship, []string{"done", "PR landed"}, []string{marked("done", "PR landed", "default")}, ""},
+		{"captain material report", "captain", ship, []string{"blocked", "waiting", "--key", "gate"}, []string{marked("blocked", "waiting", "gate")}, ""},
+		{"dispatcher report", "general", ship, []string{"done", "merged"}, []string{"done: merged [key=default]"}, ""},
+		{"empty message", "soldier", ship, []string{"done", ""}, nil, emptyMsg},
+		{"key outside the slug on a progress report", "soldier", ship, []string{"working", "build", "--key", "a.b"}, nil, invalidKey},
+		{"slug key on a progress report", "soldier", ship, []string{"working", "build", "--key", "a-b_c"}, []string{marked("working", "build", "a-b_c")}, ""},
+		{"key outside the slug on a material report", "soldier", ship, []string{"done", "PR landed", "--key", "a.b"}, []string{marked("done", "PR landed", "a.b")}, ""},
+		{"key outside the slug on a scout done report", "soldier", taskauthority.KindScout, []string{"done", "found it", "--key", "a.b"}, nil, invalidKey},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			own, parent := t.TempDir(), t.TempDir()
@@ -80,14 +82,7 @@ func TestReportWritesOneLine(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			runs := 1
-			if tc.repeat {
-				runs = 2
-			}
-			var err error
-			for i := 0; i < runs; i++ {
-				err = reportAs(t, tc.role, own, parent, task, taskauthority.KindShip, tc.args...)
-			}
+			err := reportAs(t, tc.role, own, parent, task, tc.kind, tc.args...)
 			if tc.wantErr == "" && err != nil {
 				t.Fatalf("report = %v, want nil", err)
 			}
@@ -104,6 +99,62 @@ func TestReportWritesOneLine(t *testing.T) {
 			if tc.role == "captain" {
 				if mine, _ := home.ReadStatus(own, task); len(mine) != 0 {
 					t.Fatalf("captain's own home holds %q, want no line", mine)
+				}
+			}
+		})
+	}
+}
+
+// Every soldier report is a report of its own: an identical repeat derives a
+// second wake, and each holds teardown until its own wake settles. Only the
+// dispatcher's unmarked repeat appends nothing, and says so.
+func TestARepeatedReportIsAReportOfItsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		role        string
+		settleFirst bool
+		wantLines   int
+		wantWakes   int
+	}{
+		{"soldier repeat after the first was settled", "soldier", true, 2, 1},
+		{"soldier repeat before the first was settled", "soldier", false, 2, 2},
+		{"dispatcher repeat", "general", false, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			if err := reportAs(t, tc.role, homeDir, homeDir, "t-1", taskauthority.KindShip, "failed", "CI red"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.settleFirst {
+				settleReports(t, homeDir)
+			}
+			out, err := runRoot(t, "report", "failed", "CI red")
+			if err != nil {
+				t.Fatalf("repeat: %v\n%s", err, out)
+			}
+			if noop := strings.Contains(out, "not appended"); noop != (tc.wantLines == 1) {
+				t.Fatalf("repeat output = %s, want not-appended=%v", out, tc.wantLines == 1)
+			}
+			if lines, _ := home.ReadStatus(homeDir, "t-1"); len(lines) != tc.wantLines {
+				t.Fatalf("status lines = %q, want %d", lines, tc.wantLines)
+			}
+			claim, err := orchestrator.ClaimWakes(homeDir, "general", 60, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(claim.Wakes) != tc.wantWakes {
+				t.Fatalf("wakes = %+v, want %d", claim.Wakes, tc.wantWakes)
+			}
+			if len(claim.Wakes) == 2 && claim.Wakes[0].Ref == claim.Wakes[1].Ref {
+				t.Fatalf("two identical reports share the ref %q, want one ref each", claim.Wakes[0].Ref)
+			}
+			for i, w := range claim.Wakes {
+				if _, err := orchestrator.AckWakes(homeDir, claim.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+					t.Fatal(err)
+				}
+				if left, err := home.UnsettledReports(homeDir, "t-1"); err != nil || len(left) != len(claim.Wakes)-1-i {
+					t.Fatalf("after settling %d of %d: unsettled = %q err=%v", i+1, len(claim.Wakes), left, err)
 				}
 			}
 		})

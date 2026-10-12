@@ -99,9 +99,9 @@ func (r *ReturnReport) String() string {
 		}
 	}
 	if len(r.UnacceptedReports) > 0 {
-		b.WriteString(fmt.Sprintf("  reports not finished (%d); %s:\n", len(r.UnacceptedReports), UnacceptedReportsHint))
+		b.WriteString(fmt.Sprintf("  reports not finished (%d):\n", len(r.UnacceptedReports)))
 		for _, u := range r.UnacceptedReports {
-			b.WriteString(fmt.Sprintf("    - %s\n", u))
+			b.WriteString(fmt.Sprintf("    - %s\n      %s\n", u, u.Hint))
 		}
 	}
 	if r.DigestNotRemoved != "" {
@@ -282,14 +282,23 @@ func Return(homeDir string) (*ReturnReport, error) {
 			report.Escalations = append(report.Escalations, s)
 
 			// Separate out blocked items for explicit surfacing.
-			lower := strings.ToLower(entry.Payload)
-			if strings.HasPrefix(lower, "blocked:") || strings.Contains(lower, "\nblocked:") {
+			if blockedEntry(entry) {
 				report.BlockedItems = append(report.BlockedItems, entry.Payload)
 			}
 		}
 	}
 
 	return report, nil
+}
+
+// blockedEntry reports whether a digest entry is a blocked report. Its payload
+// takes one of the two producer shapes payloadHasMaterialMarker reads: a
+// watcher signal wake's status line ("blocked: ...") or a report wake's
+// "<key>: blocked: ...".
+func blockedEntry(entry BatchedEntry) bool {
+	lower := strings.ToLower(entry.Payload)
+	return strings.HasPrefix(lower, "blocked:") || strings.HasPrefix(lower, strings.ToLower(entry.Key)+": blocked:") ||
+		strings.Contains(lower, "\nblocked:")
 }
 
 // waitForDaemonExit observes a stopped daemon until it is gone or the bound

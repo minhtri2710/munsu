@@ -1,8 +1,10 @@
 package home
 
 import (
+	"io"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -144,6 +146,54 @@ func TestDeriveReportWakes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.steps(t, t.TempDir()); !slices.Equal(got, tc.want) {
 				t.Fatalf("report wakes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A task whose report cursor cannot be read is skipped with one stderr line,
+// however many cycles skip it, and every other task's reports still derive.
+func TestDeriveReportWakesLogsASkippedTask(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		corrupt   bool
+		wantLogs  int
+		wantWakes []string
+	}{
+		{"unreadable cursor", true, 1, []string{"t2: done: shipped [key=default]"}},
+		{"readable cursor", false, 0, []string{"t1: failed: red [key=default]", "t2: done: shipped [key=default]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := t.TempDir()
+			appendReport(t, h, "t1", "failed", "red")
+			appendReport(t, h, "t2", "done", "shipped")
+			if tc.corrupt {
+				p, err := ReportCursorPath(h, "t1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stderr := os.Stderr
+			os.Stderr = w
+			deriveReports(t, h)
+			deriveReports(t, h)
+			os.Stderr = stderr
+			w.Close()
+			logged, _ := io.ReadAll(r)
+			if n := strings.Count(string(logged), "reports of task t1 in "+h+" are not derived"); n != tc.wantLogs {
+				t.Fatalf("stderr = %q, want the t1 skip logged %d time(s)", logged, tc.wantLogs)
+			}
+			got := reportWakePayloads(t, h)
+			slices.Sort(got)
+			if !slices.Equal(got, tc.wantWakes) {
+				t.Fatalf("report wakes = %q, want %q", got, tc.wantWakes)
 			}
 		})
 	}

@@ -147,14 +147,11 @@ func newWakeCmd() *cobra.Command {
 }
 
 // newWakeAck builds the settle result. The wake is settled whether or not its
-// report's work finished; unfinished reports ride along with the hint.
+// report's work finished; unfinished reports ride along, each with its hint.
 func newWakeAck(wakeID, claimID, state string, unaccepted []orchestrator.UnacceptedReport) WakeAck {
 	ack := WakeAck{WakeID: wakeID, ClaimID: claimID, State: state}
 	for _, u := range unaccepted {
-		ack.UnacceptedReports = append(ack.UnacceptedReports, WakeUnacceptedReport{Key: u.Key, Payload: u.Payload, Ref: u.Ref, Reason: u.Reason})
-	}
-	if len(unaccepted) > 0 {
-		ack.Hint = orchestrator.UnacceptedReportsHint
+		ack.UnacceptedReports = append(ack.UnacceptedReports, WakeUnacceptedReport{Key: u.Key, Payload: u.Payload, Ref: u.Ref, Reason: u.Reason, Hint: u.Hint})
 	}
 	return ack
 }

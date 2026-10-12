@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -139,10 +140,24 @@ func DeriveReportWakes(h string) (err error) {
 	return deriveReportWakesLocked(h, time.Now())
 }
 
+// skippedReportTasks holds, per home and task, the reason derivation last
+// skipped that task, so a skip is logged once until its reason changes.
+var skippedReportTasks sync.Map
+
+// logReportSkip writes to stderr that task id's reports were not derived,
+// once while the reason is unchanged.
+func logReportSkip(h, id string, err error) {
+	if prev, ok := skippedReportTasks.Swap(h+"\x00"+id, err.Error()); ok && prev == err.Error() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "warning: reports of task %s in %s are not derived: %v\n", id, h, err)
+}
+
 // deriveReportWakesLocked queues the wakes before it advances the cursors: a
 // crash between the two derives those reports again (at least once, never
-// lost). A task whose status or cursor cannot be read is skipped, so one bad
-// file never blocks every other report.
+// lost). A task whose status or cursor cannot be read is skipped and logged,
+// so one bad file never blocks every other report; its teardown still holds,
+// because UnsettledReports fails on the same read.
 func deriveReportWakesLocked(h string, now time.Time) error {
 	ids, err := statusTaskIDs(h)
 	if err != nil {
@@ -153,12 +168,15 @@ func deriveReportWakesLocked(h string, now time.Time) error {
 	for _, id := range ids {
 		lines, err := ReadStatus(h, id)
 		if err != nil {
+			logReportSkip(h, id, err)
 			continue
 		}
 		cur, err := readReportCursor(h, id)
 		if err != nil {
+			logReportSkip(h, id, err)
 			continue
 		}
+		skippedReportTasks.Delete(h + "\x00" + id)
 		next := reportCursor{Next: len(lines), Pending: cur.Pending}
 		if len(lines) > 0 {
 			next.LastSHA = lineSHA(lines[len(lines)-1])

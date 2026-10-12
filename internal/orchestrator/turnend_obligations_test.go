@@ -19,13 +19,13 @@ func TestObligationsByRole(t *testing.T) {
 		},
 		{
 			role:      RoleCaptain,
-			want:      2,
-			wantKinds: []ObligationKind{ReportRelay, Cleanup},
+			want:      1,
+			wantKinds: []ObligationKind{Cleanup},
 		},
 		{
 			role:      RoleSoldier,
-			want:      2,
-			wantKinds: []ObligationKind{ReportRelay, Cleanup},
+			want:      1,
+			wantKinds: []ObligationKind{Cleanup},
 		},
 	}
 
@@ -80,62 +80,25 @@ func TestSaveAndLoadObligations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadObligations() error = %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("LoadObligations() = %d items, want 2", len(loaded))
+	if len(loaded) != 1 {
+		t.Fatalf("LoadObligations() = %d items, want 1", len(loaded))
 	}
 
-	// Complete one obligation
-	found, err := CompleteObligation(home, role, ReportRelay)
+	found, err := CompleteObligation(home, role, Cleanup)
 	if err != nil {
 		t.Fatalf("CompleteObligation() error = %v", err)
 	}
 	if !found {
-		t.Errorf("CompleteObligation(ReportRelay) = false, want true")
+		t.Errorf("CompleteObligation(Cleanup) = false, want true")
 	}
 
-	// Load again — should see one closed, one open
+	// Load again — the obligation persists, closed
 	loaded, err = LoadObligations(home, role)
 	if err != nil {
 		t.Fatalf("LoadObligations() error = %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("LoadObligations() = %d items, want 2 after complete", len(loaded))
-	}
-
-	var reportRelayFound, cleanupFound bool
-	for _, o := range loaded {
-		switch o.Kind {
-		case ReportRelay:
-			reportRelayFound = true
-			if o.State != StateClosed {
-				t.Errorf("ReportRelay state = %q, want %q", o.State, StateClosed)
-			}
-			if o.ClosedAt == 0 {
-				t.Errorf("ReportRelay ClosedAt = 0, want non-zero")
-			}
-		case Cleanup:
-			cleanupFound = true
-			if o.State != StateOpen {
-				t.Errorf("Cleanup state = %q, want %q", o.State, StateOpen)
-			}
-		}
-	}
-	if !reportRelayFound || !cleanupFound {
-		t.Errorf("missing obligations: reportRelay=%v cleanup=%v", reportRelayFound, cleanupFound)
-	}
-}
-
-func TestCompleteNotFound(t *testing.T) {
-	home := t.TempDir()
-	role := RoleGeneral
-
-	// General has only Cleanup, completing ReportRelay should return false
-	found, err := CompleteObligation(home, role, ReportRelay)
-	if err != nil {
-		t.Fatalf("CompleteObligation() error = %v", err)
-	}
-	if found {
-		t.Errorf("CompleteObligation(ReportRelay) for General = true, want false")
+	if len(loaded) != 1 || loaded[0].Kind != Cleanup || loaded[0].State != StateClosed || loaded[0].ClosedAt == 0 {
+		t.Fatalf("LoadObligations() after complete = %+v, want one closed Cleanup with ClosedAt", loaded)
 	}
 }
 
@@ -166,7 +129,6 @@ func TestClearCompleted(t *testing.T) {
 	role := RoleCaptain
 
 	// Complete all obligations
-	CompleteObligation(home, role, ReportRelay)
 	CompleteObligation(home, role, Cleanup)
 
 	// Clear completed
@@ -198,8 +160,8 @@ func TestClearCompletedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadObligations() error = %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Errorf("after ClearCompleted on fresh home: got %d, want 2", len(loaded))
+	if len(loaded) != 1 {
+		t.Errorf("after ClearCompleted on fresh home: got %d, want 1", len(loaded))
 	}
 }
 
@@ -220,48 +182,5 @@ func TestLoadFromEmptyFile(t *testing.T) {
 	}
 	if len(loaded) != 0 {
 		t.Errorf("empty file: got %d obligations, want 0", len(loaded))
-	}
-}
-
-func TestSoldierObligations(t *testing.T) {
-	home := t.TempDir()
-	role := RoleSoldier
-
-	loaded, err := LoadObligations(home, role)
-	if err != nil {
-		t.Fatalf("LoadObligations() error = %v", err)
-	}
-	if len(loaded) != 2 {
-		t.Fatalf("soldier: got %d obligations, want 2", len(loaded))
-	}
-
-	// Complete both
-	found, err := CompleteObligation(home, role, ReportRelay)
-	if err != nil {
-		t.Fatalf("CompleteObligation(ReportRelay) error = %v", err)
-	}
-	if !found {
-		t.Errorf("soldier CompleteObligation(ReportRelay) = false, want true")
-	}
-
-	found, err = CompleteObligation(home, role, Cleanup)
-	if err != nil {
-		t.Fatalf("CompleteObligation(Cleanup) error = %v", err)
-	}
-	if !found {
-		t.Errorf("soldier CompleteObligation(Cleanup) = false, want true")
-	}
-
-	// Clear completed
-	if err := ClearCompleted(home, role); err != nil {
-		t.Fatalf("ClearCompleted() error = %v", err)
-	}
-
-	loaded, err = LoadObligations(home, role)
-	if err != nil {
-		t.Fatalf("LoadObligations() error = %v", err)
-	}
-	if len(loaded) != 0 {
-		t.Errorf("soldier after clear: got %d obligations, want 0", len(loaded))
 	}
 }

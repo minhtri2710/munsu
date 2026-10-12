@@ -29,7 +29,8 @@ munsu afk
 munsu afk return
 # → reads the digest summary, prints escalations/blocked (a dead watcher is listed as a [wedge] escalation); settles the
 #   drained report wakes (a scout it cannot complete is listed with a
-#   `munsu task done <id>` hint)
+#   `munsu task done <id>` hint; a report it cannot settle, with a
+#   `munsu teardown <id> --force` hint)
 
 # Verify clean:
 munsu afk return check

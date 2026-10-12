@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -383,55 +384,71 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 // launch). The teardown command composes the Authority over the resolved task
 // home (Task 7.7), and the retirement transition fails closed without the
 // authoritative record.
-func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
+// A review task is created against a working ship task, as it must be.
+func seedRetireAuthority(t *testing.T, taskID, kind string) string {
 	t.Helper()
-	initCLITestHome(t, homeDir)
+	var homeDir string
+	req := taskauthority.CanonicalCreateRequest{Owner: "owner", Kind: kind, Reason: "create"}
+	if kind == taskauthority.KindReview {
+		homeDir = deliveryGuardShip(t, "t-ship")
+		req.ReviewTaskID, req.ReviewHead = "t-ship", deliveryGuardHead
+	} else {
+		homeDir = t.TempDir()
+		initCLITestHome(t, homeDir)
+		req.ScoutScope = "investigate the requested question"
+	}
 	auth := testAuthorityFor(t, homeDir)
 	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := taskauthority.CanonicalCreateRequest{
-		HomeID:     auth.HomeID(),
-		TaskID:     tid,
-		Owner:      "owner",
-		Kind:       "scout",
-		ScoutScope: "investigate the requested question",
-		Reason:     "create",
-	}
+	req.HomeID, req.TaskID = auth.HomeID(), tid
 	if _, err := auth.Create(mustCanonicalOp(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatal(err)
 	}
+	return homeDir
 }
 
-// The CLI teardown of a scout holds while a report its reporter filed is not
-// settled, and --force retires past it. A scout's done report never held.
+// The CLI teardown holds while a report its reporter filed is not settled, and
+// --force retires past it. A scout's done report never held; any other
+// kind's does. A review task stands in for the other kinds: it reaches the
+// hold with no launched worktree, and its done report is the verdict line the
+// watcher writes.
 func TestTeardownCmdHoldsForUnsettledReports(t *testing.T) {
 	const refusal = "report(s) its parent has not settled"
 	for _, tc := range []struct {
 		name    string
+		kind    string
 		state   string
 		settle  bool
 		force   bool
 		wantErr string
 	}{
-		{"unsettled report", "failed", false, false, refusal},
-		{"settled report", "failed", true, false, ""},
-		{"forced past an unsettled report", "failed", false, true, ""},
-		{"unsettled scout done report", "done", false, false, ""},
+		{"unsettled report", taskauthority.KindScout, "failed", false, false, refusal},
+		{"settled report", taskauthority.KindScout, "failed", true, false, ""},
+		{"forced past an unsettled report", taskauthority.KindScout, "failed", false, true, ""},
+		{"unsettled scout done report", taskauthority.KindScout, "done", false, false, ""},
+		{"unsettled review done report", taskauthority.KindReview, "done", false, false, refusal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
 			soldierID := "teardown-report-test"
-			seedRetireAuthority(t, tmpDir, soldierID)
-			writeRawTaskMeta(t, tmpDir, soldierID, "kind=scout\nworktree=/nonexistent\n")
+			tmpDir := seedRetireAuthority(t, soldierID, tc.kind)
+			meta := "kind=" + tc.kind + "\n"
+			if tc.kind != taskauthority.KindReview {
+				meta += "worktree=/nonexistent\n"
+			}
+			writeRawTaskMeta(t, tmpDir, soldierID, meta)
 			if err := os.MkdirAll(filepath.Join(tmpDir, "data", soldierID), 0755); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if err := reportAs(t, "soldier", tmpDir, tmpDir, soldierID, "scout", tc.state, "report"); err != nil {
+			if tc.kind == taskauthority.KindReview {
+				if _, err := orchestrator.AppendReportStatus(tmpDir, soldierID, domain.ReportStatusLine(tc.state, "verdict recorded", "review-verdict-d1")); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := reportAs(t, "soldier", tmpDir, tmpDir, soldierID, tc.kind, tc.state, "report"); err != nil {
 				t.Fatalf("report: %v", err)
 			}
 			if tc.settle {

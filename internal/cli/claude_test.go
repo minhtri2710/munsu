@@ -765,6 +765,10 @@ func TestGuardAllowsASoldierSeatToStop(t *testing.T) {
 	}{
 		{"claude", "soldier", 0, ""},
 		{"claude", "general", 2, "TURN WOULD END BLIND"},
+		{"claude", "captain", 2, "TURN WOULD END BLIND"},
+		{"codex", "soldier", 0, ""},
+		{"opencode", "soldier", 0, ""},
+		{"grok", "soldier", 0, ""},
 		{"agy", "soldier", 0, `{"decision":"allow"}`},
 		{"agy", "general", 0, `"decision":"continue"`},
 	} {

@@ -130,8 +130,13 @@ Use 'munsu send' to steer down; 'munsu report' to report up.`,
 			if role != "soldier" && role != "captain" {
 				line = domain.ReportLineText(line)
 			}
-			if _, err := orchestrator.AppendReportStatus(targetHome, taskID, line); err != nil {
+			replay, err := orchestrator.AppendReportStatus(targetHome, taskID, line)
+			if err != nil {
 				return fmt.Errorf("report: %w", err)
+			}
+			message := fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID)
+			if replay {
+				message = fmt.Sprintf("not appended: %s: %s is already the last status line of task %s (idempotent)", state, msg, taskID)
 			}
 
 			return writeContract(cmd, Response[MessageResult]{
@@ -139,7 +144,8 @@ Use 'munsu send' to steer down; 'munsu report' to report up.`,
 				Kind:          "report",
 				Status:        "success",
 				Data: MessageResult{
-					Message:         fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
+					Message:         message,
+					Noop:            replay,
 					WatcherIdentity: identifyWatcher(homeDir),
 				},
 			})

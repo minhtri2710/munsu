@@ -28,13 +28,8 @@ const (
 // ObligationKind describes one kind of turn-end obligation.
 type ObligationKind string
 
-const (
-	// ReportRelay: material status change must be relayed to the parent channel.
-	ReportRelay ObligationKind = "report-relay"
-
-	// Cleanup: temp artifacts, stale turnend markers, closed-key hygiene.
-	Cleanup ObligationKind = "cleanup"
-)
+// Cleanup: temp artifacts, stale turnend markers, closed-key hygiene.
+const Cleanup ObligationKind = "cleanup"
 
 // State represents the lifecycle state of an obligation.
 type State string
@@ -70,12 +65,6 @@ func Obligations(role Role) []Obligation {
 	case RoleCaptain:
 		return []Obligation{
 			{
-				Kind:      ReportRelay,
-				State:     StateOpen,
-				Detail:    "relay material status changes to General parent channel",
-				CreatedAt: now,
-			},
-			{
 				Kind:      Cleanup,
 				State:     StateOpen,
 				Detail:    "clean up soldier artifacts, stale turnend markers, closed-key hygiene",
@@ -84,12 +73,6 @@ func Obligations(role Role) []Obligation {
 		}
 	case RoleSoldier:
 		return []Obligation{
-			{
-				Kind:      ReportRelay,
-				State:     StateOpen,
-				Detail:    "relay material status changes to supervisor parent channel",
-				CreatedAt: now,
-			},
 			{
 				Kind:      Cleanup,
 				State:     StateOpen,
@@ -198,7 +181,7 @@ func parseObligations(f *os.File) ([]Obligation, error) {
 			return nil, fmt.Errorf("obligation line %d: got %d fields, want %d", lineNo, len(parts), obligationFields)
 		}
 		kind := ObligationKind(parts[0])
-		if kind != ReportRelay && kind != Cleanup {
+		if kind != Cleanup {
 			return nil, fmt.Errorf("obligation line %d: unknown kind %q", lineNo, parts[0])
 		}
 		state := State(parts[1])

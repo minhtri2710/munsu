@@ -14,7 +14,7 @@ import (
 func TestObligations_RoundTripKeyedAndKeyless(t *testing.T) {
 	home := t.TempDir()
 	want := []Obligation{
-		{Kind: ReportRelay, State: StateOpen, Key: "terminal-1", Detail: "relay material terminal report for task/key", CreatedAt: 111, ClosedAt: 0},
+		{Kind: Cleanup, State: StateOpen, Key: "terminal-1", Detail: "clean the artifacts of task/key", CreatedAt: 111, ClosedAt: 0},
 		{Kind: Cleanup, State: StateClosed, Key: "", Detail: "clean temp artifacts, stale turnend markers, closed-key hygiene", CreatedAt: 222, ClosedAt: 333},
 	}
 	if err := SaveObligations(home, RoleGeneral, want); err != nil {

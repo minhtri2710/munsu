@@ -23,20 +23,26 @@ func ClaimWakes(h, c string, seconds, limit int) (*ClaimResult, error) {
 	return result, err
 }
 
-// UnacceptedReportsHint tells the receiver what to do with a report a settle
-// or an AFK return could not finish.
-const UnacceptedReportsHint = "the report is settled, but completing its scout task failed: run `munsu task done <id>` once the cause is fixed"
-
 // UnacceptedReport is a report whose settlement could not finish its work when
 // the wake or digest entry that carried it was settled. The settle itself is
-// never refused for it; the report is returned as data so the receiver can
-// finish by hand.
+// never refused for it; the report is returned as data, with the hint that
+// says how to finish by hand.
 type UnacceptedReport struct {
 	Key     string `json:"key"`
 	Payload string `json:"payload,omitempty"`
 	Ref     string `json:"ref"`
 	Reason  string `json:"reason"`
+	Hint    string `json:"hint"`
 }
+
+const (
+	// scoutNotCompletedHint answers a scout completion that failed after the
+	// report was settled.
+	scoutNotCompletedHint = "the report is settled, but completing its scout task failed: run `munsu task done <id>` once the cause is fixed"
+	// reportNotSettledHint answers a settlement that failed: the wake or digest
+	// entry is consumed anyway, so nothing settles the report again.
+	reportNotSettledHint = "the report is NOT settled and still holds its task's teardown, and nothing will settle it again: once the cause is fixed, retire the task with `munsu teardown <id> --force`"
+)
 
 func (u UnacceptedReport) String() string {
 	if u.Payload == "" {
@@ -95,17 +101,19 @@ func settleReportWakes(h, leaseID string, eventIDs []string) ([]UnacceptedReport
 // teardown. It is the one place a report is settled: the wake resolve and ack
 // paths and the AFK return all go through it.
 func settleReport(h, taskID, payload, ref string) *UnacceptedReport {
-	var reasons []string
+	var reasons, hints []string
 	if err := completeScoutOnReport(h, taskID, payload); err != nil {
 		reasons = append(reasons, "completing scout task: "+err.Error())
+		hints = append(hints, scoutNotCompletedHint)
 	}
 	if err := home.SettleReport(h, taskID, ref); err != nil {
 		reasons = append(reasons, "settling report: "+err.Error())
+		hints = []string{reportNotSettledHint}
 	}
 	if len(reasons) == 0 {
 		return nil
 	}
-	return &UnacceptedReport{Key: taskID, Payload: payload, Ref: ref, Reason: strings.Join(reasons, "; ")}
+	return &UnacceptedReport{Key: taskID, Payload: payload, Ref: ref, Reason: strings.Join(reasons, "; "), Hint: strings.Join(hints, "; ")}
 }
 
 // completeScoutOnReport commits a scout's completion when its parent settles

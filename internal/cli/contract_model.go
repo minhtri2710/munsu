@@ -263,9 +263,8 @@ type WakeAck struct {
 
 	// UnacceptedReports lists the reports the settled wakes carried whose
 	// settlement could not finish its work. The wake is settled regardless;
-	// Hint says how to finish by hand.
+	// each report's Hint says how to finish by hand.
 	UnacceptedReports []WakeUnacceptedReport `json:"unaccepted_reports,omitempty"`
-	Hint              string                 `json:"hint,omitempty"`
 }
 
 // WakeUnacceptedReport is one report a settled wake could not finish.
@@ -274,6 +273,7 @@ type WakeUnacceptedReport struct {
 	Payload string `json:"payload,omitempty"`
 	Ref     string `json:"ref"`
 	Reason  string `json:"reason"`
+	Hint    string `json:"hint"`
 }
 
 // DrainCycle records one General drain cycle: actionable wakes claimed,
