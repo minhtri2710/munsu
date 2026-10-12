@@ -47,7 +47,7 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 		return incomplete, fmt.Errorf("bound endpoint identity is incomplete")
 	}
 	switch endpoint.Backend {
-	case "tmux", "herdr", "zellij", "cmux", "orca":
+	case "tmux", "herdr":
 	default:
 		return fleet.EndpointStatus{
 			Lifecycle:      fleet.LifecycleUnknown,

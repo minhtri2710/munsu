@@ -35,7 +35,7 @@ func TestSelect_RejectsUnknownNames(t *testing.T) {
 	}
 }
 func TestSelect_ReturnsKnownBackendsWhenRequestedBinaryPresent(t *testing.T) {
-	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	known := []string{"tmux", "herdr"}
 	fakeBin := fakeExecutables(t, known...)
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
@@ -53,7 +53,7 @@ func TestSelect_ReturnsKnownBackendsWhenRequestedBinaryPresent(t *testing.T) {
 }
 
 func TestSelect_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
-	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	known := []string{"tmux", "herdr"}
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", "/dev/null")
@@ -107,7 +107,7 @@ func TestResolve_ExplicitIdentityIgnoresEnvAndConfigFile(t *testing.T) {
 // requested capability's binary is absent from PATH — no adapter is returned
 // and nothing is deferred to first exec.
 func TestResolve_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
-	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	known := []string{"tmux", "herdr"}
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", "/dev/null")
@@ -133,7 +133,7 @@ func TestResolve_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
 // TestResolve_SucceedsWithControlledPATH verifies the shared verified-construction
 // path succeeds when the requested binary is present on a controlled PATH.
 func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
-	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	known := []string{"tmux", "herdr"}
 	fakeBin := fakeExecutables(t, known...)
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
@@ -156,18 +156,6 @@ func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
 		case "herdr":
 			if _, ok := bk.(*HerdrBackend); !ok {
 				t.Errorf("Resolve('herdr') returned %T, want *HerdrBackend", bk)
-			}
-		case "zellij":
-			if _, ok := bk.(*ZellijBackend); !ok {
-				t.Errorf("Resolve('zellij') returned %T, want *ZellijBackend", bk)
-			}
-		case "cmux":
-			if _, ok := bk.(*CmuxBackend); !ok {
-				t.Errorf("Resolve('cmux') returned %T, want *CmuxBackend", bk)
-			}
-		case "orca":
-			if _, ok := bk.(*OrcaBackend); !ok {
-				t.Errorf("Resolve('orca') returned %T, want *OrcaBackend", bk)
 			}
 		}
 	}
@@ -358,7 +346,7 @@ func TestTmux_Backend_NotFound(t *testing.T) {
 // constructBackend returns the expected adapter types for explicitly
 // requested backends when their binaries are on PATH.
 func TestConstructBackend_ReturnsVerifiedAdapterTypes(t *testing.T) {
-	fakeBin := fakeExecutables(t, "tmux", "herdr", "zellij")
+	fakeBin := fakeExecutables(t, "tmux", "herdr")
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
@@ -377,14 +365,6 @@ func TestConstructBackend_ReturnsVerifiedAdapterTypes(t *testing.T) {
 	}
 	if _, ok := bk.(*HerdrBackend); !ok {
 		t.Errorf("constructBackend('herdr') returned %T, want *HerdrBackend", bk)
-	}
-
-	bk, err = constructBackend("zellij")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := bk.(*ZellijBackend); !ok {
-		t.Errorf("constructBackend('zellij') returned %T, want *ZellijBackend", bk)
 	}
 }
 
