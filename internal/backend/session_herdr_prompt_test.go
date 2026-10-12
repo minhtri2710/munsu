@@ -19,6 +19,10 @@ import (
 // one argument per line.
 const promptArgvFile = "prompt.argv"
 
+// paneKeysFile is the file the fake herdr appends each raw `pane send-text`
+// or `pane send-keys` call to.
+const paneKeysFile = "pane.keys"
+
 // readPromptArgv returns the argv the fake herdr saw for `agent prompt` (after
 // any --session), one element per argument; nil when it was never called.
 func readPromptArgv(t *testing.T, dir string) []string {
@@ -83,8 +87,9 @@ func writeFakeHerdrPrompt(t *testing.T, dir, apiSchema string) string {
 		`      exit ${FAKE_PANE_GET_EXIT:-0}` + "\n" +
 		`    fi` + "\n" +
 		`    if [ "$2" = "send-text" ] || [ "$2" = "send-keys" ]; then` + "\n" +
+		`      printf '%s\n' "$*" >> "` + filepath.Join(dir, paneKeysFile) + `"` + "\n" +
 		`      echo '{"result":{}}'` + "\n" +
-		`      exit ${FAKE_PANE_SEND_EXIT:-0}` + "\n" +
+		`      exit 0` + "\n" +
 		`    fi` + "\n" +
 		`    ;;` + "\n" +
 		`esac` + "\n" +
@@ -326,40 +331,39 @@ func TestAgentPrompt_EmptyResponse(t *testing.T) {
 	}
 }
 
-func TestSubmitPrompt_NoFallbackAfterTypedFailure(t *testing.T) {
-	tmp := t.TempDir()
-	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	testutil.PrependPath(t, tmp)
-
-	// Stalled must NOT fall back to legacy.
-	setFakeEnv(t, tmp,
-		"AGENT_GET_STATUS=idle",
-		"AGENT_PROMPT_STDOUT={\"error\":{\"code\":\"agent_prompt_stalled\",\"message\":\"stalled\"}}",
-		"AGENT_PROMPT_EXIT=1",
-	)
-	h := NewHerdrBackend("test-s")
-	result := SubmitPrompt(h, "test-s:w1:p1", "hello")
-	if result.Status != PromptStalled {
-		t.Errorf("stalled no-fallback: status = %q, want %q (detail: %s)", result.Status, PromptStalled, result.Detail)
-	}
-}
-
-func TestSubmitPrompt_LegacyFallback(t *testing.T) {
-	tmp := t.TempDir()
-	writeFakeHerdrPrompt(t, tmp, "protocol: 17")
-	testutil.PrependPath(t, tmp)
-
-	// Alive non-agent pane: AgentPrompt returns Unsupported, so SubmitPrompt
-	// must fall back to the legacy SendKeys path.
-	setFakeEnv(t, tmp,
-		"AGENT_GET_ERRCODE=agent_not_found",
-		"AGENT_GET_EXIT=1",
-		"FAKE_PANE_GET_EXIT=0",
-	)
-	h := NewHerdrBackend("test-s")
-	result := SubmitPrompt(h, "test-s:w1:p1", "hello")
-	if result.Status != PromptSubmitted || !result.Legacy {
-		t.Errorf("legacy fallback: status=%q legacy=%v want submitted+legacy (detail: %s)", result.Status, result.Legacy, result.Detail)
+// TestSubmitPrompt_NeverSendsKeys pins that SubmitPrompt returns the typed
+// AgentPrompt outcome and never types the payload into the pane as raw keys,
+// including for an alive pane herdr recognizes no agent in.
+func TestSubmitPrompt_NeverSendsKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want PromptStatus
+	}{
+		{"stalled agent", []string{
+			"AGENT_GET_STATUS=idle",
+			"AGENT_PROMPT_STDOUT={\"error\":{\"code\":\"agent_prompt_stalled\",\"message\":\"stalled\"}}",
+			"AGENT_PROMPT_EXIT=1",
+		}, PromptStalled},
+		{"alive non-agent pane", []string{
+			"AGENT_GET_ERRCODE=agent_not_found",
+			"AGENT_GET_EXIT=1",
+			"FAKE_PANE_GET_EXIT=0",
+		}, PromptUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			writeFakeHerdrPrompt(t, tmp, "protocol: 17")
+			testutil.PrependPath(t, tmp)
+			setFakeEnv(t, tmp, tc.env...)
+			result := SubmitPrompt(NewHerdrBackend("test-s"), "test-s:w1:p1", "hello")
+			if result.Status != tc.want {
+				t.Errorf("status = %q, want %q (detail: %s)", result.Status, tc.want, result.Detail)
+			}
+			if keys, err := os.ReadFile(filepath.Join(tmp, paneKeysFile)); err == nil {
+				t.Errorf("SubmitPrompt typed raw keys into the pane: %q", keys)
+			}
+		})
 	}
 }
 

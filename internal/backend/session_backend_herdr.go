@@ -804,8 +804,8 @@ func (h *HerdrBackend) agentGet(windowID string) (status, name string, err error
 //     or PromptUnsupported if pane exists but is not an agent).
 //
 // On stalled/error:
-//   - agent_prompt_stalled or timeout → PromptStalled (NO fallback; the text
-//     may be pending in the composer)
+//   - agent_prompt_stalled or timeout → PromptStalled (the text may be pending
+//     in the composer)
 //   - agent_not_found → PromptEndpointDead (if pane absent) or PromptUnsupported
 //   - other errors → PromptBackendFailed
 func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
@@ -958,30 +958,4 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 func (h *HerdrBackend) Notify(title, body string) error {
 	_, err := h.herdr("notification", "show", title, "--body", body)
 	return err
-}
-
-// LegacyPrompt implements the LegacyPrompt interface for HerdrBackend.
-// This is used when the target is not a recognized agent (an alive
-// non-agent pane) and AgentPrompt returns PromptUnsupported. It falls back
-// to raw SendKeys (send-text + send-keys Enter) without typed acknowledgment.
-func (h *HerdrBackend) LegacyPrompt(windowID, text string) PromptResult {
-	// Fallback: use raw pane send-text + send-keys Enter.
-	if err := h.SendKeys(windowID, text); err != nil {
-		if isNotFoundErr(err) {
-			return PromptResult{
-				Status: PromptEndpointDead,
-				Detail: err.Error(),
-			}
-		}
-		return PromptResult{
-			Status: PromptBackendFailed,
-			Detail: "legacy send-keys failed",
-			Err:    err,
-		}
-	}
-	return PromptResult{
-		Status: PromptSubmitted,
-		Detail: "legacy send-keys",
-		Legacy: true,
-	}
 }

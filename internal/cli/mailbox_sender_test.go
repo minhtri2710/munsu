@@ -14,11 +14,12 @@ type mailboxPromptBackend struct {
 	promptCalls int
 }
 
-func (b mailboxPromptBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b mailboxPromptBackend) SendKeys(string, string) error            { return nil }
-func (b mailboxPromptBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b mailboxPromptBackend) Alive(string) bool                        { return true }
-func (b mailboxPromptBackend) Teardown(string) error                    { return nil }
+func (b mailboxPromptBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b mailboxPromptBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b mailboxPromptBackend) SendKeys(string, string) error                     { return nil }
+func (b mailboxPromptBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b mailboxPromptBackend) Alive(string) bool                                 { return true }
+func (b mailboxPromptBackend) Teardown(string) error                             { return nil }
 func (b *mailboxPromptBackend) AgentPrompt(string, string) backend.PromptResult {
 	b.promptCalls++
 	return b.result
