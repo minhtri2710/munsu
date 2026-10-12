@@ -5,6 +5,7 @@ package orchestrator
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"math"
@@ -88,12 +89,51 @@ func nextID(homeDir string) (uint64, error) {
 	return maxID + 1, nil
 }
 
+// repairTornTail cuts a trailing line that has no final newline. A writer that
+// died mid-append never acknowledged that record, and readers never return
+// text after the last newline, so cutting it loses nothing visible; leaving it
+// would glue the next record onto the fragment. Call it under the event log
+// lock.
+func repairTornTail(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("opening event log: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("reading event log: %w", err)
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return fmt.Errorf("reading event log: %w", err)
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("reading event log: %w", err)
+	}
+	if err := f.Truncate(int64(bytes.LastIndexByte(data, '\n') + 1)); err != nil {
+		return fmt.Errorf("truncating torn event log tail: %w", err)
+	}
+	return f.Sync()
+}
+
 // Append writes a typed event to the event log and returns its ID. The four
 // text fields are stored home.EscapeLine-encoded, so a tab or newline in any of
 // them stays inside its field. The ID is assigned and written under one
 // exclusive lock, so concurrent writers in any process never share an ID. The
 // lock is a sibling file, not the log itself: on Windows a LockFileEx lock is
-// mandatory and would fail concurrent readers of the log.
+// mandatory and would fail concurrent readers of the log. A torn tail is cut
+// before the ID is assigned, and the write is synced before Append returns.
 func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 	path := LogPath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -102,6 +142,9 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 
 	var id uint64
 	err := home.WithExclusiveFileLock(path+".lock", func() error {
+		if err := repairTornTail(path); err != nil {
+			return err
+		}
 		next, err := nextID(homeDir)
 		if err != nil {
 			return err
@@ -116,6 +159,9 @@ func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 		defer f.Close()
 		if _, err := f.WriteString(line); err != nil {
 			return fmt.Errorf("writing event: %w", err)
+		}
+		if err := f.Sync(); err != nil {
+			return fmt.Errorf("syncing event log: %w", err)
 		}
 		id = next
 		return nil
