@@ -202,16 +202,27 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
+	// Primary checkout with in-flight work and a stale beat: without the
+	// loop guard this stop would block with exit 2.
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, tmpDir, "init")
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	metaDir := filepath.Join(tmpDir, "state")
+	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
+	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	var exitCode int
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() { exitWithCode = oldExit }()
 
-	// Call runGuardBlocking with stdin containing stop_hook_active=true
-	stdinPayload := `{"hookEventName":"Stop","stop_hook_active":true}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
-	w.Write([]byte(stdinPayload))
+	w.Write([]byte(`{"hookEventName":"Stop","stop_hook_active":true}`))
 	w.Close()
 	os.Stdin = r
 
@@ -302,6 +313,7 @@ func TestClaudeGuardHealthyExit(t *testing.T) {
 	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
+	runGit(t, tmpDir, "init")
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
