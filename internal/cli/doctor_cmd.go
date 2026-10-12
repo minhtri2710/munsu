@@ -164,10 +164,6 @@ Use --role for role-specific integration matrix:
 				exitCode = 1
 			}
 
-			if isMissing(result.MissingTools, "herdr") {
-				fmt.Println("herdr: optional with tmux, but tmux has no prompt support yet (wake, mailbox, nudge, uplink and captain prompts need herdr)")
-			}
-
 			if exitCode != 0 {
 				exitWithCode(exitCode)
 			}

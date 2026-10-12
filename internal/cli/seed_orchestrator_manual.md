@@ -448,7 +448,7 @@ Run: `munsu skill show <name>` to read any skill.
 3. munsu task add <id> ...           # register task
 4. munsu brief <id> <repo>           # scaffold soldier brief
    # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
-5. munsu spawn <id> <project>        # launch soldier in worktree+herdr/tmux window
+5. munsu spawn <id> <project>        # launch soldier in worktree+herdr/tmux window (tmux: no prompt support yet)
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
 8. munsu wake resolve ...; munsu soldier-state <id>  # on a delivered wake prompt (else: munsu wake claim --consumer <id> first)
