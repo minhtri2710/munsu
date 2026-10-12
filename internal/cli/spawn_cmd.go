@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -358,6 +359,17 @@ func newPromoteCmd() *cobra.Command {
 	return cmd
 }
 
+// writeTeardownSteps lists the steps a failed teardown completed before it
+// stopped, so a partial outcome keeps what already happened visible.
+func writeTeardownSteps(w io.Writer, result *fleet.TeardownResult) {
+	if result == nil {
+		return
+	}
+	for _, step := range result.Steps {
+		fmt.Fprintf(w, "  - %s\n", step)
+	}
+}
+
 func newTeardownCmd() *cobra.Command {
 	var force bool
 	var targetGen uint
@@ -424,11 +436,7 @@ generation must pass its explicit generation here.
 
 			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if err != nil {
-				if result != nil {
-					for _, step := range result.Steps {
-						fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", step)
-					}
-				}
+				writeTeardownSteps(cmd.ErrOrStderr(), result)
 				return err
 			}
 
