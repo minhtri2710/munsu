@@ -402,6 +402,21 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		b.WriteString("\n")
 		posture.SkillBlock = true
 	}
+	// A fenced claude seat runs from a config dir of its own, so it never needs
+	// to write the Human's ~/.claude or ~/.claude.json, and logs in with the
+	// Human's keychain item. An unfenced seat keeps the Human's config: there is
+	// no fence to keep it out, and a login outside the keychain is unverified.
+	if in.LaunchBin == harness.Claude && in.Fence != nil {
+		dir, cfg, err := provisionClaudeConfigDir(in.HomeDir, in.TaskID)
+		if err != nil {
+			return preparedLaunchArtifact{}, err
+		}
+		b.WriteString("export CLAUDE_CONFIG_DIR=")
+		b.WriteString(shQuote(dir))
+		b.WriteString("\nexport CLAUDE_SECURESTORAGE_CONFIG_DIR=")
+		b.WriteString(shQuote(cfg.SecureStorage))
+		b.WriteString("\n")
+	}
 	// The seat's PATH is exactly the list the fence denies, never the pane's.
 	if len(in.PathDirs) == 0 {
 		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: the seat PATH is required")
@@ -502,6 +517,37 @@ func piAgentDirPath(homeDir, taskID string) (string, error) {
 	return dir, nil
 }
 
+// claudeConfigDirPath is the per-task claude config dir under the home's state/:
+// the CLAUDE_CONFIG_DIR of a fenced claude launch and the fence's harness state dir.
+func claudeConfigDirPath(homeDir, taskID string) (string, error) {
+	dir, err := home.DurableFilePath(home.StateDir(homeDir), taskID, "."+harness.ClaudeConfigDirSuffix)
+	if err != nil {
+		return "", fmt.Errorf("soldier launch: %w", err)
+	}
+	return dir, nil
+}
+
+// provisionClaudeConfigDir builds the seat's claude config dir from the Human's
+// claude configuration and returns it with that configuration.
+func provisionClaudeConfigDir(homeDir, taskID string) (string, harness.ClaudeConfig, error) {
+	stateDir := home.StateDir(homeDir)
+	dst, err := claudeConfigDirPath(homeDir, taskID)
+	if err != nil {
+		return "", harness.ClaudeConfig{}, err
+	}
+	cfg, err := harness.HumanClaudeConfig(stateDir)
+	if err != nil {
+		return "", harness.ClaudeConfig{}, fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return "", harness.ClaudeConfig{}, fmt.Errorf("soldier launch: %w", err)
+	}
+	if err := harness.BuildClaudeConfigDir(cfg, harness.SeatBuildDir(homeDir), dst); err != nil {
+		return "", harness.ClaudeConfig{}, fmt.Errorf("soldier launch: %w", err)
+	}
+	return dst, cfg, nil
+}
+
 // provisionPiSkillBlock blocks the orchestration skill for a pi soldier at both
 // levels pi filters skills: the per-task agent dir (user level, pointed at by
 // PI_CODING_AGENT_DIR) and the worktree .pi/settings.json (project level, which
@@ -544,7 +590,7 @@ func provisionPiSkillAgentDir(homeDir, taskID, worktreePath string) (string, err
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
 	}
-	if err := harness.BuildPiAgentDir(src, dst); err != nil {
+	if err := harness.BuildPiAgentDir(src, harness.SeatBuildDir(homeDir), dst); err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
 	}
 	return dst, nil

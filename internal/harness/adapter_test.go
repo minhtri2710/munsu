@@ -170,7 +170,7 @@ func TestStateArtifactsForHarness(t *testing.T) {
 	}{
 		{"pi returns pi-ext.ts and the per-task agent dir", Pi, []string{"pi-ext.ts", PiAgentDirSuffix}},
 		{"grok returns grok-turnend-token", Grok, []string{"grok-turnend-token"}},
-		{"claude has no artifacts", Claude, nil},
+		{"claude returns its per-task config dir", Claude, []string{ClaudeConfigDirSuffix}},
 		{"codex has no artifacts", Codex, nil},
 		{"opencode has no artifacts", Opencode, nil},
 		{"agy has no artifacts", Agy, nil},

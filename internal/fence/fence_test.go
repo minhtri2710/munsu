@@ -112,19 +112,18 @@ func TestGitBranchFilesAreExactlyTheCommitWriteSet(t *testing.T) {
 }
 
 func TestHarnessStateRefusals(t *testing.T) {
-	if _, _, _, err := harnessState(harness.Claude, "/u", "/state/x"); err == nil || !strings.Contains(err.Error(), "has no per-launch state dir") {
-		t.Errorf("claude with a state dir: err = %v", err)
-	}
-	if _, _, _, err := harnessState(harness.Codex, "/u", ""); err == nil || !strings.Contains(err.Error(), "no state profile") {
+	if _, _, err := harnessState(harness.Codex, "/u", "/state/x"); err == nil || !strings.Contains(err.Error(), "no state profile") {
 		t.Errorf("unmodeled harness: err = %v", err)
 	}
-	dirs, files, bins, err := harnessState(harness.Pi, "/u", "/state/x")
-	if err != nil || strings.Join(dirs, " ") != "/u/.pi/agent /state/x" || len(files) != 0 || strings.Join(bins, " ") != "/u/.pi/agent/bin /state/x/bin" {
-		t.Errorf("pi state = %q, %q, %q, %v", dirs, files, bins, err)
+	dirs, bins, err := harnessState(harness.Pi, "/u", "/state/x")
+	if err != nil || strings.Join(dirs, " ") != "/u/.pi/agent /state/x" || strings.Join(bins, " ") != "/u/.pi/agent/bin /state/x/bin" {
+		t.Errorf("pi state = %q, %q, %v", dirs, bins, err)
 	}
-	dirs, files, bins, err = harnessState(harness.Claude, "/u", "")
-	if err != nil || len(dirs) != 2 || strings.Join(files, " ") != "/u/.claude.json" || len(bins) != 0 {
-		t.Errorf("claude state = %q, %q, %q, %v", dirs, files, bins, err)
+	// Never ~/.claude or ~/.claude.json: only the log cache. The seat's own
+	// config dir is the launch's state dir, which New opens inside state/.
+	dirs, bins, err = harnessState(harness.Claude, "/u", "/state/x")
+	if err != nil || strings.Join(dirs, " ") != "/u/Library/Caches/claude-cli-nodejs" || len(bins) != 0 {
+		t.Errorf("claude state = %q, %q, %v", dirs, bins, err)
 	}
 }
 

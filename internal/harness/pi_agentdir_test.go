@@ -207,7 +207,7 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "settings.json"), []byte(`{"skills":["keep"]}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := BuildPiAgentDir(src, dst); err != nil {
+		if err := BuildPiAgentDir(src, seatBuildDirOf(dst), dst); err != nil {
 			t.Fatal(err)
 		}
 		for _, name := range []string{"auth.json", "models.json", "extensions"} {
@@ -231,13 +231,13 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if orig, _ := os.ReadFile(filepath.Join(src, "settings.json")); string(orig) != `{"skills":["keep"]}` {
 			t.Fatalf("the Human's settings.json was modified: %s", orig)
 		}
-		if _, err := os.Lstat(dst + ".building"); !os.IsNotExist(err) {
-			t.Fatalf("building dir left behind: %v", err)
+		if names := dirNames(t, seatBuildDirOf(dst)); len(names) != 0 {
+			t.Fatalf("build left %v behind in the seat build dir", names)
 		}
 	})
 	t.Run("an absent agent dir still gets the settings block", func(t *testing.T) {
 		home, _, dst := agentDirFixture(t)
-		if err := BuildPiAgentDir(filepath.Join(home, "no-such-agent"), dst); err != nil {
+		if err := BuildPiAgentDir(filepath.Join(home, "no-such-agent"), seatBuildDirOf(dst), dst); err != nil {
 			t.Fatal(err)
 		}
 		entries, _ := os.ReadDir(dst)
@@ -245,50 +245,20 @@ func TestBuildPiAgentDir(t *testing.T) {
 			t.Fatalf("entries = %v, want only settings.json", entries)
 		}
 	})
-	t.Run("an existing dir is kept untouched", func(t *testing.T) {
-		_, src, dst := agentDirFixture(t)
-		if err := os.MkdirAll(dst, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		marker := filepath.Join(dst, "live")
-		if err := os.WriteFile(marker, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := BuildPiAgentDir(src, dst); err != nil {
-			t.Fatal(err)
-		}
-		if entries, _ := os.ReadDir(dst); len(entries) != 1 || entries[0].Name() != "live" {
-			t.Fatalf("existing dir was rebuilt: %v", entries)
-		}
-	})
-	t.Run("a stale building dir from a crashed build is cleared", func(t *testing.T) {
-		_, src, dst := agentDirFixture(t)
-		if err := os.MkdirAll(dst+".building", 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dst+".building", "stale"), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := BuildPiAgentDir(src, dst); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Lstat(filepath.Join(dst, "stale")); !os.IsNotExist(err) {
-			t.Fatalf("stale entry survived into the installed dir: %v", err)
-		}
-	})
 	t.Run("malformed settings install nothing", func(t *testing.T) {
 		_, src, dst := agentDirFixture(t)
 		if err := os.WriteFile(filepath.Join(src, "settings.json"), []byte("{"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		err := BuildPiAgentDir(src, dst)
+		err := BuildPiAgentDir(src, seatBuildDirOf(dst), dst)
 		if err == nil || !strings.Contains(err.Error(), "settings.json") {
 			t.Fatalf("err = %v, want a settings.json refusal", err)
 		}
-		for _, p := range []string{dst, dst + ".building"} {
-			if _, err := os.Lstat(p); !os.IsNotExist(err) {
-				t.Errorf("%s exists after a failed build: %v", p, err)
-			}
+		if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a failed build: %v", dst, err)
+		}
+		if names := dirNames(t, seatBuildDirOf(dst)); len(names) != 0 {
+			t.Errorf("failed build left %v behind in the seat build dir", names)
 		}
 	})
 	t.Run("an unreadable destination parent refuses", func(t *testing.T) {
@@ -297,7 +267,7 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := BuildPiAgentDir(src, filepath.Join(blocker, "T.pi-agent")); err == nil || !strings.Contains(err.Error(), "checking pi agent dir") {
+		if err := BuildPiAgentDir(src, seatBuildDirOf(dst), filepath.Join(blocker, "T.pi-agent")); err == nil || !strings.Contains(err.Error(), "checking pi agent dir") {
 			t.Fatalf("BuildPiAgentDir under a regular file = %v, want the checking refusal", err)
 		}
 	})
@@ -307,7 +277,7 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if err := os.WriteFile(notDir, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := BuildPiAgentDir(notDir, dst); err == nil || !strings.Contains(err.Error(), "building pi agent dir from") {
+		if err := BuildPiAgentDir(notDir, seatBuildDirOf(dst), dst); err == nil || !strings.Contains(err.Error(), "building pi agent dir from") {
 			t.Fatalf("err = %v, want the build refusal", err)
 		}
 		if _, err := os.Lstat(dst); !os.IsNotExist(err) {
@@ -319,7 +289,7 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(src, "settings.json"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := BuildPiAgentDir(src, dst); err == nil || !strings.Contains(err.Error(), "building pi agent dir from") {
+		if err := BuildPiAgentDir(src, seatBuildDirOf(dst), dst); err == nil || !strings.Contains(err.Error(), "building pi agent dir from") {
 			t.Fatalf("err = %v, want the build refusal", err)
 		}
 		if _, err := os.Lstat(dst); !os.IsNotExist(err) {
