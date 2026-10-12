@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -256,7 +257,8 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 
 // A no-mistakes soldier's push into its gate succeeds under the fence after the
 // gate denies, and appends to the branch reflog the daemon already keeps there.
-// The gate's hooks are stubs, so no no-mistakes binary runs.
+// The gate's hooks are stubs, so no no-mistakes binary runs; pre-receive dials
+// NM_HOME/socket as the live hook's admit-push does, and the test holds it.
 func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	out := outsideDir(t)
 	uhome := seatEnv(t, out)
@@ -278,8 +280,30 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	git("init", "-q", "-b", "main", primary)
 	git("-C", primary, "commit", "-q", "--allow-empty", "-m", "init")
 	git("init", "-q", "--bare", gate)
-	for _, h := range []string{"pre-receive", "post-receive"} {
-		if err := os.WriteFile(filepath.Join(gate, "hooks", h), []byte("#!/bin/sh\ncat >/dev/null\n"), 0o755); err != nil {
+	sock := filepath.Join(out, "nm", "socket")
+	daemon, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	admitted := make(chan string, 1)
+	go func() {
+		c, err := daemon.Accept()
+		if err != nil {
+			admitted <- ""
+			return
+		}
+		defer c.Close()
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		b := make([]byte, len("admit"))
+		n, _ := io.ReadFull(c, b)
+		admitted <- string(b[:n])
+	}()
+	for h, body := range map[string]string{
+		"pre-receive":  "#!/bin/sh\ncat >/dev/null\nprintf admit | /usr/bin/nc -U " + sock + " || { echo 'no-mistakes: gate push refused before ref mutation'; exit 1; }\n",
+		"post-receive": "#!/bin/sh\ncat >/dev/null\n",
+	} {
+		if err := os.WriteFile(filepath.Join(gate, "hooks", h), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -303,6 +327,9 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	cmd.Env = env
 	if o, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the fenced push into the gate failed: %v %s", err, o)
+	}
+	if got := <-admitted; got != "admit" {
+		t.Errorf("the daemon socket read %q from pre-receive, want admit", got)
 	}
 	if got, want := git("-C", gate, "rev-parse", "refs/heads/mu/T-1"), git("-C", wt, "rev-parse", "HEAD"); got != want {
 		t.Errorf("gate mu/T-1 = %s, want the pushed head %s", got, want)
@@ -617,17 +644,27 @@ func TestSeatDirRefusals(t *testing.T) {
 	}
 }
 
-// connects reports whether the fenced nc reached a listener the test holds at
-// sock, which proves the bytes arrived. nc prints no reason for a refused
-// connect, so a refusal is nc failing while the held listener accepts nothing.
-func connects(t *testing.T, f *Fence, sock string) (bool, error) {
+// connects runs dial under the fence and reports whether it reached a listener
+// the test holds at addr, which proves the bytes arrived. nc prints no reason
+// for a refused connect, so a refusal is nc failing while the held listener
+// accepts nothing.
+func connects(t *testing.T, f *Fence, network, addr string, dial []string) (bool, error) {
 	t.Helper()
-	mkdirs(t, filepath.Dir(sock))
-	l, err := net.Listen("unix", sock)
+	if network == "unix" {
+		mkdirs(t, filepath.Dir(addr))
+	}
+	l, err := net.Listen(network, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.Close()
+	if dial == nil {
+		dial = []string{"/usr/bin/nc", "-U", addr}
+		if network == "tcp" {
+			host, port, _ := net.SplitHostPort(l.Addr().String())
+			dial = []string{"/usr/bin/nc", host, port}
+		}
+	}
 	got := make(chan string, 1)
 	go func() {
 		c, err := l.Accept()
@@ -641,7 +678,7 @@ func connects(t *testing.T, f *Fence, sock string) (bool, error) {
 		n, _ := io.ReadFull(c, buf)
 		got <- string(buf[:n])
 	}()
-	wrapped, err := f.Wrap([]string{"/usr/bin/nc", "-U", sock})
+	wrapped, err := f.Wrap(dial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,13 +690,13 @@ func connects(t *testing.T, f *Fence, sock string) (bool, error) {
 	runErr := cmd.Run()
 	// A connect that succeeded is queued before nc exits, so a short accept
 	// deadline cannot miss it.
-	l.(*net.UnixListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
+	l.(interface{ SetDeadline(time.Time) error }).SetDeadline(time.Now().Add(200 * time.Millisecond))
 	return <-got == "typed", runErr
 }
 
-// socketScratch points the socket temp root, HOME and every variable that moves
-// a session socket dir into scratch, never the live dirs. The temp root sits in
-// a short path: a unix socket path is capped near 104 bytes.
+// socketScratch points the socket temp root, HOME and TMUX_TMPDIR into scratch,
+// never the live dirs. The temp root sits in a short path: a unix socket path
+// is capped near 104 bytes.
 func socketScratch(t *testing.T) (tmp, uhome string) {
 	t.Helper()
 	tmp, err := os.MkdirTemp("/tmp", "fsock-")
@@ -674,55 +711,82 @@ func socketScratch(t *testing.T) (tmp, uhome string) {
 	t.Cleanup(func() { socketTempDir = orig })
 	socketTempDir = tmp
 	uhome = seatEnv(t, outsideDir(t))
-	for k, v := range map[string]string{
-		"XDG_RUNTIME_DIR": filepath.Join(tmp, "run"), "CLAUDE_CODE_TMPDIR": filepath.Join(tmp, "cct"),
-		"TMUX_TMPDIR": filepath.Join(tmp, "tmuxtmp"), "XDG_CONFIG_HOME": filepath.Join(tmp, "xdg"),
-		"HERDR_SOCKET_PATH": filepath.Join(tmp, "hs", "s.sock"), "HERDR_CLIENT_SOCKET_PATH": filepath.Join(tmp, "hc", "c.sock"),
-	} {
-		t.Setenv(k, v)
-	}
+	t.Setenv("TMUX_TMPDIR", filepath.Join(tmp, "tmuxtmp"))
 	return tmp, uhome
 }
 
-// A seat, soldier or reviewer, connects to no other session's input socket:
-// claude's message sockets wherever claude puts them, a tmux server under its
-// default dir or TMUX_TMPDIR, or herdr's server and client sockets, which
-// reach every pane, the seat's own included (G1085, G1148). The allow rows are
-// the nearest valid connects: a socket in a sibling temp dir, and one beside
-// herdr's dir.
-func TestSeatCannotReachAnotherSessionsSocket(t *testing.T) {
+// A seat connects to no unix socket but DNS's and, for a soldier with a gate,
+// the no-mistakes daemon's (G1153 refining G1150; G1148; G1085): not another
+// claude session, tmux server or herdr, not a session socket whose dir it
+// renamed away, not any other socket, its own listener included, and not
+// another socket it moves onto the daemon's name. The allow rows are the
+// nearest valid connects: the daemon's socket for a soldier with a gate, a DNS
+// lookup (it needs the network) and TCP.
+func TestSeatConnectsOnlyToDNSAndItsGateSocket(t *testing.T) {
 	tmp, uhome := socketScratch(t)
 	uid := strconv.Itoa(os.Getuid())
 	l := newLayout(t)
-	for _, role := range []struct {
+	nm := filepath.Join(tmp, "nm")
+	// Set as fleet's environment holds it, so a fence that took the daemon's
+	// socket from it, not from the gate, would open it to every seat.
+	t.Setenv("NM_HOME", nm)
+	gate := l.soldier()
+	gate.GateRepo = filepath.Join(nm, "repos", "g.git")
+	mkdirs(t, gate.GateRepo)
+	const withGate = "soldier with a gate"
+	fences := []struct {
 		name string
 		f    *Fence
-	}{{"soldier", mustNew(t, l.soldier())}, {"reviewer", mustNew(t, l.reviewer())}} {
-		for _, tt := range []struct {
-			name    string
-			sock    string
-			refused bool
-		}{
-			{"another claude session's message socket", filepath.Join(tmp, "cc-socks", "1.sock"), true},
-			{"claude's per-uid fallback socket", filepath.Join(tmp, "cc-socks-"+uid, "1.sock"), true},
-			{"claude's socket under XDG_RUNTIME_DIR", filepath.Join(tmp, "run", "cc-socks", "1.sock"), true},
-			{"claude's socket under CLAUDE_CODE_TMPDIR", filepath.Join(tmp, "cct", "cc-socks", "1.sock"), true},
-			{"a tmux server under its default dir", filepath.Join(tmp, "tmux-"+uid, "default"), true},
-			{"a tmux server under TMUX_TMPDIR", filepath.Join(tmp, "tmuxtmp", "tmux-"+uid, "default"), true},
-			{"the herdr server under ~/.config", filepath.Join(uhome, ".config", "herdr", "herdr.sock"), true},
-			{"the herdr server under XDG_CONFIG_HOME", filepath.Join(tmp, "xdg", "herdr", "herdr.sock"), true},
-			{"the herdr socket HERDR_SOCKET_PATH names", filepath.Join(tmp, "hs", "s.sock"), true},
-			{"the herdr client socket HERDR_CLIENT_SOCKET_PATH names", filepath.Join(tmp, "hc", "c.sock"), true},
-			{"a socket in a sibling temp dir", filepath.Join(tmp, "other", "s.sock"), false},
-			{"a socket beside herdr's dir", filepath.Join(uhome, ".config", "other", "s.sock"), false},
-		} {
-			t.Run(role.name+"/"+tt.name, func(t *testing.T) {
-				ok, err := connects(t, role.f, tt.sock)
-				if tt.refused && (ok || err == nil) {
-					t.Errorf("connect to %s was not refused by the fence: connected=%v nc=%v", tt.sock, ok, err)
+	}{{withGate, mustNew(t, gate)}, {"soldier without a gate", mustNew(t, l.soldier())}, {"reviewer", mustNew(t, l.reviewer())}}
+	perl := func(prog string, args ...string) []string {
+		return append([]string{"/usr/bin/perl", "-MSocket", "-e", prog}, args...)
+	}
+	sh := func(script string) []string { return []string{"/bin/sh", "-c", script} }
+	ccu, moved, victim, own := filepath.Join(tmp, "cc-socks-"+uid), filepath.Join(tmp, "moved"), filepath.Join(tmp, "v", "1.sock"), filepath.Join(tmp, "own.sock")
+	for _, tt := range []struct {
+		name          string
+		network, addr string   // the listener the test holds; none when network is ""
+		dial          []string // run under the fence; nc to addr when nil
+		reaches       []string // the fences that connect; every other one is refused
+	}{
+		{"another claude session's message socket", "unix", filepath.Join(tmp, "cc-socks", "1.sock"), nil, nil},
+		{"a tmux server", "unix", filepath.Join(tmp, "tmux-"+uid, "default"), nil, nil},
+		{"the herdr server", "unix", filepath.Join(uhome, ".config", "herdr", "herdr.sock"), nil, nil},
+		{"a session socket whose dir the seat renamed away", "unix", filepath.Join(ccu, "1.sock"),
+			append(sh(`mv "$0" "$1" && /usr/bin/nc -U "$1/1.sock"`), ccu, moved), nil},
+		{"a socket in a sibling temp dir", "unix", filepath.Join(tmp, "other", "s.sock"), nil, nil},
+		{"the seat's own listener", "", "", perl(`my ($s, $c); socket($s, AF_UNIX, SOCK_STREAM, 0) && bind($s, pack_sockaddr_un($ARGV[0])) && listen($s, 1) or die "listen: $!\n"; `+
+			`socket($c, AF_UNIX, SOCK_STREAM, 0) && connect($c, pack_sockaddr_un($ARGV[0])) or die "connect: $!\n"`, own), nil},
+		{"the no-mistakes daemon's socket", "unix", filepath.Join(nm, "socket"), nil, []string{withGate}},
+		{"a sibling socket in NM_HOME", "unix", filepath.Join(nm, "other.sock"), nil, nil},
+		{"another socket the seat moves onto the daemon's name", "unix", victim,
+			append(sh(`mv "$0" "$1" && /usr/bin/nc -U "$1"`), victim, filepath.Join(nm, "socket")), nil},
+		{"a DNS lookup", "", "", perl(`my ($e) = Socket::getaddrinfo("github.com", "443"); die "getaddrinfo: $e\n" if $e`), []string{withGate, "soldier without a gate", "reviewer"}},
+		{"TCP to a loopback listener", "tcp", "127.0.0.1:0", nil, []string{withGate, "soldier without a gate", "reviewer"}},
+	} {
+		for _, fc := range fences {
+			t.Run(fc.name+"/"+tt.name, func(t *testing.T) {
+				// What an earlier row's seat moved or bound.
+				os.RemoveAll(moved)
+				os.Remove(filepath.Join(nm, "socket"))
+				os.Remove(own)
+				want := slices.Contains(tt.reaches, fc.name)
+				if tt.network == "" {
+					out, err := fenced(t, fc.f, tt.dial...)
+					if want && err != nil {
+						t.Errorf("%s was refused: %v %s", tt.name, err, out)
+					}
+					if !want && (err == nil || !strings.Contains(out, "connect: Operation not permitted")) {
+						t.Errorf("%s was not refused by the fence: %v %s", tt.name, err, out)
+					}
+					return
 				}
-				if !tt.refused && (!ok || err != nil) {
-					t.Errorf("connect to %s was refused: connected=%v nc=%v", tt.sock, ok, err)
+				ok, err := connects(t, fc.f, tt.network, tt.addr, tt.dial)
+				if !want && (ok || err == nil) {
+					t.Errorf("connect to %s was not refused by the fence: connected=%v nc=%v", tt.addr, ok, err)
+				}
+				if want && (!ok || err != nil) {
+					t.Errorf("connect to %s was refused: connected=%v nc=%v", tt.addr, ok, err)
 				}
 			})
 		}
