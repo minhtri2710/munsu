@@ -1771,7 +1771,6 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, stateErr))
 			continue
 		}
-		taskID := taskIDForCaptain(sm.ID)
 		switch state {
 		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
@@ -1791,35 +1790,12 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			errs = append(errs, fmt.Sprintf("%s: endpoint state unproven; strict-dead-only refuses relaunch", sm.ID))
 			continue
 		case CaptainDead:
-			// Launched-but-dead (binding already validated by checkAliveWithProbe):
-			// refuse a duplicate relaunch while the guard is armed, verify the
-			// canonical integration, then relaunch.
-			refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, time.Now())
-			if gErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: gErr.Error()})
-				errs = append(errs, fmt.Sprintf("%s: relaunch guard check failed: %v", sm.ID, gErr))
-				continue
-			}
-			if refused {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))})
-				errs = append(errs, fmt.Sprintf("%s: duplicate relaunch refused (guard expires in %s)", sm.ID, remaining.Round(time.Second)))
-				continue
-			}
-			if lErr := Launch(sm.Home, parentHome, caps.Launch, caps.Integration); lErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
-				errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
+			if err := relaunchDeadCaptain(parentHome, sm, caps.Launch, caps.Integration, caps.Probe, proveSleep, time.Now); err != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", err)})
+				errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, err))
 			} else {
-				proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, proveSleep, time.Now)
-				if pErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recovered but %v", pErr)})
-					errs = append(errs, fmt.Sprintf("%s: auto-recover liveness proof failed: %v", sm.ID, pErr))
-				} else if !proven {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: "dead agent — auto-recovered but post-launch liveness could not be proven; duplicate relaunch guarded"})
-					errs = append(errs, fmt.Sprintf("%s: auto-recover relaunched but post-launch liveness could not be proven", sm.ID))
-				} else {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
-					fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
-				}
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
+				fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
 			}
 		}
 
@@ -2001,7 +1977,6 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			res.Entries = append(res.Entries, entry)
 			continue
 		}
-		taskID := taskIDForCaptain(sm.ID)
 		switch state {
 		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
@@ -2030,44 +2005,13 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		// CaptainDead: launched-but-dead (binding already validated by
-		// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
-		// armed, verify the bound harness integration, then relaunch.
-		// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
-		refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, time.Now())
-		if gErr != nil {
+		if err := relaunchDeadCaptain(parentHome, sm, capabilities.Launch, capabilities.Integration, capabilities.Probe, proveSleep, time.Now); err != nil {
 			entry.Outcome = RecoverFailed
-			entry.Error = gErr.Error()
-			res.Failed++
-			res.Entries = append(res.Entries, entry)
-			continue
-		}
-		if refused {
-			entry.Outcome = RecoverFailed
-			entry.Error = fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))
-			res.Failed++
-			res.Entries = append(res.Entries, entry)
-			continue
-		}
-
-		if lErr := Launch(sm.Home, parentHome, capabilities.Launch, capabilities.Integration); lErr != nil {
-			entry.Outcome = RecoverFailed
-			entry.Error = lErr.Error()
+			entry.Error = err.Error()
 			res.Failed++
 		} else {
-			proven, pErr := proveRelaunch(parentHome, sm, capabilities.Probe, proveSleep, time.Now)
-			if pErr != nil {
-				entry.Outcome = RecoverFailed
-				entry.Error = fmt.Sprintf("relaunched but %v", pErr)
-				res.Failed++
-			} else if !proven {
-				entry.Outcome = RecoverFailed
-				entry.Error = "relaunched but post-launch liveness could not be proven; duplicate relaunch guarded"
-				res.Failed++
-			} else {
-				entry.Outcome = RecoverRelaunched
-				res.Relaunched++
-			}
+			entry.Outcome = RecoverRelaunched
+			res.Relaunched++
 		}
 		res.Entries = append(res.Entries, entry)
 	}

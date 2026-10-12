@@ -244,7 +244,8 @@ The sweep lock is parent state/.captain-converge.lock.`,
 		Use:   "recover <captain-id>",
 		Short: "Run structured recovery transaction for a captain",
 		Long: `Run the full recovery transaction for one captain: provenance → config-validation → charter-refresh → config-push → integration-status → launch-readiness → relaunch-pane → watcher-ensure → nudge-retry.
-	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
+	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.
+	The transaction holds the converge lock (parent state/.captain-converge.lock) and fails while another sweep holds it.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := fleet.ListCaptains(ctx.Home)
