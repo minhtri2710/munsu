@@ -80,7 +80,14 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
-	denySessionSockets(&b, sessionSocketDirs())
+	var gateSocket string
+	if p.gateRepo != "" {
+		// The no-mistakes daemon's socket is NM_HOME/socket, and fleet's
+		// projectGate (internal/fleet/spawn_spawn.go) launches with a gate only
+		// when it sits directly under NM_HOME/repos.
+		gateSocket = filepath.Join(filepath.Dir(filepath.Dir(p.gateRepo)), "socket")
+	}
+	denySocketConnects(&b, gateSocket)
 	// Later rules win in a sandbox profile: broad allows first, then the
 	// protected denies, then the seat's own roots and git carve-outs.
 	var roots []string // every subpath this profile makes writable
@@ -138,13 +145,18 @@ func New(l Launch) (*Fence, error) {
 		// is stopped accepted". A temp-root NM_HOME keeps its other files and
 		// state.sqlite writable through the temp-root allow (the fence does
 		// not know the state path); no lane runs that, and the temp-root
-		// allow covers it.
+		// allow covers it. Even there the daemon's socket name is refused, and
+		// every directory above it is locked against unlink and rename, so a
+		// seat can neither move another session's socket onto that name nor
+		// swap NM_HOME for a dir holding one: G1085 (quoted above) keeps
+		// G1153's carve-out to the daemon's own socket.
 		g := p.gateRepo
 		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
 		deny(&b, "subpath", g)
 		allowRoots(obj, refs)
 		deny(&b, "subpath", filepath.Join(obj, "info"))
-		deny(&b, "literal", obj, refs, logs)
+		deny(&b, "literal", obj, refs, logs, gateSocket)
+		denyUnlink(&b, ancestors(gateSocket)...)
 		// logs/ is not a root (that let a seat plant a symlink an unfenced push
 		// then appended through: fence-reflog-symlink-deputy). The seat may only
 		// append to its own gate branch reflog, which munsu pre-creates at spawn
@@ -224,6 +236,7 @@ func New(l Launch) (*Fence, error) {
 	deny(&b, "subpath", pathDirs...)
 	deny(&b, "literal", locked...)
 	denyUnlink(&b, removable...)
+	denySocketRemoval(&b, keptSocketDirs())
 
 	// The probe proves the home roots refused: every soldier root (G1058,
 	// quoted above), and a reviewer's state/. For a no-mistakes soldier it also
@@ -269,14 +282,6 @@ func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked
 		}
 		return dedupe(out), nil
 	}
-	ancestorsOf := func(in []string) (out []string) {
-		for _, d := range in {
-			for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
-				out = append(out, a)
-			}
-		}
-		return dedupe(out)
-	}
 	if dirs, err = expand(pathDirs); err != nil {
 		return nil, nil, nil, err
 	}
@@ -287,8 +292,8 @@ func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked
 		}
 	}
 	dirs = dedupe(append(dirs, shimDirs...))
-	shimAncestors := ancestorsOf(shimDirs)
-	for _, a := range ancestorsOf(dirs) {
+	shimAncestors := ancestors(shimDirs...)
+	for _, a := range ancestors(dirs...) {
 		if slices.Contains(roots, a) && !slices.Contains(shimAncestors, a) {
 			removable = append(removable, a)
 		} else {
@@ -577,45 +582,72 @@ func harnessState(kind, userHome, stateDir string) (dirs, binDirs []string, err 
 	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
 }
 
-// The parents of other sessions' input sockets, as variables so tests point them
-// into scratch: claude's per-process message sockets, and the directory tmux
-// makes its tmux-<uid> socket dir in when TMUX_TMPDIR is unset.
-var (
-	claudeSocketDir = "/private/tmp/cc-socks"
-	tmuxTempDir     = "/private/tmp"
-)
+// socketTempDir is the temp root claude and tmux make their socket dirs in when
+// no environment variable moves them; a variable so tests point it into scratch.
+var socketTempDir = "/private/tmp"
 
-// sessionSocketDirs are the directories that hold another session's input
-// socket: claude's message sockets, and tmux's server sockets under its default
-// dir and under TMUX_TMPDIR as munsu's own environment sets it.
-func sessionSocketDirs() []string {
+// keptSocketDirs returns claude's and tmux's default socket dirs, and tmux's
+// under TMUX_TMPDIR when resolvePath accepts it (a relative one is left out
+// without error).
+func keptSocketDirs() []string {
 	tmux := "tmux-" + strconv.Itoa(os.Getuid())
-	dirs := []string{claudeSocketDir, filepath.Join(tmuxTempDir, tmux)}
-	if d := os.Getenv("TMUX_TMPDIR"); d != "" {
-		if r, err := resolvePath(filepath.Join(d, tmux), false); err == nil {
+	dirs := []string{filepath.Join(socketTempDir, "cc-socks"), filepath.Join(socketTempDir, tmux)}
+	if v := os.Getenv("TMUX_TMPDIR"); v != "" {
+		if r, err := resolvePath(filepath.Join(v, tmux), false); err == nil {
 			dirs = append(dirs, r)
 		}
 	}
 	return dedupe(dirs)
 }
 
-// denySessionSockets refuses connecting to any unix socket under dirs, so a
-// seat cannot inject messages into another claude session or type into another
-// tmux pane. Each dir is its own remote term: two path filters inside one term
-// match only together, so the second would never refuse. Human words
-// (domain.Words): grantor the Human, channel supervisor-relay:dialog,
-// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không
-// bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và
-// không gửi input vào session ngoài session của nó."
-//
-// The herdr socket stays reachable pending Human words on own-pane self-report
-// (fence-session-socket part 2).
-func denySessionSockets(b *strings.Builder, dirs []string) {
-	b.WriteString("(deny network-outbound")
-	for _, d := range dirs {
-		b.WriteString(" (remote unix-socket (subpath " + quote(d) + "))")
+// denySocketConnects refuses connecting to every unix socket but DNS's
+// (mDNSResponder) and gateSocket, the no-mistakes daemon's socket of a soldier
+// with a gate, which its gate push's pre-receive hook and its no-mistakes
+// commands dial. So a seat cannot inject messages into another claude session,
+// type into a tmux pane, drive any herdr pane (its own included), or reach any
+// other daemon or listener, its own included. The allows are exact paths, and
+// a symlink at one is matched at its target. The daemon serves every lane, so
+// through it a seat can still answer another lane's run; G1153's row accepts
+// that. Human words (domain.Words), each grantor the Human, channel
+// supervisor-relay:dialog, words=selected: G1153, refining G1150 ("Chặn hết
+// trừ DNS (Recommended): deny every unix-socket connect except
+// mDNSResponder"): "Chặn hết trừ DNS + socket no-mistakes
+// (Recommended): deny-all except mDNSResponder, plus <NM_HOME>/socket only for
+// a soldier with a gate". G1148: "Chặn hẳn (Recommended): deny the herdr
+// socket entirely for fenced seats". G1085: "Quy tắc chung (Recommended): Seat
+// có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
+// fence sẽ chạy, và không gửi input vào session ngoài session của nó."
+func denySocketConnects(b *strings.Builder, gateSocket string) {
+	b.WriteString("(deny network-outbound (remote unix-socket))\n")
+	for _, s := range []string{"/private/var/run/mDNSResponder", gateSocket} {
+		if s != "" {
+			b.WriteString("(allow network-outbound (remote unix-socket (path-literal " + quote(s) + ")))\n")
+		}
 	}
-	b.WriteString(")\n")
+}
+
+// denySocketRemoval refuses unlinking or renaming each dir, anything in it, and
+// each ancestor's own name, so a seat cannot remove another session's socket
+// and bind its own in its place, nor move the dir or a parent away and plant a
+// tree of its own. Creating a socket stays allowed: the seat's own claude binds
+// its socket in cc-socks. Its own socket stays behind at exit, which the words
+// accept. Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1149: "Chặn (Recommended): deny
+// unlink/rename/replace of sockets in /tmp/cc-socks and the tmux dir".
+func denySocketRemoval(b *strings.Builder, dirs []string) {
+	rule(b, "deny", "file-write-unlink", "subpath", dirs)
+	denyUnlink(b, ancestors(dirs...)...)
+}
+
+// ancestors returns every directory above each path, "/" excluded, once.
+func ancestors(paths ...string) []string {
+	var out []string
+	for _, d := range paths {
+		for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
+			out = append(out, a)
+		}
+	}
+	return dedupe(out)
 }
 
 // goCaches returns the Go build cache, module cache (with the checksum db) and

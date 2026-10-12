@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -220,6 +221,33 @@ func TestPathDirDeniesSplitsAncestorsByWritableRoot(t *testing.T) {
 			}
 			if !slices.Equal(removable, tt.removable) {
 				t.Errorf("removable = %q, want %q", removable, tt.removable)
+			}
+		})
+	}
+}
+
+// A TMUX_TMPDIR that resolvePath refuses (relative) is left out of the socket
+// dirs without error; the nearest valid one, absolute, adds its tmux-<uid> dir
+// to the dirs kept from removal.
+func TestKeptSocketDirsTMUXTMPDIR(t *testing.T) {
+	tmux := "tmux-" + strconv.Itoa(os.Getuid())
+	abs := t.TempDir()
+	resolved, err := resolvePath(filepath.Join(abs, tmux), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := []string{filepath.Join(socketTempDir, "cc-socks"), filepath.Join(socketTempDir, tmux)}
+	for _, tt := range []struct {
+		name, env string
+		want      []string
+	}{
+		{"a relative TMUX_TMPDIR is left out", filepath.Join("rel", "dir"), base},
+		{"an absolute TMUX_TMPDIR adds its tmux dir", abs, append(slices.Clone(base), resolved)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TMUX_TMPDIR", tt.env)
+			if keep := keptSocketDirs(); !slices.Equal(keep, tt.want) {
+				t.Fatalf("kept dirs = %q, want %q", keep, tt.want)
 			}
 		})
 	}

@@ -1,8 +1,9 @@
 // Package fence confines a launched seat's whole process tree to a set of
-// writable roots with an OS sandbox (macOS sandbox-exec), and refuses a
-// connect to another claude or tmux session's socket. It is defense in depth
-// beside the shell lexer and the git shim: those refuse
-// by reading argv; the fence refuses at the syscall, so a wrapped program, an
+// writable roots with an OS sandbox (macOS sandbox-exec), refuses every
+// unix-socket connect but DNS's and a gate soldier's no-mistakes daemon's, and
+// refuses the removal or replacement of a claude or tmux socket. It is defense
+// in depth beside the shell lexer and the git shim: those refuse by reading
+// argv; the fence refuses at the syscall, so a wrapped program, an
 // absolute-path git, or a reset PATH cannot write outside the roots.
 //
 // New validates one launch's facts and builds the profile. Wrap turns the launch
@@ -57,7 +58,8 @@ type Launch struct {
 	HarnessStateDir string
 	// GateRepo is the no-mistakes write set of a soldier that drives a gate
 	// run: this project's gate repository, of which only objects/, refs/ and
-	// logs/ are writable. A reviewer has none.
+	// logs/ are writable. It lies directly under NM_HOME/repos, and the seat
+	// may connect to NM_HOME/socket. A reviewer has none.
 	GateRepo string
 	// WritableRoots are a soldier's extra writable directories from the project's
 	// config (fence-writable-roots), checked by ValidateWritableRoots. Checkouts
