@@ -237,13 +237,9 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 	args := []string{}
 	if model != "" && tmpl.ModelFlag != "" {
 		args = append(args, tmpl.ModelFlag, model)
-	} else if tmpl.DefaultModel != "" && tmpl.ModelFlag != "" {
-		args = append(args, tmpl.ModelFlag, tmpl.DefaultModel)
 	}
 	if effort != "" && tmpl.EffortFlag != "" {
 		args = append(args, tmpl.EffortFlag, effort)
-	} else if tmpl.DefaultEffort != "" && tmpl.EffortFlag != "" {
-		args = append(args, tmpl.EffortFlag, tmpl.DefaultEffort)
 	}
 	args = append(args, tmpl.ExtraArgs...)
 	args = append(args, adapter.SoldierLaunch.Args...)

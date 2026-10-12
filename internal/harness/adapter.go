@@ -114,7 +114,6 @@ var Adapters = map[string]Adapter{
 		FailurePatterns: []string{"Quick safety check"},
 		LaunchTemplate: Template{
 			ModelFlag: "--model",
-			// DefaultModel omitted — let Claude Code use its runtime default
 		},
 		SoldierLaunch: SoldierLaunchContract{
 			Supported: true,
@@ -138,12 +137,6 @@ var Adapters = map[string]Adapter{
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
 		FailurePatterns: []string{"AuthenticationError", "Incorrect API key"},
-		LaunchTemplate: Template{
-			ModelFlag:     "--model",
-			EffortFlag:    "--effort",
-			DefaultModel:  "gpt-5.2-codex",
-			DefaultEffort: "80",
-		},
 	},
 	Opencode: {
 		Name:       Opencode,
@@ -155,12 +148,6 @@ var Adapters = map[string]Adapter{
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
 		FailurePatterns: []string{"AuthenticationError", "Incorrect API key"},
-		LaunchTemplate: Template{
-			ModelFlag:     "--model",
-			EffortFlag:    "--effort",
-			DefaultModel:  "gpt-5.2-codex",
-			DefaultEffort: "80",
-		},
 	},
 	Pi: {
 		Name:       Pi,

@@ -93,28 +93,6 @@ func TestSpawn_DeniedExplicitModelFailsClosedBeforeSideEffects(t *testing.T) {
 	assertNoTaskSideEffects(t, homeDir, "denied-task")
 }
 
-func TestSpawn_AutoSelectedDeniedModelFailsClosed(t *testing.T) {
-	homeDir := seedTypedSpawnHome(t, "test-project")
-	// The model is auto-selected (adapter template default for codex), not explicit.
-	writeModelAllowlist(t, homeDir, "pi:opencode-go/deepseek-v4-flash\n")
-	spawnContext(t, homeDir)
-
-	_, err := Spawn(Args{
-		ID:          "auto-denied-task",
-		ProjectName: "test-project",
-		HarnessFlag: harness.Codex, // no --model: resolves to template default gpt-5.2-codex
-		HomeDir:     homeDir,
-		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
-	})
-	if err == nil {
-		t.Fatal("expected auto-selected model denial")
-	}
-	if !strings.Contains(err.Error(), "gpt-5.2-codex") {
-		t.Fatalf("error should name the auto-selected model, got: %v", err)
-	}
-	assertNoTaskSideEffects(t, homeDir, "auto-denied-task")
-}
-
 func TestSpawn_AllowedModelPassesAllowlist(t *testing.T) {
 	homeDir := seedTypedSpawnHome(t, "test-project")
 	writeModelAllowlist(t, homeDir, "pi:claude-sonnet-4-20250515\n")
@@ -320,9 +298,8 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 
 // TestSpawn_UnresolvedModelFailsClosed verifies blocker 1: with a policy
 // present, an effective model that cannot be resolved to a concrete value must
-// fail closed instead of passing unvalidated. pi has no template default model,
-// so a pi spawn without --model/dispatch/project model leaves the identity
-// unresolved; the policy must deny it because the runtime default cannot be
+// fail closed instead of passing unvalidated. A pi spawn without
+// --model/dispatch/project model leaves the identity unresolved; the policy must deny it because the runtime default cannot be
 // verified against the allowlist.
 func TestSpawn_UnresolvedModelFailsClosed(t *testing.T) {
 	homeDir := seedTypedSpawnHome(t, "test-project")
@@ -332,7 +309,7 @@ func TestSpawn_UnresolvedModelFailsClosed(t *testing.T) {
 	_, err := Spawn(Args{
 		ID:          "unresolved-model-task",
 		ProjectName: "test-project",
-		HarnessFlag: harness.Pi, // no --model, no dispatch, no template default for pi
+		HarnessFlag: harness.Pi, // no --model, no dispatch, no project model
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	})
@@ -432,16 +409,15 @@ func TestSpawn_AllowlistResolutionCachedForPreflightAndLaunch(t *testing.T) {
 	}
 }
 
-// TestSpawn_ProjectConfigModelValidatedNotTemplateDefault verifies blocker 2:
-// when project config selects a model, the allowlist must validate that exact
-// model, not fall back to validating the adapter template default. codex's
-// template default is gpt-5.2-codex; beta's project model is beta-model.
-func TestSpawn_ProjectConfigModelValidatedNotTemplateDefault(t *testing.T) {
-	t.Run("project model denied when only template default allowed", func(t *testing.T) {
+// TestSpawn_ProjectConfigModelValidated verifies blocker 2: when project config
+// selects a model, the allowlist validates that exact model. beta's project
+// model is beta-model on codex.
+func TestSpawn_ProjectConfigModelValidated(t *testing.T) {
+	t.Run("project model denied when another codex model is allowed", func(t *testing.T) {
 		homeDir := t.TempDir()
 		writeSpawnSnapshotDocuments(t, homeDir)
 		spawnContext(t, homeDir)
-		writeModelAllowlist(t, homeDir, "codex:gpt-5.2-codex\n") // only the template default
+		writeModelAllowlist(t, homeDir, "codex:other-model\n")
 
 		_, err := Spawn(Args{
 			ID:          "beta-denied",
@@ -450,7 +426,7 @@ func TestSpawn_ProjectConfigModelValidatedNotTemplateDefault(t *testing.T) {
 			Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 		})
 		if err == nil {
-			t.Fatal("expected denial: project model must be validated, not the template default")
+			t.Fatal("expected denial: the project model must be validated")
 		}
 		if !strings.Contains(err.Error(), "beta-model") {
 			t.Fatalf("denial should name the project-config model beta-model, got: %v", err)
@@ -460,7 +436,7 @@ func TestSpawn_ProjectConfigModelValidatedNotTemplateDefault(t *testing.T) {
 		}
 		assertNoTaskSideEffects(t, homeDir, "beta-denied")
 	})
-	t.Run("project model allowed passes even though template default would be denied", func(t *testing.T) {
+	t.Run("project model allowed passes", func(t *testing.T) {
 		homeDir := t.TempDir()
 		writeSpawnSnapshotDocuments(t, homeDir)
 		spawnContext(t, homeDir)
