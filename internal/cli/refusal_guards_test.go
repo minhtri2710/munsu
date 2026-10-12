@@ -272,9 +272,10 @@ func TestGuardUpdateInRefusesAGitFileThatIsNotAWorktreePointer(t *testing.T) {
 
 type guardBackend struct{ tornDown []string }
 
-func (b *guardBackend) NewWindow(string, string) (string, error) { return "w1", nil }
-func (b *guardBackend) SendKeys(string, string) error            { return nil }
-func (b *guardBackend) Capture(string, int) (string, error)      { return "", nil }
+func (b *guardBackend) NewWindow(string, string) (string, error)          { return "w1", nil }
+func (b *guardBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *guardBackend) SendKeys(string, string) error                     { return nil }
+func (b *guardBackend) Capture(string, int) (string, error)               { return "", nil }
 func (b *guardBackend) Teardown(handle string) error {
 	b.tornDown = append(b.tornDown, handle)
 	return nil

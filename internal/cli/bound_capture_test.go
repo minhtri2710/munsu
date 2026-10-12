@@ -14,8 +14,9 @@ type captureBackend struct {
 	err    error
 }
 
-func (b *captureBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *captureBackend) SendKeys(string, string) error            { return nil }
+func (b *captureBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *captureBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *captureBackend) SendKeys(string, string) error                     { return nil }
 func (b *captureBackend) Capture(handle string, lines int) (string, error) {
 	b.handle, b.lines = handle, lines
 	return b.output, b.err

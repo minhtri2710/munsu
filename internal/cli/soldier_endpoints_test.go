@@ -14,11 +14,12 @@ type soldierEndpointBackend struct {
 	prompt     backend.PromptResult
 }
 
-func (b *soldierEndpointBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *soldierEndpointBackend) SendKeys(string, string) error            { return nil }
-func (b *soldierEndpointBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *soldierEndpointBackend) Alive(string) bool                        { return b.alive }
-func (b *soldierEndpointBackend) Teardown(string) error                    { return nil }
+func (b *soldierEndpointBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *soldierEndpointBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *soldierEndpointBackend) SendKeys(string, string) error                     { return nil }
+func (b *soldierEndpointBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *soldierEndpointBackend) Alive(string) bool                                 { return b.alive }
+func (b *soldierEndpointBackend) Teardown(string) error                             { return nil }
 func (b *soldierEndpointBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return b.alive, b.alive && b.recognized, nil
 }
@@ -29,11 +30,12 @@ func (b *soldierEndpointBackend) AgentPrompt(string, string) backend.PromptResul
 
 type recognizedOnlyBackend struct{ base *soldierEndpointBackend }
 
-func (b recognizedOnlyBackend) NewWindow(a, c string) (string, error)   { return b.base.NewWindow(a, c) }
-func (b recognizedOnlyBackend) SendKeys(a, c string) error              { return b.base.SendKeys(a, c) }
-func (b recognizedOnlyBackend) Capture(a string, c int) (string, error) { return b.base.Capture(a, c) }
-func (b recognizedOnlyBackend) Alive(a string) bool                     { return b.base.Alive(a) }
-func (b recognizedOnlyBackend) Teardown(a string) error                 { return b.base.Teardown(a) }
+func (b recognizedOnlyBackend) NewWindow(a, c string) (string, error)             { return b.base.NewWindow(a, c) }
+func (b recognizedOnlyBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b recognizedOnlyBackend) SendKeys(a, c string) error                        { return b.base.SendKeys(a, c) }
+func (b recognizedOnlyBackend) Capture(a string, c int) (string, error)           { return b.base.Capture(a, c) }
+func (b recognizedOnlyBackend) Alive(a string) bool                               { return b.base.Alive(a) }
+func (b recognizedOnlyBackend) Teardown(a string) error                           { return b.base.Teardown(a) }
 func (b recognizedOnlyBackend) IsRecognizedAgent(a string) (bool, string) {
 	return b.base.IsRecognizedAgent(a)
 }

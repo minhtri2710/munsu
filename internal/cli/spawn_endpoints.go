@@ -24,10 +24,7 @@ func newSpawnSessionEndpoints() fleet.EndpointCapabilities {
 // delegates to the real backend find-or-create contract, which is keyed by
 // the launch intent's generation-scoped window label (the same reservation
 // always resolves to the SAME window). A call without a reservation identity
-// fails closed (no unreserved create). A backend without a real
-// reservation-aware find-or-create contract fails closed BEFORE acquisition
-// with a typed owner-clean error — never a silently fresh NewWindow, fallback
-// backend, or replacement endpoint.
+// fails closed (no unreserved create).
 func (s *spawnSessionEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.CreatedEndpoint, error) {
 	if strings.TrimSpace(req.ReservationID) == "" || strings.TrimSpace(req.FenceToken) == "" {
 		return fleet.CreatedEndpoint{}, fmt.Errorf("spawn endpoint create requires the exact launch reservation identity (reservation id + fence token); unreserved create is not allowed")
@@ -39,7 +36,7 @@ func (s *spawnSessionEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.C
 	if hb, ok := bk.(*backend.HerdrBackend); ok {
 		hb.Cwd = req.Cwd
 	}
-	handle, err := reservedWindow(bk, backend.WorkspaceTag(req.Home), req.TabName, name, req.ReservationID)
+	handle, err := bk.FindOrCreateWindow(backend.WorkspaceTag(req.Home), req.TabName)
 	if err != nil {
 		return fleet.CreatedEndpoint{}, err
 	}
@@ -52,22 +49,6 @@ func (s *spawnSessionEndpoints) CreateReserved(req fleet.CreateRequest) (fleet.C
 	}
 	s.bound[spawnEndpointKey(ep)] = bk
 	return ep, nil
-}
-
-// reservedWindow invokes the real reservation-aware find-or-create contract
-// of the selected backend. tmux and herdr implement FindOrCreateWindow
-// (find-or-create under the reservation-derived generation-scoped window
-// label; ambiguity fails closed). Any backend without that contract cannot
-// prove reservation-owned recovery and fails closed BEFORE acquisition with a
-// typed owner-clean error instead of allocating a replacement.
-func reservedWindow(bk backend.Backend, session, name, backendName, reservationID string) (string, error) {
-	f, ok := bk.(interface {
-		FindOrCreateWindow(session, name string) (string, error)
-	})
-	if !ok {
-		return "", fmt.Errorf("backend %q has no reservation-aware find-or-create contract (FindOrCreateWindow); cannot recover launch reservation %q — fail closed before acquisition (no fresh NewWindow, no fallback backend, no replacement endpoint)", backendName, reservationID)
-	}
-	return f.FindOrCreateWindow(session, name)
 }
 
 func spawnEndpointKey(ep fleet.CreatedEndpoint) string { return ep.Backend + "\x00" + ep.Handle }

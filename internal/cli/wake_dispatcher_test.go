@@ -19,11 +19,12 @@ type agentAwareBackend struct {
 	checkAlive func(string) (bool, bool, error)
 }
 
-func (b *agentAwareBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *agentAwareBackend) SendKeys(string, string) error            { return nil }
-func (b *agentAwareBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *agentAwareBackend) Alive(string) bool                        { return true }
-func (b *agentAwareBackend) Teardown(string) error                    { return nil }
+func (b *agentAwareBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *agentAwareBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *agentAwareBackend) SendKeys(string, string) error                     { return nil }
+func (b *agentAwareBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *agentAwareBackend) Alive(string) bool                                 { return true }
+func (b *agentAwareBackend) Teardown(string) error                             { return nil }
 func (b *agentAwareBackend) CheckAgentAlive(s string) (bool, bool, error) {
 	return b.checkAlive(s)
 }
@@ -34,11 +35,12 @@ type plainBackend struct {
 	alive bool
 }
 
-func (b *plainBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *plainBackend) SendKeys(string, string) error            { return nil }
-func (b *plainBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *plainBackend) Alive(string) bool                        { return b.alive }
-func (b *plainBackend) Teardown(string) error                    { return nil }
+func (b *plainBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *plainBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *plainBackend) SendKeys(string, string) error                     { return nil }
+func (b *plainBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *plainBackend) Alive(string) bool                                 { return b.alive }
+func (b *plainBackend) Teardown(string) error                             { return nil }
 
 func TestProbeAdapter_AgentAwareBackendProducesTypedStates(t *testing.T) {
 	tests := []struct {
@@ -158,11 +160,12 @@ type testSubmitBackend struct {
 	result backend.PromptResult
 }
 
-func (b *testSubmitBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *testSubmitBackend) SendKeys(string, string) error            { return nil }
-func (b *testSubmitBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *testSubmitBackend) Alive(string) bool                        { return true }
-func (b *testSubmitBackend) Teardown(string) error                    { return nil }
+func (b *testSubmitBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *testSubmitBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *testSubmitBackend) SendKeys(string, string) error                     { return nil }
+func (b *testSubmitBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *testSubmitBackend) Alive(string) bool                                 { return true }
+func (b *testSubmitBackend) Teardown(string) error                             { return nil }
 func (b *testSubmitBackend) AgentPrompt(string, string) backend.PromptResult {
 	return b.result
 }

@@ -25,6 +25,10 @@ var ErrAgentNotFound = errors.New("agent not found in pane")
 // absence (ErrPaneNotFound) from operational failure.
 type Backend interface {
 	NewWindow(session, name string) (string, error)
+	// FindOrCreateWindow returns the window labeled name in session, creating
+	// it when none exists; the same label always resolves to the same window
+	// and an ambiguous label fails closed.
+	FindOrCreateWindow(session, name string) (string, error)
 	SendKeys(windowID, text string) error
 	Capture(windowID string, lines int) (string, error)
 	Teardown(windowID string) error

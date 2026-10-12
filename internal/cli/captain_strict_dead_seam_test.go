@@ -28,11 +28,12 @@ type seamProbeBackend struct {
 	calls      int
 }
 
-func (b *seamProbeBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *seamProbeBackend) SendKeys(string, string) error            { return nil }
-func (b *seamProbeBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *seamProbeBackend) Alive(string) bool                        { return false }
-func (b *seamProbeBackend) Teardown(string) error                    { return nil }
+func (b *seamProbeBackend) NewWindow(string, string) (string, error)          { return "", nil }
+func (b *seamProbeBackend) FindOrCreateWindow(string, string) (string, error) { return "", nil }
+func (b *seamProbeBackend) SendKeys(string, string) error                     { return nil }
+func (b *seamProbeBackend) Capture(string, int) (string, error)               { return "", nil }
+func (b *seamProbeBackend) Alive(string) bool                                 { return false }
+func (b *seamProbeBackend) Teardown(string) error                             { return nil }
 func (b *seamProbeBackend) CheckAgentAlive(string) (bool, bool, error) {
 	b.calls++
 	return b.paneAlive, b.agentAlive, b.err
@@ -63,10 +64,13 @@ func (b *seamProbeBackend) IsRecognizedAgent(string) (bool, string) {
 type seamAbsentThenAliveBackend struct{ calls int }
 
 func (b *seamAbsentThenAliveBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *seamAbsentThenAliveBackend) SendKeys(string, string) error            { return nil }
-func (b *seamAbsentThenAliveBackend) Capture(string, int) (string, error)      { return "", nil }
-func (b *seamAbsentThenAliveBackend) Alive(string) bool                        { return false }
-func (b *seamAbsentThenAliveBackend) Teardown(string) error                    { return nil }
+func (b *seamAbsentThenAliveBackend) FindOrCreateWindow(string, string) (string, error) {
+	return "", nil
+}
+func (b *seamAbsentThenAliveBackend) SendKeys(string, string) error       { return nil }
+func (b *seamAbsentThenAliveBackend) Capture(string, int) (string, error) { return "", nil }
+func (b *seamAbsentThenAliveBackend) Alive(string) bool                   { return false }
+func (b *seamAbsentThenAliveBackend) Teardown(string) error               { return nil }
 func (b *seamAbsentThenAliveBackend) CheckAgentAlive(string) (bool, bool, error) {
 	pane, agent, _, _, err := b.ObserveAgent("")
 	return pane, agent, err
