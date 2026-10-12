@@ -349,6 +349,21 @@ func newBootstrapCmd() *cobra.Command {
 	return cmd
 }
 
+// fleetActiveDeliveryPort lists active delivery journals through Fleet.
+type fleetActiveDeliveryPort struct{}
+
+func (fleetActiveDeliveryPort) ActiveDeliveries(homeDir string) ([]orchestrator.ActiveDelivery, error) {
+	journals, err := fleet.ActiveDeliveryJournals(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	active := make([]orchestrator.ActiveDelivery, len(journals))
+	for i, j := range journals {
+		active[i] = orchestrator.ActiveDelivery{ID: j.ID, TaskID: j.TaskID, Stage: j.Stage}
+	}
+	return active, nil
+}
+
 func newWatchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
@@ -356,7 +371,7 @@ func newWatchCmd() *cobra.Command {
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
-			reason, err := orchestrator.RunWithProbeSenderAndEvents(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, fleetReviewVerdictPort{}, fleetCheckValidationPort{}, runtimeTaskStatePort{}, runtimeObservationEventPort())
+			reason, err := orchestrator.RunWithProbeSenderAndEvents(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, fleetReviewVerdictPort{}, fleetCheckValidationPort{}, runtimeTaskStatePort{}, runtimeObservationEventPort(), fleetActiveDeliveryPort{})
 			if err != nil {
 				return err
 			}
