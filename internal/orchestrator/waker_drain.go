@@ -180,14 +180,18 @@ func hasAgedMaterialWake(homeDir string, now time.Time) bool {
 }
 
 // OldestMaterialWake returns the enqueue epoch of the oldest material wake in
-// the wake queue. ok is false when the queue holds none or cannot be read.
+// the wake queue, counting a report line no wake carries yet from its status
+// file's mtime. ok is false when there is none or the queue cannot be read.
 func OldestMaterialWake(homeDir string) (epoch int64, ok bool) {
+	if at, found := mhome.OldestUnderivedReport(homeDir); found {
+		epoch, ok = at.Unix(), true
+	}
 	records, err := mhome.PeekWakes(homeDir)
 	if err != nil {
-		return 0, false
+		return epoch, ok
 	}
 	for _, r := range records {
-		// r.Key is the taskID for signal/uplink wakes; payloadHasMaterialMarker
+		// r.Key is the taskID for signal/report wakes; payloadHasMaterialMarker
 		// uses it to check the signal marker at the anchored "<taskID>: " position.
 		if !payloadHasMaterialMarker(r.Key, r.Payload) {
 			continue
@@ -205,10 +209,10 @@ func OldestMaterialWake(homeDir string) (epoch int64, ok bool) {
 
 // payloadHasMaterialMarker reports whether a wake queue payload carries a
 // material-state marker (done:/failed:/needs-decision:/blocked:) at its
-// structural position. Material wakes take two producer shapes: a signal wake
-// payload is "<taskID>: <state>: <msg> [event=N]" (the marker follows the
-// "<key>: " prefix, where key is the taskID) and an uplink wake payload is
-// "<state>: <msg> [task=X key=Y]" (the marker is at the start). Checking both
+// structural position. Material wakes take two producer shapes: a report wake
+// payload is "<taskID>: <state>: <msg> [key=K]" (the marker follows the
+// "<key>: " prefix, where key is the taskID) and a watcher signal wake payload
+// is the status line itself (the marker is at the start). Checking both
 // anchored positions matches both shapes while rejecting a marker that merely
 // appears mid-message in a non-material payload. OldestMaterialWake
 // applies it for both the guard and watch.

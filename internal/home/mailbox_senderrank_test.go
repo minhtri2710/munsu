@@ -123,7 +123,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			},
 		},
 		{
-			// The captain's uplink report. The General home does hold a task
+			// A captain's message to the General. The General home does hold a task
 			// record for the captain, so this is the hop that would misderive
 			// if a hosted task alone were taken as soldier provenance.
 			name: "captain to general",

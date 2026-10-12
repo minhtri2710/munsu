@@ -116,18 +116,16 @@ func TestTaskStatusMissingTaskStillAuditOnly(t *testing.T) {
 
 // TestTaskAddRejectsScoutMissingScoutContract proves the scout contract is
 // enforced on the CLI path, not only inside the Authority: `task add --kind
-// scout` without a scope, and with a non-positive budget, are both refused and
-// commit no task. The CLI defaults `--scope` to "" and `--budget` to 0, so
-// without this guard the ordinary invocation would create a scout with no
-// investigation scope and no runtime ceiling.
+// scout` without a scope is refused and commits no task. The CLI defaults
+// `--scope` to "", so without this guard the ordinary invocation would create a
+// scout with no investigation scope.
 func TestTaskAddRejectsScoutMissingScoutContract(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		args    []string
 		wantMsg string
 	}{
-		{"no scope", []string{"--kind", "scout", "--budget", "300"}, "requires non-empty scope"},
-		{"no budget", []string{"--kind", "scout", "--scope", "investigate"}, "requires positive runtime budget"},
+		{"no scope", []string{"--kind", "scout"}, "requires non-empty scope"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -152,7 +150,7 @@ func TestTaskAddRejectsScoutMissingScoutContract(t *testing.T) {
 }
 
 // TestTaskAddAcceptsCompleteScoutContract is the positive control: the same
-// CLI path with both scout flags present commits, and the flag values reach the
+// CLI path with the scope present commits, and the scope reaches the
 // authoritative aggregate.
 func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
 	homeDir := t.TempDir()
@@ -160,7 +158,7 @@ func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
 
 	out, err := runTaskCommand(t, []string{
 		"task", "add", "recon", "investigate the thing",
-		"--kind", "scout", "--scope", "investigate the thing", "--budget", "300",
+		"--kind", "scout", "--scope", "investigate the thing",
 		"--home", homeDir,
 	})
 	if err != nil {
@@ -171,8 +169,7 @@ func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
 		t.Fatalf("authority Get: %v", err)
 	}
 	if agg.Definition.Kind != "scout" ||
-		agg.Definition.ScoutScope != "investigate the thing" ||
-		agg.Definition.ScoutRuntimeBudgetSecs != 300 {
-		t.Fatalf("scout definition = %+v, want the --scope/--budget flags preserved", agg.Definition)
+		agg.Definition.ScoutScope != "investigate the thing" {
+		t.Fatalf("scout definition = %+v, want the --scope flag preserved", agg.Definition)
 	}
 }

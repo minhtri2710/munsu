@@ -26,20 +26,19 @@ const PiSettingsName = harness.PiProjectSettingsRelPath
 // LaunchPromptInput is the canonical input for building a Soldier launch prompt.
 // All fields must be populated before BuildLaunchPrompt is called.
 type LaunchPromptInput struct {
-	TaskID                 string
-	TaskKind               string // ship, scout or review
-	DeliveryMode           string
-	Repository             string // repo name for brief
-	ParentCaptainID        string
-	ParentHome             string
-	WorktreePath           string // absolute path to the checkout the harness runs in
-	HomeDir                string // munsu home (parent)
-	BriefContent           []byte // complete task brief content
-	RequiredSkills         []SkillEntry
-	OptionalSkills         []SkillEntry
-	HarnessName            string
-	ScoutScope             string
-	ScoutRuntimeBudgetSecs int64
+	TaskID          string
+	TaskKind        string // ship, scout or review
+	DeliveryMode    string
+	Repository      string // repo name for brief
+	ParentCaptainID string
+	ParentHome      string
+	WorktreePath    string // absolute path to the checkout the harness runs in
+	HomeDir         string // munsu home (parent)
+	BriefContent    []byte // complete task brief content
+	RequiredSkills  []SkillEntry
+	OptionalSkills  []SkillEntry
+	HarnessName     string
+	ScoutScope      string
 }
 
 // BuildLaunchPrompt constructs the complete, role-specific Soldier launch prompt.
@@ -66,10 +65,10 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	if input.TaskKind == "" {
 		input.TaskKind = taskauthority.KindShip
 	}
-	if input.TaskKind == taskauthority.KindScout && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0) {
-		return "", nil, fmt.Errorf("soldier launch: scout scope and positive runtime budget are required")
+	if input.TaskKind == taskauthority.KindScout && strings.TrimSpace(input.ScoutScope) == "" {
+		return "", nil, fmt.Errorf("soldier launch: scout scope is required")
 	}
-	if input.TaskKind != taskauthority.KindScout && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0) {
+	if input.TaskKind != taskauthority.KindScout && strings.TrimSpace(input.ScoutScope) != "" {
 		return "", nil, fmt.Errorf("soldier launch: scout contract is only valid for scout tasks")
 	}
 	if input.DeliveryMode == "" {
@@ -98,17 +97,16 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 
 	// 4. Build envelope.
 	env := &LaunchEnvelope{
-		EnvelopeVersion:        EnvelopeVersion,
-		TaskID:                 input.TaskID,
-		TaskKind:               input.TaskKind,
-		DeliveryMode:           input.DeliveryMode,
-		Repository:             input.Repository,
-		ParentCaptainID:        input.ParentCaptainID,
-		ParentHome:             input.ParentHome,
-		ScoutScope:             input.ScoutScope,
-		ScoutRuntimeBudgetSecs: input.ScoutRuntimeBudgetSecs,
-		RequiredSkills:         input.RequiredSkills,
-		OptionalSkills:         input.OptionalSkills,
+		EnvelopeVersion: EnvelopeVersion,
+		TaskID:          input.TaskID,
+		TaskKind:        input.TaskKind,
+		DeliveryMode:    input.DeliveryMode,
+		Repository:      input.Repository,
+		ParentCaptainID: input.ParentCaptainID,
+		ParentHome:      input.ParentHome,
+		ScoutScope:      input.ScoutScope,
+		RequiredSkills:  input.RequiredSkills,
+		OptionalSkills:  input.OptionalSkills,
 		Metadata: map[string]string{
 			"harness": input.HarnessName,
 			"home":    input.HomeDir,

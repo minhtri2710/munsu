@@ -22,7 +22,7 @@ type wakeResolutionRecord struct {
 // NormalizeWakeResolution trims the claim id, event id and summary of a wake
 // resolution and refuses an empty value or an invalid lease id. It is the one
 // check ResolveWake applies, exported so a caller that acts on the request
-// first (the uplink acceptance) sees the same values and the same refusals.
+// first (report settlement) sees the same values and the same refusals.
 func NormalizeWakeResolution(leaseID, eventID, summary string) (string, string, string, error) {
 	leaseID = strings.TrimSpace(leaseID)
 	eventID = strings.TrimSpace(eventID)

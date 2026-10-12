@@ -17,8 +17,7 @@ import (
 // Phase 2.2+: runLoop integrates the digester, the watcher beat check, and stale clearing.
 //
 // The daemon diagnoses and accumulates; it never repairs. Reaching the general
-// while they are away has two owners: the uplink notify path for immediate
-// notice, and `munsu afk return` for reconciliation.
+// while they are away has one owner: `munsu afk return`.
 type Daemon struct {
 	homeDir  string
 	lock     *home.AFKLock

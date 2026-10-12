@@ -28,7 +28,6 @@ func newTaskCmd() *cobra.Command {
 			kind, _ := cmd.Flags().GetString("kind")
 			repo, _ := cmd.Flags().GetString("repo")
 			scope, _ := cmd.Flags().GetString("scope")
-			budget, _ := cmd.Flags().GetInt64("budget")
 			reviews, _ := cmd.Flags().GetString("reviews")
 
 			project := ""
@@ -49,16 +48,15 @@ func newTaskCmd() *cobra.Command {
 				return err
 			}
 			req := taskauthority.CanonicalCreateRequest{
-				HomeID:                 auth.HomeID(),
-				TaskID:                 tid,
-				Owner:                  owner,
-				Description:            desc,
-				Kind:                   kind,
-				Project:                domain.ProjectID{},
-				ScoutScope:             scope,
-				ScoutRuntimeBudgetSecs: budget,
-				ReviewTaskID:           reviews,
-				Reason:                 "cli task add",
+				HomeID:       auth.HomeID(),
+				TaskID:       tid,
+				Owner:        owner,
+				Description:  desc,
+				Kind:         kind,
+				Project:      domain.ProjectID{},
+				ScoutScope:   scope,
+				ReviewTaskID: reviews,
+				Reason:       "cli task add",
 			}
 			if kind == taskauthority.KindReview {
 				// munsu reads the reviewed head from the reviewed worktree; the
@@ -103,7 +101,6 @@ func newTaskCmd() *cobra.Command {
 	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout|review)")
 	addCmd.Flags().String("repo", "", "Project repository name")
 	addCmd.Flags().String("scope", "", "Scout investigation scope (required for scout tasks)")
-	addCmd.Flags().Int64("budget", 0, "Maximum scout runtime in seconds (required and positive for scout tasks)")
 	addCmd.Flags().String("reviews", "", "Ship task a review task reads (required for review tasks)")
 
 	listCmd := &cobra.Command{

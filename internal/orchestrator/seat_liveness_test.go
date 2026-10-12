@@ -218,16 +218,13 @@ func TestSeatLivenessIncidents(t *testing.T) {
 	}
 }
 
-// TestSeatLivenessIgnoresRepeatsOfAnUplinkReport pins the report-owned exception:
-// a failed line the uplink already delivered as its own wake is not a repeat
-// incident, however many times it is appended.
-func TestSeatLivenessIgnoresRepeatsOfAnUplinkReport(t *testing.T) {
+// TestSeatLivenessIgnoresRepeatsOfAReport pins the report-owned exception: a
+// failed line `munsu report` filed wakes as its own report wake, so its
+// repeats are not a repeat incident and raise no signal wake.
+func TestSeatLivenessIgnoresRepeatsOfAReport(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
-	generalHome, identity := directGeneralHome(t)
-	reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
-	if _, _, err := AppendReportStatus(generalHome, "direct-task", "failed", "direct dispatch failure", "default"); err != nil {
-		t.Fatal(err)
-	}
+	generalHome, _ := directGeneralHome(t)
+	reportDone(t, generalHome, "direct-task", "failed")
 	lines, err := mhome.ReadStatus(generalHome, "direct-task")
 	if err != nil || len(lines) == 0 {
 		t.Fatalf("ReadStatus = %q, %v", lines, err)
@@ -244,12 +241,12 @@ func TestSeatLivenessIgnoresRepeatsOfAnUplinkReport(t *testing.T) {
 	if _, err := RunCycleWithProbeAndSender(generalHome, aliveTaskProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}); err != nil {
 		t.Fatal(err)
 	}
-	records, err := DrainWakes(generalHome)
+	signals, err := mhome.DrainWakesOfKind(generalHome, "signal")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 0 {
-		t.Fatalf("wakes = %#v, want none for a repeated uplink-report line", records)
+	if len(signals) != 0 {
+		t.Fatalf("signal wakes = %#v, want none for a repeated report line", signals)
 	}
 }
 

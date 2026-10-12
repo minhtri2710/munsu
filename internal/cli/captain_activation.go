@@ -53,7 +53,6 @@ func ensureCaptainReadyWithWait(parentHome string, sm fleet.Info, probe fleet.Pr
 
 func newCaptainRecoverTransaction() *fleet.RecoverTransaction {
 	return &fleet.RecoverTransaction{Capabilities: fleet.RecoverCapabilities{
-		Continuity:  captainContinuityAdapter{notification: newSessionUplinkTransport()},
 		Watcher:     captainWatcherAdapter{},
 		Integration: captainIntegrationAdapter{},
 		Launch:      newSessionLaunchEndpoint(),

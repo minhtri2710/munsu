@@ -34,6 +34,33 @@ func IsMaterialVerb(verb string) bool {
 	return slices.Contains(MaterialVerbs, verb)
 }
 
+// reportMark ends every status line `munsu report` writes, after its key. It
+// tells a reporter's report from a line the dispatcher wrote into the same
+// status file: only a report derives a report wake and holds teardown.
+const reportMark = " [report]"
+
+// ReportStatusLine is the status line `munsu report` writes for one report.
+func ReportStatusLine(state, message, key string) string {
+	return state + ": " + message + " [key=" + key + "]" + reportMark
+}
+
+// IsReportLine reports whether line was written by ReportStatusLine: the mark
+// directly after a non-empty [key=...]. The key may hold any byte, as a
+// material report's key always could.
+func IsReportLine(line string) bool {
+	rest, ok := strings.CutSuffix(line, reportMark)
+	if !ok || !strings.HasSuffix(rest, "]") {
+		return false
+	}
+	i := strings.LastIndex(rest, " [key=")
+	return i >= 0 && len(rest) > i+len(" [key=")+1
+}
+
+// ReportLineText is a report line without its mark, as a wake shows it.
+func ReportLineText(line string) string {
+	return strings.TrimSuffix(line, reportMark)
+}
+
 // humanNeededVerbs are the status verbs that put the Human's attention on a
 // task: a Human gate opens or a product fork (needs-decision), a
 // blocker routed upward (blocked), and a failure such as red CI or a

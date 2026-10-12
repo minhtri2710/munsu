@@ -258,7 +258,7 @@ func TestGCOrphanDataDirs_AbortedCleanupKeepsBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tidValue, Owner: "owner", Description: "brief", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tidValue, Owner: "owner", Description: "brief", Kind: "scout", Project: project, ScoutScope: "scope", Reason: "test"}
 	createOp, err := domain.NewOperation(mustBootstrapOperationID(t, "bootstrap-create-brief"), create)
 	if err != nil {
 		t.Fatal(err)
@@ -348,7 +348,7 @@ func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", Reason: "test"}
 	if _, err := auth.Create(mustBootstrapOperation(t, "interleave-create", create), create); err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", Reason: "test"}
 	if _, err := auth.Create(mustBootstrapOperation(t, "terminal-create", create), create); err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,7 @@ func TestGCOrphanDataDirs_ReclaimsSupersededSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", ScoutRuntimeBudgetSecs: 60, Reason: "test"}
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "scout", Project: project, ScoutScope: "scope", Reason: "test"}
 	if _, err := auth.Create(mustBootstrapOperation(t, "source-create", create), create); err != nil {
 		t.Fatal(err)
 	}

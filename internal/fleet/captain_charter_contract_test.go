@@ -128,29 +128,25 @@ func TestCharter_TaskAuthority(t *testing.T) {
 	}
 }
 
-// TestCharter_RelaySemantics verifies the mailbox-only one-hop Uplink Report contract.
-func TestCharter_RelaySemantics(t *testing.T) {
-	charter := defaultCaptainCharter(t, "relay-test", t.TempDir())
+// TestCharter_ReportSemantics verifies the Captain reports through its status
+// file in the General's home and that nothing is pushed to a pane.
+func TestCharter_ReportSemantics(t *testing.T) {
+	parent := t.TempDir()
+	charter := defaultCaptainCharter(t, "relay-test", parent)
+	statusFile, err := home.StatusFilePath(parent, taskIDForCaptain("relay-test"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, required := range []string{
-		"One-Hop Uplink Report",
-		"immutable envelope",
-		"NotificationRef",
-		"inbox receive",
-		"inbox ack",
-		"settles the report's wake with `munsu wake resolve`",
-		"Processing Ack",
-		"after 60 seconds",
-		"latest material report supersedes",
-		"Teardown is allowed only after",
+		"Uplink only through `munsu report`",
+		"A report is a line in your status file in the General's home (" + shQuote(statusFile) + ")",
+		"Nothing is pushed to any pane",
+		"report wake the General settles with `munsu wake resolve`",
+		"Teardown of a soldier is refused while one of its material reports is unsettled",
 	} {
 		if !strings.Contains(charter, required) {
 			t.Errorf("DefaultCaptainCharter must mention %q", required)
-		}
-	}
-	for _, legacy := range []string{"turnend.WriteAck", "CompleteTaskObligation"} {
-		if strings.Contains(charter, legacy) {
-			t.Errorf("DefaultCaptainCharter must not prescribe legacy relay %q", legacy)
 		}
 	}
 }

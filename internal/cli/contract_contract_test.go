@@ -32,7 +32,6 @@ var fixtureNames = []string{
 	"event_record",
 	"fleet_snapshot",
 	"guard",
-	"message_injection",
 	"noop",
 	"project_entry",
 	"safety_check",
@@ -119,7 +118,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 		WakeAck{}, WakeUnacceptedReport{}, WakeClaim{}, WakeClaimedWake{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, InboxReceiveResult{}, EmptyResult{},
 		TruncatedResult{}, Guard{}, GuardViolation{}, WatchEnsure{}, WatchRun{}, WatchStop{}, WatchStatus{}, WatchLeaseInfo{},
 		EventRecord{}, EventAppend{}, DrainCycle{}, SessionStart{},
-		SafetyCheckData{}, ReportInjection{}, DecisionHoldInfo{},
+		SafetyCheckData{}, DecisionHoldInfo{},
 		TaskEntry{}, ProjectEntry{},
 	} {
 		typeOf := reflect.TypeOf(value)

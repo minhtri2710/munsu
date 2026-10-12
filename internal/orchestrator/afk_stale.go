@@ -15,9 +15,9 @@ import (
 //   - state/.seen-*             — watcher dedup markers from a prior session
 //   - state/.subsuper-*         — subsupervisor escalation artifacts
 //   - state/.afk-digest         — any prior digest that was never consumed,
-//     except one holding uplink refs: those entries are the only copy of the
-//     reports' NotificationRefs, so it is kept and the next `munsu afk return`
-//     drains it (the digester appends to it meanwhile) and accepts them
+//     except one holding report refs: those entries are the only copy of the
+//     drained report wakes, so it is kept and the next `munsu afk return`
+//     drains it (the digester appends to it meanwhile) and settles them
 //
 // Only operates within the given home directory — never touches sibling homes
 // or paths outside stateDir.
@@ -49,7 +49,7 @@ func ClearStaleArtifacts(homeDir string) error {
 	return removeErr
 }
 
-// digestHoldsRefs reports whether the digest file at path carries an uplink ref.
+// digestHoldsRefs reports whether the digest file at path carries a report ref.
 // An unreadable or unparseable file holds none this code can use.
 func digestHoldsRefs(path string) bool {
 	be, err := readDigestFile(path)

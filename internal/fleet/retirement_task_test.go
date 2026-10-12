@@ -707,15 +707,15 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 		want []string
 	}{
 		{"ship with pi", taskauthority.KindShip, map[string]string{"harness": "pi"}, []string{
-			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
+			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
 		{"review also removes its launch home", taskauthority.KindReview, map[string]string{"harness": "pi"}, []string{
-			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
+			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
 		{"unknown harness has only the native artifacts", taskauthority.KindShip, map[string]string{}, []string{
-			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"),
+			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -979,7 +979,7 @@ func abortAbsentEndpointAllow(t *testing.T) {
 
 type failingRetirementJournals struct{}
 
-func (failingRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (failingRetirementJournals) VerifyRetirementContinuity(string, string, string) error { return nil }
 func (failingRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
 	return nil, nil
 }

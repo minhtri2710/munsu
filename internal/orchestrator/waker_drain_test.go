@@ -152,10 +152,10 @@ func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
 	queuePath := mhome.WakeQueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
-	// Realistic signal-wake payload: the DeliverWake producer emits
-	// "<taskID>: <state>: <msg> [event=N]", so the material marker is embedded
+	// Realistic report-wake payload: derivation emits
+	// "<taskID>: <state>: <msg> [key=K]", so the material marker is embedded
 	// after the "<taskID>: " prefix, not at payload start.
-	line := fmt.Sprintf("%d	%d\tsignal\ttask-1\ttask-1: done: PR merged [event=1]\n", oldEpoch, 1)
+	line := fmt.Sprintf("%d	%d\treport\ttask-1\ttask-1: done: PR merged [key=default]\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
 
 	result := EvaluateGuard(home, 1, time.Now())
@@ -291,15 +291,15 @@ func TestPayloadHasMaterialMarker(t *testing.T) {
 		payload string
 		want    bool
 	}{
-		// Signal wake: "<taskID>: <state>: <msg> [event=N]" (marker embedded
+		// Report wake: "<taskID>: <state>: <msg> [key=K]" (marker embedded
 		// after the taskID). The old HasPrefix-only guard MISSED this shape.
-		{"signal done embedded", "task-1", "task-1: done: PR merged [event=7]", true},
-		{"signal failed embedded", "t2", "t2: failed: build broke [event=9]", true},
-		{"signal needs-decision embedded", "t3", "t3: needs-decision: pick one [event=1]", true},
-		{"signal blocked embedded", "t4", "t4: blocked: waiting [event=2]", true},
-		// Uplink wake: "<state>: <msg> [task=X key=Y]" (marker at start).
-		{"uplink done prefix", "task-1", "done: report ready [task=task-1 key=default]", true},
-		{"uplink taskID equals state", "done", "done: finished [task=done key=default]", true},
+		{"report done embedded", "task-1", "task-1: done: PR merged [key=default]", true},
+		{"report failed embedded", "t2", "t2: failed: build broke [key=default]", true},
+		{"report needs-decision embedded", "t3", "t3: needs-decision: pick one [key=default]", true},
+		{"report blocked embedded", "t4", "t4: blocked: waiting [key=default]", true},
+		// Signal wake: the status line itself (marker at start).
+		{"signal done prefix", "task-1", "done: report ready [key=default]", true},
+		{"signal taskID equals state", "done", "done: finished [key=default]", true},
 		// A non-material payload whose message merely contains a marker string
 		// must NOT match (this is the false positive pure Contains produced).
 		{"working with done in message", "task-1", "task-1: working: almost done: 90% [event=3]", false},

@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -186,6 +187,19 @@ func newContractGuardCmd() *cobra.Command {
 			// Harness Stop-hook guard: --harness routes to the harness-specific guard
 			// (adapter hooks call `munsu guard --harness <X>`). Omit --harness for the
 			// contract guard report below.
+			//
+			// A soldier seat runs the Human's hooks too, but its turn end is not the
+			// dispatcher's: the guard would read the dispatcher's fleet over a
+			// watcher the soldier cannot repair. It allows the stop.
+			if os.Getenv("MUNSU_ROLE") == "soldier" {
+				switch harnessFlag {
+				case "agy":
+					fmt.Fprintln(os.Stdout, `{"decision":"allow"}`)
+					return nil
+				case "claude", "codex", "opencode", "grok":
+					return nil
+				}
+			}
 			switch harnessFlag {
 			case "agy":
 				return runGuardAgy(ctx.Home)

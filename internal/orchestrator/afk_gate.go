@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"path/filepath"
-	"strings"
 )
 
 // IsClean checks whether any actionable AFK state remains in the
@@ -29,8 +28,7 @@ func IsClean(homeDir string) (bool, error) {
 		if entry.Type != EscalationRoutine {
 			return false, nil
 		}
-		lower := strings.ToLower(entry.Payload)
-		if strings.HasPrefix(lower, "blocked:") || strings.Contains(lower, "\nblocked:") {
+		if blockedEntry(entry) {
 			return false, nil
 		}
 	}

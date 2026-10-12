@@ -148,7 +148,6 @@ func seedTaskInHome(t *testing.T, homeDir, taskID, kind string) *taskauthority.C
 	}
 	if kind == taskauthority.KindScout {
 		req.ScoutScope = "investigate the requested question"
-		req.ScoutRuntimeBudgetSecs = 300
 	}
 	if _, err := c.Create(mustFleetOperation(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatalf("Create(%s): %v", taskID, err)

@@ -1068,18 +1068,16 @@ func TestCanonicalLaunchFlowComposesToWorking(t *testing.T) {
 	}
 }
 
-// TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp pins the READ
-// half of the premise waiving internal/cli/report_cmd.go's
-// `agg.LaunchEvidence.SubmittedAt <= 0` branch. The writer-side test
-// (TestCanonicalRecordLaunchRecordsEvidence) pins only that RecordLaunch
-// stamps the field; it stays green if a second writer appears or if the read
-// path stops validating. What actually keeps the CLI branch unreachable is
-// that readTaskDoc runs validateAggregate and fails closed, so a record
-// carrying SubmittedAt = 0 is never served to a caller no matter who wrote it.
-// This test plants exactly that record under the aggregate on disk and
-// asserts Get refuses it; it goes red the moment the read path stops
+// TestGetRefusesLaunchEvidenceWithNoSubmissionTimestamp pins the READ half of
+// launch evidence validation. The writer-side test
+// (TestCanonicalRecordLaunchRecordsEvidence) pins only that RecordLaunch stamps
+// the field; it stays green if a second writer appears or if the read path
+// stops validating. readTaskDoc runs validateAggregate and fails closed, so a
+// record carrying SubmittedAt = 0 is never served to a caller no matter who
+// wrote it. This test plants exactly that record under the aggregate on disk
+// and asserts Get refuses it; it goes red the moment the read path stops
 // validating or validateLaunchEvidence stops checking SubmittedAt.
-func TestPremiseGetRefusesLaunchEvidenceWithNoSubmissionTimestamp(t *testing.T) {
+func TestGetRefusesLaunchEvidenceWithNoSubmissionTimestamp(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))

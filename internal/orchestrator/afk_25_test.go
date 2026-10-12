@@ -43,8 +43,8 @@ func TestReturn_WithPendingDigest(t *testing.T) {
 	// Create a digest with escalations.
 	be := &BatchedEscalation{
 		Entries: []BatchedEntry{
-			{Kind: "afk", Key: "task-1", Payload: "done: PR merged", Type: EscalationReviewReady, At: time.Now()},
-			{Kind: "afk", Key: "task-2", Payload: "blocked: missing auth token", Type: EscalationFailure, At: time.Now()},
+			{Kind: mhome.ReportWakeKind, Key: "task-1", Payload: "task-1: done: PR merged [key=default]", Type: EscalationReviewReady, At: time.Now()},
+			{Kind: mhome.ReportWakeKind, Key: "task-2", Payload: "task-2: blocked: missing auth token [key=default]", Type: EscalationFailure, At: time.Now()},
 			{Kind: "afk", Key: "task-3", Payload: "routine update", Type: EscalationRoutine, At: time.Now()},
 			{Kind: "wedge", Key: "daemon", Payload: "watcher beat stale: age=10m0s", Type: EscalationWedge, At: time.Now()},
 		},
@@ -275,7 +275,7 @@ func TestIsClean_BlockedItem(t *testing.T) {
 
 	be := &BatchedEscalation{
 		Entries: []BatchedEntry{
-			{Kind: "afk", Key: "t1", Payload: "blocked: missing credentials", Type: EscalationFailure, At: time.Now()},
+			{Kind: mhome.ReportWakeKind, Key: "t1", Payload: "t1: blocked: missing credentials [key=default]", Type: EscalationFailure, At: time.Now()},
 		},
 	}
 	data, _ := json.Marshal(be)

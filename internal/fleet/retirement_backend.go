@@ -35,7 +35,7 @@ type BoundTeardown interface {
 }
 
 type RetirementJournalPort interface {
-	VerifyRetirementContinuity(homeDir, taskID string) error
+	VerifyRetirementContinuity(homeDir, taskID, kind string) error
 	PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error)
 	FinalizeRetirementJournals(homeDir, taskID string) ([]string, error)
 }

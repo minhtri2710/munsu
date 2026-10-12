@@ -11,7 +11,7 @@ import (
 func newTurnendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "turnend",
-		Short: "Manage turn-end obligations (report relay, cleanup, etc.)",
+		Short: "Manage turn-end obligations (cleanup)",
 		Long: `Turn-end obligations are role-specific actions that must be performed
 at the end of a turn. They survive process restarts via durable state
 under the munsu home.
@@ -70,7 +70,7 @@ func newTurnendCompleteCmd() *cobra.Command {
 		Short: "Mark a turn-end obligation as complete",
 		Long: `Mark a turn-end obligation as complete.
 
-Valid kinds: report-relay, cleanup`,
+Valid kinds: cleanup`,
 		Args: cobra.ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			role := resolveRole()

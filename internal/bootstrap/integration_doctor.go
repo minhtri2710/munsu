@@ -122,7 +122,7 @@ func checkSessionBackend() StatusEntry {
 		return StatusEntry{
 			Subsystem: "session_backend",
 			Status:    StatusCurrent,
-			Detail:    "tmux found on PATH (no prompt support yet: wake, mailbox, nudge, uplink and captain prompts need herdr)",
+			Detail:    "tmux found on PATH (no prompt support yet: wake, mailbox, nudge and captain prompts need herdr)",
 		}
 	}
 	// Check herdr env

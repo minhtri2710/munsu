@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -14,31 +13,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
+// newReportCmd creates the `munsu report` command: rank-aware status reporting.
 func newReportCmd() *cobra.Command {
-	transport := newSessionUplinkTransport()
-	return newReportCmdWithNotifier(func(senderHome, receiverHome string, ref home.NotificationRef) orchestrator.UplinkNotifyResult {
-		return orchestrator.NotifyParentWithTransport(senderHome, receiverHome, ref, transport)
-	})
-}
-
-func newReportCmdWithNotifier(notify func(senderHome, receiverHome string, ref home.NotificationRef) orchestrator.UplinkNotifyResult) *cobra.Command {
 	var key string
-	var ring string // "auto" | "ring" | "no-ring"
 
 	cmd := &cobra.Command{
 		Use:   "report <state> <msg>",
 		Short: "Report status up the rank hierarchy (report up, send down)",
 		Long: `Report status with rank-aware routing via MUNSU_ROLE:
 
-  soldier  -> appends to task .status in the current home (MUNSU_HOME)
-  captain  -> appends to General home state/captain:<id>.status (MUNSU_PARENT_STATUS)
-  general  -> local append only (same as soldier)
-Also writes to the typed event log, enqueues a wake for material states
-(done, failed, needs-decision, blocked), and injects a sentinel message
-directly into the parent terminal pane when the composer is safe.
+  soldier  -> appends a report line to the task .status in the current home (MUNSU_HOME)
+  captain  -> appends a report line to General home state/<task>.status (MUNSU_PARENT_STATUS)
+  general  -> local append only
+A soldier's or captain's material report (done, failed, needs-decision,
+blocked) is one line: the watcher or the receiver's next wake claim turns it
+into one report wake, and settling that wake is the receiver's acknowledgment.
 
-Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
+Use 'munsu send' to steer down; 'munsu report' to report up.`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			state := args[0]
@@ -74,7 +65,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					fmt.Sprintf("report: task %s is a review task", taskID))
 			}
 
-			// Determine target home for identity capture based on role
+			// Determine target home based on role
 			targetHome := homeDir // default: local
 			switch role {
 			case "captain":
@@ -87,30 +78,15 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// Ship tasks cannot use "resolved" as delivery completion.
 			// Only "done" is the valid terminal delivery state for ship tasks.
 			if state == "resolved" {
-				kind, err := canonicalTaskKind(targetHome, taskID)
-				if err != nil {
-					return fmt.Errorf("report: cannot read task %s kind to check 'resolved': %w", taskID, err)
+				kind := taskKind
+				if role != "soldier" {
+					var err error
+					if kind, err = canonicalTaskKind(targetHome, taskID); err != nil {
+						return fmt.Errorf("report: cannot read task %s kind to check 'resolved': %w", taskID, err)
+					}
 				}
 				if kind == taskauthority.KindShip {
 					return fmt.Errorf("report: ship task %s cannot use 'resolved' as delivery completion; use 'done' instead", taskID)
-				}
-			}
-
-			// A soldier's terminal scout report is also the authoritative lifecycle
-			// signal for the generation owned by its parent Captain. Commit that
-			// transition before sending the uplink so teardown can observe the
-			// canonical terminal phase without requiring --force.
-			if role == "soldier" && state == "done" {
-				if taskKind == taskauthority.KindScout {
-					if err := enforceScoutReportBudget(parentHome, taskID, time.Now()); err != nil {
-						if budgetErr := new(orchestrator.ScoutBudgetError); errors.As(err, &budgetErr) {
-							_ = home.AppendStatus(parentHome, taskID, "failed: scout runtime deadline evidence: "+formatScoutBudgetEvidence(budgetErr.Evidence))
-						}
-						return fmt.Errorf("report: scout completion rejected: %w", err)
-					}
-				}
-				if err := completeScoutReport(parentHome, taskID); err != nil {
-					return fmt.Errorf("report: completing scout lifecycle: %w", err)
 				}
 			}
 
@@ -119,94 +95,48 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// delivery authorization/outcome truth, and delivery execution runs
 			// exclusively through the Fleet journaled Deliver operation.
 
-			var receipt *orchestrator.WakeReceipt
-			var uplinkResult *orchestrator.ReportResult
-			if role == "soldier" && state == "done" && taskKind == taskauthority.KindScout {
-				var err error
-				receipt, err = orchestrator.DeliverWake(orchestrator.DeliverRequest{
-					HomeDir: homeDir, ParentHome: parentHome, TaskID: taskID,
-					State: state, Message: msg, Key: key, Role: role,
-				})
-				if err != nil {
-					return fmt.Errorf("report: delivering scout terminal wake: %w", err)
+			// The report is the one line. A soldier's or captain's line carries
+			// the report mark, so it derives a report wake and holds the task's
+			// teardown until its parent settles it; settling a scout's done
+			// report completes the scout.
+			if msg == "" {
+				return fmt.Errorf("report: message is required")
+			}
+			// A captain's material report is refused from a home whose captain
+			// marker, or whose parent's identity, cannot be read, as it always
+			// was. Both homes are the captain's to read.
+			if role == "captain" && domain.IsMaterialVerb(state) {
+				if _, err := home.ValidateCaptainProvenance(homeDir); err != nil {
+					return fmt.Errorf("report: deriving sender identity: %w", err)
 				}
-			} else if domain.IsMaterialVerb(state) && (role == "soldier" || role == "captain") {
-				// A soldier identifies itself as the task its home hosts, in
-				// exactly the form the receiver derives from the envelope's
-				// task ID; a captain identifies itself as its own home.
-				senderIdentity := home.ReceiverIDForTask(taskID)
-				senderRank := home.Rank(role)
-				if role == "captain" {
-					identity, idErr := home.ValidateCaptainProvenance(homeDir)
-					if idErr != nil {
-						return fmt.Errorf("report: deriving sender identity: %w", idErr)
-					}
-					senderIdentity = identity
-				}
-				// The receiving home's own provenance is the only authority on
-				// its rank: a captain home under Captain dispatch, the General
-				// home under direct General dispatch.
-				receiverIdentity, receiverRank, err := home.ReadHomeIdentity(parentHome)
-				if err != nil {
+				if _, _, err := home.ReadHomeIdentity(parentHome); err != nil {
 					return fmt.Errorf("report: deriving receiver identity: %w", err)
 				}
-				uplinkResult, err = orchestrator.Report(orchestrator.ReportRequest{
-					SenderHome: senderHomeForRole(role, homeDir, parentHome), ReceiverHome: parentHome,
-					SenderRank: senderRank, SenderIdentity: senderIdentity,
-					ReceiverRank: receiverRank, ReceiverID: receiverIdentity,
-					TaskID: taskID, Key: key, State: state, Message: msg,
-					Notify: func(ref home.NotificationRef) orchestrator.UplinkNotifyResult {
-						if resolveRingPolicy(ring, homeDir) == "no-ring" {
-							return orchestrator.QueuedNotification()
-						}
-						return notify(homeDir, parentHome, ref)
-					},
-				})
-				// A soldier's uplink report keeps the same .status projection
-				// DeliverWake writes, but only once the receiver holds the report:
-				// a refused report leaves no line. Captains keep their uplink-only
-				// record.
-				if role == "soldier" && (err == nil || errors.Is(err, orchestrator.ErrReportDurable)) {
-					if _, _, statusErr := orchestrator.AppendReportStatus(homeDir, taskID, state, msg, key); statusErr != nil {
-						return fmt.Errorf("report: %w", statusErr)
-					}
-				}
-				if err != nil {
-					// This failure landed after the durable commit, so the receiver
-					// already holds the report and its notification remains pending
-					// for reconciliation and retry. Re-running report is also safe:
-					// it supersedes this record rather than adding a second one.
-					if errors.Is(err, orchestrator.ErrReportDurable) {
-						return fmt.Errorf("report: %w -- the receiver already holds this report; its notification remains pending for reconciliation and retry; re-running report for this state safely supersedes it rather than adding a second one", err)
-					}
-					return fmt.Errorf("report: %w", err)
-				}
-			} else {
-				var err error
-				receipt, err = orchestrator.DeliverWake(orchestrator.DeliverRequest{
-					HomeDir: targetHome, ParentHome: parentHome, TaskID: taskID,
-					State: state, Message: msg, Key: key, Role: role,
-				})
-				if err != nil {
-					return fmt.Errorf("report: %w", err)
+			}
+			if key == "" {
+				key = "default"
+			}
+			// The key is checked where it always was: on every report but a
+			// soldier's or captain's material one, a scout's done excepted. One
+			// rule for every report would refuse keys this path accepts, or
+			// accept keys it refuses; that change waits for the Human's words.
+			material := domain.IsMaterialVerb(state) && (role == "soldier" || role == "captain")
+			if !material || (role == "soldier" && state == "done" && taskKind == taskauthority.KindScout) {
+				if !validReportKey(key) {
+					return fmt.Errorf("report: invalid terminal key %q: must be a non-empty slug of [A-Za-z0-9_-]", key)
 				}
 			}
-
-			var injectResult *ReportInjection
-			watcherID := identifyWatcher(homeDir)
-			var enqueueTimestamp, receiptTimestamp int64
-			if uplinkResult != nil {
-				outcome := "queued"
-				if uplinkResult.Notified {
-					outcome = "notified"
-				}
-				injectResult = &ReportInjection{Outcome: outcome}
-				receiptTimestamp = time.Now().Unix()
-			} else if receipt != nil {
-				enqueueTimestamp = receipt.EnqueueUnix
-				if receipt.ReceiptWritten {
-					receiptTimestamp = time.Now().Unix()
-				}
+			line := domain.ReportStatusLine(state, msg, key)
+			if role != "soldier" && role != "captain" {
+				line = domain.ReportLineText(line)
+			}
+			replay, err := orchestrator.AppendReportStatus(targetHome, taskID, line)
+			if err != nil {
+				return fmt.Errorf("report: %w", err)
+			}
+			message := fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID)
+			if replay {
+				message = fmt.Sprintf("not appended: %s: %s is already the last status line of task %s (idempotent)", state, msg, taskID)
 			}
 
 			return writeContract(cmd, Response[MessageResult]{
@@ -214,11 +144,9 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				Kind:          "report",
 				Status:        "success",
 				Data: MessageResult{
-					Message:          fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
-					Injection:        injectResult,
-					EnqueueTimestamp: enqueueTimestamp,
-					ReceiptTimestamp: receiptTimestamp,
-					WatcherIdentity:  watcherID,
+					Message:         message,
+					Noop:            replay,
+					WatcherIdentity: identifyWatcher(homeDir),
 				},
 			})
 		}),
@@ -226,8 +154,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 
 	configureContractCommand(cmd)
 	cmd.Flags().StringVar(&key, "key", "", "Optional status key/slug for correlation and idempotency")
-	cmd.Flags().StringVar(&ring, "ring", "auto", "Ring policy: auto, ring, no-ring")
 	return cmd
+}
+
+func validReportKey(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // canonicalTaskKind reads the task's kind from its canonical record. A task
@@ -249,106 +185,4 @@ func canonicalTaskKind(homeDir, taskID string) (string, error) {
 		return "", err
 	}
 	return agg.Definition.Kind, nil
-}
-
-func formatScoutBudgetEvidence(e orchestrator.ScoutBudgetEvidence) string {
-	return fmt.Sprintf("outcome=%s budget_secs=%d started_at_unix=%d observed_at_unix=%d elapsed_secs=%d", e.Outcome, e.BudgetSecs, e.StartedAtUnix, e.ObservedAtUnix, e.ElapsedSecs)
-}
-
-func enforceScoutReportBudget(homeDir, taskID string, now time.Time) error {
-	h, err := home.Open(homeDir)
-	if err != nil {
-		return err
-	}
-	auth, err := taskauthority.NewCanonical(h)
-	if err != nil {
-		return err
-	}
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		return err
-	}
-	agg, err := auth.Get(tid)
-	if err != nil {
-		return err
-	}
-	if agg.Definition.Kind != taskauthority.KindScout {
-		return nil
-	}
-	// Task-only/local report flows may not have a launch submission record; keep
-	// their existing report semantics. When launch evidence exists, its timestamp
-	// is authoritative and malformed evidence fails closed.
-	if agg.LaunchEvidence == nil {
-		return nil
-	}
-	if agg.LaunchEvidence.SubmittedAt <= 0 {
-		return fmt.Errorf("%w: task=%s", orchestrator.ErrScoutBudgetMissingTimestamp, taskID)
-	}
-	_, err = orchestrator.EnforceScoutRuntimeBudget(agg.Definition.ScoutRuntimeBudgetSecs, agg.LaunchEvidence.SubmittedAt, now.Unix(), now)
-	return err
-}
-
-func completeScoutReport(homeDir, taskID string) error {
-	h, err := home.Open(homeDir)
-	if errors.Is(err, home.ErrNotInitialized) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	auth, err := taskauthority.NewCanonical(h)
-	if err != nil {
-		return err
-	}
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		return err
-	}
-	agg, err := auth.Get(tid)
-	if errors.Is(err, taskauthority.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if agg.Definition.Kind != taskauthority.KindScout || agg.Phase == taskauthority.PhaseDone || agg.Phase == taskauthority.PhaseResolved || agg.Phase == taskauthority.PhaseRetired {
-		return nil
-	}
-	req := taskauthority.CanonicalCompleteRequest{
-		HomeID: auth.HomeID(), TaskID: tid,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		To:           taskauthority.PhaseDone, Reason: "report: scout done",
-	}
-	op, err := newCanonicalOperation("report-scout-done", req)
-	if err != nil {
-		return err
-	}
-	if _, err := auth.Complete(op, req); err != nil {
-		return err
-	}
-	if err := touchTaskMeta(homeDir, taskID); err != nil {
-		return err
-	}
-	return home.AppendStatus(homeDir, taskID, "done: report scout done")
-}
-
-func senderHomeForRole(role, homeDir, parentHome string) string {
-	if role == "soldier" {
-		return parentHome
-	}
-	return homeDir
-}
-
-func resolveRingPolicy(ring, homeDir string) string {
-	switch ring {
-	case "ring":
-		return "ring"
-	case "no-ring":
-		return "no-ring"
-	default: // auto
-		if orchestrator.IsActive(homeDir) {
-			return "no-ring"
-		}
-		return "ring"
-	}
 }

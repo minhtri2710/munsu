@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,32 +11,6 @@ import (
 )
 
 // --- Sentinel tests ---
-
-func TestSentinelMark(t *testing.T) {
-	payload := "PR #42 merged"
-	marked := Mark(payload)
-	if !strings.HasPrefix(marked, FM_INJECT_MARK) {
-		t.Errorf("Mark(%q) = %q, expected %q prefix", payload, marked, FM_INJECT_MARK)
-	}
-}
-
-func TestSentinelRoundTrip(t *testing.T) {
-	payloads := []string{
-		"PR #42 merged",
-		"needs-decision: which target branch",
-		"",
-		"done: build green",
-	}
-	for _, p := range payloads {
-		marked := Mark(p)
-		got := strings.TrimPrefix(marked, FM_INJECT_MARK)
-		if got != p {
-			t.Errorf("Mark/Marked round-trip failed: input=%q, got=%q", p, got)
-		}
-	}
-}
-
-// --- Triage tests ---
 
 func TestTriageNoQueue(t *testing.T) {
 	tmp := t.TempDir()

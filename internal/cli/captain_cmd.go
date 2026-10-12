@@ -225,7 +225,7 @@ The sweep lock is parent state/.captain-converge.lock.`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
@@ -290,7 +290,7 @@ func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLiven
 	if !recover {
 		return res
 	}
-	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Watcher: captainWatcherAdapter{}, Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Watcher: captainWatcherAdapter{}, Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 	if rr != nil {
 		res.Recover = &bootstrap.CaptainRecoverSummary{
 			Relaunched: rr.Relaunched,
