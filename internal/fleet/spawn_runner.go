@@ -2057,9 +2057,14 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	switch {
 	case r.review != nil:
 		launch.Role, launch.Branch, launch.Files = fence.RoleReviewer, "", []string{r.review.VerdictFile}
-	case r.effectiveMode == "no-mistakes":
-		if launch.GateRepo, launch.GateState, err = projectGate(primary); err != nil {
+	default:
+		if launch.Files, err = r.soldierFiles(); err != nil {
 			return fmt.Errorf("launch fence: %w", err)
+		}
+		if r.effectiveMode == "no-mistakes" {
+			if launch.GateRepo, launch.GateState, err = projectGate(primary); err != nil {
+				return fmt.Errorf("launch fence: %w", err)
+			}
 		}
 	}
 	f, err := fence.New(launch)
@@ -2084,6 +2089,20 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	r.fence = f
 	r.fenceRecord = taskauthority.FenceRecord{Applied: true, Role: string(ev.Role), ProfileDigest: ev.ProfileDigest, WritableRoots: ev.WritableRoots}
 	return nil
+}
+
+// soldierFiles are the files a soldier writes in its dispatcher's home: its
+// status file and ack log, and for a scout its current generation's report.
+func (r *Runner) soldierFiles() ([]string, error) {
+	files, err := home.SoldierFiles(r.homeDir, r.args.ID)
+	if err != nil || r.kind != taskauthority.KindScout {
+		return files, err
+	}
+	agg, err := r.taskAggregate()
+	if err != nil {
+		return nil, err
+	}
+	return append(files, ReportPath(r.homeDir, r.args.ID, agg.Generation)), nil
 }
 
 // registeredCheckouts lists every registered project's checkout and git common

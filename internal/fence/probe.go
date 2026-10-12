@@ -30,8 +30,10 @@ func (f *Fence) Wrap(argv []string) ([]string, error) {
 
 // Probe runs, under the exact profile Wrap uses, a write to an allowed root
 // (the control) and then one write to each directory the profile must refuse:
-// the primary checkout, the git common dir, and for a reviewer the checkout
-// under review and its git dir. It returns a nil error only when the control
+// the primary checkout, the git common dir, for a soldier its home roots, and
+// for a reviewer the checkout under review, its git dir and the home's state/.
+// A home root that does not exist yet (.journal, .lock) is probed by creating
+// it, which the profile must refuse too. It returns a nil error only when the control
 // succeeds and every refused write fails with "Operation not permitted". A
 // write that succeeds, a missing sandbox-exec, a profile that does not compile
 // and any other error are failures. The Evidence is returned either way.
@@ -65,6 +67,9 @@ func (f *Fence) Probe(ctx context.Context) (Evidence, error) {
 			return fail(ProbeStep{Outcome: OutcomeError, Detail: err.Error()})
 		}
 		target := filepath.Join(dir, ".fence-probe-"+hex.EncodeToString(nonce[:]))
+		if _, err := os.Lstat(dir); os.IsNotExist(err) {
+			target = dir
+		}
 		cmd := f.touchCommand(target)
 		out, runErr := run(ctx, cmd)
 		if _, statErr := os.Lstat(target); statErr == nil {

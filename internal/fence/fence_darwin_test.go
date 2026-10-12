@@ -145,8 +145,6 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "objects", "f"),
 		filepath.Join(l.common, "refs", "remotes", "f"),
 		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
-		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),
-		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
 		filepath.Join(gateRepo, "sub", "f"), filepath.Join(gateRepo, "f"), gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
@@ -194,6 +192,103 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	}
 	if _, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "refs", "heads", "rogue")); err == nil {
 		t.Error("a namespace dir other than the task's branch was created")
+	}
+}
+
+// In its dispatcher's home a soldier writes only its own status file, ack log
+// and current scout report (Files) and its harness state dir; every other path
+// under state/, data/, .journal/ and .lock/ is refused, and so is renaming a
+// root away to plant a tree of its own (G1058). Each refused row names its
+// nearest allowed neighbour. The table runs for a home outside the temp roots
+// and for one inside a temp root (shim set, as a launch sets it), where only the
+// profile's home-root deny refuses.
+func TestSoldierFenceHomeWrites(t *testing.T) {
+	for _, placement := range []string{"outside the temp roots", "inside a temp root"} {
+		t.Run(placement, func(t *testing.T) {
+			out := outsideDir(t)
+			seatEnv(t, out)
+			l := newSplitLayout(t, out)
+			if placement == "inside a temp root" {
+				l = newSplitLayout(t, "")
+			}
+			state := filepath.Join(l.home, "state")
+			data := filepath.Join(l.home, "data", "T-1")
+			status, acks, report := filepath.Join(state, "T-1.status"), filepath.Join(state, "T-1.acks"), filepath.Join(data, "report-g1.md")
+			metaLock := filepath.Join(state, "T-1.meta.lock")
+			shim := filepath.Join(l.home, "git-shim", "bin")
+			mkdirs(t, shim, data, filepath.Join(state, "fleet-registry"), filepath.Join(state, "task-authority", "tasks", "T-1"),
+				filepath.Join(state, ".inbox", "general"))
+			if err := os.Chmod(state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range []string{status, metaLock} {
+				if err := os.WriteFile(f, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			launch := l.soldier()
+			launch.HarnessStateDir = l.claudeStateDir()
+			launch.Files = []string{status, acks, report}
+			launch.PathDirs, launch.ShimDir = []string{shim, "/usr/bin"}, shim
+			f := mustNew(t, launch)
+			chmod := func(mode, path string) []string {
+				return []string{"/usr/bin/perl", "-e", "chmod(" + mode + ", $ARGV[0]) or die \"$!\\n\"", path}
+			}
+			flock := []string{"/usr/bin/perl", "-MFcntl=:DEFAULT,:flock", "-e",
+				`sysopen(F, $ARGV[0], O_RDONLY|O_CREAT) or die "$!\n"; flock(F, LOCK_EX) or die "$!\n"`, metaLock}
+			sh := func(script string) []string { return []string{"/bin/sh", "-c", script} }
+			tests := []struct {
+				name    string
+				argv    []string
+				refused bool
+				absent  string // a path a refused write must not have created
+			}{
+				{"another task's status (allowed: own status append)", []string{touchBin, filepath.Join(state, "T-2.status")}, true, filepath.Join(state, "T-2.status")},
+				{"own status append", sh(`printf 'working: x\n' >> ` + status), false, ""},
+				{"a new directory in state/ (allowed: own status atomic rename)", []string{"/bin/mkdir", filepath.Join(state, "x")}, true, filepath.Join(state, "x")},
+				{"own status atomic rename through its temp sibling", sh(`printf 'y\n' > ` + status + `.tmp.1.ab && /bin/mv ` + status + `.tmp.1.ab ` + status), false, ""},
+				{"an ack in the dispatcher's inbox (allowed: own ack log)", []string{touchBin, filepath.Join(state, ".inbox", "general", "m1.ack")}, true, filepath.Join(state, ".inbox", "general", "m1.ack")},
+				{"own ack log, created", []string{touchBin, acks}, false, ""},
+				{"next generation's report (allowed: own current report)", []string{touchBin, filepath.Join(data, "report-g2.md")}, true, filepath.Join(data, "report-g2.md")},
+				{"own brief (allowed: own current report)", []string{touchBin, filepath.Join(data, "brief.md")}, true, filepath.Join(data, "brief.md")},
+				{"own current report", []string{touchBin, report}, false, ""},
+				{"own task document, which holds its review verdict (allowed: own status)", []string{touchBin, filepath.Join(state, "task-authority", "tasks", "T-1", "current.json")}, true, filepath.Join(state, "task-authority", "tasks", "T-1", "current.json")},
+				{"a delivery authorization (allowed: own status)", []string{"/bin/mkdir", "-p", filepath.Join(state, "task-authority", "delivery", "T-1")}, true, filepath.Join(state, "task-authority", "delivery")},
+				{"a gate record (allowed: own status)", []string{"/bin/mkdir", "-p", filepath.Join(state, "task-authority", "gates", "T-1")}, true, filepath.Join(state, "task-authority", "gates")},
+				{"the project registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "projects.json")}, true, filepath.Join(state, "fleet-registry", "projects.json")},
+				{"the captain registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "captains.json")}, true, filepath.Join(state, "fleet-registry", "captains.json")},
+				{"the binding registry (allowed: own status)", []string{touchBin, filepath.Join(state, "fleet-registry", "bindings.json")}, true, filepath.Join(state, "fleet-registry", "bindings.json")},
+				{"own meta (allowed: own status)", []string{touchBin, filepath.Join(state, "T-1.meta")}, true, filepath.Join(state, "T-1.meta")},
+				{"own report cursor (allowed: own status)", []string{touchBin, filepath.Join(state, "T-1.report-cursor")}, true, filepath.Join(state, "T-1.report-cursor")},
+				{"the wake queue (allowed: own status)", []string{touchBin, filepath.Join(state, ".wake-queue")}, true, filepath.Join(state, ".wake-queue")},
+				{"the event log (allowed: own status)", []string{touchBin, filepath.Join(state, ".event-log")}, true, filepath.Join(state, ".event-log")},
+				{"a journal record (allowed: own status)", []string{touchBin, filepath.Join(l.home, ".journal", "fleet-projects.x.json")}, true, filepath.Join(l.home, ".journal", "fleet-projects.x.json")},
+				{"a scope lock, created (allowed: flock of own existing meta lock)", []string{touchBin, filepath.Join(l.home, ".lock", "dispatch.lock")}, true, filepath.Join(l.home, ".lock", "dispatch.lock")},
+				{"flock of own existing meta lock", flock, false, ""},
+				{"chmod of state/, even to its own mode (allowed: chmod of own status)", chmod("0700", state), true, ""},
+				{"chmod of own status", chmod("0600", status), false, ""},
+				{"renaming state/ away (allowed: own status atomic rename)", []string{"/bin/mv", state, state + ".x"}, true, state + ".x"},
+				{"renaming data/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "data"), filepath.Join(l.home, "data.x")}, true, filepath.Join(l.home, "data.x")},
+				{"own harness state dir", sh(`/bin/mkdir -p ` + launch.HarnessStateDir + ` && printf x > ` + launch.HarnessStateDir + `/f`), false, ""},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					o, err := fenced(t, f, tt.argv...)
+					if !tt.refused {
+						if err != nil {
+							t.Fatalf("%q was refused: %v %s", tt.argv, err, o)
+						}
+						return
+					}
+					if err == nil || !strings.Contains(o, "not permitted") {
+						t.Errorf("%q was not refused by the fence: %v %s", tt.argv, err, o)
+					}
+					if _, statErr := os.Lstat(tt.absent); tt.absent != "" && statErr == nil {
+						t.Errorf("%s exists after a write the fence must refuse", tt.absent)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -278,6 +373,7 @@ func TestSeatDirRefusals(t *testing.T) {
 	build := harness.SeatBuildDir(l.home)
 	sl := l.soldier()
 	sl.HarnessStateDir = l.claudeStateDir()
+	sl.Files = []string{filepath.Join(state, "T-1.status")}
 	rl := l.reviewer()
 	rl.HarnessStateDir = filepath.Join(state, "R-1."+harness.ClaudeConfigDirSuffix)
 	mkdirs(t, sl.HarnessStateDir, rl.HarnessStateDir)
@@ -373,6 +469,7 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	mkdirs(t, filepath.Join(l.stateDir(), "bin"), piAgentBin)
 	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, "/usr/bin"}
 	sl, rl := l.soldier(), l.reviewer()
+	sl.Files = []string{filepath.Join(state, "T-1.status")}
 	sl.PathDirs, rl.PathDirs = pathDirs, pathDirs
 	sl.ShimDir, rl.ShimDir = shim, shim
 	soldier, reviewer := mustNew(t, sl), mustNew(t, rl)
@@ -418,16 +515,13 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"pi soldier writes its agent dir", piSoldier, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
 		{"pi soldier writes beside the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(uhome, ".pi", "agent", "f")}, false, "", ""},
 		{"pi reviewer writes its agent dir", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
-		{"soldier chmods its state dir", soldier, []string{"/bin/chmod", "700", state}, false, "", ""},
 		{"soldier chmods a harness root that holds a PATH dir", soldier, []string{"/bin/chmod", "700", claudeCache}, false, "", ""},
-		{"soldier creates a directory under the state dir", soldier, []string{"/bin/mkdir", filepath.Join(state, "newdir")}, false, "", ""},
 		{"pi soldier chmods its own state dir", piSoldier, []string{"/bin/chmod", "700", l.stateDir()}, false, "", ""},
 		{"soldier chmods a PATH dir under a harness root to 000", soldier, []string{"/bin/chmod", "000", claudeBin}, true, "", claudeBin},
 		{"soldier creates a file in a PATH dir inside its worktree", soldier, []string{touchBin, filepath.Join(wtBin, "go")}, true, filepath.Join(wtBin, "go"), ""},
 		{"soldier writes beside a PATH dir inside its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "node_modules", "f")}, false, "", ""},
 		{"soldier chmods the directory above a PATH dir inside its worktree to 000", soldier, []string{"/bin/chmod", "000", filepath.Dir(wtBin)}, true, "", wtBin},
 		{"soldier chmods its worktree", soldier, []string{"/bin/chmod", "700", l.worktree}, false, "", ""},
-		{"soldier chmods the state dir of a home under a temp root", tmpHome, []string{"/bin/chmod", "700", filepath.Join(tl.home, "state")}, false, "", ""},
 		{"soldier chmods a home under a temp root to 000", tmpHome, []string{"/bin/chmod", "000", tl.home}, true, "", tshim},
 		{"soldier chmods the dir holding a home under a temp root to 000", tmpHome, []string{"/bin/chmod", "000", filepath.Dir(tl.home)}, true, "", tshim},
 		{"soldier changes the temp root holding the home", tmpHome, []string{touchBin, tmpRoot}, true, "", tshim},
@@ -476,7 +570,7 @@ func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 		launch  Launch
 		refused []string
 	}{
-		{"soldier", l.soldier(), []string{l.primary, l.common}},
+		{"soldier", l.soldier(), append([]string{l.primary, l.common}, homeRoots(l.home)...)},
 		{"reviewer", l.reviewer(), []string{l.primary, l.common, l.worktree, l.gitDir, filepath.Join(l.home, "state")}},
 		{"home-less reviewer", func() Launch { x := l.reviewer(); x.Home = ""; return x }(), []string{l.primary, l.common, l.worktree, l.gitDir}},
 	}
@@ -517,6 +611,30 @@ func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 			}
 		})
 	}
+	// A home root that does not exist yet is probed by creating it.
+	t.Run("soldier whose home has no journal yet", func(t *testing.T) {
+		ml := newLayout(t)
+		journal := filepath.Join(ml.home, ".journal")
+		if err := os.Remove(journal); err != nil {
+			t.Fatal(err)
+		}
+		ev, err := mustNew(t, ml.soldier()).Probe(context.Background())
+		if err != nil {
+			t.Fatalf("Probe: %v", err)
+		}
+		var step *ProbeStep
+		for i := range ev.Steps {
+			if ev.Steps[i].Command[4] == journal {
+				step = &ev.Steps[i]
+			}
+		}
+		if step == nil || step.Outcome != OutcomeRefused {
+			t.Fatalf("steps = %+v; want the journal's creation refused", ev.Steps)
+		}
+		if _, err := os.Lstat(journal); err == nil {
+			t.Fatal("the probe created the journal")
+		}
+	})
 }
 
 func TestProbeRemovesItsControlDir(t *testing.T) {
@@ -535,6 +653,9 @@ func TestProbeRemovesItsControlDir(t *testing.T) {
 
 func TestProbeFailureOutcomes(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	open := "(version 1)\n(allow default)\n"
 	tests := []struct {
 		name    string
@@ -545,7 +666,8 @@ func TestProbeFailureOutcomes(t *testing.T) {
 		{"a profile that refuses nothing is open", &Fence{profile: open, digest: "d", refuse: []string{dir}}, OutcomeWritten, 2},
 		{"a profile that does not compile fails the control", &Fence{profile: "(version 1\n(bogus", digest: "d", refuse: []string{dir}}, OutcomeControlFailed, 1},
 		{"a profile that refuses the control write fails the control", &Fence{profile: "(version 1)\n(allow default)\n(deny file-write*)\n", digest: "d", refuse: []string{dir}}, OutcomeControlFailed, 1},
-		{"a refusal that is not the sandbox's is an error", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "missing")}}, OutcomeError, 2},
+		{"a refusal that is not the sandbox's is an error", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "file", "sub")}}, OutcomeError, 2},
+		{"a missing refused dir the profile lets the seat create is open", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "missing")}}, OutcomeWritten, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -561,7 +683,7 @@ func TestProbeFailureOutcomes(t *testing.T) {
 			}
 		})
 	}
-	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("a written probe file was left behind: %v", entries)
 	}
 	t.Run("an unusable temp root is an error with no command", func(t *testing.T) {
@@ -577,10 +699,6 @@ func TestNewRefusals(t *testing.T) {
 	out := outsideDir(t)
 	seatEnv(t, out)
 	l := newLayout(t)
-	// h2 holds a primary checkout inside its state root.
-	h2 := filepath.Join(l.root, "h2")
-	pri := filepath.Join(h2, "state", "pri")
-	mkdirs(t, filepath.Join(pri, ".git", "worktrees", "wt"))
 	tests := []struct {
 		name string
 		mut  func(*Launch)
@@ -593,9 +711,6 @@ func TestNewRefusals(t *testing.T) {
 		{"a file inside the git common dir", func(x *Launch) { x.Files = []string{filepath.Join(l.common, "v.json")} }, "overlaps protected path"},
 		{"a file inside the git dir", func(x *Launch) { x.Files = []string{filepath.Join(l.gitDir, "v.json")} }, "overlaps protected path"},
 		{"a relative PATH directory", func(x *Launch) { x.PathDirs = []string{"/usr/bin", "bin"} }, `PATH directory "bin" is not absolute`},
-		{"a home whose state root holds the primary", func(x *Launch) {
-			x.Home, x.Primary, x.CommonDir, x.GitDir = h2, pri, filepath.Join(pri, ".git"), filepath.Join(pri, ".git", "worktrees", "wt")
-		}, "overlaps protected path"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

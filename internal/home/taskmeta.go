@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -327,15 +328,22 @@ func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
 		return false, fmt.Errorf("creating state directory: %w", err)
 	}
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	// A soldier writes its own status file and so can replace it. An unfenced
+	// append must not follow what it put there into another task's documents
+	// or the fleet registries. Human words (domain.Words): grantor the Human,
+	// channel supervisor-relay:dialog, words=selected, G1058: "A soldier's
+	// write fence lets it write only its own task's status, report and request
+	// files; it can never write another task's documents, any review verdict,
+	// delivery authorization or gate record, or the fleet registries
+	// (projects.json, captains.json)."
+	f, err := openRegular(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return false, fmt.Errorf("opening status file: %w", err)
 	}
-	if err := secureFile(p); err != nil {
-		f.Close()
+	defer f.Close()
+	if err := secureOpened(f); err != nil {
 		return false, fmt.Errorf("securing status file: %w", err)
 	}
-	defer f.Close()
 	if _, err := f.WriteString(EscapeLine(line) + "\n"); err != nil {
 		return false, fmt.Errorf("writing status line: %w", err)
 	}
@@ -346,7 +354,8 @@ func appendStatus(homeDir string, id, line string, once bool) (bool, error) {
 }
 
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<durable-stem>.status,
-// decoded as AppendStatus was given them.
+// decoded as AppendStatus was given them. Only a regular file is read, as
+// ReadRegularFile reads (Human words G1086, quoted there).
 func ReadStatus(homeDir string, id string) ([]string, error) {
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
@@ -355,7 +364,7 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 	if err := validateStatePath(homeDir, p, false); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(p)
+	f, err := openRegular(p, os.O_RDONLY, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // no status yet
@@ -367,6 +376,24 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 	var lines []string
 	err = EachLine(f, func(line string) { lines = append(lines, UnescapeLine(line)) })
 	return lines, err
+}
+
+// ReadRegularFile reads a file a fenced soldier can write (its status, ack log
+// or scout report) for an unfenced reader: only a regular file, never through
+// a symlink, never blocking on a FIFO. Human words (domain.Words): grantor
+// the Human, channel supervisor-relay:dialog, words=selected, G1086, whose
+// section 1 conditions include "PR-3 O_NOFOLLOW+regular-file": "Duyệt, có R3
+// (Recommended): option 1 + 3 PRs with section 1 conditions; R3 worded as an
+// accident guard (not a boundary), error names munsu report <state>; gate
+// record = munsu task-authority gates, no-mistakes gate state a separate fence
+// task."
+func ReadRegularFile(path string) ([]byte, error) {
+	f, err := openRegular(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 // StatusHasLine reports whether the task's status holds line. A status that
@@ -510,6 +537,22 @@ func lockPath(homeDir, id string) (string, error) {
 // acquireMetaLock acquires an exclusive advisory lock on the meta lock file.
 // Uses flock(2) which is automatically released when the process exits.
 // Returns the locked file and a cleanup function.
+// SoldierFiles returns the only files a soldier of task id writes in this
+// home: its status file and its ack log (see Store.ackLogPath). It first
+// creates the task's meta lock if it is missing: the soldier's status append
+// takes that lock, and its fence lets it lock the file but not create it.
+func SoldierFiles(homeDir, id string) ([]string, error) {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return nil, err
+	}
+	unlock()
+	// The lock path above already validated id, so these cannot fail.
+	status, _ := StatusFilePath(homeDir, id)
+	acks, _ := DurableFilePath(StateDir(homeDir), id, ".acks")
+	return []string{status, acks}, nil
+}
+
 func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 	lp, err := lockPath(homeDir, id)
 	if err != nil {

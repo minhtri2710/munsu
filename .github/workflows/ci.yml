@@ -173,8 +173,8 @@ jobs:
           TestProbeFenceOnAHostWithoutAFence
           TestLaunchRecordsTheSeatOfTheLaunch
           TestProbeFenceRefusesTheSeatsPathDirs
-          TestFencedSoldierAppendsItsStatus
-          TestFencedSoldierOpensItsHome
+          TestFencedSoldierWritesOnlyItsOwnFiles
+          TestFencedSoldierReadsCommittedTaskDocuments
           TestFencedSoldierCannotTakeTheGitShimOffItsPath
           TestFencedClaudeLaunchRunsFromItsOwnConfigDir
           TestFencedClaudeReviewerWritesItsOwnConfigDir

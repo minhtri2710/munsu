@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -308,14 +309,13 @@ func formatCaptainStatusLines(stateDir string) []string {
 
 // readLastLine reads the last non-empty line from a file.
 func readLastLine(path string) string {
-	f, err := os.Open(path)
+	data, err := home.ReadRegularFile(path)
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
 
 	var lastLine string
-	_ = home.EachLine(f, func(text string) {
+	_ = home.EachLine(bytes.NewReader(data), func(text string) {
 		if strings.TrimSpace(text) != "" {
 			lastLine = text
 		}
