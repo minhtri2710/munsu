@@ -92,7 +92,6 @@ func mustCreateFleetTask(t *testing.T, homeDir, taskID, kind string) *taskauthor
 	}
 	if kind == "scout" {
 		req.ScoutScope = "investigate scope"
-		req.ScoutRuntimeBudgetSecs = 300
 	}
 	if _, err := auth.Create(mustFleetOperation(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatalf("Create(%s): %v", taskID, err)

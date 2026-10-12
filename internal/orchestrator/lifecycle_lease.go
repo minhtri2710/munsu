@@ -1,10 +1,15 @@
 package orchestrator
 
 import (
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type ClaimedWakeRecord = home.ClaimedWakeRecord
@@ -18,19 +23,26 @@ func ClaimWakes(h, c string, seconds, limit int) (*ClaimResult, error) {
 	return result, err
 }
 
-// UnacceptedReportsHint tells the receiver what to do with the reports a settle
-// or an AFK return could not accept.
-const UnacceptedReportsHint = "the reports stay pending: run `munsu inbox ack '<ref>'` once the cause is fixed, or `munsu teardown <id> --force` to retire the task past them"
-
-// UnacceptedReport is an uplink report whose envelope could not be accepted when
-// the wake or digest entry that named it was settled. The settle itself is never
-// refused for it; the report is returned as data so the receiver can retry.
+// UnacceptedReport is a report whose settlement could not finish its work when
+// the wake or digest entry that carried it was settled. The settle itself is
+// never refused for it; the report is returned as data, with the hint that
+// says how to finish by hand.
 type UnacceptedReport struct {
 	Key     string `json:"key"`
 	Payload string `json:"payload,omitempty"`
 	Ref     string `json:"ref"`
 	Reason  string `json:"reason"`
+	Hint    string `json:"hint"`
 }
+
+const (
+	// scoutNotCompletedHint answers a scout completion that failed after the
+	// report was settled.
+	scoutNotCompletedHint = "the report is settled, but completing its scout task failed: run `munsu task done <id>` once the cause is fixed"
+	// reportNotSettledHint answers a settlement that failed: the wake or digest
+	// entry is consumed anyway, so nothing settles the report again.
+	reportNotSettledHint = "the report is NOT settled and still holds its task's teardown, and nothing will settle it again: once the cause is fixed, retire the task with `munsu teardown <id> --force`"
+)
 
 func (u UnacceptedReport) String() string {
 	if u.Payload == "" {
@@ -39,83 +51,121 @@ func (u UnacceptedReport) String() string {
 	return fmt.Sprintf("%s: %s: %s: %s", u.Key, u.Payload, u.Reason, u.Ref)
 }
 
-// AckWakes acknowledges claimed wakes. A wake that points at an uplink report
-// also accepts that report: the wake is the receiver's acknowledgment, so the
-// sender's pending report retires on its next recovery pass without a separate
-// inbox ack. The wake is acked whether or not its report could be accepted;
-// failed acceptances are returned.
+// AckWakes acknowledges claimed wakes. A report wake settles its report first:
+// the wake is the receiver's acknowledgment. The wake is acked whether or not
+// its report's work finished; failures are returned.
 func AckWakes(h, id string, events []string) ([]UnacceptedReport, error) {
-	unaccepted, err := acceptUplinkReports(h, id, events)
+	unaccepted, err := settleReportWakes(h, id, events)
 	if err != nil {
 		return nil, err
 	}
 	return unaccepted, home.AckWakes(h, id, events)
 }
 
-// ResolveWake resolves one claimed wake and, like AckWakes, accepts the uplink
-// report the wake points at without letting a failed acceptance block the
-// resolution.
+// ResolveWake resolves one claimed wake and, like AckWakes, settles the report
+// a report wake carries without letting a failure block the resolution.
 func ResolveWake(h, leaseID, eventID, summary string) ([]UnacceptedReport, error) {
 	leaseID, eventID, summary, err := home.NormalizeWakeResolution(leaseID, eventID, summary)
 	if err != nil {
 		return nil, err
 	}
-	unaccepted, err := acceptUplinkReports(h, leaseID, []string{eventID})
+	unaccepted, err := settleReportWakes(h, leaseID, []string{eventID})
 	if err != nil {
 		return nil, err
 	}
 	return unaccepted, home.ResolveWake(h, leaseID, eventID, summary)
 }
 
-// acceptUplinkReports runs before the wake leaves the lease, so a crash between
-// the two steps replays the idempotent ack instead of stranding the report. A
-// lease that is already gone holds nothing to accept; the wake mutation reports
-// that case. An acceptance failure is data, never an error.
-func acceptUplinkReports(h, leaseID string, eventIDs []string) ([]UnacceptedReport, error) {
+// settleReportWakes runs before the wake leaves the lease, so a crash between
+// the two steps settles the report again instead of stranding it. A lease that
+// is already gone holds nothing to settle; the wake mutation reports that case.
+func settleReportWakes(h, leaseID string, eventIDs []string) ([]UnacceptedReport, error) {
 	wakes, err := home.LeaseWakes(h, leaseID)
 	if err != nil {
 		return nil, err
 	}
 	var unaccepted []UnacceptedReport
-	acceptor := uplinkAcceptor{home: h}
 	for _, wake := range wakes {
-		if wake.Ref == "" || !slices.Contains(eventIDs, wake.Epoch+":"+wake.Seq) {
+		if wake.Kind != home.ReportWakeKind || !slices.Contains(eventIDs, wake.Epoch+":"+wake.Seq) {
 			continue
 		}
-		if err := acceptor.accept(wake.Ref); err != nil {
-			unaccepted = append(unaccepted, UnacceptedReport{Key: wake.Key, Payload: wake.Payload, Ref: wake.Ref, Reason: err.Error()})
+		if u := settleReport(h, wake.Key, wake.Payload, wake.Ref); u != nil {
+			unaccepted = append(unaccepted, *u)
 		}
 	}
 	return unaccepted, nil
 }
 
-// uplinkAcceptor accepts the uplink reports a General (or Captain) home has
-// received, by the NotificationRef a wake or digest entry carries. It is the one
-// place a wake counts as the receiver's acknowledgment: the wake resolve and ack
+// settleReport settles one report its parent received. A scout's done report
+// completes the scout's task; then the report stops holding the task's
+// teardown. It is the one place a report is settled: the wake resolve and ack
 // paths and the AFK return all go through it.
-type uplinkAcceptor struct {
-	home     string
-	receiver *home.Receiver
+func settleReport(h, taskID, payload, ref string) *UnacceptedReport {
+	var reasons, hints []string
+	if err := completeScoutOnReport(h, taskID, payload); err != nil {
+		reasons = append(reasons, "completing scout task: "+err.Error())
+		hints = append(hints, scoutNotCompletedHint)
+	}
+	if err := home.SettleReport(h, taskID, ref); err != nil {
+		reasons = append(reasons, "settling report: "+err.Error())
+		hints = []string{reportNotSettledHint}
+	}
+	if len(reasons) == 0 {
+		return nil
+	}
+	return &UnacceptedReport{Key: taskID, Payload: payload, Ref: ref, Reason: strings.Join(reasons, "; "), Hint: strings.Join(hints, "; ")}
 }
 
-// accept acks the envelope ref names with Receiver.Ack. A superseded report is
-// skipped: its replacement has its own wake. Every Ack failure, a conflicting
-// outcome included, is returned for the caller to report.
-func (a *uplinkAcceptor) accept(rawRef string) error {
-	ref, err := home.ParseNotificationRef(rawRef)
+// completeScoutOnReport commits a scout's completion when its parent settles
+// the scout's done report. Any other report, a task munsu does not track, and a
+// scout already terminal complete nothing.
+func completeScoutOnReport(h, taskID, payload string) error {
+	if domain.LineVerb(strings.TrimPrefix(payload, taskID+": ")) != "done" {
+		return nil
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return nil
+	}
+	hm, err := home.Open(h)
+	if errors.Is(err, home.ErrNotInitialized) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if home.NewStore(a.home).IsSuperseded(ref.SenderIdentity, ref.MessageID) {
+	auth, err := taskauthority.NewCanonical(hm)
+	if err != nil {
+		return err
+	}
+	agg, err := auth.Get(tid)
+	if errors.Is(err, taskauthority.ErrNotFound) {
 		return nil
 	}
-	if a.receiver == nil {
-		if a.receiver, err = home.NewReceiver(a.home); err != nil {
-			return fmt.Errorf("creating receiver: %w", err)
-		}
+	if err != nil {
+		return err
 	}
-	if _, err := a.receiver.Ack(ref); err != nil {
-		return fmt.Errorf("accepting uplink report %s: %w", ref.MessageID, err)
+	if agg.Definition.Kind != taskauthority.KindScout || agg.Phase == taskauthority.PhaseDone || agg.Phase == taskauthority.PhaseResolved || agg.Phase == taskauthority.PhaseRetired {
+		return nil
 	}
-	return nil
+	req := taskauthority.CanonicalCompleteRequest{
+		HomeID: auth.HomeID(), TaskID: tid,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		To:           taskauthority.PhaseDone, Reason: "report: scout done",
+	}
+	var nonce [12]byte
+	rand.Read(nonce[:])
+	opID, err := domain.NewOperationID(fmt.Sprintf("report-scout-done-%x", nonce[:]))
+	if err != nil {
+		return err
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return err
+	}
+	if _, err := auth.Complete(op, req); err != nil {
+		return err
+	}
+	// The .meta mtime is the staleness witness of the task's check artifacts.
+	return home.UpdateMeta(h, taskID, func(map[string]string) error { return nil })
 }

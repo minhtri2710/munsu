@@ -77,7 +77,7 @@ func newBriefCmd() *cobra.Command {
 				return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 			}
 
-			scoutScope, scoutBudget := "", int64(0)
+			scoutScope := ""
 			var scoutGeneration taskauthority.Generation
 			if scout {
 				if !canonicalExists {
@@ -87,7 +87,6 @@ func newBriefCmd() *cobra.Command {
 					return fmt.Errorf("task %q is not a scout", id)
 				}
 				scoutScope = agg.Definition.ScoutScope
-				scoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 				scoutGeneration = agg.Generation
 			}
 			review := canonicalExists && agg.Definition.Kind == taskauthority.KindReview
@@ -95,7 +94,7 @@ func newBriefCmd() *cobra.Command {
 				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
 				Review: review, ReviewTask: agg.Definition.ReviewTaskID, ReviewHead: agg.Definition.ReviewHead,
 				Mode: resolvedMode, Yolo: projYolo,
-				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
+				ScoutScope: scoutScope,
 				Generation: scoutGeneration, TamperCheck: tamperCheck,
 			}
 
@@ -408,22 +407,12 @@ func runGuardBlocking(homeDir string) error {
 	// Loop guard: stop_hook_active means the harness has already been forced
 	// to continue one turn. Allow the stop by exiting 0.
 	if stopHookActive {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
 	// Check scope: only guard primary checkouts
 	cls := fleet.Classify(homeDir)
 	if cls.Err != nil || cls.Identity != fleet.Primary {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
@@ -437,11 +426,6 @@ func runGuardBlocking(homeDir string) error {
 
 	// No in-flight work → safe to end turn
 	if inFlight == 0 {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
@@ -450,11 +434,6 @@ func runGuardBlocking(homeDir string) error {
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
@@ -489,22 +468,12 @@ func runGuardGrok(homeDir string) error {
 	// Loop guard: stop_hook_active means Grok has already been forced
 	// to continue one turn. Allow the stop by exiting 0.
 	if stopHookActive {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
 	// Check scope: only guard primary checkouts
 	cls := fleet.Classify(homeDir)
 	if cls.Err != nil || cls.Identity != fleet.Primary {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
@@ -518,11 +487,6 @@ func runGuardGrok(homeDir string) error {
 
 	// No in-flight work -> safe to end turn
 	if inFlight == 0 {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
@@ -531,11 +495,6 @@ func runGuardGrok(homeDir string) error {
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
-		if err := checkPendingRelayObligations(homeDir); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			exitWithCode(2)
-			return nil
-		}
 		return nil
 	}
 
@@ -558,7 +517,6 @@ func runGuardGrok(homeDir string) error {
 // runGuardAgy implements the agy Stop hook guard.
 // agy Stop hooks are active: stdout decision JSON gates the turn end.
 // - fullyIdle=true: allow stop with {"decision":"allow"}
-// - pending relay obligations: continue with {"decision":"continue","reason":"..."}
 // - Blind turn: continue with {"decision":"continue","reason":"..."}
 // - Healthy: allow stop with {"decision":"allow"}
 // All paths exit 0 because agy gates on the stdout decision field, NOT exit code.
@@ -573,16 +531,6 @@ func runGuardAgy(homeDir string) error {
 				fullyIdle = true
 			}
 		}
-	}
-
-	// Obligation gate: check before any allow decision
-	if err := checkPendingRelayObligations(homeDir); err != nil {
-		continueJSON, _ := json.Marshal(map[string]interface{}{
-			"decision": "continue",
-			"reason":   err.Error(),
-		})
-		fmt.Fprintln(os.Stdout, string(continueJSON))
-		return nil
 	}
 
 	// fullyIdle means the agent says it's completely finished — allow the stop
@@ -647,36 +595,6 @@ func runGuardAgy(homeDir string) error {
 		"reason":   reason,
 	})
 	fmt.Fprintln(os.Stdout, string(continueJSON))
-	return nil
-}
-
-// checkPendingRelayObligations checks for un-acked terminal receipts with material
-// status. It is BLOCKING: returns an error if material relay is pending. Fail-closed
-// on read errors. Checks both homeDir and MUNSU_PARENT_STATUS (captain home).
-func checkPendingRelayObligations(homeDir string) error {
-	// Collect homes to check: own home + parent home (for soldiers, receipts
-	// live in captain-owned state under MUNSU_PARENT_STATUS).
-	homes := []string{homeDir}
-	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome != "" && parentHome != homeDir {
-		homes = append(homes, parentHome)
-	}
-
-	for _, h := range homes {
-		receipts, err := orchestrator.ListPendingReceipts(h)
-		if err != nil {
-			return fmt.Errorf("obligation gate fail-closed: reading terminal receipts from %s: %w", h, err)
-		}
-		for _, r := range receipts {
-			has, err := orchestrator.MaterialReportExists(h, r.TaskID)
-			if err != nil {
-				return fmt.Errorf("obligation gate fail-closed: checking material report for task %s in %s: %w", r.TaskID, h, err)
-			}
-			if has {
-				return fmt.Errorf("material relay pending: task %s has un-acked terminal receipt (state=%s) in %s; re-run 'munsu report %s <msg>' for that task to close the handoff, or use --force", r.TaskID, r.State, h, r.State)
-			}
-		}
-	}
-
 	return nil
 }
 

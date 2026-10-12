@@ -2,10 +2,8 @@ package orchestrator_test
 
 import (
 	"fmt"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,27 +40,6 @@ func TestReliablePath_DuplicateWakeIdempotency(t *testing.T) {
 	}
 	if len(records) != 2 {
 		t.Fatalf("drained %d, want 2", len(records))
-	}
-}
-
-// TestReliablePath_ExactTaskKeyRelay proves receipt with key round-trips.
-func TestReliablePath_ExactTaskKeyRelay(t *testing.T) {
-	home := t.TempDir()
-	taskID := "test-task"
-	termKey := "my-key"
-
-	orchestrator.WriteReceipt(home, taskID, termKey, "done", "delivered")
-	pending, _ := orchestrator.ListPendingReceipts(home)
-	if len(pending) != 1 {
-		t.Fatalf("pending = %d, want 1", len(pending))
-	}
-	if pending[0].TaskID != taskID || pending[0].TermKey != termKey {
-		t.Errorf("pending = %+v", pending[0])
-	}
-
-	orchestrator.WriteAck(home, taskID, termKey)
-	if !orchestrator.IsReceiptAcked(home, taskID, termKey) {
-		t.Fatal("IsReceiptAcked false after WriteAck")
 	}
 }
 
@@ -167,53 +144,6 @@ func TestConfigRereadWake_Visibility(t *testing.T) {
 	if orchestrator.HasQueuedWakes(home) {
 		t.Fatal("HasQueuedWakes true after drain")
 	}
-}
-
-// TestLiteralFailClosedTeardown_NoForce proves that standard watcher recovery
-// uses literal fail-closed teardown (without --force) and does not admit
-// --force or dynamic variants. This guards against regression where recovery
-// might bypass safety checks.
-func TestLiteralFailClosedTeardown_NoForce(t *testing.T) {
-	home := t.TempDir()
-
-	// Create a minimal task state so teardown has something to check.
-	stateDir := filepath.Join(home, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatalf("state dir: %v", err)
-	}
-
-	// No status file — teardown would close phases but there's no meta
-	// or worktree to check. The key assertion is that the standard
-	// (non-force) path is used.
-	taskID := "test-task"
-
-	// Write a minimal meta file that would pass the kind check.
-	metaContent := "kind=ship\nworktree=" + home + "\n"
-	metaPath, err := mhome.MetaFilePath(home, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
-		t.Fatalf("meta: %v", err)
-	}
-
-	// No status file means MaterialReportExists returns false (no material state).
-	// The teardown uplink check should pass (no report to relay).
-	// Verify by checking MaterialReportExists directly.
-	hasMaterial, err := orchestrator.MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("MaterialReportExists: %v", err)
-	}
-	if hasMaterial {
-		t.Fatal("MaterialReportExists true without status file")
-	}
-
-	// With no material report, uplinkCheck passes and teardown proceeds
-	// with the literal fail-closed path (not --force). The safety check
-	// (shipSafetyCheck) would fail because there's no real git worktree,
-	// but that's expected. The key assertion is the literal path is used.
-	_ = home
-	_ = taskID
 }
 
 func TestTypedDiagnostics_WatcherIdentitySummary(t *testing.T) {

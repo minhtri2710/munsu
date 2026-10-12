@@ -1133,35 +1133,6 @@ func TestStore_FullFlow(t *testing.T) {
 	}
 }
 
-// --- ListAllPending across identities ---
-
-func TestStore_ListAllPending(t *testing.T) {
-	home := t.TempDir()
-	store := mhome.NewStore(home)
-
-	envs := []*mhome.Envelope{
-		{MessageID: "a-1", SenderIdentity: "alpha", Payload: "a1"},
-		{MessageID: "a-2", SenderIdentity: "alpha", Payload: "a2"},
-		{MessageID: "b-1", SenderIdentity: "beta", Payload: "b1"},
-	}
-	for _, e := range envs {
-		e.SenderRank = mhome.RankSoldier
-		e.ReceiverRank = mhome.RankCaptain
-		e.ReceiverID = "captain-1"
-		if err := store.WritePending(e); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	all, err := store.ListAllPending()
-	if err != nil {
-		t.Fatalf("ListAllPending: %v", err)
-	}
-	if len(all) != 3 {
-		t.Fatalf("expected 3 pending total, got %d", len(all))
-	}
-}
-
 // --- Recovery ---
 
 func TestRecoverInbox_AlreadyAcked(t *testing.T) {
@@ -1214,18 +1185,6 @@ func TestRecoverInbox_SkipOnMarker(t *testing.T) {
 	attempt := RecoverInboxWithSender(&deliverySender{}, home, env)
 	if !attempt.Skipped {
 		t.Error("expected Skipped when marker exists")
-	}
-}
-
-func TestRecoverInbox_SkipsUplinkEnvelope(t *testing.T) {
-	for _, env := range []*mhome.Envelope{
-		{MessageID: "soldier-up", Kind: "uplink-report", SenderRank: mhome.RankSoldier, ReceiverRank: mhome.RankCaptain},
-		{MessageID: "captain-up", Kind: "uplink-report", SenderRank: mhome.RankCaptain, ReceiverRank: mhome.RankGeneral},
-	} {
-		attempt := RecoverInboxWithSender(&deliverySender{}, t.TempDir(), env)
-		if !attempt.Skipped || attempt.Delivered {
-			t.Fatalf("attempt=%+v, want skipped uplink", attempt)
-		}
 	}
 }
 

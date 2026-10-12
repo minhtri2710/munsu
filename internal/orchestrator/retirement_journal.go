@@ -4,35 +4,36 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func VerifyRetirementContinuity(homeDir, taskID string) error {
-	if HasPendingReport(homeDir, taskID) || HasAnyOpenReport(homeDir, taskID) {
-		return fmt.Errorf("uplink report not acknowledged: Processing Ack is still pending for task %s", taskID)
-	}
-	open, err := IsTaskReportRelayOpen(homeDir, taskID)
+// VerifyRetirementContinuity refuses a teardown while a report the task's
+// reporter wrote with munsu report is not settled by its parent: retiring the
+// task would end it before the parent took its report. A line the dispatcher
+// wrote holds nothing, and neither does a scout's done report: settling it only
+// completes the scout, which retiring it supersedes. An unreadable report state
+// refuses.
+func VerifyRetirementContinuity(homeDir, taskID, kind string) error {
+	unsettled, err := home.UnsettledReports(homeDir, taskID)
 	if err != nil {
-		return fmt.Errorf("reading task obligations: %w", err)
+		return fmt.Errorf("reading task %s reports: %w", taskID, err)
 	}
-	if !open {
-		return nil
+	if kind == taskauthority.KindScout {
+		unsettled = slices.DeleteFunc(unsettled, func(line string) bool { return domain.LineVerb(line) == "done" })
 	}
-	hasMaterial, err := MaterialReportExists(homeDir, taskID)
-	if err != nil {
-		return fmt.Errorf("checking material report: %w", err)
-	}
-	if hasMaterial {
-		return fmt.Errorf("terminal report-relay not acknowledged for task %s", taskID)
+	if len(unsettled) > 0 {
+		return fmt.Errorf("task %s has %d report(s) its parent has not settled: settle them with munsu wake claim and munsu wake resolve, or retire anyway with munsu teardown --force %s", taskID, len(unsettled), taskID)
 	}
 	return nil
 }
 
 // PrepareForcedRetirementEvidence preserves forced-retirement evidence under
-// state/.backup/<durable-stem>/<durable-stem>.status (and matching receipt
-// basenames); the logical task ID is used only to derive the durable stem.
+// state/.backup/<durable-stem>/<durable-stem>.status; the logical task ID is
+// used only to derive the durable stem.
 func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 	stem, err := home.DurableKey(taskID)
 	if err != nil {
@@ -49,21 +50,6 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 	if src, err := os.ReadFile(statusPath); err == nil {
 		if err := os.WriteFile(filepath.Join(backupDir, filepath.Base(statusPath)), src, 0600); err != nil {
 			return nil, err
-		}
-	}
-	if entries, err := os.ReadDir(ReceiptDir(homeDir)); err == nil {
-		prefix := stem + "."
-		for _, entry := range entries {
-			if !strings.HasPrefix(entry.Name(), prefix) {
-				continue
-			}
-			src, err := os.ReadFile(filepath.Join(ReceiptDir(homeDir), entry.Name()))
-			if err != nil {
-				return nil, err
-			}
-			if err := os.WriteFile(filepath.Join(backupDir, entry.Name()), src, 0600); err != nil {
-				return nil, err
-			}
 		}
 	}
 	return []string{"evidence preserved to state/.backup/" + stem + " (--force)"}, nil
@@ -85,9 +71,5 @@ func FinalizeRetirementJournals(homeDir, taskID string) ([]string, error) {
 		}
 		steps = append(steps, fmt.Sprintf("closed keyed phase [key=%s]", activity.Key))
 	}
-	if err := ClearTaskCompleted(homeDir, taskID); err != nil {
-		return steps, err
-	}
-	steps = append(steps, "task obligations cleared")
 	return steps, nil
 }

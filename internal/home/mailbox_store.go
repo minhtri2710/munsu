@@ -541,34 +541,3 @@ func (s *Store) RemoveAckedPayload(env *Envelope) {
 		s.removeInboxPayload(env.SenderIdentity, env.MessageID)
 	}
 }
-
-// ListAllPending returns all pending records across all sender identities.
-// Deprecated: prefer scoped ListPending per sender identity.
-func (s *Store) ListAllPending() ([]*Envelope, error) {
-	outboxRoot := filepath.Join(s.homeDir, "state", OutboxDir)
-	entries, err := os.ReadDir(outboxRoot)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var envelopes []*Envelope
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		envs, err := s.ListPending(entry.Name())
-		if err != nil {
-			continue
-		}
-		envelopes = append(envelopes, envs...)
-	}
-	sort.Slice(envelopes, func(i, j int) bool {
-		if envelopes[i].CreatedAt != envelopes[j].CreatedAt {
-			return envelopes[i].CreatedAt < envelopes[j].CreatedAt
-		}
-		return envelopes[i].MessageID < envelopes[j].MessageID
-	})
-	return envelopes, nil
-}

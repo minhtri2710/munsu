@@ -70,7 +70,7 @@ func TestProjectDeliveryIdentityUnreadableMetaIsNotErased(t *testing.T) {
 
 // TestMetaMtimeWitnessesTaskStateAdvance pins the constraint beside
 // touchTaskMeta: a .check written before task add, promote or the scout-done
-// report is refused by AcceptOrRefuseStale afterwards, and one written after
+// report settlement is refused by AcceptOrRefuseStale afterwards, and one written after
 // it is accepted. Deleting the touch from any one writer turns that row red.
 func TestMetaMtimeWitnessesTaskStateAdvance(t *testing.T) {
 	cases := []struct {
@@ -89,7 +89,7 @@ func TestMetaMtimeWitnessesTaskStateAdvance(t *testing.T) {
 			tid := mustTaskIDFor(t, "w-promote")
 			req := taskauthority.CanonicalCreateRequest{
 				HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "explore", Kind: "scout",
-				ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+				ScoutScope: "investigate the requested question", Reason: "test",
 			}
 			if _, err := auth.Create(mustCanonicalOp(t, "op-create-w-promote", req), req); err != nil {
 				t.Fatal(err)
@@ -111,17 +111,20 @@ func TestMetaMtimeWitnessesTaskStateAdvance(t *testing.T) {
 			}
 			return "w-promote"
 		}},
-		{"scout-done report", func(t *testing.T, homeDir string) string {
+		{"scout-done report settled", func(t *testing.T, homeDir string) string {
 			auth := testAuthorityFor(t, homeDir)
 			req := taskauthority.CanonicalCreateRequest{
 				HomeID: auth.HomeID(), TaskID: mustTaskIDFor(t, "w-scout"), Owner: "owner", Description: "explore", Kind: "scout",
-				ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+				ScoutScope: "investigate the requested question", Reason: "test",
 			}
 			if _, err := auth.Create(mustCanonicalOp(t, "op-create-w-scout", req), req); err != nil {
 				t.Fatal(err)
 			}
-			if err := completeScoutReport(homeDir, "w-scout"); err != nil {
-				t.Fatalf("completeScoutReport: %v", err)
+			if err := reportAs(t, "soldier", homeDir, homeDir, "w-scout", "scout", "done", "findings"); err != nil {
+				t.Fatalf("report: %v", err)
+			}
+			if unaccepted := settleReports(t, homeDir); len(unaccepted) != 0 {
+				t.Fatalf("unaccepted = %+v", unaccepted)
 			}
 			return "w-scout"
 		}},

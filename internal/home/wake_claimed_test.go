@@ -20,7 +20,7 @@ func writeLeaseFixture(t *testing.T, home, name, content string) {
 	}
 }
 
-const claimedWakeLine = "100\t1\tuplink\tgreet-go\tdone: pr\\topen\n"
+const claimedWakeLine = "100\t1\treport\tgreet-go\tdone: pr\\topen\n"
 
 // TestListClaimedLeasesReadsFieldsInClaimOrder pins the shape of a listed
 // lease: header fields, decoded wakes, resolution state, and the order.
@@ -49,7 +49,7 @@ func TestListClaimedLeasesReadsFieldsInClaimOrder(t *testing.T) {
 		t.Fatalf("lease-b header fields = %+v", b)
 	}
 	want := ClaimedLeaseWake{
-		ClaimedWakeRecord: ClaimedWakeRecord{Epoch: "100", Seq: "1", Kind: "uplink", Key: "greet-go", Payload: "done: pr\topen"},
+		ClaimedWakeRecord: ClaimedWakeRecord{Epoch: "100", Seq: "1", Kind: "report", Key: "greet-go", Payload: "done: pr\topen"},
 		Resolution:        "prepared", ResolutionAt: 1700,
 	}
 	if len(b.Wakes) != 1 || b.Wakes[0] != want {

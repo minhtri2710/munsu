@@ -13,64 +13,212 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// TestReportDoneDoesNotCaptureDeliveryIdentity proves the terminal report
-// path never captures or commits delivery identity through a parallel path:
-// `report done` with a PR message proceeds as a plain uplink report and
-// leaves no pr_* meta projection and no delivery state behind. Delivery
-// truth is consumed from canonical authorization/outcome records only.
-func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
+// reportAs runs `munsu report` with a seat's launch environment.
+func reportAs(t *testing.T, role, homeDir, parentHome, taskID, kind string, args ...string) error {
+	t.Helper()
 	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "scout-report")
-	t.Setenv("MUNSU_ROLE", "soldier")
-	t.Setenv("MUNSU_TASK_KIND", "scout")
-	t.Setenv("MUNSU_PARENT_STATUS", homeDir)
+	t.Setenv("MUNSU_ROLE", role)
+	t.Setenv("MUNSU_TASK_ID", taskID)
+	t.Setenv("MUNSU_TASK_KIND", kind)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	_, err := runRoot(t, append([]string{"report"}, args...)...)
+	return err
+}
 
-	root := NewRootCommand()
-	root.SetArgs([]string{"task", "add", "scout-report", "investigate", "--kind", "scout", "--scope", "investigate report", "--budget", "300"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("task add: %v", err)
-	}
-	root = NewRootCommand()
-	root.SetArgs([]string{"task", "start", "scout-report"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("task start: %v", err)
-	}
-	root = NewRootCommand()
-	root.SetArgs([]string{"report", "done", "findings recorded", "--key", "scout-report", "--ring", "no-ring"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("report done: %v", err)
-	}
-
-	auth, err := taskAuthorityForRead(homeDir)
+// settleReports claims every wake in homeDir and acknowledges it, as the
+// parent does, and returns the reports whose settlement could not finish.
+func settleReports(t *testing.T, homeDir string) []orchestrator.UnacceptedReport {
+	t.Helper()
+	claim, err := orchestrator.ClaimWakes(homeDir, "general", 60, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tid, _ := domain.NewTaskID("scout-report")
-	agg, err := auth.Get(tid)
+	var ids []string
+	for _, w := range claim.Wakes {
+		ids = append(ids, w.Epoch+":"+w.Seq)
+	}
+	unaccepted, err := orchestrator.AckWakes(homeDir, claim.LeaseID, ids)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseDone {
-		t.Fatalf("phase = %s, want done", agg.Phase)
-	}
-	// The scout's terminal report closes its own handoff: nothing
-	// else in the binary can write the ack, so leaving it pending would wedge
-	// the turn-end guard forever.
-	if !orchestrator.IsReceiptAcked(homeDir, "scout-report", "scout-report") {
-		t.Fatal("terminal receipt was not acknowledged by its writer")
-	}
-	pending, err := orchestrator.ListPendingReceipts(homeDir)
-	if err != nil || len(pending) != 0 {
-		t.Fatalf("pending receipts=%d err=%v, want 0", len(pending), err)
-	}
-	open, err := orchestrator.IsTaskReportRelayOpen(homeDir, "scout-report")
-	if err != nil || open {
-		t.Fatalf("relay obligation open=%v err=%v, want closed", open, err)
+	return unaccepted
+}
+
+// One report is one status line: marked for a soldier or a captain, in the home
+// its parent reads, and plain for the dispatcher's own reports. A report munsu
+// refuses writes nothing.
+func TestReportWritesOneLine(t *testing.T) {
+	const (
+		task       = "t-1"
+		emptyMsg   = "message is required"
+		invalidKey = "invalid terminal key"
+		ship       = taskauthority.KindShip
+	)
+	marked := func(state, msg, key string) string { return domain.ReportStatusLine(state, msg, key) }
+	for _, tc := range []struct {
+		name    string
+		role    string
+		kind    string
+		args    []string
+		want    []string // lines in the status file the parent reads
+		wantErr string
+	}{
+		{"soldier material report", "soldier", ship, []string{"done", "PR landed"}, []string{marked("done", "PR landed", "default")}, ""},
+		{"captain material report", "captain", ship, []string{"blocked", "waiting", "--key", "gate"}, []string{marked("blocked", "waiting", "gate")}, ""},
+		{"dispatcher report", "general", ship, []string{"done", "merged"}, []string{"done: merged [key=default]"}, ""},
+		{"empty message", "soldier", ship, []string{"done", ""}, nil, emptyMsg},
+		{"key outside the slug on a progress report", "soldier", ship, []string{"working", "build", "--key", "a.b"}, nil, invalidKey},
+		{"slug key on a progress report", "soldier", ship, []string{"working", "build", "--key", "a-b_c"}, []string{marked("working", "build", "a-b_c")}, ""},
+		{"key outside the slug on a material report", "soldier", ship, []string{"done", "PR landed", "--key", "a.b"}, []string{marked("done", "PR landed", "a.b")}, ""},
+		{"key outside the slug on a scout done report", "soldier", taskauthority.KindScout, []string{"done", "found it", "--key", "a.b"}, nil, invalidKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			own, parent := t.TempDir(), t.TempDir()
+			initCLITestHome(t, parent)
+			reader := own
+			if tc.role == "captain" {
+				reader = parent
+				if err := home.SeedCaptainProvenance(own, "cap-1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := reportAs(t, tc.role, own, parent, task, tc.kind, tc.args...)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("report = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("report = %v, want %q", err, tc.wantErr)
+			}
+			lines, err := home.ReadStatus(reader, task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(lines, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("status lines = %q, want %q", lines, tc.want)
+			}
+			if tc.role == "captain" {
+				if mine, _ := home.ReadStatus(own, task); len(mine) != 0 {
+					t.Fatalf("captain's own home holds %q, want no line", mine)
+				}
+			}
+		})
 	}
 }
 
+// Every soldier report is a report of its own: an identical repeat derives a
+// second wake, and each holds teardown until its own wake settles. Only the
+// dispatcher's unmarked repeat appends nothing, and says so.
+func TestARepeatedReportIsAReportOfItsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		role        string
+		settleFirst bool
+		wantLines   int
+		wantWakes   int
+	}{
+		{"soldier repeat after the first was settled", "soldier", true, 2, 1},
+		{"soldier repeat before the first was settled", "soldier", false, 2, 2},
+		{"dispatcher repeat", "general", false, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			if err := reportAs(t, tc.role, homeDir, homeDir, "t-1", taskauthority.KindShip, "failed", "CI red"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.settleFirst {
+				settleReports(t, homeDir)
+			}
+			out, err := runRoot(t, "report", "failed", "CI red")
+			if err != nil {
+				t.Fatalf("repeat: %v\n%s", err, out)
+			}
+			if noop := strings.Contains(out, "not appended"); noop != (tc.wantLines == 1) {
+				t.Fatalf("repeat output = %s, want not-appended=%v", out, tc.wantLines == 1)
+			}
+			if lines, _ := home.ReadStatus(homeDir, "t-1"); len(lines) != tc.wantLines {
+				t.Fatalf("status lines = %q, want %d", lines, tc.wantLines)
+			}
+			claim, err := orchestrator.ClaimWakes(homeDir, "general", 60, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(claim.Wakes) != tc.wantWakes {
+				t.Fatalf("wakes = %+v, want %d", claim.Wakes, tc.wantWakes)
+			}
+			if len(claim.Wakes) == 2 && claim.Wakes[0].Ref == claim.Wakes[1].Ref {
+				t.Fatalf("two identical reports share the ref %q, want one ref each", claim.Wakes[0].Ref)
+			}
+			for i, w := range claim.Wakes {
+				if _, err := orchestrator.AckWakes(homeDir, claim.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+					t.Fatal(err)
+				}
+				if left, err := home.UnsettledReports(homeDir, "t-1"); err != nil || len(left) != len(claim.Wakes)-1-i {
+					t.Fatalf("after settling %d of %d: unsettled = %q err=%v", i+1, len(claim.Wakes), left, err)
+				}
+			}
+		})
+	}
+}
+
+// Settling a report completes only a scout's done: the parent's settlement is
+// the scout's completion, and nothing else changes a task's phase.
+func TestSettlingAReportCompletesOnlyAScoutsDone(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		kind      string
+		state     string
+		completed bool // the task was completed before its report settled
+		wantDone  bool
+	}{
+		{"scout done", taskauthority.KindScout, "done", false, true},
+		{"scout blocked", taskauthority.KindScout, "blocked", false, false},
+		{"ship done", taskauthority.KindShip, "done", false, false},
+		{"scout already done", taskauthority.KindScout, "done", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			addArgs := []string{"task", "add", "t-1", "work", "--kind", tc.kind, "--home", homeDir}
+			if tc.kind == taskauthority.KindScout {
+				addArgs = append(addArgs, "--scope", "investigate report")
+			}
+			if out, err := runTaskCommand(t, addArgs); err != nil {
+				t.Fatalf("task add: %v\n%s", err, out)
+			}
+			auth := testAuthorityFor(t, homeDir)
+			tid := mustTaskIDFor(t, "t-1")
+			if tc.completed {
+				done := taskauthority.CanonicalCompleteRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), To: taskauthority.PhaseDone, Reason: "test"}
+				if _, err := auth.Complete(mustCanonicalOp(t, "op-complete-t-1", done), done); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := reportAs(t, "soldier", homeDir, homeDir, "t-1", tc.kind, tc.state, "report"); err != nil {
+				t.Fatalf("report: %v", err)
+			}
+			if unaccepted := settleReports(t, homeDir); len(unaccepted) != 0 {
+				t.Fatalf("unaccepted = %+v, want none", unaccepted)
+			}
+			agg, err := auth.Get(tid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := agg.Phase == taskauthority.PhaseDone; got != tc.wantDone {
+				t.Fatalf("phase = %s, want done=%v", agg.Phase, tc.wantDone)
+			}
+			if left, err := home.UnsettledReports(homeDir, "t-1"); err != nil || len(left) != 0 {
+				t.Fatalf("unsettled = %q err=%v, want none", left, err)
+			}
+		})
+	}
+}
+
+// TestReportDoneDoesNotCaptureDeliveryIdentity proves the terminal report
+// path never captures or commits delivery identity through a parallel path:
+// `report done` with a PR message leaves no pr_* meta projection and no
+// delivery state behind. Delivery truth is consumed from canonical
+// authorization/outcome records only.
 func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 	homeDir := t.TempDir()
 	parentHome := t.TempDir()
@@ -85,7 +233,7 @@ func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
-	root.SetArgs([]string{"report", "--ring", "no-ring", "done", "work landed, PR https://github.com/owner/repo/pull/7"})
+	root.SetArgs([]string{"report", "done", "work landed, PR https://github.com/owner/repo/pull/7"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("report done: %v\n%s", err, buf.String())
 	}
@@ -102,37 +250,35 @@ func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 	}
 }
 
-// TestReportResolvedRefusalReadsCanonicalKind pins the `resolved` refusal for
-// a ship task: the kind is the canonical task's, never the .meta's, and a
-// canonical record that cannot be read refuses. The blocking rows are a
-// canonical ship whose .meta carries no kind and a corrupt canonical record;
-// the allowing row is a canonical scout whose .meta claims ship.
-func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
+// TestReportResolvedRefusalReadsTheTaskKind pins the `resolved` refusal for a
+// ship task. A soldier reads its kind from its launch environment and never
+// opens the dispatcher's home; a captain or the dispatcher reads the canonical
+// task, never the .meta, and a canonical record that cannot be read refuses.
+func TestReportResolvedRefusalReadsTheTaskKind(t *testing.T) {
 	const (
 		shipRefusal = "cannot use 'resolved' as delivery completion"
 		readRefusal = "cannot read task res-1 kind to check 'resolved'"
 	)
 	for _, tc := range []struct {
 		name    string
+		role    string
+		envKind string
 		addArgs []string
 		meta    map[string]string
 		corrupt bool
-		noTask  bool
 		want    string
 	}{
-		{"canonical ship is refused with no meta kind", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, false, shipRefusal},
-		{"unreadable canonical record is refused", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "scout"}, true, false, readRefusal},
-		{"canonical scout passes although meta claims ship", []string{"--kind", "scout", "--scope", "investigate report", "--budget", "300"}, map[string]string{"kind": "ship"}, false, false, ""},
-		{"task with no canonical record and no meta is allowed", nil, nil, false, true, ""},
+		{"soldier whose launch names ship is refused", "soldier", "ship", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "scout"}, false, shipRefusal},
+		{"soldier whose launch names scout passes over a corrupt record", "soldier", "scout", []string{"--kind", "ship"}, map[string]string{"kind": "ship"}, true, ""},
+		{"canonical ship is refused with no meta kind", "general", "", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, shipRefusal},
+		{"unreadable canonical record is refused", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "scout"}, true, readRefusal},
+		{"canonical scout passes although meta claims ship", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "ship"}, false, ""},
+		{"task with no canonical record and no meta is allowed", "general", "", nil, nil, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			initCLITestHome(t, homeDir)
-			t.Setenv("MUNSU_HOME", homeDir)
-			t.Setenv("MUNSU_TASK_ID", "res-1")
-			t.Setenv("MUNSU_ROLE", "soldier")
-			t.Setenv("MUNSU_PARENT_STATUS", homeDir)
-			if !tc.noTask {
+			if tc.addArgs != nil {
 				if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--home", homeDir}, tc.addArgs...)); err != nil {
 					t.Fatalf("task add: %v\n%s", err, out)
 				}
@@ -146,21 +292,19 @@ func TestReportResolvedRefusalReadsCanonicalKind(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			root := NewRootCommand()
-			root.SetArgs([]string{"report", "resolved", "done with it", "--key", "res-1", "--ring", "no-ring"})
-			err := root.Execute()
+			err := reportAs(t, tc.role, homeDir, homeDir, "res-1", tc.envKind, "resolved", "done with it", "--key", "res-1")
 			for _, refusal := range []string{shipRefusal, readRefusal} {
 				got := err != nil && strings.Contains(err.Error(), refusal)
 				if got != (refusal == tc.want) {
 					t.Fatalf("report resolved err = %v, refusal %q seen=%v, want only %q", err, refusal, got, tc.want)
 				}
 			}
-			if tc.noTask {
+			if tc.want == "" {
 				if err != nil {
-					t.Fatalf("report resolved for a task with no canonical record: %v", err)
+					t.Fatalf("report resolved: %v", err)
 				}
 				lines, statusErr := home.ReadStatus(homeDir, "res-1")
-				if statusErr != nil || len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "resolved") || !strings.Contains(lines[len(lines)-1], "done with it") {
+				if statusErr != nil || len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "resolved: done with it") {
 					t.Fatalf("status lines = %q (%v), want a resolved line ending the file", lines, statusErr)
 				}
 			}

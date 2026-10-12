@@ -165,24 +165,6 @@ func TestRecoverAllInboxesWithSenderUsesExplicitCapability(t *testing.T) {
 	}
 }
 
-func TestRecoverAllInboxesWithSenderSkipsUplinkReport(t *testing.T) {
-	home := t.TempDir()
-	env := recoveryEnvelope("uplink-report")
-	writeRecoveryEnvelope(t, home, env)
-	sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Status: "submitted", Acknowledged: true}}
-
-	attempts, err := RecoverAllInboxesWithSender(sender, home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(attempts) != 1 || !attempts[0].Skipped || attempts[0].Delivered {
-		t.Fatalf("attempts = %+v", attempts)
-	}
-	if len(sender.payloads) != 0 {
-		t.Fatalf("uplink report was sent: %v", sender.payloads)
-	}
-}
-
 func TestRecoverAllInboxesWithSenderDeliversOnlyValidatedInboxRecords(t *testing.T) {
 	home := t.TempDir()
 	valid := recoveryEnvelope("command")

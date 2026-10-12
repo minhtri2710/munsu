@@ -3,10 +3,7 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestObligationsByRole(t *testing.T) {
@@ -22,13 +19,13 @@ func TestObligationsByRole(t *testing.T) {
 		},
 		{
 			role:      RoleCaptain,
-			want:      2,
-			wantKinds: []ObligationKind{ReportRelay, Cleanup},
+			want:      1,
+			wantKinds: []ObligationKind{Cleanup},
 		},
 		{
 			role:      RoleSoldier,
-			want:      2,
-			wantKinds: []ObligationKind{ReportRelay, Cleanup},
+			want:      1,
+			wantKinds: []ObligationKind{Cleanup},
 		},
 	}
 
@@ -83,62 +80,25 @@ func TestSaveAndLoadObligations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadObligations() error = %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("LoadObligations() = %d items, want 2", len(loaded))
+	if len(loaded) != 1 {
+		t.Fatalf("LoadObligations() = %d items, want 1", len(loaded))
 	}
 
-	// Complete one obligation
-	found, err := CompleteObligation(home, role, ReportRelay)
+	found, err := CompleteObligation(home, role, Cleanup)
 	if err != nil {
 		t.Fatalf("CompleteObligation() error = %v", err)
 	}
 	if !found {
-		t.Errorf("CompleteObligation(ReportRelay) = false, want true")
+		t.Errorf("CompleteObligation(Cleanup) = false, want true")
 	}
 
-	// Load again — should see one closed, one open
+	// Load again — the obligation persists, closed
 	loaded, err = LoadObligations(home, role)
 	if err != nil {
 		t.Fatalf("LoadObligations() error = %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("LoadObligations() = %d items, want 2 after complete", len(loaded))
-	}
-
-	var reportRelayFound, cleanupFound bool
-	for _, o := range loaded {
-		switch o.Kind {
-		case ReportRelay:
-			reportRelayFound = true
-			if o.State != StateClosed {
-				t.Errorf("ReportRelay state = %q, want %q", o.State, StateClosed)
-			}
-			if o.ClosedAt == 0 {
-				t.Errorf("ReportRelay ClosedAt = 0, want non-zero")
-			}
-		case Cleanup:
-			cleanupFound = true
-			if o.State != StateOpen {
-				t.Errorf("Cleanup state = %q, want %q", o.State, StateOpen)
-			}
-		}
-	}
-	if !reportRelayFound || !cleanupFound {
-		t.Errorf("missing obligations: reportRelay=%v cleanup=%v", reportRelayFound, cleanupFound)
-	}
-}
-
-func TestCompleteNotFound(t *testing.T) {
-	home := t.TempDir()
-	role := RoleGeneral
-
-	// General has only Cleanup, completing ReportRelay should return false
-	found, err := CompleteObligation(home, role, ReportRelay)
-	if err != nil {
-		t.Fatalf("CompleteObligation() error = %v", err)
-	}
-	if found {
-		t.Errorf("CompleteObligation(ReportRelay) for General = true, want false")
+	if len(loaded) != 1 || loaded[0].Kind != Cleanup || loaded[0].State != StateClosed || loaded[0].ClosedAt == 0 {
+		t.Fatalf("LoadObligations() after complete = %+v, want one closed Cleanup with ClosedAt", loaded)
 	}
 }
 
@@ -169,7 +129,6 @@ func TestClearCompleted(t *testing.T) {
 	role := RoleCaptain
 
 	// Complete all obligations
-	CompleteObligation(home, role, ReportRelay)
 	CompleteObligation(home, role, Cleanup)
 
 	// Clear completed
@@ -201,8 +160,8 @@ func TestClearCompletedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadObligations() error = %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Errorf("after ClearCompleted on fresh home: got %d, want 2", len(loaded))
+	if len(loaded) != 1 {
+		t.Errorf("after ClearCompleted on fresh home: got %d, want 1", len(loaded))
 	}
 }
 
@@ -223,179 +182,5 @@ func TestLoadFromEmptyFile(t *testing.T) {
 	}
 	if len(loaded) != 0 {
 		t.Errorf("empty file: got %d obligations, want 0", len(loaded))
-	}
-}
-
-func TestSoldierObligations(t *testing.T) {
-	home := t.TempDir()
-	role := RoleSoldier
-
-	loaded, err := LoadObligations(home, role)
-	if err != nil {
-		t.Fatalf("LoadObligations() error = %v", err)
-	}
-	if len(loaded) != 2 {
-		t.Fatalf("soldier: got %d obligations, want 2", len(loaded))
-	}
-
-	// Complete both
-	found, err := CompleteObligation(home, role, ReportRelay)
-	if err != nil {
-		t.Fatalf("CompleteObligation(ReportRelay) error = %v", err)
-	}
-	if !found {
-		t.Errorf("soldier CompleteObligation(ReportRelay) = false, want true")
-	}
-
-	found, err = CompleteObligation(home, role, Cleanup)
-	if err != nil {
-		t.Fatalf("CompleteObligation(Cleanup) error = %v", err)
-	}
-	if !found {
-		t.Errorf("soldier CompleteObligation(Cleanup) = false, want true")
-	}
-
-	// Clear completed
-	if err := ClearCompleted(home, role); err != nil {
-		t.Fatalf("ClearCompleted() error = %v", err)
-	}
-
-	loaded, err = LoadObligations(home, role)
-	if err != nil {
-		t.Fatalf("LoadObligations() error = %v", err)
-	}
-	if len(loaded) != 0 {
-		t.Errorf("soldier after clear: got %d obligations, want 0", len(loaded))
-	}
-}
-
-func TestMaterialReportExists(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	taskID := "test-task"
-
-	// No status file → no material report, no error
-	has, err := MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("unexpected error for missing status: %v", err)
-	}
-	if has {
-		t.Errorf("expected false for missing status file")
-	}
-
-	// Write a non-material status line
-	statusPath, err := mhome.StatusFilePath(home, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(statusPath, []byte("working: in progress\n"), 0644)
-	has, err = MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if has {
-		t.Errorf("expected false for non-material status")
-	}
-
-	// Write a material status line (done)
-	os.WriteFile(statusPath, []byte("working: in progress\ndone: task complete\n"), 0644)
-	has, err = MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !has {
-		t.Errorf("expected true for material done status")
-	}
-
-	// Test with failed
-	os.WriteFile(statusPath, []byte("failed: something broke\n"), 0644)
-	has, err = MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !has {
-		t.Errorf("expected true for material failed status")
-	}
-
-	// Test with needs-decision (keyed)
-	os.WriteFile(statusPath, []byte("needs-decision [key=approach]: pick approach\n"), 0644)
-	has, err = MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !has {
-		t.Errorf("expected true for material needs-decision status")
-	}
-
-	// Test with blocked
-	os.WriteFile(statusPath, []byte("blocked: waiting for review\n"), 0644)
-	has, err = MaterialReportExists(home, taskID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !has {
-		t.Errorf("expected true for material blocked status")
-	}
-}
-
-// TestWriteReceipt_StaleAckInvalidation verifies that WriteReceipt removes
-// any prior ack for the same taskID+termKey, making the new receipt pending.
-func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-task"
-	termKey := "uplink"
-
-	// Write initial receipt and ack (simulating completed relay)
-	if err := WriteReceipt(homeDir, taskID, termKey, "done", "first"); err != nil {
-		t.Fatalf("first receipt: %v", err)
-	}
-	if err := WriteAck(homeDir, taskID, termKey); err != nil {
-		t.Fatalf("first ack: %v", err)
-	}
-	if !IsReceiptAcked(homeDir, taskID, termKey) {
-		t.Fatal("receipt should be acked after WriteAck")
-	}
-
-	// Rewrite receipt via WriteReceipt — should invalidate the stale ack
-	if err := WriteReceipt(homeDir, taskID, termKey, "done", "second"); err != nil {
-		t.Fatalf("second receipt: %v", err)
-	}
-
-	// Ack should no longer exist (removed by WriteReceipt)
-	if IsReceiptAcked(homeDir, taskID, termKey) {
-		t.Error("receipt should NOT be acked after WriteReceipt invalidated stale ack")
-	}
-
-	// But old receipt should be overwritten with new content
-	receiptPath, err := ReceiptPath(homeDir, taskID, termKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(receiptPath)
-	if err != nil {
-		t.Fatalf("reading receipt: %v", err)
-	}
-	if !strings.Contains(string(data), "second") {
-		t.Errorf("expected new receipt content, got: %s", string(data))
-	}
-	if strings.Contains(string(data), "first") {
-		t.Errorf("receipt should not contain old content, got: %s", string(data))
-	}
-
-	// No temp file should remain
-	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(receiptPath), ".home-write-*")); len(leftovers) != 0 {
-		t.Errorf("temporary files should be cleaned up after successful WriteReceipt: %v", leftovers)
-	}
-}
-
-func TestMaterialReportExistsTakesALineOverTheScannerLimit(t *testing.T) {
-	home := t.TempDir()
-	if err := mhome.AppendStatus(home, "t1", "done: "+strings.Repeat("row\n", 30000)); err != nil {
-		t.Fatal(err)
-	}
-	if has, err := MaterialReportExists(home, "t1"); err != nil || !has {
-		t.Fatalf("MaterialReportExists() = %v, %v; want true", has, err)
 	}
 }
