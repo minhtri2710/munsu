@@ -15,6 +15,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
+func (l layout) claudeStateDir() string { return filepath.Join(l.home, "state", "T-1.claude-config") }
+
 // outsideDir returns a fresh directory under the real user home: neither a temp
 // root nor a dev path, so only a profile rule can make it writable.
 func outsideDir(t *testing.T) string {
@@ -123,6 +125,8 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "refs", "remotes"), filepath.Join(l.common, "refs", "heads"),
 		filepath.Join(l.common, "logs", "refs", "remotes"), filepath.Join(l.common, "logs", "refs", "heads"), filepath.Join(out, "wt2"))
 	launch := l.soldier()
+	launch.HarnessStateDir = l.claudeStateDir()
+	mkdirs(t, launch.HarnessStateDir)
 	launch.Files = []string{verdict}
 	launch.GateRepo, launch.GateState = gateRepo, gateState
 	f := mustNew(t, launch)
@@ -135,8 +139,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
-		filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
-		filepath.Join(uhome, ".claude.json"), filepath.Join(uhome, ".claude.json.tmp.123.abc1"),
+		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
 		filepath.Join(gateRepo, "sub", "f"), filepath.Join(gateRepo, "f"), gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
 		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
@@ -150,7 +153,8 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "logs", "HEAD"),
 		filepath.Join(l.gitDir, "config.worktree"),
 		filepath.Join(l.home, "f"),
-		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, "Library", "Caches", "f"), filepath.Join(uhome, ".claude.jsonx"), filepath.Join(uhome, ".claude.json.tmpX"),
+		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, "Library", "Caches", "f"),
+		filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(uhome, ".claude.json.tmp.123.abc1"),
 		filepath.Join(out, "wt2", "f"), filepath.Join(out, "f"),
 		verdict+"2", verdict+".tmp.abc", verdict+".tmp.1.xyz",
 		gateState+"-x", filepath.Join(out, "gate", "f"),
@@ -218,6 +222,15 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
 		filepath.Join(uhome, "other", "f"), verdict+"2",
 	)
+
+	// A claude reviewer writes its own config dir, carved out of the refused
+	// home roots, and never the Human's claude config.
+	cl := l.reviewer()
+	cl.HarnessStateDir = l.claudeStateDir()
+	mkdirs(t, cl.HarnessStateDir)
+	cf := mustNew(t, cl)
+	mustWrite(t, cf, filepath.Join(cl.HarnessStateDir, "f"))
+	mustRefuse(t, cf, filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"))
 }
 
 // A seat's PATH directories are refused wholesale, whatever allowed root they
@@ -230,7 +243,8 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	state := filepath.Join(l.home, "state")
 	// The shim sits beside state/, outside every writable root.
 	shim := filepath.Join(l.home, "git-shim", "bin")
-	claudeBin := filepath.Join(uhome, ".claude", "local")
+	claudeCache := filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs")
+	claudeBin := filepath.Join(claudeCache, "local")
 	tmpBin := filepath.Join(l.root, "pathbin")
 	mkdirs(t, shim, claudeBin, tmpBin)
 	if err := os.WriteFile(filepath.Join(shim, "git"), []byte("shim"), 0o755); err != nil {
@@ -249,7 +263,7 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	}
 	// A PATH dir deeper under a harness root: its middle directory is strictly
 	// inside the root, the root itself is not.
-	deepBin := filepath.Join(uhome, ".claude", "deep", "mid", "bin")
+	deepBin := filepath.Join(claudeCache, "deep", "mid", "bin")
 	mkdirs(t, deepBin)
 	// A PATH dir inside the worktree, a writable root: node_modules is strictly
 	// inside it.
@@ -309,7 +323,7 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"soldier writes beside a symlinked PATH dir's real directory", soldier, []string{touchBin, filepath.Join(l.root, "realbin-sibling", "f")}, false, "", ""},
 		{"soldier writes its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "f")}, false, "", ""},
 		{"soldier writes its task status", soldier, []string{touchBin, filepath.Join(state, "T-1.status")}, false, "", ""},
-		{"soldier writes beside a harness PATH dir", soldier, []string{touchBin, filepath.Join(uhome, ".claude", "f")}, false, "", ""},
+		{"soldier writes beside a harness PATH dir", soldier, []string{touchBin, filepath.Join(claudeCache, "f")}, false, "", ""},
 		{"pi soldier creates a file in its agent dir's bin", piSoldier, []string{touchBin, filepath.Join(l.stateDir(), "bin", "gh")}, true, filepath.Join(l.stateDir(), "bin", "gh"), ""},
 		{"pi soldier creates a file in the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(piAgentBin, "pi")}, true, filepath.Join(piAgentBin, "pi"), ""},
 		{"pi reviewer creates a file in its agent dir's bin", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "bin", "gh")}, true, filepath.Join(l.stateDir(), "bin", "gh"), ""},
@@ -317,7 +331,7 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"pi soldier writes beside the default pi agent bin", piSoldier, []string{touchBin, filepath.Join(uhome, ".pi", "agent", "f")}, false, "", ""},
 		{"pi reviewer writes its agent dir", piReviewer, []string{touchBin, filepath.Join(l.stateDir(), "f")}, false, "", ""},
 		{"soldier chmods its state dir", soldier, []string{"/bin/chmod", "700", state}, false, "", ""},
-		{"soldier chmods a harness root that holds a PATH dir", soldier, []string{"/bin/chmod", "700", filepath.Join(uhome, ".claude")}, false, "", ""},
+		{"soldier chmods a harness root that holds a PATH dir", soldier, []string{"/bin/chmod", "700", claudeCache}, false, "", ""},
 		{"soldier creates a directory under the state dir", soldier, []string{"/bin/mkdir", filepath.Join(state, "newdir")}, false, "", ""},
 		{"pi soldier chmods its own state dir", piSoldier, []string{"/bin/chmod", "700", l.stateDir()}, false, "", ""},
 		{"soldier chmods a PATH dir under a harness root to 000", soldier, []string{"/bin/chmod", "000", claudeBin}, true, "", claudeBin},

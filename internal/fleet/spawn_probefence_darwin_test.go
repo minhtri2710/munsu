@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestProbeFenceRecordsTheProjectsWritableRoots(t *testing.T) {
@@ -208,5 +210,91 @@ func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 		if i >= len(got) || got[i] != want {
 			t.Errorf("after a chmod 000 of %s, `command -v git` = %q; want the shim %s", d, got, want)
 		}
+	}
+}
+
+// A claude reviewer's fence carries its config dir: the reviewer writes its
+// own sessions there, while every other path in the home stays refused. A
+// soldier writes all of state/, so only the reviewer shows the carve-out.
+func TestFencedClaudeReviewerWritesItsOwnConfigDir(t *testing.T) {
+	isolateHuman(t)
+	f := newFenceFixture(t)
+	launchDir := filepath.Join(f.home, "review", "task-1", "1")
+	for _, d := range []string{filepath.Join(f.home, "state"), launchDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := f.runner("direct-PR")
+	r.launchBin = "claude"
+	r.review = &ReviewLaunch{LaunchDir: launchDir, VerdictFile: reviewVerdictFile(launchDir)}
+	if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
+		t.Fatal(err)
+	}
+	own, err := claudeConfigDirPath(f.home, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := claudeConfigDirPath(f.home, "task-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, dir string
+		allowed   bool
+	}{
+		{"writes a session in its own config dir", own, true},
+		{"is refused another task's config dir", other, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.MkdirAll(tc.dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			argv, err := r.fence.Wrap([]string{"/usr/bin/touch", filepath.Join(tc.dir, "session.jsonl")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+			if tc.allowed && err != nil {
+				t.Fatalf("write refused: %v %s", err, out)
+			}
+			if !tc.allowed && (err == nil || !strings.Contains(string(out), "Operation not permitted")) {
+				t.Fatalf("write = %v %s; want the sandbox's refusal", err, out)
+			}
+		})
+	}
+}
+
+// On a fenced host the claude preflight asks for the login the seat will use:
+// the Human's keychain item, from an empty config dir that is not the seat's.
+func TestFencedClaudePreflightAsksForTheSeatsLogin(t *testing.T) {
+	isolateHuman(t)
+	homeDir := t.TempDir()
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	for _, tc := range []struct {
+		name, check string
+		wantErr     string
+	}{
+		{"a seat login is found", `[ "${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}" = "" ]`, ""},
+		{"no seat login refuses the launch", `false`, "auth-absent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "#!/bin/sh\n" + tc.check + ` && [ -d "$CLAUDE_CONFIG_DIR" ] && case "$CLAUDE_CONFIG_DIR" in ` + shQuote(homeDir) + "/*) exit 1;; esac\n"
+			testutil.WriteFakeExecutable(t, filepath.Join(bin, "claude"), script)
+			r := NewRunner(Args{ID: "task-1", HarnessFlag: "claude", HomeDir: homeDir})
+			r.projPath, r.effectiveMode = t.TempDir(), "direct-PR"
+			err := r.preflightHarness()
+			var pf *harness.PreflightError
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("preflightHarness: %v", err)
+				}
+				return
+			}
+			if !asPreflightError(err, &pf) || pf.Reason != tc.wantErr {
+				t.Fatalf("err = %v, want %s", err, tc.wantErr)
+			}
+		})
 	}
 }

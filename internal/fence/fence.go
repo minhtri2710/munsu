@@ -47,10 +47,11 @@ type Launch struct {
 	CommonDir string   // the repository's common git dir
 	Branch    string   // soldier only: the task-local branch, e.g. mu/<task>
 	Files     []string // exact files also writable, with their atomic .tmp.<pid>.<hex> siblings
-	// HarnessStateDir is the per-launch harness state directory (for pi, the
-	// task's PI_CODING_AGENT_DIR). It is writable under both roles: a proper
-	// subdirectory of Home's state/, never a home root and never overlapping the
-	// primary checkout, worktree, git dir or common dir. Only the pi kind has one.
+	// HarnessStateDir is the per-launch harness state directory (the task's
+	// PI_CODING_AGENT_DIR for pi, its CLAUDE_CONFIG_DIR for claude). It is
+	// writable under both roles: a proper subdirectory of Home's state/, never a
+	// home root and never overlapping the primary checkout, worktree, git dir or
+	// common dir.
 	HarnessStateDir string
 	// GateRepo and GateState are the no-mistakes write set of a soldier that
 	// drives a gate run: this project's gate repository (writable subtree) and

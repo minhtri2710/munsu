@@ -11,7 +11,7 @@ import (
 
 func TestPreflight_AdapterKnown(t *testing.T) {
 	testutil.SetPath(t, t.TempDir())
-	result, err := Preflight(Claude)
+	result, err := Preflight(Claude, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Claude, err)
 	}
@@ -21,7 +21,7 @@ func TestPreflight_AdapterKnown(t *testing.T) {
 }
 
 func TestPreflight_AdapterUnknown(t *testing.T) {
-	_, err := Preflight("nonexistent-harness")
+	_, err := Preflight("nonexistent-harness", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown harness")
 	}
@@ -32,7 +32,7 @@ func TestPreflight_AdapterUnknown(t *testing.T) {
 
 func TestPreflight_BinaryOnPath_Claude(t *testing.T) {
 	testutil.FakeOnPath(t, "claude", "#!/bin/sh\nexit 0\n")
-	result, err := Preflight(Claude)
+	result, err := Preflight(Claude, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Claude, err)
 	}
@@ -46,11 +46,14 @@ func TestPreflight_BinaryOnPath_Claude(t *testing.T) {
 // argument exits 2.
 func TestPreflight_AuthConfigured(t *testing.T) {
 	const authStatus = "#!/bin/sh\n[ \"$1 $2\" = \"auth status\" ] || exit 2\n"
+	const seatAsks = "[ \"${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}\" = /h/claude ] && [ -d \"$CLAUDE_CONFIG_DIR\" ] || exit 1\n"
 	tests := []struct {
 		name    string
 		claude  string // fake claude script; empty leaves claude off PATH
 		apiKey  string
 		timeout time.Duration
+		seat    *ClaudeConfig
+		noTemp  bool // the seat's empty config dir cannot be made
 		want    PreflightLevel
 	}{
 		{name: "logged in, no env var", claude: authStatus + "exit 0\n", want: PreflightOK},
@@ -58,6 +61,11 @@ func TestPreflight_AuthConfigured(t *testing.T) {
 		{name: "no credentials", claude: authStatus + "exit 1\n", want: PreflightAbsent},
 		{name: "probe does not finish in time", claude: authStatus + "exec sleep 30\n", timeout: 100 * time.Millisecond, want: PreflightAbsent},
 		{name: "claude not on PATH", want: PreflightAbsent},
+		// A fenced seat logs in with a config dir of its own and the Human's
+		// keychain item; the fake answers only when asked that way.
+		{name: "seat asks with its own config dir and the Human's keychain item", claude: authStatus + seatAsks + "exit 0\n", seat: &ClaudeConfig{SecureStorage: "/h/claude"}, want: PreflightOK},
+		{name: "Human's config asked where a seat is meant", claude: authStatus + seatAsks + "exit 0\n", want: PreflightAbsent},
+		{name: "seat config dir cannot be made", claude: authStatus + "exit 0\n", seat: &ClaudeConfig{}, noTemp: true, want: PreflightAbsent},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,12 +75,18 @@ func TestPreflight_AuthConfigured(t *testing.T) {
 			} else {
 				testutil.FakeOnPath(t, "claude", tc.claude)
 			}
+			if tc.noTemp {
+				gone := filepath.Join(t.TempDir(), "gone")
+				for _, v := range []string{"TMPDIR", "TMP", "TEMP"} {
+					t.Setenv(v, gone)
+				}
+			}
 			if tc.timeout > 0 {
 				orig := claudeAuthProbeTimeout
 				claudeAuthProbeTimeout = tc.timeout
 				t.Cleanup(func() { claudeAuthProbeTimeout = orig })
 			}
-			result, err := Preflight(Claude)
+			result, err := Preflight(Claude, tc.seat)
 			if err != nil {
 				t.Fatalf("Preflight(%q) error = %v", Claude, err)
 			}
@@ -95,7 +109,7 @@ func TestPreflight_AuthConfigured_AnyEnvVar(t *testing.T) {
 
 	// Test with GROK_API_KEY set
 	os.Setenv("XAI_API_KEY", "test-key")
-	result, err := Preflight(Grok)
+	result, err := Preflight(Grok, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Grok, err)
 	}
@@ -105,7 +119,7 @@ func TestPreflight_AuthConfigured_AnyEnvVar(t *testing.T) {
 
 	// Test with none set
 	os.Unsetenv("XAI_API_KEY")
-	result, err = Preflight(Grok)
+	result, err = Preflight(Grok, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Grok, err)
 	}
@@ -115,7 +129,7 @@ func TestPreflight_AuthConfigured_AnyEnvVar(t *testing.T) {
 }
 
 func TestPreflight_ModelValid_Unknown(t *testing.T) {
-	result, err := Preflight(Codex)
+	result, err := Preflight(Codex, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Codex, err)
 	}
@@ -150,7 +164,7 @@ func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 	os.Unsetenv("XAI_API_KEY")
 
 	// Pi with no API key at all should fail (absent) — empty temp dir, no env
-	result, err := Preflight(Pi)
+	result, err := Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -160,7 +174,7 @@ func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 
 	// Pi with a non-OPENAI Pi-supported key should pass
 	os.Setenv("XAI_API_KEY", "test-key")
-	result, err = Preflight(Pi)
+	result, err = Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -171,7 +185,7 @@ func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 	// Pi with ANTHROPIC_API_KEY should also pass
 	os.Unsetenv("XAI_API_KEY")
 	os.Setenv("ANTHROPIC_API_KEY", "test-key")
-	result, err = Preflight(Pi)
+	result, err = Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -182,7 +196,7 @@ func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 	// Pi with GEMINI_API_KEY should also pass
 	os.Unsetenv("ANTHROPIC_API_KEY")
 	os.Setenv("GEMINI_API_KEY", "test-key")
-	result, err = Preflight(Pi)
+	result, err = Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -196,7 +210,7 @@ func TestPreflight_AllLevelsKnown(t *testing.T) {
 	defer os.Setenv("OPENAI_API_KEY", orig)
 	os.Setenv("OPENAI_API_KEY", "test-key")
 
-	result, err := Preflight(Codex)
+	result, err := Preflight(Codex, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Codex, err)
 	}
@@ -237,7 +251,7 @@ func TestPreflightError_ErrorMessages(t *testing.T) {
 func TestPreflight_AllKnownHarnesses(t *testing.T) {
 	testutil.SetPath(t, t.TempDir())
 	for _, h := range KnownHarnesses {
-		result, err := Preflight(h)
+		result, err := Preflight(h, nil)
 		if err != nil {
 			if _, ok := err.(*PreflightError); !ok {
 				t.Errorf("Preflight(%q) error type = %T, want *PreflightError", h, err)
@@ -264,7 +278,7 @@ func TestPreflight_PiCredentialStore_FileExists(t *testing.T) {
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()
 
-	result, err := Preflight(Pi)
+	result, err := Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -284,7 +298,7 @@ func TestPreflight_PiCredentialStore_FileMissing(t *testing.T) {
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()
 
-	result, err := Preflight(Pi)
+	result, err := Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -307,7 +321,7 @@ func TestPreflight_PiCredentialStore_DirInsteadOfFile(t *testing.T) {
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()
 
-	result, err := Preflight(Pi)
+	result, err := Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -332,7 +346,7 @@ func TestPreflight_PiCredentialStore_Unreadable(t *testing.T) {
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()
 
-	result, err := Preflight(Pi)
+	result, err := Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}
@@ -356,7 +370,7 @@ func TestPreflight_PiCredentialStore_EnvVarTakesPrecedence(t *testing.T) {
 	restore := injectPiCredentialCheck(t, tmpDir)
 	defer restore()
 
-	result, err := Preflight(Pi)
+	result, err := Preflight(Pi, nil)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
 	}

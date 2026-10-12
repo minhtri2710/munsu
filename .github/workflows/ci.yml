@@ -174,7 +174,10 @@ jobs:
           TestLaunchRecordsTheSeatOfTheLaunch
           TestProbeFenceRefusesTheSeatsPathDirs
           TestFencedSoldierAppendsItsStatus
-          TestFencedSoldierCannotTakeTheGitShimOffItsPath'
+          TestFencedSoldierCannotTakeTheGitShimOffItsPath
+          TestFencedClaudeLaunchRunsFromItsOwnConfigDir
+          TestFencedClaudeReviewerWritesItsOwnConfigDir
+          TestFencedClaudePreflightAsksForTheSeatsLogin'
           gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout'
 
   race:
