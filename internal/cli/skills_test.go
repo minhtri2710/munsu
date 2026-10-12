@@ -100,79 +100,57 @@ func TestReadEmbeddedSkillAll(t *testing.T) {
 	}
 }
 
-func TestSkillExistsAt(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Dir doesn't exist yet
-	if skillExistsAt(tmpDir, "test-skill") {
-		t.Error("expected false for non-existent skill")
-	}
-
-	// Create the dir
-	if err := os.MkdirAll(filepath.Join(tmpDir, "test-skill"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if !skillExistsAt(tmpDir, "test-skill") {
-		t.Error("expected true for existing skill")
-	}
-
-	// File isn't a dir
-	f, err := os.Create(filepath.Join(tmpDir, "not-a-dir"))
+func TestReplaceSkill(t *testing.T) {
+	embedded, err := skillFiles.ReadFile("skills/munsu-ops/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
-	if skillExistsAt(tmpDir, "not-a-dir") {
-		t.Error("expected false for non-directory")
+	write := func(t *testing.T, path, data string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
-}
-
-func TestInstallOneSkill(t *testing.T) {
-	tmpDir := t.TempDir()
-	dest := filepath.Join(tmpDir, "skills")
-
-	// Install munsu-ops
-	ok, err := installOneSkill(dest, "munsu-ops", false)
-	if err != nil {
-		t.Fatalf("installOneSkill: %v", err)
+	tests := []struct {
+		name         string
+		setup        func(t *testing.T, dest string)
+		wantReplaced bool
+	}{
+		{name: "replaces an existing dir and drops files absent from the embed", setup: func(t *testing.T, dest string) {
+			write(t, filepath.Join(dest, "munsu-ops", "SKILL.md"), "old")
+			write(t, filepath.Join(dest, "munsu-ops", "STALE.md"), "old")
+		}, wantReplaced: true},
+		{name: "installs into an empty destination", setup: func(t *testing.T, dest string) {}},
+		{name: "leftover work dirs from a crashed run do not break the run", setup: func(t *testing.T, dest string) {
+			write(t, filepath.Join(dest, "munsu-ops", "SKILL.md"), "old")
+			write(t, filepath.Join(dest, ".munsu-ops.new", "munsu-ops", "STALE.md"), "partial")
+			write(t, filepath.Join(dest, ".munsu-ops.old", "munsu-ops", "SKILL.md"), "aside")
+		}, wantReplaced: true},
 	}
-	if !ok {
-		t.Fatal("expected at least one file installed")
-	}
-
-	// Check SKILL.md was written
-	skillPath := filepath.Join(dest, "munsu-ops", "SKILL.md")
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		t.Fatalf("expected SKILL.md at %s", skillPath)
-	}
-
-	// Second install with overwrite=false should not install
-	ok, err = installOneSkill(dest, "munsu-ops", false)
-	if err != nil {
-		t.Fatalf("installOneSkill (second): %v", err)
-	}
-	if ok {
-		t.Error("expected false for second install without overwrite")
-	}
-
-	// Install with overwrite=true
-	ok, err = installOneSkill(dest, "munsu-ops", true)
-	if err != nil {
-		t.Fatalf("installOneSkill (overwrite): %v", err)
-	}
-	if !ok {
-		t.Error("expected true for overwrite install")
-	}
-}
-
-func TestInstallOneSkillNonexistent(t *testing.T) {
-	tmpDir := t.TempDir()
-	ok, err := installOneSkill(tmpDir, "nonexistent", false)
-	if err != nil {
-		t.Fatalf("unexpected error for non-existent skill name: %v", err)
-	}
-	if ok {
-		t.Error("expected false for non-existent skill name")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := filepath.Join(t.TempDir(), "skills")
+			tc.setup(t, dest)
+			replaced, err := replaceSkill(dest, "munsu-ops")
+			if err != nil {
+				t.Fatalf("replaceSkill: %v", err)
+			}
+			if replaced != tc.wantReplaced {
+				t.Errorf("replaced = %v, want %v", replaced, tc.wantReplaced)
+			}
+			got, err := os.ReadFile(filepath.Join(dest, "munsu-ops", "SKILL.md"))
+			if err != nil || string(got) != string(embedded) {
+				t.Errorf("SKILL.md is not the embedded copy (err %v)", err)
+			}
+			for _, p := range []string{filepath.Join("munsu-ops", "STALE.md"), ".munsu-ops.new", ".munsu-ops.old"} {
+				if _, err := os.Lstat(filepath.Join(dest, p)); !os.IsNotExist(err) {
+					t.Errorf("%s still present after replace (err %v)", p, err)
+				}
+			}
+		})
 	}
 }
 
@@ -340,7 +318,7 @@ func TestAgentSkillMirrorsMatchCanonical(t *testing.T) {
 
 func TestInstalledMunsuOpsReferencesResolve(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "skills")
-	installed, err := installSkills(dest, "", nil)
+	installed, err := installSkills(dest, "")
 	if err != nil {
 		t.Fatalf("installSkills: %v", err)
 	}

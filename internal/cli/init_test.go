@@ -52,7 +52,7 @@ func captureOutput(fn func()) (stdout, stderr string) {
 }
 
 // TestInitNonInteractive verifies that init defaults to skip when
-// stdin is not a TTY and no --skill flag or MUNSU_INIT_SKILL env is set.
+// no --skill flag or MUNSU_INIT_SKILL env is set.
 func TestInitNonInteractive(t *testing.T) {
 	savedChoice := skillChoice
 	skillChoice = ""
@@ -77,12 +77,11 @@ func TestInitNonInteractive(t *testing.T) {
 	t.Logf("stderr: %s", stderr)
 
 	if !strings.Contains(stdout, "Skipping skill install.") {
-		t.Errorf("expected 'Skipping skill install.' in non-TTY mode, got: %s", stdout)
+		t.Errorf("expected 'Skipping skill install.' without --skill, got: %s", stdout)
 	}
 }
 
-// TestInitSkillLocalFlag verifies that --skill local installs skills
-// without prompting, even when stdin is not a TTY.
+// TestInitSkillLocalFlag verifies that --skill local installs skills.
 func TestInitSkillLocalFlag(t *testing.T) {
 	savedChoice := skillChoice
 	skillChoice = skillLocal
@@ -121,8 +120,7 @@ func TestInitSkillLocalFlag(t *testing.T) {
 	}
 }
 
-// TestInitSkillGlobalFlag verifies that --skill global installs skills
-// without prompting, even when stdin is not a TTY.
+// TestInitSkillGlobalFlag verifies that --skill global installs skills.
 func TestInitSkillGlobalFlag(t *testing.T) {
 	savedChoice := skillChoice
 	skillChoice = skillGlobal
@@ -169,8 +167,8 @@ func TestInitSkillGlobalFlag(t *testing.T) {
 	}
 }
 
-// TestInitEnvOverride verifies that MUNSU_INIT_SKILL=skip env var
-// overrides interactive prompt behavior.
+// TestInitEnvOverride verifies that MUNSU_INIT_SKILL=local, with no --skill
+// flag, installs munsu-ops under <home>/.agents/skills.
 func TestInitEnvOverride(t *testing.T) {
 	savedChoice := skillChoice
 	skillChoice = ""
@@ -178,13 +176,13 @@ func TestInitEnvOverride(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("MUNSU_INIT_SKILL", "skip")
+	t.Setenv("MUNSU_INIT_SKILL", "local")
 
 	stdout, stderr := captureOutput(func() {
 		root := NewRootCommand()
 		root.SetArgs([]string{"init"})
 		if err := root.Execute(); err != nil {
-			t.Errorf("init with MUNSU_INIT_SKILL=skip failed: %v", err)
+			t.Errorf("init with MUNSU_INIT_SKILL=local failed: %v", err)
 		}
 	})
 
@@ -195,8 +193,12 @@ func TestInitEnvOverride(t *testing.T) {
 	t.Logf("stdout: %s", stdout)
 	t.Logf("stderr: %s", stderr)
 
-	if !strings.Contains(stdout, "Skipping skill install.") {
-		t.Errorf("expected 'Skipping skill install.' with MUNSU_INIT_SKILL=skip, got: %s", stdout)
+	skillDir := filepath.Join(tmpDir, ".agents", "skills")
+	if !strings.Contains(stdout, "Installed skill \"munsu-ops\" to "+skillDir) {
+		t.Errorf("expected munsu-ops installed to %s with MUNSU_INIT_SKILL=local, got: %s", skillDir, stdout)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "munsu-ops", "SKILL.md")); err != nil {
+		t.Errorf("expected munsu-ops SKILL.md under %s: %v", skillDir, err)
 	}
 }
 

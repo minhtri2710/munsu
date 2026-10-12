@@ -28,45 +28,46 @@ func embeddedSkillNames() ([]string, error) {
 	return names, nil
 }
 
-// skillExistsAt reports whether the given skill directory already exists at dest.
-func skillExistsAt(dest, name string) bool {
-	info, err := os.Stat(filepath.Join(dest, name))
-	return err == nil && info.IsDir()
-}
-
-// confirmOverwrite asks whether to overwrite an existing skill.
-// Returns true on confirmation, false otherwise (including non-TTY reads).
-func confirmOverwrite(name string) bool {
-	fmt.Printf("Skill %q already exists. Overwrite? [y/N] ", name)
-	var resp string
-	if _, err := fmt.Scanln(&resp); err != nil {
-		return false
+// replaceSkill writes the embedded skill name to dest/name, replacing whatever
+// is there whole so files dropped from the embed do not linger. It builds the
+// copy in dest/.<name>.new, moves any existing entry to dest/.<name>.old,
+// renames the copy in, then removes the old entry. Both work paths are cleared
+// first, so leftovers from a crashed run never block the next one. It reports
+// whether an existing entry was replaced.
+// ponytail: fixed work paths; two concurrent runs on one dest can collide.
+func replaceSkill(dest, name string) (bool, error) {
+	target := filepath.Join(dest, name)
+	staging := filepath.Join(dest, "."+name+".new")
+	aside := filepath.Join(dest, "."+name+".old")
+	for _, p := range []string{staging, aside} {
+		if err := os.RemoveAll(p); err != nil {
+			return false, fmt.Errorf("clearing %s: %w", p, err)
+		}
 	}
-	switch resp {
-	case "y", "Y", "yes", "YES":
-		return true
-	default:
-		return false
-	}
-}
-
-// installOneSkill writes a single embedded skill (by top-level dir name) under dest.
-// If the skill already exists and overwrite is false, it is skipped.
-func installOneSkill(dest, name string, overwrite bool) (bool, error) {
-	skip := map[string]bool{}
-	if !overwrite && skillExistsAt(dest, name) {
-		skip[name] = true
-	}
-	installed, err := installSkills(dest, name, skip)
-	if err != nil {
+	if _, err := installSkills(staging, name); err != nil {
 		return false, err
 	}
-	return len(installed) > 0, nil
+	_, statErr := os.Lstat(target)
+	replaced := statErr == nil
+	if replaced {
+		if err := os.Rename(target, aside); err != nil {
+			return false, fmt.Errorf("moving aside %s: %w", target, err)
+		}
+	}
+	if err := os.Rename(filepath.Join(staging, name), target); err != nil {
+		return false, fmt.Errorf("renaming %s into place: %w", name, err)
+	}
+	for _, p := range []string{staging, aside} {
+		if err := os.RemoveAll(p); err != nil {
+			return false, fmt.Errorf("removing %s: %w", p, err)
+		}
+	}
+	return replaced, nil
 }
 
 // installSkills writes embedded skills under dest. When onlyName is non-empty,
-// only that top-level skill is installed. skipNames is the set of skills to leave untouched.
-func installSkills(dest, onlyName string, skipNames map[string]bool) ([]string, error) {
+// only that top-level skill is installed.
+func installSkills(dest, onlyName string) ([]string, error) {
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return nil, fmt.Errorf("creating skills directory %s: %w", dest, err)
 	}
@@ -85,9 +86,6 @@ func installSkills(dest, onlyName string, skipNames map[string]bool) ([]string, 
 			top = top[:i]
 		}
 		if onlyName != "" && top != onlyName {
-			return nil
-		}
-		if skipNames[top] {
 			return nil
 		}
 		if d.IsDir() {
