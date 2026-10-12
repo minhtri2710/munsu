@@ -15,6 +15,7 @@ type SendToSoldierResult struct {
 	MessageID string
 	Queued    bool // true when the soldier was busy and the command was queued
 	Sent      bool // true when the soldier was idle and the notification ref was sent
+	Cleared   bool // true when the pending envelope was already acked and was removed without sending
 	Err       error
 }
 
@@ -194,9 +195,12 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 
 	// Already acked? If so, remove pending and return.
 	if ack, ackErr := store.ReadAck(targetEnv); ackErr == nil && ack != nil {
-		if store.RemovePendingAfterAck(senderIdentity, targetEnv.MessageID, ack) == nil {
-			store.RemoveAckedPayload(targetEnv)
+		if err := store.RemovePendingAfterAck(senderIdentity, targetEnv.MessageID, ack); err != nil {
+			result.Err = fmt.Errorf("clearing acked pending %s: %w", targetEnv.MessageID, err)
+			return result
 		}
+		store.RemoveAckedPayload(targetEnv)
+		result.Cleared = true
 		return result
 	}
 

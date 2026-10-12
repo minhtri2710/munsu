@@ -424,6 +424,11 @@ generation must pass its explicit generation here.
 
 			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if err != nil {
+				if result != nil {
+					for _, step := range result.Steps {
+						fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", step)
+					}
+				}
 				return err
 			}
 
@@ -506,7 +511,7 @@ Calling when the soldier is busy returns with "still busy".
 				SchemaVersion: SchemaVersion,
 				Kind:          "soldier-flush",
 				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("%s: cleared already-acked pending command (message=%s)", id, result.MessageID)},
 			})
 		}),
 	}
