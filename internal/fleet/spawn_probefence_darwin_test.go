@@ -149,6 +149,50 @@ func TestFencedSoldierAppendsItsStatus(t *testing.T) {
 	}
 }
 
+// fencedOpenHome names the home the child process below opens.
+const fencedOpenHome = "MUNSU_TEST_FENCED_OPEN_HOME"
+
+// TestFencedOpenHomeChild is the body TestFencedSoldierOpensItsHome runs inside
+// the fence: the home open every soldier-side munsu command makes.
+func TestFencedOpenHomeChild(t *testing.T) {
+	dir := os.Getenv(fencedOpenHome)
+	if dir == "" {
+		t.Skip("runs only as the child of TestFencedSoldierOpensItsHome")
+	}
+	if _, err := home.Open(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The fence locks every ancestor of the git shim, the home included, so that
+// lock holds only while munsu never chmods the home on a seat's path: only
+// createHome does, before any seat exists. A seat-side chmod of the home (even
+// to its own mode) fails here with "operation not permitted". The home sits in
+// a temp root, so the roots-included case is the one checked.
+func TestFencedSoldierOpensItsHome(t *testing.T) {
+	isolateHuman(t)
+	f := newFenceFixture(t)
+	if _, err := home.Init(f.home); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provisionGitShim(f.home); err != nil {
+		t.Fatal(err)
+	}
+	r := f.runner("direct-PR")
+	if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
+		t.Fatal(err)
+	}
+	argv, err := r.fence.Wrap([]string{os.Args[0], "-test.run=^TestFencedOpenHomeChild$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), fencedOpenHome+"="+f.home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the home open failed under the fence: %v\n%s", err, out)
+	}
+}
+
 // Taking the shim dir off the seat's PATH would let `git` resolve past the git
 // guard: a directory the shell cannot enter is skipped. None of the shim dir,
 // its parent or the home (here inside a temp root, a writable root) may be
