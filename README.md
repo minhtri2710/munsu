@@ -59,7 +59,7 @@ For standalone munsu use, skip this step — without a `review` tool entry the r
 
 ```sh
 munsu home --mkdir       # create ~/.munsu/{state,data,config,projects}
-munsu init               # auto-detect backend, harness, and seed AGENTS.md
+munsu init               # detect the soldier harness, seed config/base.json and AGENTS.md
 munsu doctor             # run diagnostics with fix commands
 munsu --help             # see the full command tree
 munsu --version          # print version
