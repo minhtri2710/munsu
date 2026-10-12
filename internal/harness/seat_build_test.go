@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // seatBuildDirOf is the seat build dir of the home a <home>/state/<name> dst
@@ -71,6 +72,65 @@ func TestSeatDirIsKeptOnlyAsARealDir(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The seat build dir must be a real directory the current user owns; a
+// symlink or a file there refuses the build and nothing is written through it.
+// The allow row is the nearest valid case: the dir exists already.
+func TestSeatBuildDirMustBeARealDir(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		plant   func(t *testing.T, build, victim string)
+		refused bool
+	}{
+		{"an existing real dir builds", func(t *testing.T, build, _ string) { mustDo(t, os.Mkdir(build, 0o700)) }, false},
+		{"a symlink refuses", func(t *testing.T, build, victim string) { mustDo(t, os.Symlink(victim, build)) }, true},
+		{"a regular file refuses", func(t *testing.T, build, _ string) { mustDo(t, os.WriteFile(build, nil, 0o600)) }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, dst := claudeConfigFixture(t)
+			build := seatBuildDirOf(dst)
+			victim := filepath.Join(t.TempDir(), "victim")
+			mustDo(t, os.Mkdir(victim, 0o700))
+			tc.plant(t, build, victim)
+			err := BuildClaudeConfigDir(c, build, dst)
+			if !tc.refused {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "seat build dir "+build+" is not a directory the current user owns; remove it, then respawn") {
+				t.Fatalf("err = %v, want the refusal naming %s", err, build)
+			}
+			if names := dirNames(t, victim); len(names) != 0 {
+				t.Fatalf("the build wrote through the planted link: %v", names)
+			}
+			if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+				t.Fatalf("%s exists after a refused build: %v", dst, err)
+			}
+		})
+	}
+}
+
+// A build removes the seat build dir's stale entries, which only a crashed
+// build or preflight leaves, and keeps a fresh one, which may be another build
+// in progress, of the same task included: each build has a name of its own.
+func TestSeatBuildRemovesOnlyStaleEntries(t *testing.T) {
+	_, src, dst := agentDirFixture(t)
+	build := seatBuildDirOf(dst)
+	stale, fresh := filepath.Join(build, "T-9.pi-agent-1"), filepath.Join(build, filepath.Base(dst))
+	mustDo(t, os.MkdirAll(stale, 0o700))
+	mustDo(t, os.WriteFile(filepath.Join(stale, "settings.json"), nil, 0o600))
+	mustDo(t, os.Mkdir(fresh, 0o700))
+	old := time.Now().Add(-seatBuildStaleAge - time.Minute)
+	mustDo(t, os.Chtimes(stale, old, old))
+	if err := BuildPiAgentDir(src, build, dst); err != nil {
+		t.Fatal(err)
+	}
+	if names := dirNames(t, build); !reflect.DeepEqual(names, []string{filepath.Base(fresh)}) {
+		t.Fatalf("seat build dir = %v, want only the fresh entry %s", names, filepath.Base(fresh))
 	}
 }
 

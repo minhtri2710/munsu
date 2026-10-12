@@ -251,6 +251,76 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 	mustRefuse(t, cf, filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(harness.SeatBuildDir(ls.home), "f"))
 }
 
+// mustRefuseMkdir requires the sandbox's own refusal of creating each dir.
+func mustRefuseMkdir(t *testing.T, f *Fence, dirs ...string) {
+	t.Helper()
+	for _, d := range dirs {
+		out, err := fenced(t, f, "/bin/mkdir", d)
+		if err == nil || !strings.Contains(out, "Operation not permitted") {
+			t.Errorf("mkdir %s was not refused by the fence: %v %s", d, err, out)
+		}
+		if _, statErr := os.Lstat(d); statErr == nil {
+			t.Errorf("%s exists after a mkdir the fence must refuse", d)
+			os.RemoveAll(d)
+		}
+	}
+}
+
+// The dirs munsu builds what a claude or pi seat loads in are refused to every
+// seat but their owner. The home sits under a temp root, which every seat
+// writes (MUNSU_HOME can put it there), so only the profile's late denies
+// refuse these. A blocked row covers planting the name and writing inside an
+// existing one; the allow rows are the nearest valid writes of the same seat.
+func TestSeatDirRefusals(t *testing.T) {
+	seatEnv(t, t.TempDir())
+	l := newLayout(t)
+	state := filepath.Join(l.home, "state")
+	build := harness.SeatBuildDir(l.home)
+	sl := l.soldier()
+	sl.HarnessStateDir = l.claudeStateDir()
+	rl := l.reviewer()
+	rl.HarnessStateDir = filepath.Join(state, "R-1."+harness.ClaudeConfigDirSuffix)
+	mkdirs(t, sl.HarnessStateDir, rl.HarnessStateDir)
+	soldier, reviewer := mustNew(t, sl), mustNew(t, rl)
+	// Another task's live seat dirs, built by munsu.
+	live := []string{filepath.Join(state, "T-3."+harness.ClaudeConfigDirSuffix), filepath.Join(state, "T-3."+harness.PiAgentDirSuffix)}
+	mkdirs(t, live...)
+	otherDirs := func(f *Fence) {
+		mustRefuseMkdir(t, f, filepath.Join(state, "T-2."+harness.ClaudeConfigDirSuffix), filepath.Join(state, "T-2."+harness.PiAgentDirSuffix))
+		mustRefuse(t, f, filepath.Join(live[0], "settings.json"), filepath.Join(live[1], "settings.json"))
+	}
+	buildDir := func(f *Fence) {
+		if err := os.RemoveAll(build); err != nil {
+			t.Fatal(err)
+		}
+		mustRefuseMkdir(t, f, build)
+		mkdirs(t, build)
+		mustRefuse(t, f, filepath.Join(build, "f"))
+	}
+	for _, tc := range []struct {
+		name  string
+		check func()
+	}{
+		{"a soldier is refused another task's seat dirs, its reviewer's included", func() {
+			otherDirs(soldier)
+			mustRefuse(t, soldier, filepath.Join(rl.HarnessStateDir, "settings.json"))
+		}},
+		{"a reviewer is refused another task's seat dirs, its soldier's included", func() {
+			otherDirs(reviewer)
+			mustRefuse(t, reviewer, filepath.Join(sl.HarnessStateDir, "settings.json"))
+		}},
+		{"a soldier writes its own seat dir and its own status", func() {
+			mustWrite(t, soldier, filepath.Join(sl.HarnessStateDir, "f"), filepath.Join(state, "T-1.status"))
+		}},
+		{"a reviewer writes its own seat dir", func() { mustWrite(t, reviewer, filepath.Join(rl.HarnessStateDir, "f")) }},
+		{"a soldier is refused the seat build dir", func() { buildDir(soldier) }},
+		{"a reviewer is refused the seat build dir", func() { buildDir(reviewer) }},
+		{"a reviewer writes a temp path outside the home", func() { mustWrite(t, reviewer, filepath.Join(l.root, "f")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) { tc.check() })
+	}
+}
+
 // A seat's PATH directories are refused wholesale, whatever allowed root they
 // sit in, and so is renaming one away. The allow rows are the nearest valid
 // writes: the same roots, one name over.

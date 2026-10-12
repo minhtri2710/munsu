@@ -70,7 +70,7 @@ func claudeAuthConfigured(seat *ClaudeSeat) bool {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "claude", "auth", "status")
 	if seat != nil {
-		if err := makeSeatBuildDir(seat.BuildDir); err != nil {
+		if err := prepareSeatBuildDir(seat.BuildDir); err != nil {
 			return false
 		}
 		dir, err := os.MkdirTemp(seat.BuildDir, "claude-auth-")

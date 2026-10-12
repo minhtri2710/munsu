@@ -99,8 +99,8 @@ func TestBuildClaudeConfigDir(t *testing.T) {
 		if after, _ := os.ReadFile(c.GlobalConfig); string(after) != string(before) {
 			t.Fatalf("the Human's .claude.json was modified")
 		}
-		if _, err := os.Lstat(filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))); !os.IsNotExist(err) {
-			t.Fatalf("building dir left behind: %v", err)
+		if names := dirNames(t, seatBuildDirOf(dst)); len(names) != 0 {
+			t.Fatalf("build left %v behind in the seat build dir", names)
 		}
 	})
 	t.Run("an absent config gives an empty seat dir with no trust", func(t *testing.T) {
@@ -127,10 +127,11 @@ func TestBuildClaudeConfigDir(t *testing.T) {
 				if err := BuildClaudeConfigDir(c, seatBuildDirOf(dst), dst); err == nil || !strings.Contains(err.Error(), "building claude config dir from") || !strings.Contains(err.Error(), ".claude.json") {
 					t.Fatalf("err = %v, want the .claude.json build refusal", err)
 				}
-				for _, p := range []string{dst, filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))} {
-					if _, err := os.Lstat(p); !os.IsNotExist(err) {
-						t.Errorf("%s exists after a failed build: %v", p, err)
-					}
+				if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+					t.Errorf("%s exists after a failed build: %v", dst, err)
+				}
+				if names := dirNames(t, seatBuildDirOf(dst)); len(names) != 0 {
+					t.Errorf("failed build left %v behind in the seat build dir", names)
 				}
 			})
 		}

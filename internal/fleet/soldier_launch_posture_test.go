@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -130,29 +131,27 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 	}
 }
 
-// plantSeatBuildLeftover leaves a crashed build of dst in the home's seat build
-// dir, where a launch must build dst, and returns its path.
+// plantSeatBuildLeftover leaves a stale crashed build of dst in the home's seat
+// build dir, where a launch must build dst, and returns its path.
 func plantSeatBuildLeftover(t *testing.T, homeDir, dst string) string {
 	t.Helper()
-	leftover := filepath.Join(harness.SeatBuildDir(homeDir), filepath.Base(dst))
+	leftover := filepath.Join(harness.SeatBuildDir(homeDir), filepath.Base(dst)+"-crashed")
 	if err := os.MkdirAll(leftover, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(leftover, "stale"), nil, 0o600); err != nil {
+	old := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(leftover, old, old); err != nil {
 		t.Fatal(err)
 	}
 	return leftover
 }
 
 // requireBuiltInSeatBuildDir requires that dst was built in the seat build
-// dir: the build there cleared the planted leftover and none of it reached dst.
+// dir: the build there removed the planted stale leftover.
 func requireBuiltInSeatBuildDir(t *testing.T, leftover, dst string) {
 	t.Helper()
 	if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
-		t.Fatalf("%s survived the launch, so the build ran elsewhere: %v", leftover, err)
-	}
-	if _, err := os.Lstat(filepath.Join(dst, "stale")); !os.IsNotExist(err) {
-		t.Fatalf("the leftover reached %s: %v", dst, err)
+		t.Fatalf("%s survived the launch of %s, so the build ran elsewhere: %v", leftover, dst, err)
 	}
 }
 

@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // SeatBuildDirName is the hidden dir directly under a munsu home where an
 // unfenced munsu builds what a claude or pi process will load: a seat's config
 // dir before it is renamed into state/, and the auth preflight's empty config
-// dir. No fence root covers it: a soldier writes only the home's state, data,
-// .journal and .lock roots, a reviewer none of the home, and the temp roots
-// never hold a home. It is wrong the moment a seat can write the home root.
+// dir. fence.New denies every write under it to both the soldier and the
+// reviewer, after all of its allows, so the dir stays munsu's wherever the home
+// lives, a temp root included (pinned by TestSeatDirRefusals).
 const SeatBuildDirName = ".seat-build"
 
 // SeatBuildDir returns SeatBuildDirName under homeDir. It sits on the same
@@ -21,28 +22,61 @@ func SeatBuildDir(homeDir string) string {
 	return filepath.Join(homeDir, SeatBuildDirName)
 }
 
-// makeSeatBuildDir creates buildDir if it is absent. Its parent is the home
-// root, which no seat writes, so nothing a seat planted can be at buildDir.
-func makeSeatBuildDir(buildDir string) error {
+// seatBuildStaleAge is how old an entry of the seat build dir must be before a
+// later build removes it. Every entry is a build in progress or a preflight's
+// empty config dir; a build links a few entries and writes one small file, and
+// a preflight is bounded by claudeAuthProbeTimeout, so an entry this old was
+// left by a process that crashed or was killed.
+const seatBuildStaleAge = time.Hour
+
+// prepareSeatBuildDir creates buildDir if it is absent, requires it to be a
+// real directory the current user owns, and removes its stale entries. The
+// fence refuses every seat the name itself, so nothing a seat planted can be
+// there; a symlink or another owner refuses the build anyway. No lane runs the
+// other-owner branch: making a dir another user owns needs root.
+//
+// An entry is stale when its modification time is seatBuildStaleAge old. It is
+// removed by its literal path from the listing, never through a link
+// (os.RemoveAll unlinks a symlink and does not follow it), and a failed removal
+// only leaves it for the next build.
+func prepareSeatBuildDir(buildDir string) error {
 	if err := os.Mkdir(buildDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
+	}
+	fi, err := os.Lstat(buildDir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() || !ownedByCurrentUser(fi) {
+		return fmt.Errorf("seat build dir %s is not a directory the current user owns; remove it, then respawn", buildDir)
+	}
+	entries, err := os.ReadDir(buildDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) >= seatBuildStaleAge {
+			os.RemoveAll(filepath.Join(buildDir, e.Name()))
+		}
 	}
 	return nil
 }
 
 // installSeatDir builds a seat's dir dst (what names it in errors) with fill,
-// in buildDir where no seat writes, then renames it into place, so munsu never
-// creates, writes or follows a path inside the seat-writable state/. An
-// existing real dir at dst is kept and never written: it may belong to a live
-// seat, which can replace its entries. A crash leftover of dst's last build is
-// cleared here, before the next build of the same dst.
+// in a fresh dir under buildDir where no seat writes, then renames it into
+// place, so munsu never creates, writes or follows a path inside the
+// seat-writable state/. An existing real dir at dst is kept and never written:
+// it is the seat's own, from an earlier launch of the same task, because the
+// fence refuses every seat any other task's seat dir (TestSeatDirRefusals).
+// Rebuilding it would drop the session state a pi agent dir holds.
 //
-// A symlink or non-directory at dst refuses the launch: the seat's harness
-// would load whatever it points at. Human words (domain.Words): grantor the
-// Human, channel supervisor-relay:dialog, words=selected, G1085: "Quy tắc
-// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu
-// hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào session ngoài
-// session của nó."
+// A symlink or non-directory at dst refuses the launch, fenced or not (an
+// unfenced pi loads its dir too): the seat's harness would load whatever it
+// points at. Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1085: "Quy tắc chung
+// (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu hình mà
+// tiến trình ngoài fence sẽ chạy, và không gửi input vào session ngoài session
+// của nó." Supervisor decision G1099 keeps it for unfenced launches.
 func installSeatDir(what, buildDir, dst string, fill func(dir string) error) error {
 	if fi, err := os.Lstat(dst); err == nil {
 		if fi.IsDir() {
@@ -52,14 +86,11 @@ func installSeatDir(what, buildDir, dst string, fill func(dir string) error) err
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("checking %s %s: %w", what, dst, err)
 	}
-	if err := makeSeatBuildDir(buildDir); err != nil {
+	if err := prepareSeatBuildDir(buildDir); err != nil {
 		return fmt.Errorf("building %s: %w", what, err)
 	}
-	tmp := filepath.Join(buildDir, filepath.Base(dst))
-	if err := os.RemoveAll(tmp); err != nil {
-		return fmt.Errorf("clearing %s: %w", tmp, err)
-	}
-	if err := os.Mkdir(tmp, 0o700); err != nil {
+	tmp, err := os.MkdirTemp(buildDir, filepath.Base(dst)+"-")
+	if err != nil {
 		return fmt.Errorf("building %s: %w", what, err)
 	}
 	if err := fill(tmp); err != nil {

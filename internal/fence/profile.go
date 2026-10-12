@@ -113,6 +113,21 @@ func New(l Launch) (*Fence, error) {
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
 	}
+	if p.home != "" {
+		// After every allow, so they hold wherever the home lives, a temp root
+		// included. The unfenced munsu builds what a claude or pi process loads
+		// in the seat build dir. Every task's seat dir in state/ is refused, so
+		// a seat cannot plant or change the config another task's seat (its own
+		// reviewer included) starts from; only its own dir is allowed back.
+		// Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1085 (quoted at
+		// harnessState); Supervisor decision G1099.
+		deny(&b, "subpath", harness.SeatBuildDir(p.home))
+		denySeatDirs(&b, filepath.Join(p.home, "state"))
+		if p.stateDir != "" {
+			allowRoots(p.stateDir)
+		}
+	}
 	// Last, so nothing above reopens it: a seat's PATH directories, and every
 	// ancestor's own name so a directory cannot be renamed or removed away and
 	// replaced. An ancestor of a PATH dir that is not itself a writable root is
@@ -517,6 +532,14 @@ func rule(b *strings.Builder, verb, op, filter string, paths []string) {
 		b.WriteString(" (" + filter + " " + quote(p) + ")")
 	}
 	b.WriteString(")\n")
+}
+
+// denySeatDirs refuses creating, or writing inside, any per-task seat dir in
+// state: <durable key>.<harness.ClaudeConfigDirSuffix or PiAgentDirSuffix>.
+func denySeatDirs(b *strings.Builder, state string) {
+	suffixes := regexp.QuoteMeta(harness.ClaudeConfigDirSuffix) + "|" + regexp.QuoteMeta(harness.PiAgentDirSuffix)
+	b.WriteString(`(deny file-write* (regex (string-append "^" (regex-quote ` + quote(state+"/") + `) ` +
+		quote(`[^/]+\.(`+suffixes+`)(/|$)`) + `)))` + "\n")
 }
 
 // allowFiles allows each exact file and its atomic-write temp siblings

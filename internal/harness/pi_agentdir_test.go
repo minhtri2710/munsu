@@ -231,8 +231,8 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if orig, _ := os.ReadFile(filepath.Join(src, "settings.json")); string(orig) != `{"skills":["keep"]}` {
 			t.Fatalf("the Human's settings.json was modified: %s", orig)
 		}
-		if _, err := os.Lstat(filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))); !os.IsNotExist(err) {
-			t.Fatalf("building dir left behind: %v", err)
+		if names := dirNames(t, seatBuildDirOf(dst)); len(names) != 0 {
+			t.Fatalf("build left %v behind in the seat build dir", names)
 		}
 	})
 	t.Run("an absent agent dir still gets the settings block", func(t *testing.T) {
@@ -245,25 +245,6 @@ func TestBuildPiAgentDir(t *testing.T) {
 			t.Fatalf("entries = %v, want only settings.json", entries)
 		}
 	})
-	t.Run("a crash leftover in the build dir is cleared by the next build", func(t *testing.T) {
-		_, src, dst := agentDirFixture(t)
-		leftover := filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))
-		if err := os.MkdirAll(leftover, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(leftover, "stale"), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := BuildPiAgentDir(src, seatBuildDirOf(dst), dst); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Lstat(filepath.Join(dst, "stale")); !os.IsNotExist(err) {
-			t.Fatalf("stale entry survived into the installed dir: %v", err)
-		}
-		if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
-			t.Fatalf("the build left %s behind: %v", leftover, err)
-		}
-	})
 	t.Run("malformed settings install nothing", func(t *testing.T) {
 		_, src, dst := agentDirFixture(t)
 		if err := os.WriteFile(filepath.Join(src, "settings.json"), []byte("{"), 0o600); err != nil {
@@ -273,10 +254,11 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "settings.json") {
 			t.Fatalf("err = %v, want a settings.json refusal", err)
 		}
-		for _, p := range []string{dst, filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))} {
-			if _, err := os.Lstat(p); !os.IsNotExist(err) {
-				t.Errorf("%s exists after a failed build: %v", p, err)
-			}
+		if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a failed build: %v", dst, err)
+		}
+		if names := dirNames(t, seatBuildDirOf(dst)); len(names) != 0 {
+			t.Errorf("failed build left %v behind in the seat build dir", names)
 		}
 	})
 	t.Run("an unreadable destination parent refuses", func(t *testing.T) {
