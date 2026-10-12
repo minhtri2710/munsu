@@ -20,7 +20,7 @@ func newDoctorCmd() *cobra.Command {
 
 Hard-required tools (doctor exits non-zero if missing):
   git, session backend (herdr, or tmux: tmux has no prompt support yet, so
-  wake, mailbox, nudge, uplink and captain prompts need herdr), and at least
+  wake, mailbox, nudge and captain prompts need herdr), and at least
   one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:

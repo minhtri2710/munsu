@@ -694,14 +694,12 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		result.Steps = append(result.Steps, steps...)
 	}
 
-	// Step 0: Terminal uplink continuity check
-	// Before any destructive teardown, ensure material terminal reports are
-	// durably acknowledged. If the ReportRelay obligation is still open and
-	// the task has material status (done/failed/blocked/needs-decision),
-	// fail closed — the parent supervisor must receive confirmation before
-	// local artifacts are removed. Use --force to override.
+	// Step 0: report continuity check
+	// Before any destructive teardown, every material report the task's
+	// reporter wrote must be settled by its parent; fail closed until then.
+	// Use --force to override.
 	if !opts.Force {
-		if err := journals.VerifyRetirementContinuity(opts.HomeDir, opts.ID); err != nil {
+		if err := journals.VerifyRetirementContinuity(opts.HomeDir, opts.ID, kind); err != nil {
 			return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 		}
 	}
@@ -1125,7 +1123,7 @@ func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, ki
 
 // retiredTaskPrunedWakeKinds are the watcher-derived wake kinds that describe a
 // live task's health and mean nothing once it is retired. "signal" and
-// "uplink" carry the task's terminal news to a parent that may not have drained
+// "report" carry the task's terminal news to a parent that may not have drained
 // them yet, so retirement never drops them.
 var retiredTaskPrunedWakeKinds = []string{"stale", "check"}
 
@@ -1626,7 +1624,7 @@ func cleanupResidualArtifactPaths(homeDir, id, kind string, meta map[string]stri
 		paths = append(paths, reviewHomeDir(homeDir, id))
 	}
 	stateDir := home.StateDir(homeDir)
-	for _, suffix := range []string{"check", "turnend"} {
+	for _, suffix := range []string{"check", "turnend", "report-cursor"} {
 		p, err := home.DurableFilePath(stateDir, id, "."+suffix)
 		if err != nil {
 			return nil, err

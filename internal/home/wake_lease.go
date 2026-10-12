@@ -89,6 +89,10 @@ func claimWakesAt(homeDir, consumer string, leaseSeconds, limit int, now func() 
 	if err := recoverWakeMutationLocked(homeDir); err != nil {
 		return nil, err
 	}
+	// Every claim sees every report first, with or without a watcher.
+	if err := deriveReportWakesLocked(homeDir, now()); err != nil {
+		return nil, err
+	}
 	return claimWakesLocked(homeDir, consumer, leaseSeconds, limit, now)
 }
 

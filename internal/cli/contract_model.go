@@ -261,14 +261,14 @@ type WakeAck struct {
 	ClaimID string `json:"claim_id"`
 	State   string `json:"state"`
 
-	// UnacceptedReports lists the uplink reports the settled wakes pointed at
-	// whose envelope could not be accepted. The wake is settled regardless; the
-	// reports stay pending and Hint says how to retry.
+	// UnacceptedReports lists the reports the settled wakes carried whose
+	// settlement could not finish its work. The wake is settled regardless;
+	// Hint says how to finish by hand.
 	UnacceptedReports []WakeUnacceptedReport `json:"unaccepted_reports,omitempty"`
 	Hint              string                 `json:"hint,omitempty"`
 }
 
-// WakeUnacceptedReport is one uplink report a settled wake could not accept.
+// WakeUnacceptedReport is one report a settled wake could not finish.
 type WakeUnacceptedReport struct {
 	Key     string `json:"key"`
 	Payload string `json:"payload,omitempty"`
@@ -324,12 +324,9 @@ type SpawnReceipt struct {
 
 // MessageResult represents success and idempotent no-op acknowledgements.
 type MessageResult struct {
-	Message          string           `json:"message"`
-	Noop             bool             `json:"noop"`
-	Injection        *ReportInjection `json:"injection,omitempty"`
-	EnqueueTimestamp int64            `json:"enqueue_timestamp,omitempty"`
-	ReceiptTimestamp int64            `json:"receipt_timestamp,omitempty"`
-	WatcherIdentity  string           `json:"watcher_identity,omitempty"`
+	Message         string `json:"message"`
+	Noop            bool   `json:"noop"`
+	WatcherIdentity string `json:"watcher_identity,omitempty"`
 }
 
 // InboxReceiveResult carries the loaded envelope payload from inbox receive.
@@ -466,15 +463,6 @@ type SafetyCheckData struct {
 	Block          bool   `json:"block"`
 	Reason         string `json:"reason,omitempty"`
 	Error          string `json:"error,omitempty"`
-}
-
-// ReportInjection records the outcome of one material report injection attempt.
-type ReportInjection struct {
-	Outcome string `json:"outcome"` // injected | unsafe | afk | endpoint-dead | backend-failed | capture-failed
-	Verdict string `json:"verdict,omitempty"`
-	Target  string `json:"target,omitempty"`
-	EventID uint64 `json:"event_id,omitempty"`
-	Error   string `json:"error,omitempty"`
 }
 
 // WatchStatus reports the bounded watcher health and status.

@@ -1,3 +1,3 @@
 // Package orchestrator provides supervision loops, wake queue management,
-// AFK away-mode supervision daemon, mailbox outbox, and uplink reports.
+// AFK away-mode supervision daemon, mailbox outbox, and report settlement.
 package orchestrator

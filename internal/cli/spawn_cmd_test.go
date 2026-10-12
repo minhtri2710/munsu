@@ -13,7 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -406,215 +405,61 @@ func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
 	}
 }
 
-// TestTeardownCmd_UplinkAckInTempHome proves the CLI `munsu teardown` command
-// enforces the exact uplink ack in a non-default temp home. It:
-//  1. Creates a scout task with material status + the generation's report (passes scoutSafetyCheck)
-//  2. Sets up receipt + obligation (triggers uplinkCheck)
-//  3. Runs teardown without ack → must fail with uplink check error
-//  4. Writes ack, runs teardown → must fail on worktree safety, NOT uplink check
-func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
-	tmpDir := t.TempDir()
-	soldierID := "teardown-homer-test"
-
-	// Seed the authoritative task record the teardown retirement transition
-	// requires (Task 7.7): production tasks are created via the Authority at
-	// spawn.
-	seedRetireAuthority(t, tmpDir, soldierID)
-
-	// Set up state dir
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs the generation's report)
-	metaContent := "kind=scout\nworktree=/nonexistent\n"
-	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
-
-	// Create status with material state so uplinkCheck can detect it
-	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create the generation's report so scoutSafetyCheck passes
-	dataDir := filepath.Join(tmpDir, "data", soldierID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write receipt (no ack) so uplinkCheck blocks
-	if err := orchestrator.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
-		t.Fatal(err)
-	}
-	if err := orchestrator.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("MUNSU_HOME", tmpDir)
-
-	// Step 1: Without ack, teardown must fail with uplink check error
-	root := NewRootCommand()
-	root.SetArgs([]string{"teardown", soldierID})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected teardown to fail with uplink check (no ack), got nil")
-	}
-	if !strings.Contains(err.Error(), "report-relay") && !strings.Contains(err.Error(), "acknowledged") {
-		t.Errorf("expected uplink check failure mentioning 'report-relay' or 'acknowledged', got: %v", err)
-	}
-
-	// Step 2: Write ack so uplinkCheck passes
-	if err := orchestrator.WriteAck(tmpDir, soldierID, "default"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := orchestrator.CompleteTaskObligation(tmpDir, soldierID, orchestrator.ReportRelay); err != nil {
-		t.Fatal(err)
-	}
-
-	// Step 3: With ack, teardown must succeed for scout task (scoutSafetyCheck passes with the generation's report)
-	root = NewRootCommand()
-	root.SetArgs([]string{"teardown", soldierID})
-	err = root.Execute()
-	if err != nil {
-		t.Fatalf("with ack, teardown of scout task should succeed, got: %v", err)
-	}
-}
-
-// TestTeardownCmd_ForceSkipsUplinkCheckInTempHome proves that --force
-// bypasses the uplink check even without ack. The teardown should succeed
-// with --force and never mention report-relay errors.
-func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
-	tmpDir := t.TempDir()
-	soldierID := "teardown-force-test"
-
-	// Seed the authoritative task record the teardown retirement transition
-	// requires (Task 7.7): production tasks are created via the Authority at
-	// spawn.
-	seedRetireAuthority(t, tmpDir, soldierID)
-
-	metaContent := "kind=scout\nworktree=/nonexistent\n"
-	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
-	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create the generation's report so scoutSafetyCheck passes
-	dataDir := filepath.Join(tmpDir, "data", soldierID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write receipt + obligations (no ack — would normally block)
-	if err := orchestrator.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
-		t.Fatal(err)
-	}
-	if err := orchestrator.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("MUNSU_HOME", tmpDir)
-
-	root := NewRootCommand()
-	root.SetArgs([]string{"teardown", "--force", soldierID})
-	err := root.Execute()
-	if err != nil {
-		// Must NOT mention report-relay — --force bypasses uplink check
-		if strings.Contains(err.Error(), "report-relay") || strings.Contains(err.Error(), "acknowledged") {
-			t.Errorf("--force should skip uplink check, but got: %v", err)
-		}
-		// Other errors (worktree return etc.) are fine — force bypasses safety checks
-		return
-	}
-	// Success — --force bypassed both safety check and uplink check
-}
-
-// TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating proves that acks for a
-// wrong task ID or wrong term key do NOT satisfy the uplink gating.
-// Only the exact taskID+termKey ack unblocks teardown.
-func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
-	tmpDir := t.TempDir()
-	soldierID := "teardown-wrong-key-test"
-
-	// Seed the authoritative task record the teardown retirement transition
-	// requires (Task 7.7): production tasks are created via the Authority at
-	// spawn.
-	seedRetireAuthority(t, tmpDir, soldierID)
-	termKey := "uplink"
-
-	metaContent := "kind=scout\nworktree=/nonexistent\n"
-	writeRawTaskMeta(t, tmpDir, soldierID, metaContent)
-	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create the generation's report so scoutSafetyCheck passes
-	dataDir := filepath.Join(tmpDir, "data", soldierID)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write receipt + obligations
-	if err := orchestrator.WriteReceipt(tmpDir, soldierID, termKey, "done", "task complete"); err != nil {
-		t.Fatal(err)
-	}
-	if err := orchestrator.InitTaskObligations(tmpDir, soldierID, termKey); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("MUNSU_HOME", tmpDir)
-
-	// Write ack for WRONG task (same key) — should NOT unblock
-	if err := orchestrator.WriteAck(tmpDir, "wrong-task", termKey); err != nil {
-		t.Fatal(err)
-	}
-
-	root := NewRootCommand()
-	root.SetArgs([]string{"teardown", soldierID})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected teardown to fail (wrong-task ack should not satisfy gating), got nil")
-	}
-	if !strings.Contains(err.Error(), "report-relay") && !strings.Contains(err.Error(), "acknowledged") {
-		t.Errorf("expected uplink check failure, got: %v", err)
-	}
-
-	// Write ack for correct task but WRONG key — should NOT unblock either
-	if err := orchestrator.WriteAck(tmpDir, soldierID, "wrong-key"); err != nil {
-		t.Fatal(err)
-	}
-
-	root = NewRootCommand()
-	root.SetArgs([]string{"teardown", soldierID})
-	err = root.Execute()
-	if err == nil {
-		t.Fatal("expected teardown to fail (wrong-key ack should not satisfy gating), got nil")
-	}
-	if !strings.Contains(err.Error(), "report-relay") && !strings.Contains(err.Error(), "acknowledged") {
-		t.Errorf("expected uplink check failure, got: %v", err)
-	}
-
-	// Now write ack for the exact taskID+key — should unblock
-	if err := orchestrator.WriteAck(tmpDir, soldierID, termKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := orchestrator.CompleteTaskObligation(tmpDir, soldierID, orchestrator.ReportRelay); err != nil {
-		t.Fatal(err)
-	}
-
-	root = NewRootCommand()
-	root.SetArgs([]string{"teardown", soldierID})
-	err = root.Execute()
-	if err != nil {
-		t.Fatalf("with exact taskID+key ack, teardown should succeed, got: %v", err)
+// The CLI teardown of a scout holds while a report its reporter filed is not
+// settled, and --force retires past it. A scout's done report never held.
+func TestTeardownCmdHoldsForUnsettledReports(t *testing.T) {
+	const refusal = "report(s) its parent has not settled"
+	for _, tc := range []struct {
+		name    string
+		state   string
+		settle  bool
+		force   bool
+		wantErr string
+	}{
+		{"unsettled report", "failed", false, false, refusal},
+		{"settled report", "failed", true, false, ""},
+		{"forced past an unsettled report", "failed", false, true, ""},
+		{"unsettled scout done report", "done", false, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			soldierID := "teardown-report-test"
+			seedRetireAuthority(t, tmpDir, soldierID)
+			writeRawTaskMeta(t, tmpDir, soldierID, "kind=scout\nworktree=/nonexistent\n")
+			if err := os.MkdirAll(filepath.Join(tmpDir, "data", soldierID), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(fleet.ReportPath(tmpDir, soldierID, 1), []byte("# report"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := reportAs(t, "soldier", tmpDir, tmpDir, soldierID, "scout", tc.state, "report"); err != nil {
+				t.Fatalf("report: %v", err)
+			}
+			if tc.settle {
+				settleReports(t, tmpDir)
+			}
+			args := []string{"teardown", soldierID, "--home", tmpDir}
+			if tc.force {
+				args = append(args, "--force")
+			}
+			out, err := runRoot(t, args...)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("teardown = %v, want %q\n%s", err, tc.wantErr, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("teardown = %v, want it retired\n%s", err, out)
+			}
+			cursor, err := home.ReportCursorPath(tmpDir, soldierID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(cursor); !os.IsNotExist(err) {
+				t.Fatalf("report cursor after teardown: %v, want it removed", err)
+			}
+		})
 	}
 }
 

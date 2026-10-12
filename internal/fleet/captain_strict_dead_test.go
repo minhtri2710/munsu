@@ -106,14 +106,12 @@ func TestConverge_StrictDeadOnlyNoAgentFailsClosed(t *testing.T) {
 	launch := &countingLaunchEndpoint{}
 
 	result, err := Converge(parent, []Info{{ID: "noagent-converge", Home: captainHome}}, ConvergeCapabilities{
-		Continuity:   noopCaptainContinuity{},
-		Messaging:    noopCaptainMessaging{},
-		Watcher:      noopCaptainWatcher{},
-		Notification: &captainNotificationTransport{acknowledged: true},
-		Mailbox:      &captainTestMailboxSender{},
-		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
-		Launch:       launch,
-		Probe:        &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: false}},
+		Messaging:   noopCaptainMessaging{},
+		Watcher:     noopCaptainWatcher{},
+		Mailbox:     &captainTestMailboxSender{},
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: false}},
 	})
 	if err == nil {
 		t.Fatal("expected fail-closed converge error for pane-present/no-agent")
@@ -137,14 +135,12 @@ func TestConverge_StrictDeadOnlyAuthoritativeAbsenceRelaunches(t *testing.T) {
 	launch := &countingLaunchEndpoint{}
 
 	result, err := Converge(parent, []Info{{ID: "absent-converge", Home: captainHome}}, ConvergeCapabilities{
-		Continuity:   noopCaptainContinuity{},
-		Messaging:    noopCaptainMessaging{},
-		Watcher:      noopCaptainWatcher{},
-		Notification: &captainNotificationTransport{acknowledged: true},
-		Mailbox:      &captainTestMailboxSender{},
-		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
-		Launch:       launch,
-		Probe:        &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
+		Messaging:   noopCaptainMessaging{},
+		Watcher:     noopCaptainWatcher{},
+		Mailbox:     &captainTestMailboxSender{},
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
 	})
 	if err != nil {
 		t.Fatalf("converge error: %v", err)

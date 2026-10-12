@@ -157,7 +157,7 @@ func TestReportRefusesAReviewTask(t *testing.T) {
 			t.Setenv("MUNSU_TASK_KIND", tc.envKind)
 			t.Setenv("MUNSU_PARENT_STATUS", homeDir)
 
-			out, err := runTaskCommand(t, []string{"report", "blocked", "looks fine", "--key", tc.taskID, "--ring", "no-ring"})
+			out, err := runTaskCommand(t, []string{"report", "blocked", "looks fine", "--key", tc.taskID})
 			_, statErr := os.Stat(filepath.Join(homeDir, "state", tc.taskID+".status"))
 			if !tc.refused {
 				if err != nil || statErr != nil {

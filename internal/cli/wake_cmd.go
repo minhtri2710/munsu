@@ -147,7 +147,7 @@ func newWakeCmd() *cobra.Command {
 }
 
 // newWakeAck builds the settle result. The wake is settled whether or not its
-// report was accepted; unaccepted reports ride along with the retry hint.
+// report's work finished; unfinished reports ride along with the hint.
 func newWakeAck(wakeID, claimID, state string, unaccepted []orchestrator.UnacceptedReport) WakeAck {
 	ack := WakeAck{WakeID: wakeID, ClaimID: claimID, State: state}
 	for _, u := range unaccepted {

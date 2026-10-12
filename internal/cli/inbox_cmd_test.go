@@ -80,7 +80,7 @@ func TestInboxCmd_ClaimedWakes(t *testing.T) {
 	homeDir := t.TempDir()
 	claimedAt := time.Now().Add(-10 * time.Minute)
 	writeClaimedLease(t, homeDir, "lease-1", time.Now().Add(time.Hour), claimedAt,
-		fmt.Sprintf("%d\t7\tuplink\ttask-1\tdone: PR merged", claimedAt.Unix()))
+		fmt.Sprintf("%d\t7\treport\ttask-1\tdone: PR merged", claimedAt.Unix()))
 
 	output := runInboxView(t, homeDir)
 
@@ -91,7 +91,7 @@ func TestInboxCmd_ClaimedWakes(t *testing.T) {
 		"Wakes: none queued, 1 claimed",
 		"Claimed wakes: 1",
 		"lease-1 held by munsu:herdr, claimed 10m",
-		fmt.Sprintf(`%d:7 uplink task-1 "done: PR merged" [stalled]: claimed 10m`, claimedAt.Unix()),
+		fmt.Sprintf(`%d:7 report task-1 "done: PR merged" [stalled]: claimed 10m`, claimedAt.Unix()),
 		"by munsu:herdr, no ack or resolve since",
 	} {
 		if !strings.Contains(output, want) {

@@ -3,11 +3,10 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 
-	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // ReviewVerdictTarget names one working review task generation whose verdict
@@ -75,14 +74,14 @@ func registerReviewVerdictEvents(homeDir string, reviews ReviewVerdictPort) {
 
 // recordReviewVerdictWake is the review-verdict arm of the dispatcher. On a
 // valid file it does for the review task what the done path of `munsu report`
-// does for a soldier: that path completes only a scout, so the review task is
-// not completed, and it sends the uplink report to the parent. The arm adds
-// only the verdict record. A file the record step refuses, for any reason, is
-// reported once as a failed uplink to the parent, keyed by the file digest so
-// a re-entry supersedes instead of duplicating, and then acked: there is no
-// retry. An uplink that cannot be written leaves the event unacked, and
-// RecoverProcessEvents re-announces it on the next watcher start; the record
-// step replaces the verdict, so re-entry is safe.
+// does for a soldier: it writes the review task's done report, whose report
+// wake reaches the parent; settling it completes only a scout, so the review
+// task is not completed. The arm adds only the verdict record. A file the
+// record step refuses, for any reason, is reported once as a failed report,
+// keyed by the file digest, and then acked: there is no retry. A report that
+// cannot be written leaves the event unacked, and RecoverProcessEvents
+// re-announces it on the next watcher start; the record step replaces the
+// verdict, so re-entry is safe.
 func recordReviewVerdictWake(homeDir string, reviews ReviewVerdictPort, announced ProcessEventWake, rec *ProcessEventRecord) {
 	var target ReviewVerdictTarget
 	if err := json.Unmarshal([]byte(rec.Payload), &target); err != nil || announced.EventID != reviewVerdictEventID(target.TaskID, target.Generation) {
@@ -103,29 +102,11 @@ func recordReviewVerdictWake(homeDir string, reviews ReviewVerdictPort, announce
 	if digest == "" {
 		key = reviewVerdictEventPrefix + "unreadable"
 	}
-	if err := reportReviewVerdict(homeDir, target.TaskID, key, state, summary); err != nil && !errors.Is(err, ErrReportDurable) {
-		fmt.Fprintf(os.Stderr, "review-verdict uplink for %s failed (re-announced on restart): %v\n", target.TaskID, err)
+	if _, err := AppendReportStatus(homeDir, target.TaskID, domain.ReportStatusLine(state, summary, key)); err != nil {
+		fmt.Fprintf(os.Stderr, "review-verdict report for %s failed (re-announced on restart): %v\n", target.TaskID, err)
 		return
 	}
 	if err := AckProcessEvent(homeDir, announced.EventID, announced.Generation); err != nil {
 		fmt.Fprintf(os.Stderr, "process-event %q ack failed (re-announced on restart): %v\n", announced.EventID, err)
 	}
-}
-
-// reportReviewVerdict sends the uplink exactly as the soldier done and failed
-// path of `munsu report` does: sender is the task the home hosts, the receiver
-// is the home's own identity, and the notification is left queued.
-func reportReviewVerdict(homeDir, taskID, key, state, message string) error {
-	receiverID, receiverRank, err := home.ReadHomeIdentity(homeDir)
-	if err != nil {
-		return fmt.Errorf("deriving receiver identity: %w", err)
-	}
-	_, err = Report(ReportRequest{
-		SenderHome: homeDir, ReceiverHome: homeDir,
-		SenderRank: home.Rank("soldier"), SenderIdentity: home.ReceiverIDForTask(taskID),
-		ReceiverRank: receiverRank, ReceiverID: receiverID,
-		TaskID: taskID, Key: key, State: state, Message: message,
-		Notify: func(home.NotificationRef) UplinkNotifyResult { return QueuedNotification() },
-	})
-	return err
 }

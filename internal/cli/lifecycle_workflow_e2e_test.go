@@ -89,29 +89,6 @@ func (e *workflowEndpoints) Capture(fleet.CreatedEndpoint, int) (string, error) 
 
 func (e *workflowEndpoints) Dispose(fleet.CreatedEndpoint) error { return nil }
 
-// workflowUplink is the notification transport the captain watcher hook
-// requires (a nil transport is a fail-closed refusal). Delivery into General's
-// terminal needs a resolvable runtime target, which a headless run has not
-// got, so the hook queues instead of reaching this transport. The relay proof
-// in this scenario is therefore the durable pending -> accepted transition of
-// the uplink record, not a notification count.
-type workflowUplink struct{}
-
-func (workflowUplink) Notify(string, orchestrator.TargetResult, string) orchestrator.UplinkNotifyResult {
-	return orchestrator.QueuedNotification()
-}
-
-// workflowActivation counts the activation nudges the captain watcher hook
-// delivers to the Captain's own pane when a soldier receipt lands.
-type workflowActivation struct {
-	attempts int
-}
-
-func (a *workflowActivation) Attempt(string, orchestrator.TargetResult, string) orchestrator.ActivationAttempt {
-	a.attempts++
-	return orchestrator.ActivationAttempt{Acknowledged: true}
-}
-
 // workflowTeardown is the teardown backend seam. The soldier's endpoint is
 // gone by the time its terminal report has landed, so the probe reports a
 // narrow exact structured absence — the reading production needs to skip
@@ -257,14 +234,10 @@ type workflowCase struct {
 	// parentCaptainID is the parent identity the policy resolves and the
 	// launch envelope durably records.
 	parentCaptainID string
-	// relayed is how many durable captain->General uplinks the report leg must
-	// leave for the supervision cycle to relay and retire. General-direct has
-	// no captain in the loop: its terminal report closes its own handoff, so
-	// any pending uplink at all is a topology violation.
-	relayed int
-	// activations is how many nudges the Captain's own pane must receive for
-	// the soldier receipt that landed in its home. General has no Captain pane.
-	activations int
+	// generalReports is how many report wakes the Captain's report leaves in
+	// General's home. General-direct has no captain in the loop, so any report
+	// wake there is a topology violation.
+	generalReports int
 }
 
 func TestFleetLifecycleWorkflowAcrossTopologyPolicies(t *testing.T) {
@@ -275,8 +248,7 @@ func TestFleetLifecycleWorkflowAcrossTopologyPolicies(t *testing.T) {
 			role:            "general",
 			model:           "workflow-general-model",
 			parentCaptainID: "general",
-			relayed:         0,
-			activations:     0,
+			generalReports:  0,
 		},
 		{
 			name:            "captain-mediated",
@@ -285,8 +257,7 @@ func TestFleetLifecycleWorkflowAcrossTopologyPolicies(t *testing.T) {
 			model:           "workflow-captain-model",
 			digest:          workflowPublishedDigest,
 			parentCaptainID: "cap-1",
-			relayed:         1,
-			activations:     1,
+			generalReports:  1,
 		},
 	}
 	for _, tc := range cases {
@@ -420,7 +391,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// A session restarting over the live scout must arm supervision for it.
 	workflowSessionStart(t, spawnHome, tc.role, 1)
 
-	// --- report (soldier terminal uplink) ---------------------------------
+	// --- report (soldier terminal report) ---------------------------------
 	// The soldier's home and parent home are both the spawning home, exactly
 	// as the generated launch script exports them.
 	// The soldier writes the report generation-named, exactly as the brief
@@ -434,111 +405,43 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	workflowRunCLI(t, spawnHome, map[string]string{
 		"MUNSU_ROLE": "soldier", "MUNSU_TASK_KIND": "scout", "MUNSU_HOME": spawnHome,
 		"MUNSU_TASK_ID": taskID, "MUNSU_PARENT_STATUS": spawnHome,
-	}, "report", "done", "findings recorded", "--key", taskID, "--ring", "no-ring")
+	}, "report", "done", "findings recorded", "--key", taskID)
 
+	// --- supervision derives the report; the parent settles it ------------
+	// A done report is audit-only for the status scan: the supervisor gets the
+	// report wake, never a signal wake for it.
+	supervisionEmitted := workflowSupervisionCycle(t, spawnHome)
+	reports := workflowWakesOfKind(t, spawnHome, home.ReportWakeKind, taskID)
+	if len(reports) != 1 || reports[0].Payload != taskID+": done: findings recorded [key="+taskID+"]" {
+		t.Fatalf("report wakes for %s under %s = %+v, want the one done report", taskID, tc.policy, reports)
+	}
+	if signals := workflowWakesOfKind(t, spawnHome, "signal", taskID); len(signals) != 0 {
+		t.Fatalf("supervision cycle under %s woke the supervisor for the done task %s: %v", tc.policy, taskID, signals)
+	}
+	workflowSettleReports(t, spawnHome)
 	agg, err := auth.Get(tid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if agg.Phase != taskauthority.PhaseDone {
-		t.Fatalf("phase after terminal report = %s, want done", agg.Phase)
-	}
-	// The terminal report closes its own handoff. Nothing else can.
-	receiptAcked := orchestrator.IsReceiptAcked(spawnHome, taskID, taskID)
-	if !receiptAcked {
-		t.Fatal("terminal receipt was not acknowledged by its writer")
-	}
-	relayOpen, err := orchestrator.IsTaskReportRelayOpen(spawnHome, taskID)
-	if err != nil || relayOpen {
-		t.Fatalf("report relay obligation open=%v err=%v, want closed", relayOpen, err)
+		t.Fatalf("phase after the settled report = %s, want done", agg.Phase)
 	}
 
-	// --- relay/ack + supervision wake -------------------------------------
-	uplink := workflowUplink{}
-	activation := &workflowActivation{}
 	if tc.policy == fleet.DispatchPolicyCaptainMediated {
-		// The Captain relays the soldier's terminal outcome up to General.
-		// --ring no-ring leaves the uplink durable-but-undelivered, so what
-		// clears it below is the supervision cycle's replay, not this write.
+		// The Captain reports the soldier's outcome up to General: one line in
+		// its status file in General's home, which General's next claim turns
+		// into a report wake. Nothing is pushed to any pane.
 		workflowRunCLI(t, spawnHome, map[string]string{
 			"MUNSU_ROLE": "captain", "MUNSU_HOME": spawnHome,
 			"MUNSU_TASK_ID": "captain:" + tc.parentCaptainID, "MUNSU_PARENT_STATUS": generalHome,
-		}, "report", "done", "soldier "+taskID+" reported done", "--key", taskID, "--ring", "no-ring")
+		}, "report", "done", "soldier "+taskID+" reported done", "--key", taskID)
 	}
-
-	// A General-direct dispatch has no captain in the loop: the terminal
-	// report closed its own handoff and there is nothing to relay. Any
-	// pending uplink here is a topology violation.
-	pending := workflowPendingUplinks(t, spawnHome)
-	pendingBeforeReplay := len(pending)
-	if pendingBeforeReplay != tc.relayed {
-		t.Fatalf("pending captain->General uplinks = %d, want %d under %s",
-			len(pending), tc.relayed, tc.policy)
+	if err := home.DeriveReportWakes(generalHome); err != nil {
+		t.Fatal(err)
 	}
-
-	// The soldier's own terminal report enqueued a signal wake of its own, so
-	// drain the queue first: whatever is read back below is then exactly what
-	// the supervision cycle emitted and nothing that preceded it.
-	if _, err := orchestrator.DrainWakes(spawnHome); err != nil {
-		t.Fatalf("drain wakes before supervision cycle: %v", err)
-	}
-
-	// The supervision cycle replays the pending uplink; with no ack yet it
-	// must stay pending. A cycle that retired it without an ack would lose
-	// the report.
-	supervisionEmitted := workflowSupervisionCycle(t, spawnHome, uplink, activation)
-	// A done report is audit-only: the fleet scan reads this task's done: status
-	// line and the supervisor is not woken for it (only needs-decision, blocked
-	// and failed reach the General). Any other wake source -- a probe check on
-	// a host without the backend -- is not the claim, so assert the kind and
-	// the key of the wake that must not exist.
-	wakes, err := orchestrator.DrainWakes(spawnHome)
-	if err != nil {
-		t.Fatalf("drain supervision wakes on %s: %v", spawnHome, err)
-	}
-	for _, wake := range wakes {
-		if wake.Kind == "signal" && wake.Key == taskID {
-			t.Fatalf("supervision cycle under %s woke the supervisor for the done task %s: %v", tc.policy, taskID, wake)
-		}
-	}
-	pendingAfterReplay := len(workflowPendingUplinks(t, spawnHome))
-	if pendingAfterReplay != tc.relayed {
-		t.Fatalf("pending uplinks after replay = %d, want %d (an unacked report must not retire)", pendingAfterReplay, tc.relayed)
-	}
-
-	if tc.relayed > 0 {
-		env := pending[0]
-		if env.ReceiverRank != home.RankGeneral {
-			t.Fatalf("relayed uplink receiver rank = %q, want %q", env.ReceiverRank, home.RankGeneral)
-		}
-		// General acknowledges the exact ref, then the next cycle retires it.
-		recv, err := home.NewReceiver(generalHome)
-		if err != nil {
-			t.Fatalf("NewReceiver(general): %v", err)
-		}
-		ref := home.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
-		if got, err := recv.Receive(ref); err != nil || got == nil {
-			t.Fatalf("General receive of relayed report: %v", err)
-		}
-		ack, err := recv.Ack(ref)
-		if err != nil {
-			t.Fatalf("General ack of relayed report: %v", err)
-		}
-		if ack.Outcome != home.OutcomeAccepted {
-			t.Fatalf("ack outcome = %q, want accepted", ack.Outcome)
-		}
-		workflowSupervisionCycle(t, spawnHome, uplink, activation)
-		if got := len(workflowPendingUplinks(t, spawnHome)); got != 0 {
-			t.Fatalf("pending uplinks after ack = %d, want 0 (the acked relay must retire)", got)
-		}
-	}
-	pendingFinal := len(workflowPendingUplinks(t, spawnHome))
-
-	// The Captain is nudged for the soldier receipt that landed in its home,
-	// and the nudge is idempotent across the cycles above. A General-direct
-	// dispatch has no Captain pane to nudge.
-	if activation.attempts != tc.activations {
-		t.Fatalf("captain activation nudges = %d, want %d under %s", activation.attempts, tc.activations, tc.policy)
+	generalReports := workflowWakesOfKind(t, generalHome, home.ReportWakeKind, "")
+	if len(generalReports) != tc.generalReports {
+		t.Fatalf("report wakes in General's home = %+v, want %d under %s", generalReports, tc.generalReports, tc.policy)
 	}
 
 	// --- teardown ---------------------------------------------------------
@@ -562,11 +465,10 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if retired.Phase != taskauthority.PhaseRetired {
 		t.Fatalf("phase after teardown = %s, want retired", retired.Phase)
 	}
-	t.Logf("workflow evidence: policy=%s model=%s digest=%s parent=%s endpoint(create=%d submit=%d ready-captures=%d) receipt-acked=%t relay-open=%t pending(before=%d after-replay=%d final=%d) supervision-emitted=%t activations=%d teardown(phase=%s returned=%d disposed=%d)",
+	t.Logf("workflow evidence: policy=%s model=%s digest=%s parent=%s endpoint(create=%d submit=%d ready-captures=%d) general-reports=%d supervision-emitted=%t teardown(phase=%s returned=%d disposed=%d)",
 		tc.policy, meta["model"], digest, tc.parentCaptainID,
-		endpoints.creates, endpoints.submits, endpoints.captures, receiptAcked, relayOpen,
-		pendingBeforeReplay, pendingAfterReplay, pendingFinal, supervisionEmitted,
-		activation.attempts, retired.Phase, teardown.returned, teardown.disposed)
+		endpoints.creates, endpoints.submits, endpoints.captures, len(generalReports), supervisionEmitted,
+		retired.Phase, teardown.returned, teardown.disposed)
 }
 
 // workflowSeedCaptainHome builds the Captain-owned side of the captain-
@@ -717,25 +619,47 @@ func workflowRunCLI(t *testing.T, homeDir string, env map[string]string, args ..
 	}
 }
 
-// workflowPendingUplinks lists the durable uplink reports the home has written
-// and not yet had accepted.
-func workflowPendingUplinks(t *testing.T, homeDir string) []*home.Envelope {
+// workflowWakesOfKind lists the queued wakes of one kind in homeDir, for one
+// key when key is not empty.
+func workflowWakesOfKind(t *testing.T, homeDir, kind, key string) []home.WakeRecord {
 	t.Helper()
-	pending, err := home.NewStore(homeDir).ListAllPending()
+	queued, err := home.PeekWakes(homeDir)
 	if err != nil {
-		t.Fatalf("list pending uplinks in %s: %v", homeDir, err)
+		t.Fatalf("peek wakes in %s: %v", homeDir, err)
 	}
-	return pending
+	var out []home.WakeRecord
+	for _, w := range queued {
+		if w.Kind == kind && (key == "" || w.Key == key) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// workflowSettleReports claims and acknowledges every wake in homeDir, as the
+// parent does, and fails on any report whose settlement could not finish.
+func workflowSettleReports(t *testing.T, homeDir string) {
+	t.Helper()
+	claim, err := orchestrator.ClaimWakes(homeDir, "general", 60, 100)
+	if err != nil {
+		t.Fatalf("claim wakes in %s: %v", homeDir, err)
+	}
+	var ids []string
+	for _, w := range claim.Wakes {
+		ids = append(ids, w.Epoch+":"+w.Seq)
+	}
+	unaccepted, err := orchestrator.AckWakes(homeDir, claim.LeaseID, ids)
+	if err != nil || len(unaccepted) != 0 {
+		t.Fatalf("ack wakes in %s: unaccepted=%+v err=%v", homeDir, unaccepted, err)
+	}
 }
 
 // workflowSupervisionCycle runs one real supervision cycle with the production
-// captain watcher hooks, so the captain->General uplink replay and the
-// activation nudge are driven by the same code the watcher runs.
-func workflowSupervisionCycle(t *testing.T, homeDir string, uplink workflowUplink, activation *workflowActivation) bool {
+// watcher hooks.
+func workflowSupervisionCycle(t *testing.T, homeDir string) bool {
 	t.Helper()
-	hooks := orchestrator.NewCaptainWatcherHooks(uplink, activation)
 	emitted, err := orchestrator.RunCycleWithProbeAndSender(homeDir,
-		runtimeTaskEndpointProbe(), newSessionMailboxSender(), hooks,
+		runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(),
 		fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) {
 			return taskauthority.NewCanonical(mustOpenHome(t, h))
 		}}, fleetReviewVerdictPort{}, fleetCheckValidationPort{}, runtimeTaskStatePort{})
@@ -743,4 +667,14 @@ func workflowSupervisionCycle(t *testing.T, homeDir string, uplink workflowUplin
 		t.Fatalf("supervision cycle on %s: %v", homeDir, err)
 	}
 	return emitted
+}
+
+// mustOpenHome opens an already-initialized home for e2e fixtures.
+func mustOpenHome(t *testing.T, homeDir string) *home.Home {
+	t.Helper()
+	h, err := home.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
 }

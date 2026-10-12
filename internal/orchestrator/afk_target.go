@@ -72,17 +72,6 @@ func ValidateTargetOwnership(result *TargetResult) error {
 	return nil
 }
 
-// captainMetaTarget names a captain's pane from its task meta in the parent
-// General home: the window handle its backend recorded at launch and the
-// session that owns it.
-func captainMetaTarget(meta map[string]string) (TargetResult, error) {
-	window := strings.TrimSpace(meta["window"])
-	if window == "" {
-		return TargetResult{}, fmt.Errorf("captain meta has no window")
-	}
-	return TargetResult{Source: RuntimeSource, Handle: window, Session: strings.TrimSpace(meta[backend.MetaSessionOwner])}, nil
-}
-
 // ResolveTargetWithSource resolves the general pane handle with source diagnostics.
 func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
 	path := filepath.Join(homeDir, generalPaneConfig)

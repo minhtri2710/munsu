@@ -17,12 +17,12 @@ func TestObligations_RoundTripKeyedAndKeyless(t *testing.T) {
 		{Kind: ReportRelay, State: StateOpen, Key: "terminal-1", Detail: "relay material terminal report for task/key", CreatedAt: 111, ClosedAt: 0},
 		{Kind: Cleanup, State: StateClosed, Key: "", Detail: "clean temp artifacts, stale turnend markers, closed-key hygiene", CreatedAt: 222, ClosedAt: 333},
 	}
-	if err := SaveTaskObligations(home, "task-a", want); err != nil {
-		t.Fatalf("SaveTaskObligations: %v", err)
+	if err := SaveObligations(home, RoleGeneral, want); err != nil {
+		t.Fatalf("SaveObligations: %v", err)
 	}
-	got, err := LoadTaskObligations(home, "task-a")
+	got, err := LoadObligations(home, RoleGeneral)
 	if err != nil {
-		t.Fatalf("LoadTaskObligations: %v", err)
+		t.Fatalf("LoadObligations: %v", err)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("loaded %d obligations, want %d: %+v", len(got), len(want), got)
@@ -39,16 +39,12 @@ func TestObligations_RoundTripKeyedAndKeyless(t *testing.T) {
 // the pre-cut five-field line.
 func TestObligations_KeylessWritesSixFields(t *testing.T) {
 	home := t.TempDir()
-	if err := SaveTaskObligations(home, "task-a", []Obligation{
+	if err := SaveObligations(home, RoleGeneral, []Obligation{
 		{Kind: Cleanup, State: StateOpen, Key: "", Detail: "clean", CreatedAt: 1, ClosedAt: 0},
 	}); err != nil {
-		t.Fatalf("SaveTaskObligations: %v", err)
+		t.Fatalf("SaveObligations: %v", err)
 	}
-	p, err := taskObligationsPath(home, "task-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(obligationsPath(home, RoleGeneral))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,21 +58,17 @@ func TestObligations_KeylessWritesSixFields(t *testing.T) {
 	}
 }
 
-// writeRawObligations writes literal bytes to a task's obligations file so the
+// writeRawObligations writes literal bytes to a role's obligations file so the
 // parser's rejection of malformed records is observable through the public load
 // path.
-func writeRawObligations(t *testing.T, home, taskID, content string) {
+func writeRawObligations(t *testing.T, home string, role Role, content string) {
 	t.Helper()
 	// Seed the obligations directory through the real writer, then overwrite
 	// the file with the literal record under test.
-	if err := SaveTaskObligations(home, taskID, nil); err != nil {
+	if err := SaveObligations(home, role, nil); err != nil {
 		t.Fatalf("seeding obligations dir: %v", err)
 	}
-	p, err := taskObligationsPath(home, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(obligationsPath(home, role), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -98,9 +90,9 @@ func TestParseObligations_RejectsMalformed(t *testing.T) {
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
-			writeRawObligations(t, home, "task-a", content)
-			if _, err := LoadTaskObligations(home, "task-a"); err == nil {
-				t.Errorf("LoadTaskObligations on %q = nil error, want a parse error", content)
+			writeRawObligations(t, home, RoleGeneral, content)
+			if _, err := LoadObligations(home, RoleGeneral); err == nil {
+				t.Errorf("LoadObligations on %q = nil error, want a parse error", content)
 			}
 		})
 	}

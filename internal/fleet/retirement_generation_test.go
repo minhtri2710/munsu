@@ -301,7 +301,9 @@ func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
 
 type countingRetirementJournals struct{ finalized int }
 
-func (j *countingRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (j *countingRetirementJournals) VerifyRetirementContinuity(string, string, string) error {
+	return nil
+}
 func (j *countingRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
 	return nil, nil
 }
@@ -705,7 +707,7 @@ func TestRetirementClaimBarrierBeforeWorktreeReturn(t *testing.T) {
 // individual filesystem removals are in progress.
 type barrierJournals struct{ onFinalize func() }
 
-func (barrierJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (barrierJournals) VerifyRetirementContinuity(string, string, string) error { return nil }
 func (barrierJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
 	return nil, nil
 }

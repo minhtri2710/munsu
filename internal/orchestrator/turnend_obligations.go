@@ -4,13 +4,6 @@
 // and are persisted under the munsu home so they survive process restarts.
 // Obligations differ by role: general, captain, and soldier each have a
 // distinct set of obligations.
-//
-// Task+terminal-key binding:
-//   - Per-task obligation files replace per-role global files for soldier
-//     ReportRelay, scoping the relay obligation to the exact task+key.
-//   - Durable relay receipts in captain-owned state ensure Soldier->Captain
-//     ack survives restart.
-//   - Captain reconcile/turn-end relays to General and acks the exact task/key.
 package orchestrator
 
 import (
@@ -21,9 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Role identifies which role the obligation set targets.
@@ -58,8 +48,7 @@ const (
 type Obligation struct {
 	Kind      ObligationKind `json:"kind"`
 	State     State          `json:"state"`
-	Key       string         `json:"key,omitempty"`     // terminal key bound to this obligation
-	TaskID    string         `json:"task_id,omitempty"` // task ID for per-task obligations
+	Key       string         `json:"key,omitempty"` // terminal key bound to this obligation
 	Detail    string         `json:"detail,omitempty"`
 	CreatedAt int64          `json:"created_at"` // unix nanos
 	ClosedAt  int64          `json:"closed_at,omitempty"`
@@ -113,288 +102,9 @@ func Obligations(role Role) []Obligation {
 	}
 }
 
-// --- Per-task obligation persistence ---
-// Per-task obligations bind ReportRelay to the exact taskID + terminalKey.
-// File: state/.obligations/<durable-task-key>.obligations
+// --- Per-role obligation persistence ---
 
 const obligationsDir = "state/.obligations"
-
-// taskObligationsPath returns the per-task obligations file path.
-func taskObligationsPath(homeDir, taskID string) (string, error) {
-	return home.DurableFilePath(filepath.Join(homeDir, obligationsDir), taskID, ".obligations")
-}
-
-// InitTaskObligations creates per-task soldier obligations for a given taskID.
-// Idempotent: no-op if per-task file already exists.
-func InitTaskObligations(homeDir, taskID, termKey string) error {
-	p, err := taskObligationsPath(homeDir, taskID)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(p); err == nil {
-		return nil // already exists — idempotent
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return fmt.Errorf("creating obligations dir: %w", err)
-	}
-	now := time.Now().UnixNano()
-	obligations := []Obligation{
-		{
-			Kind:      ReportRelay,
-			State:     StateOpen,
-			Key:       termKey,
-			TaskID:    taskID,
-			Detail:    "relay material terminal report for task/key",
-			CreatedAt: now,
-		},
-		{
-			Kind:      Cleanup,
-			State:     StateOpen,
-			Key:       "",
-			TaskID:    taskID,
-			Detail:    "clean temp artifacts, stale turnend markers, closed-key hygiene",
-			CreatedAt: now,
-		},
-	}
-	return SaveTaskObligations(homeDir, taskID, obligations)
-}
-
-// LoadTaskObligations reads the per-task obligation state.
-// Returns nil, nil if no per-task file exists.
-func LoadTaskObligations(homeDir, taskID string) ([]Obligation, error) {
-	p, err := taskObligationsPath(homeDir, taskID)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(p)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading task obligations %s: %w", taskID, err)
-	}
-	defer f.Close()
-
-	return parseObligations(f)
-}
-
-// SaveTaskObligations persists the per-task obligation state.
-func SaveTaskObligations(homeDir, taskID string, obligations []Obligation) error {
-	p, err := taskObligationsPath(homeDir, taskID)
-	if err != nil {
-		return err
-	}
-	return writeObligationsFile(p, obligations)
-}
-
-// CompleteTaskObligation marks an obligation of the given kind as closed
-// for the specific task. Returns true if a matching open obligation was found.
-func CompleteTaskObligation(homeDir, taskID string, kind ObligationKind) (bool, error) {
-	obligations, err := LoadTaskObligations(homeDir, taskID)
-	if err != nil {
-		return false, err
-	}
-	now := time.Now().UnixNano()
-	found := false
-	for i, o := range obligations {
-		if o.Kind == kind && o.State == StateOpen {
-			obligations[i].State = StateClosed
-			obligations[i].ClosedAt = now
-			found = true
-		}
-	}
-	if !found {
-		return false, nil
-	}
-	return true, SaveTaskObligations(homeDir, taskID, obligations)
-}
-
-// IsTaskReportRelayOpen returns true if the task has an open ReportRelay obligation.
-func IsTaskReportRelayOpen(homeDir, taskID string) (bool, error) {
-	obligations, err := LoadTaskObligations(homeDir, taskID)
-	if err != nil {
-		return false, err
-	}
-	for _, o := range obligations {
-		if o.Kind == ReportRelay && o.State == StateOpen {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// ClearTaskCompleted removes all closed obligations for a specific task.
-func ClearTaskCompleted(homeDir, taskID string) error {
-	obligations, err := LoadTaskObligations(homeDir, taskID)
-	if err != nil {
-		return err
-	}
-	var open []Obligation
-	for _, o := range obligations {
-		if o.State == StateOpen {
-			open = append(open, o)
-		}
-	}
-	return SaveTaskObligations(homeDir, taskID, open)
-}
-
-// --- Durable relay receipts ---
-// Receipt: Soldier->Captain durable proof that a material terminal report
-// was sent. Stored in captain-owned state/.terminal-receipts/<durable-task-key>.<key>.receipt
-// Ack: Captain marks relay to General by writing <durable-task-key>.<key>.ack
-
-const receiptsDir = "state/.terminal-receipts"
-
-// ReceiptDir returns the receipts directory under the given home.
-func ReceiptDir(homeDir string) string {
-	return filepath.Join(homeDir, receiptsDir)
-}
-
-// ReceiptPath returns the path for a terminal receipt file.
-func ReceiptPath(homeDir, taskID, termKey string) (string, error) {
-	return home.DurableFilePath(ReceiptDir(homeDir), taskID, "."+termKey+".receipt")
-}
-
-// AckPath returns the path for an ack file marking a receipt as relayed.
-func AckPath(homeDir, taskID, termKey string) (string, error) {
-	return home.DurableFilePath(ReceiptDir(homeDir), taskID, "."+termKey+".ack")
-}
-
-// isTermKeySafe reports whether every byte of s is in the durable-safe
-// filename alphabet [A-Za-z0-9_-]. An empty string is not safe.
-func isTermKeySafe(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-			(c >= 'a' && c <= 'z') || c == '_' || c == '-') {
-			return false
-		}
-	}
-	return true
-}
-
-// ValidateTermKey rejects a terminal key that is not a durable-safe slug. The
-// key becomes a filename segment in <stem>.<termKey>.<ext>; constraining it to
-// [A-Za-z0-9_-] keeps that encoding injective (the reader splits at the last
-// dot, and the stem alone may carry dots) and forbids the tab/newline bytes
-// that could otherwise forge a field or a whole record.
-func ValidateTermKey(termKey string) error {
-	if !isTermKeySafe(termKey) {
-		return fmt.Errorf("invalid terminal key %q: must be a non-empty slug of [A-Za-z0-9_-]", termKey)
-	}
-	return nil
-}
-
-// parseReceiptName recovers the logical (taskID, termKey) pair from a receipt
-// filename of the form <stem>.<termKey>.receipt. termKey is guaranteed
-// dot-free and durable-safe by ValidateTermKey at write time, so the LAST dot
-// before the extension is the stem/termKey separator; the stem itself may
-// contain dots (a Unix task ID such as "v1.2"). ok is false for a name that is
-// not a well-formed receipt (wrong extension, no separator, an empty
-// component, or a termKey that is not durable-safe); err is non-nil only when a
-// well-formed stem fails to decode.
-func parseReceiptName(name string) (taskID, termKey string, ok bool, err error) {
-	if !strings.HasSuffix(name, ".receipt") {
-		return "", "", false, nil
-	}
-	core := strings.TrimSuffix(name, ".receipt")
-	i := strings.LastIndex(core, ".")
-	if i <= 0 || i == len(core)-1 {
-		return "", "", false, nil
-	}
-	stem, termKey := core[:i], core[i+1:]
-	if !isTermKeySafe(termKey) {
-		return "", "", false, nil
-	}
-	taskID, err = home.ReverseDurableKey(stem)
-	if err != nil {
-		return "", "", false, fmt.Errorf("decoding receipt task stem %q: %w", stem, err)
-	}
-	return taskID, termKey, true, nil
-}
-
-// WriteReceipt writes a durable relay receipt for a terminal report.
-// The receipt is identified by taskID + termKey (terminal key).
-// If a receipt already exists for this taskID+termKey, any stale ack is
-// removed and the receipt is replaced with home.AtomicWrite. A write failure
-// leaves the old receipt pending, which is acceptable fail-closed behavior.
-func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
-	p, err := ReceiptPath(homeDir, taskID, termKey)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return fmt.Errorf("creating receipts dir: %w", err)
-	}
-
-	// Remove any prior ack first so the new receipt starts pending; a failure
-	// after this point leaves the old receipt pending, which fails closed.
-	ackPath, err := AckPath(homeDir, taskID, termKey)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(ackPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing stale ack: %w", err)
-	}
-	content := fmt.Sprintf("task_id=%s\nkey=%s\nstate=%s\nmsg=%s\ntimestamp=%d\n",
-		taskID, termKey, state, msg, time.Now().UnixNano())
-	if err := home.AtomicWrite(p, []byte(content), 0644); err != nil {
-		return fmt.Errorf("writing receipt: %w", err)
-	}
-
-	return nil
-}
-
-// IsReceiptAcked checks whether a terminal receipt has been acknowledged.
-func IsReceiptAcked(homeDir, taskID, termKey string) bool {
-	p, err := AckPath(homeDir, taskID, termKey)
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(p)
-	return err == nil
-}
-
-// WriteAck marks a terminal receipt as acknowledged by the Captain.
-func WriteAck(homeDir, taskID, termKey string) error {
-	p, err := AckPath(homeDir, taskID, termKey)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return fmt.Errorf("creating receipts dir: %w", err)
-	}
-	content := fmt.Sprintf("task_id=%s\nkey=%s\nacked_at=%d\n",
-		taskID, termKey, time.Now().UnixNano())
-	return os.WriteFile(p, []byte(content), 0644)
-}
-
-// PendingReceipt represents one un-acked terminal receipt.
-type PendingReceipt struct {
-	TaskID  string
-	TermKey string
-	State   string
-}
-
-// ListPendingReceipts returns all receipt files without corresponding ack.
-func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
-	all, err := listAllReceipts(homeDir)
-	if err != nil {
-		return nil, err
-	}
-	var pending []PendingReceipt
-	for _, r := range all {
-		if !IsReceiptAcked(homeDir, r.TaskID, r.TermKey) {
-			pending = append(pending, r)
-		}
-	}
-	return pending, nil
-}
-
-// --- Per-role obligation persistence (backward-compatible) ---
 
 // obligationsPath returns the per-role durable obligations file path.
 func obligationsPath(homeDir string, role Role) string {
@@ -463,37 +173,6 @@ func ClearCompleted(homeDir string, role Role) error {
 		}
 	}
 	return SaveObligations(homeDir, role, open)
-}
-
-// MaterialReportExists returns true if the task has a material status line
-// (done, failed, needs-decision, blocked) in its status file.
-// FAILS CLOSED: returns error on unreadable status.
-func MaterialReportExists(homeDir, taskID string) (bool, error) {
-	statusPath, err := home.StatusFilePath(homeDir, taskID)
-	if err != nil {
-		return false, err
-	}
-	f, err := os.Open(statusPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("reading status file %s: %w", statusPath, err)
-	}
-	defer f.Close()
-
-	var lastLine string
-	if err := home.EachLine(f, func(line string) {
-		if line = strings.TrimSpace(line); line != "" {
-			lastLine = line
-		}
-	}); err != nil {
-		return false, fmt.Errorf("scanning status file %s: %w", statusPath, err)
-	}
-	if lastLine == "" {
-		return false, nil
-	}
-	return domain.IsMaterialVerb(domain.LineVerb(lastLine)), nil
 }
 
 // obligationFields is the fixed column count of a serialized obligation line.

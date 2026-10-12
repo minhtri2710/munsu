@@ -127,7 +127,7 @@ func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
 
 type fakeRetirementJournals struct{}
 
-func (fakeRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (fakeRetirementJournals) VerifyRetirementContinuity(string, string, string) error { return nil }
 func (fakeRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
 	return nil, nil
 }
