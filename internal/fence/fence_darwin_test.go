@@ -143,6 +143,25 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	launch.Files = []string{verdict}
 	launch.GateRepo, launch.GateState = gateRepo, gateState
 	f := mustNew(t, launch)
+	// The same gate under the layout's temp root, where the temp-root allow
+	// covers it and only the profile's whole-gate deny refuses.
+	tempGate := filepath.Join(l.root, "gate", "repo.git")
+	mkdirs(t, filepath.Join(tempGate, "objects", "info"), filepath.Join(tempGate, "refs", "heads", "mu"),
+		filepath.Join(tempGate, "logs", "refs", "heads", "mu"), filepath.Join(tempGate, "hooks"))
+	tempLaunch := launch
+	tempLaunch.GateRepo, tempLaunch.GateState = tempGate, filepath.Join(l.root, "gate", "state.db")
+	for _, gt := range []struct {
+		f    *Fence
+		repo string
+	}{{f, gateRepo}, {mustNew(t, tempLaunch), tempGate}} {
+		// What a push writes in the gate.
+		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"),
+			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-1"))
+		// Outside objects/, refs/ and logs/ (G1151): a program, configuration
+		// and data; and objects/info, the alternates (G1085).
+		mustRefuse(t, gt.f, filepath.Join(gt.repo, "hooks", "pre-receive"), filepath.Join(gt.repo, "config"),
+			filepath.Join(gt.repo, "HEAD"), filepath.Join(gt.repo, "objects", "info", "alternates"))
+	}
 
 	mustWrite(t, f,
 		filepath.Join(l.worktree, "f"),
@@ -152,9 +171,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
-		// What a push writes in the gate.
-		filepath.Join(gateRepo, "objects", "f"), filepath.Join(gateRepo, "refs", "heads", "mu", "T-1"),
-		filepath.Join(gateRepo, "logs", "refs", "heads", "mu", "T-1"), gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
+		gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
 		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
 		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 		filepath.Join(l.root, "temp-elsewhere-f"),
@@ -171,10 +188,6 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(out, "wt2", "f"), filepath.Join(out, "f"),
 		verdict+"2", verdict+".tmp.abc", verdict+".tmp.1.xyz",
 		gateState+"-x", filepath.Join(out, "gate", "f"),
-		// Outside objects/, refs/ and logs/ (G1151): a program, configuration
-		// and data; and objects/info, the alternates (G1085).
-		filepath.Join(gateRepo, "hooks", "pre-receive"), filepath.Join(gateRepo, "config"), filepath.Join(gateRepo, "HEAD"),
-		filepath.Join(gateRepo, "objects", "info", "alternates"),
 	)
 	// Neither the gate root nor objects/, refs/ or logs/ can be renamed away
 	// (into a writable temp root) and replaced, and an absent logs/ cannot be
