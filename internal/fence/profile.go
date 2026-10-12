@@ -94,7 +94,13 @@ func New(l Launch) (*Fence, error) {
 		// fence lets it write only its own task's status, report and request
 		// files; it can never write another task's documents, any review
 		// verdict, delivery authorization or gate record, or the fleet
-		// registries (projects.json, captains.json)."
+		// registries (projects.json, captains.json)." config/ and projects/
+		// hold the configuration and the project clones that unfenced munsu
+		// reads and runs, so no seat writes them either. Human words
+		// (domain.Words): grantor the Human, channel supervisor-relay:dialog,
+		// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence
+		// không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence
+		// sẽ chạy, và không gửi input vào session ngoài session của nó."
 		deny(&b, "subpath", homeRoots(p.home)...)
 	}
 	allowFiles(&b, p.files...)
@@ -301,7 +307,7 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 		p.files = append(p.files, filepath.Join(dir, filepath.Base(f)))
 	}
 	if p.home != "" {
-		if err := realHomeRoots(p.home); err != nil {
+		if err := realHomeRoots(p.home, l.Role); err != nil {
 			return p, err
 		}
 	}
@@ -346,8 +352,14 @@ func resolveWritableRoots(l Launch, p *launchPaths) error {
 }
 
 // homeRoots are the munsu home directories no seat writes beyond its own
-// files: its durable state, data, journal and lock roots.
+// files: its durable roots, and the config and project clones that unfenced
+// munsu reads and runs.
 func homeRoots(home string) []string {
+	return append(durableHomeRoots(home), filepath.Join(home, "config"), filepath.Join(home, "projects"))
+}
+
+// durableHomeRoots are the home's state, data, journal and lock roots.
+func durableHomeRoots(home string) []string {
 	return []string{filepath.Join(home, "state"), filepath.Join(home, "data"), filepath.Join(home, ".journal"), filepath.Join(home, ".lock")}
 }
 
@@ -356,13 +368,20 @@ func homeRoots(home string) []string {
 // paths, so a root linked elsewhere (into a temp root, say) would escape the
 // deny while the seat's own files, resolved through the link, stay allowed. A
 // missing root is fine: the seat cannot create it. It runs for every seat
-// with a home. Human words (domain.Words): for a soldier, G1058, quoted in
-// New; for a reviewer, grantor the Human, channel supervisor-relay:dialog,
-// words=selected, G1122: "Áp cho cả reviewer (Recommended): reviewer launch
-// refuses when home state/, data/, .journal/ or .lock/ is a symlink or not a
-// directory; same code path as soldiers".
-func realHomeRoots(home string) error {
-	for _, r := range homeRoots(home) {
+// with a home. A soldier's every home root is checked. A reviewer's config/
+// and projects/ are not: G1122 names only the four durable roots, so its
+// config/ and projects/ are denied by name and not checked here. Human words
+// (domain.Words): for a soldier, G1058, quoted in New; for a reviewer,
+// grantor the Human, channel supervisor-relay:dialog, words=selected, G1122:
+// "Áp cho cả reviewer (Recommended): reviewer launch refuses when home
+// state/, data/, .journal/ or .lock/ is a symlink or not a directory; same
+// code path as soldiers".
+func realHomeRoots(home string, role Role) error {
+	roots := homeRoots(home)
+	if role == RoleReviewer {
+		roots = durableHomeRoots(home)
+	}
+	for _, r := range roots {
 		fi, err := os.Lstat(r)
 		if os.IsNotExist(err) {
 			continue

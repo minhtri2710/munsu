@@ -39,7 +39,11 @@ func newSplitLayout(t *testing.T, out string) layout {
 		worktree: filepath.Join(out, "wt"),
 	}
 	dirs := []string{l.primary, l.common, l.gitDir, l.worktree}
-	dirs = append(dirs, homeRoots(l.home)...)
+	// The home's directories as createLayout makes them, named apart from
+	// homeRoots so a root the profile stops denying still exists here.
+	for _, r := range []string{"state", "data", ".journal", ".lock", "config", "projects"} {
+		dirs = append(dirs, filepath.Join(l.home, r))
+	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -444,6 +448,9 @@ func TestLinkedHomeRootRefusals(t *testing.T) {
 	}{
 		{"a soldier whose state root is a link", RoleSoldier, "state", true, true},
 		{"a soldier whose journal root is a link", RoleSoldier, ".journal", true, true},
+		{"a soldier whose config root is a link", RoleSoldier, "config", true, true},
+		// G1122 names a reviewer's four durable roots only.
+		{"a reviewer whose config root is a link", RoleReviewer, "config", true, false},
 		{"a soldier whose home roots are directories", RoleSoldier, "state", false, false},
 		{"a reviewer whose state root is a link", RoleReviewer, "state", true, true},
 		{"a reviewer whose data root is a link", RoleReviewer, "data", true, true},
