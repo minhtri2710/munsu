@@ -16,8 +16,9 @@ const ClaudeConfigDirSuffix = "claude-config"
 // claudeConfigLinks are the entries of the Human's config dir a seat runs with:
 // settings, instructions, skills, agents, commands, styles, hooks and plugins.
 // Each is a symlink, and the fence resolves links, so the seat reads them but
-// cannot write them. Everything else (sessions, transcripts, memory, history,
-// caches) is claude's mutable state, which claude creates seat-private.
+// cannot write them (pinned by TestSoldierFenceWritableSet, darwin fence lane).
+// Everything else (sessions, transcripts, memory, history, caches) is claude's
+// mutable state, which claude creates seat-private.
 var claudeConfigLinks = []string{"settings.json", "CLAUDE.md", "rules", "skills", "agents", "commands", "output-styles", "hooks", "plugins"}
 
 // claudeGlobalKeys are the keys of the Human's global config (.claude.json) a
@@ -62,31 +63,15 @@ func HumanClaudeConfig(stateDir string) (ClaudeConfig, error) {
 // BuildClaudeConfigDir builds the per-task claude config dir dst from c: a
 // symlink to each of the Human's claudeConfigLinks that exists, and a private
 // .claude.json holding claudeGlobalKeys and the Human's folder-trust answers.
-// An existing dst is kept and never written: it may belong to a live seat,
-// which can replace its entries, and dst is only ever renamed into place
-// complete.
-func BuildClaudeConfigDir(c ClaudeConfig, dst string) error {
-	if _, err := os.Lstat(dst); err == nil {
+// It is built in buildDir (SeatBuildDir) and renamed into place; an existing
+// dst is kept (see installSeatDir).
+func BuildClaudeConfigDir(c ClaudeConfig, buildDir, dst string) error {
+	return installSeatDir("claude config dir", buildDir, dst, func(dir string) error {
+		if err := fillClaudeConfigDir(c, dir); err != nil {
+			return fmt.Errorf("building claude config dir from %s: %w", c.Dir, err)
+		}
 		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("checking claude config dir %s: %w", dst, err)
-	}
-	tmp := dst + ".building"
-	if err := os.RemoveAll(tmp); err != nil {
-		return fmt.Errorf("clearing %s: %w", tmp, err)
-	}
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		return fmt.Errorf("building claude config dir: %w", err)
-	}
-	if err := fillClaudeConfigDir(c, tmp); err != nil {
-		os.RemoveAll(tmp)
-		return fmt.Errorf("building claude config dir from %s: %w", c.Dir, err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		os.RemoveAll(tmp)
-		return fmt.Errorf("installing claude config dir %s: %w", dst, err)
-	}
-	return nil
+	})
 }
 
 func fillClaudeConfigDir(c ClaudeConfig, dir string) error {
@@ -109,7 +94,7 @@ func fillClaudeConfigDir(c ClaudeConfig, dir string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(c.GlobalConfig), err)
 	}
-	return os.WriteFile(filepath.Join(dir, ".claude.json"), out, 0o600)
+	return writeNewFile(filepath.Join(dir, ".claude.json"), out)
 }
 
 // claudeGlobalCopy returns the seat's .claude.json from the Human's (raw, nil

@@ -126,7 +126,15 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "logs", "refs", "remotes"), filepath.Join(l.common, "logs", "refs", "heads"), filepath.Join(out, "wt2"))
 	launch := l.soldier()
 	launch.HarnessStateDir = l.claudeStateDir()
-	mkdirs(t, launch.HarnessStateDir)
+	// The seat dir is built as a launch builds it, linking the Human's settings.
+	humanSettings := filepath.Join(uhome, ".claude", "settings.json")
+	if err := os.WriteFile(humanSettings, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	human := harness.ClaudeConfig{Dir: filepath.Join(uhome, ".claude"), GlobalConfig: filepath.Join(uhome, ".claude.json")}
+	if err := harness.BuildClaudeConfigDir(human, harness.SeatBuildDir(l.home), launch.HarnessStateDir); err != nil {
+		t.Fatal(err)
+	}
 	launch.Files = []string{verdict}
 	launch.GateRepo, launch.GateState = gateRepo, gateState
 	f := mustNew(t, launch)
@@ -152,13 +160,21 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "hooks", "f"), filepath.Join(l.common, "refs", "heads", "main"),
 		filepath.Join(l.common, "logs", "HEAD"),
 		filepath.Join(l.gitDir, "config.worktree"),
-		filepath.Join(l.home, "f"),
+		filepath.Join(l.home, "f"), filepath.Join(harness.SeatBuildDir(l.home), "f"),
 		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, "Library", "Caches", "f"),
 		filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(uhome, ".claude.json.tmp.123.abc1"),
 		filepath.Join(out, "wt2", "f"), filepath.Join(out, "f"),
 		verdict+"2", verdict+".tmp.abc", verdict+".tmp.1.xyz",
 		gateState+"-x", filepath.Join(out, "gate", "f"),
 	)
+	// The seat's settings.json links the Human's file. The fence resolves the
+	// link, so a write through it is refused and the Human's file is unchanged.
+	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", filepath.Join(launch.HarnessStateDir, "settings.json")); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("a write through the seat's settings.json link was not refused by the fence: %v %s", err, o)
+	}
+	if b, err := os.ReadFile(humanSettings); err != nil || string(b) != "{}" {
+		t.Errorf("the Human's settings.json = %q, %v; want it unchanged", b, err)
+	}
 	if t.Failed() {
 		return
 	}
@@ -224,13 +240,15 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 	)
 
 	// A claude reviewer writes its own config dir, carved out of the refused
-	// home roots, and never the Human's claude config.
-	cl := l.reviewer()
-	cl.HarnessStateDir = l.claudeStateDir()
-	mkdirs(t, cl.HarnessStateDir)
+	// home roots, and never the Human's claude config or the seat build dir.
+	// Its home sits outside the temp roots, as a real home does.
+	ls := newSplitLayout(t, out)
+	cl := ls.reviewer()
+	cl.HarnessStateDir = ls.claudeStateDir()
+	mkdirs(t, cl.HarnessStateDir, harness.SeatBuildDir(ls.home))
 	cf := mustNew(t, cl)
 	mustWrite(t, cf, filepath.Join(cl.HarnessStateDir, "f"))
-	mustRefuse(t, cf, filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"))
+	mustRefuse(t, cf, filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(harness.SeatBuildDir(ls.home), "f"))
 }
 
 // A seat's PATH directories are refused wholesale, whatever allowed root they

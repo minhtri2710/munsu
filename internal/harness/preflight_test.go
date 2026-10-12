@@ -46,14 +46,16 @@ func TestPreflight_BinaryOnPath_Claude(t *testing.T) {
 // argument exits 2.
 func TestPreflight_AuthConfigured(t *testing.T) {
 	const authStatus = "#!/bin/sh\n[ \"$1 $2\" = \"auth status\" ] || exit 2\n"
-	const seatAsks = "[ \"${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}\" = /h/claude ] && [ -d \"$CLAUDE_CONFIG_DIR\" ] || exit 1\n"
+	// The seat's config dir must be a fresh dir directly in the seat build dir
+	// the row names, never under a temp root.
+	const seatAsks = "[ \"${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}\" = /h/claude ] && [ -d \"$CLAUDE_CONFIG_DIR\" ] && [ \"${CLAUDE_CONFIG_DIR%/*}\" = \"$WANT_BUILD_DIR\" ] || exit 1\n"
 	tests := []struct {
 		name    string
 		claude  string // fake claude script; empty leaves claude off PATH
 		apiKey  string
 		timeout time.Duration
 		seat    *ClaudeConfig
-		noTemp  bool // the seat's empty config dir cannot be made
+		noBuild bool // the seat's empty config dir cannot be made
 		want    PreflightLevel
 	}{
 		{name: "logged in, no env var", claude: authStatus + "exit 0\n", want: PreflightOK},
@@ -65,7 +67,7 @@ func TestPreflight_AuthConfigured(t *testing.T) {
 		// keychain item; the fake answers only when asked that way.
 		{name: "seat asks with its own config dir and the Human's keychain item", claude: authStatus + seatAsks + "exit 0\n", seat: &ClaudeConfig{SecureStorage: "/h/claude"}, want: PreflightOK},
 		{name: "Human's config asked where a seat is meant", claude: authStatus + seatAsks + "exit 0\n", want: PreflightAbsent},
-		{name: "seat config dir cannot be made", claude: authStatus + "exit 0\n", seat: &ClaudeConfig{}, noTemp: true, want: PreflightAbsent},
+		{name: "seat config dir cannot be made", claude: authStatus + "exit 0\n", seat: &ClaudeConfig{}, noBuild: true, want: PreflightAbsent},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,18 +77,25 @@ func TestPreflight_AuthConfigured(t *testing.T) {
 			} else {
 				testutil.FakeOnPath(t, "claude", tc.claude)
 			}
-			if tc.noTemp {
-				gone := filepath.Join(t.TempDir(), "gone")
-				for _, v := range []string{"TMPDIR", "TMP", "TEMP"} {
-					t.Setenv(v, gone)
+			var seat *ClaudeSeat
+			if tc.seat != nil {
+				home := t.TempDir()
+				seat = &ClaudeSeat{Config: *tc.seat, BuildDir: SeatBuildDir(home)}
+				if tc.noBuild {
+					blocker := filepath.Join(home, "file")
+					if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					seat.BuildDir = filepath.Join(blocker, SeatBuildDirName)
 				}
+				t.Setenv("WANT_BUILD_DIR", seat.BuildDir)
 			}
 			if tc.timeout > 0 {
 				orig := claudeAuthProbeTimeout
 				claudeAuthProbeTimeout = tc.timeout
 				t.Cleanup(func() { claudeAuthProbeTimeout = orig })
 			}
-			result, err := Preflight(Claude, tc.seat)
+			result, err := Preflight(Claude, seat)
 			if err != nil {
 				t.Fatalf("Preflight(%q) error = %v", Claude, err)
 			}

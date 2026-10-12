@@ -539,7 +539,7 @@ func provisionClaudeConfigDir(homeDir, taskID string) (string, harness.ClaudeCon
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return "", harness.ClaudeConfig{}, fmt.Errorf("soldier launch: %w", err)
 	}
-	if err := harness.BuildClaudeConfigDir(cfg, dst); err != nil {
+	if err := harness.BuildClaudeConfigDir(cfg, harness.SeatBuildDir(homeDir), dst); err != nil {
 		return "", harness.ClaudeConfig{}, fmt.Errorf("soldier launch: %w", err)
 	}
 	return dst, cfg, nil
@@ -587,7 +587,7 @@ func provisionPiSkillAgentDir(homeDir, taskID, worktreePath string) (string, err
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
 	}
-	if err := harness.BuildPiAgentDir(src, dst); err != nil {
+	if err := harness.BuildPiAgentDir(src, harness.SeatBuildDir(homeDir), dst); err != nil {
 		return "", fmt.Errorf("soldier launch: %w", err)
 	}
 	return dst, nil

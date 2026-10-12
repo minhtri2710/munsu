@@ -100,15 +100,16 @@ func TestFencedClaudeLaunchRunsFromItsOwnConfigDir(t *testing.T) {
 			if tc.fenced {
 				in.Fence = launchFenceForTest(t)
 			}
+			dir, err := claudeConfigDirPath(in.HomeDir, in.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leftover := plantSeatBuildLeftover(t, in.HomeDir, dir)
 			art, err := buildLaunchArtifact(in)
 			if err != nil {
 				t.Fatalf("buildLaunchArtifact: %v", err)
 			}
 			script := readFile(t, art.ScriptPath)
-			dir, err := claudeConfigDirPath(in.HomeDir, in.TaskID)
-			if err != nil {
-				t.Fatal(err)
-			}
 			want := "export CLAUDE_CONFIG_DIR=" + shQuote(dir) + "\nexport CLAUDE_SECURESTORAGE_CONFIG_DIR=''\n"
 			_, statErr := os.Stat(filepath.Join(dir, ".claude.json"))
 			if !tc.fenced {
@@ -123,6 +124,7 @@ func TestFencedClaudeLaunchRunsFromItsOwnConfigDir(t *testing.T) {
 			if strings.Index(script, want) > strings.Index(script, "\nexec ") {
 				t.Fatal("the config dir is exported after the harness exec")
 			}
+			requireBuiltInSeatBuildDir(t, leftover, dir)
 		})
 	}
 }

@@ -1105,13 +1105,13 @@ func (r *Runner) preflightHarness() error {
 	}
 
 	// A fenced claude seat logs in from a config dir of its own; ask the way it will.
-	var claudeSeat *harness.ClaudeConfig
+	var claudeSeat *harness.ClaudeSeat
 	if r.harness == harness.Claude && fence.Supported() == nil {
 		cfg, err := harness.HumanClaudeConfig(home.StateDir(r.homeDir))
 		if err != nil {
 			return err
 		}
-		claudeSeat = &cfg
+		claudeSeat = &harness.ClaudeSeat{Config: cfg, BuildDir: harness.SeatBuildDir(r.homeDir)}
 	}
 	result, err := harness.Preflight(r.harness, claudeSeat)
 	if err != nil {

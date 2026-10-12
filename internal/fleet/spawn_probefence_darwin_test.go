@@ -318,7 +318,8 @@ func TestFencedClaudeReviewerWritesItsOwnConfigDir(t *testing.T) {
 }
 
 // On a fenced host the claude preflight asks for the login the seat will use:
-// the Human's keychain item, from an empty config dir that is not the seat's.
+// the Human's keychain item, from an empty config dir that is not the seat's,
+// made in the home's seat build dir, which no fence root covers.
 func TestFencedClaudePreflightAsksForTheSeatsLogin(t *testing.T) {
 	isolateHuman(t)
 	homeDir := t.TempDir()
@@ -332,10 +333,13 @@ func TestFencedClaudePreflightAsksForTheSeatsLogin(t *testing.T) {
 		{"no seat login refuses the launch", `false`, "auth-absent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			script := "#!/bin/sh\n" + tc.check + ` && [ -d "$CLAUDE_CONFIG_DIR" ] && case "$CLAUDE_CONFIG_DIR" in ` + shQuote(homeDir) + "/*) exit 1;; esac\n"
+			script := "#!/bin/sh\n" + tc.check + ` && [ -d "$CLAUDE_CONFIG_DIR" ] && [ "${CLAUDE_CONFIG_DIR%/*}" = ` + shQuote(harness.SeatBuildDir(homeDir)) + " ]\n"
 			testutil.WriteFakeExecutable(t, filepath.Join(bin, "claude"), script)
 			r := NewRunner(Args{ID: "task-1", HarnessFlag: "claude", HomeDir: homeDir})
 			r.projPath, r.effectiveMode = t.TempDir(), "direct-PR"
+			if err := r.resolveHome(); err != nil {
+				t.Fatal(err)
+			}
 			err := r.preflightHarness()
 			var pf *harness.PreflightError
 			if tc.wantErr == "" {

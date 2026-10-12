@@ -62,21 +62,32 @@ var claudeAuthProbeTimeout = 10 * time.Second
 // With seat set it asks as a fenced seat logs in: CLAUDE_CONFIG_DIR is a
 // config dir other than the Human's and CLAUDE_SECURESTORAGE_CONFIG_DIR names
 // the Human's keychain item, so a claude that stops honoring the variable fails
-// the spawn here rather than at a login screen. The dir is a fresh empty one,
-// never a seat's: an unfenced claude must not load settings a seat can write.
-func claudeAuthConfigured(seat *ClaudeConfig) bool {
+// the spawn here rather than at a login screen. The dir is a fresh empty one in
+// the seat build dir, never a seat's and never under a temp root: an unfenced
+// claude must not load settings a seat can write.
+func claudeAuthConfigured(seat *ClaudeSeat) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeAuthProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "claude", "auth", "status")
 	if seat != nil {
-		dir, err := os.MkdirTemp("", "munsu-claude-auth-")
+		if err := makeSeatBuildDir(seat.BuildDir); err != nil {
+			return false
+		}
+		dir, err := os.MkdirTemp(seat.BuildDir, "claude-auth-")
 		if err != nil {
 			return false
 		}
 		defer os.RemoveAll(dir)
-		cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+seat.SecureStorage)
+		cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+seat.Config.SecureStorage)
 	}
 	return cmd.Run() == nil
+}
+
+// ClaudeSeat is how a fenced claude seat logs in, for the auth preflight: the
+// Human's configuration, and the munsu home's SeatBuildDir.
+type ClaudeSeat struct {
+	Config   ClaudeConfig
+	BuildDir string
 }
 
 // piCredentialFile is a function that reports whether a Pi credential store file
@@ -121,7 +132,7 @@ var piConfigDir = func() string {
 // Checks in order: adapter known → binary on PATH → auth credentials → model valid.
 // Each level returns ok/absent/unknown honestly. claudeSeat, when set, is the
 // configuration a fenced claude seat logs in with (see claudeAuthConfigured).
-func Preflight(harnessName string, claudeSeat *ClaudeConfig) (*PreflightResult, error) {
+func Preflight(harnessName string, claudeSeat *ClaudeSeat) (*PreflightResult, error) {
 	result := &PreflightResult{}
 
 	// 1. Adapter known

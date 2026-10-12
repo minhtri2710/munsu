@@ -64,7 +64,7 @@ func TestBuildClaudeConfigDir(t *testing.T) {
 	t.Run("config is linked, state is the seat's own, and .claude.json carries only the start keys and trust", func(t *testing.T) {
 		c, dst := claudeConfigFixture(t)
 		before, _ := os.ReadFile(c.GlobalConfig)
-		if err := BuildClaudeConfigDir(c, dst); err != nil {
+		if err := BuildClaudeConfigDir(c, seatBuildDirOf(dst), dst); err != nil {
 			t.Fatal(err)
 		}
 		var names []string
@@ -99,34 +99,17 @@ func TestBuildClaudeConfigDir(t *testing.T) {
 		if after, _ := os.ReadFile(c.GlobalConfig); string(after) != string(before) {
 			t.Fatalf("the Human's .claude.json was modified")
 		}
-		if _, err := os.Lstat(dst + ".building"); !os.IsNotExist(err) {
+		if _, err := os.Lstat(filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))); !os.IsNotExist(err) {
 			t.Fatalf("building dir left behind: %v", err)
-		}
-	})
-	t.Run("an existing dir is kept untouched", func(t *testing.T) {
-		c, dst := claudeConfigFixture(t)
-		if err := os.MkdirAll(dst, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		// A seat may have replaced its own entries; munsu never writes into them.
-		if err := os.Symlink(c.GlobalConfig, filepath.Join(dst, ".claude.json")); err != nil {
-			t.Fatal(err)
-		}
-		before, _ := os.ReadFile(c.GlobalConfig)
-		if err := BuildClaudeConfigDir(c, dst); err != nil {
-			t.Fatal(err)
-		}
-		if entries, _ := os.ReadDir(dst); len(entries) != 1 {
-			t.Fatalf("existing dir was rebuilt: %v", entries)
-		}
-		if after, _ := os.ReadFile(c.GlobalConfig); string(after) != string(before) {
-			t.Fatalf("a write went through the seat's link into the Human's .claude.json")
 		}
 	})
 	t.Run("an absent config gives an empty seat dir with no trust", func(t *testing.T) {
 		home := t.TempDir()
-		dst := filepath.Join(home, "T-1."+ClaudeConfigDirSuffix)
-		if err := BuildClaudeConfigDir(ClaudeConfig{Dir: filepath.Join(home, "none"), GlobalConfig: filepath.Join(home, "none.json")}, dst); err != nil {
+		dst := filepath.Join(home, "state", "T-1."+ClaudeConfigDirSuffix)
+		if err := os.Mkdir(filepath.Dir(dst), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := BuildClaudeConfigDir(ClaudeConfig{Dir: filepath.Join(home, "none"), GlobalConfig: filepath.Join(home, "none.json")}, seatBuildDirOf(dst), dst); err != nil {
 			t.Fatal(err)
 		}
 		raw, _ := os.ReadFile(filepath.Join(dst, ".claude.json"))
@@ -141,10 +124,10 @@ func TestBuildClaudeConfigDir(t *testing.T) {
 				if err := os.WriteFile(c.GlobalConfig, []byte(body), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				if err := BuildClaudeConfigDir(c, dst); err == nil || !strings.Contains(err.Error(), "building claude config dir from") || !strings.Contains(err.Error(), ".claude.json") {
+				if err := BuildClaudeConfigDir(c, seatBuildDirOf(dst), dst); err == nil || !strings.Contains(err.Error(), "building claude config dir from") || !strings.Contains(err.Error(), ".claude.json") {
 					t.Fatalf("err = %v, want the .claude.json build refusal", err)
 				}
-				for _, p := range []string{dst, dst + ".building"} {
+				for _, p := range []string{dst, filepath.Join(seatBuildDirOf(dst), filepath.Base(dst))} {
 					if _, err := os.Lstat(p); !os.IsNotExist(err) {
 						t.Errorf("%s exists after a failed build: %v", p, err)
 					}

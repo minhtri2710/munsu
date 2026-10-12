@@ -92,6 +92,11 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := launchArtifactInputForGuards(t)
 			in.LaunchBin, in.LaunchArgs = tc.bin, tc.args
+			agentDir, err := piAgentDirPath(in.HomeDir, in.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leftover := plantSeatBuildLeftover(t, in.HomeDir, agentDir)
 			art, err := buildLaunchArtifact(in)
 			if err != nil {
 				t.Fatalf("buildLaunchArtifact: %v", err)
@@ -100,10 +105,6 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 				t.Fatalf("Posture = %+v, want %+v", art.Posture, tc.want)
 			}
 			script := readFile(t, art.ScriptPath)
-			agentDir, err := piAgentDirPath(in.HomeDir, in.TaskID)
-			if err != nil {
-				t.Fatal(err)
-			}
 			export := "export PI_CODING_AGENT_DIR=" + shQuote(agentDir)
 			settings := filepath.Join(in.WorktreePath, filepath.FromSlash(PiSettingsName))
 			if tc.want.SkillBlock {
@@ -116,6 +117,7 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 				if got := readFile(t, settings); got != string(harness.PiProjectSettings()) {
 					t.Fatalf("worktree %s = %q, want the skill block", PiSettingsName, got)
 				}
+				requireBuiltInSeatBuildDir(t, leftover, agentDir)
 				return
 			}
 			if strings.Contains(script, "PI_CODING_AGENT_DIR") {
@@ -125,6 +127,32 @@ func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
 				t.Fatalf("a non-pi launch wrote the worktree pi settings (stat err = %v)", err)
 			}
 		})
+	}
+}
+
+// plantSeatBuildLeftover leaves a crashed build of dst in the home's seat build
+// dir, where a launch must build dst, and returns its path.
+func plantSeatBuildLeftover(t *testing.T, homeDir, dst string) string {
+	t.Helper()
+	leftover := filepath.Join(harness.SeatBuildDir(homeDir), filepath.Base(dst))
+	if err := os.MkdirAll(leftover, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leftover, "stale"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return leftover
+}
+
+// requireBuiltInSeatBuildDir requires that dst was built in the seat build
+// dir: the build there cleared the planted leftover and none of it reached dst.
+func requireBuiltInSeatBuildDir(t *testing.T, leftover, dst string) {
+	t.Helper()
+	if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
+		t.Fatalf("%s survived the launch, so the build ran elsewhere: %v", leftover, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "stale")); !os.IsNotExist(err) {
+		t.Fatalf("the leftover reached %s: %v", dst, err)
 	}
 }
 
