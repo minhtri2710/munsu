@@ -18,12 +18,14 @@ func TestRetirementRules(t *testing.T) {
 		{"captain with in-flight soldiers, force overrides", captainInFlightBlock, captainInFlightForceAllow},
 		{"scout unresolved decision holds", scoutHoldsBlock, scoutHoldsAllow},
 		{"unanswered delivery authorization, force overrides", deliveryReauthorizedBlock, deliveryReauthorizedForceAllow},
-		{"delivery lock held over this task's authorization, force overrides", deliveryLockHeldOwnBlock, deliveryLockHeldForceAllow},
-		{"delivery lock held by another delivery, force overrides", deliveryLockHeldOtherBlock, deliveryLockHeldForceAllow},
+		{"this task's delivery holds the delivery lock, force overrides", deliveryLockHeldOwnBlock, deliveryLockHeldForceAllow},
 		{"crashed delivery is recovered before the check", crashedDeliveryHeldBlock, crashedDeliveryHealsAllow},
-		{"another task's unrecoverable delivery does not block", crashedDeliveryHeldBlock, otherTaskRecoveryFailureAllow},
+		{"reopen while waiting for the delivery lock refuses a pinned teardown", reopenDuringLockWaitPinnedBlock, crashedDeliveryHealsAllow},
+		{"reopen while waiting for the delivery lock refuses an unpinned teardown", reopenDuringLockWaitUnpinnedBlock, crashedDeliveryHealsAllow},
+		{"task change while waiting for the delivery lock refuses", changeDuringLockWaitBlock, crashedDeliveryHealsAllow},
 		{"released delivery authorization does not block", deliveryReauthorizedBlock, deliveryReleasedAllow},
 		{"outcome of its own authorization does not block", deliveryReauthorizedBlock, deliveryOwnOutcomeAllow},
+		{"another task's delivery lock does not hold an unrelated task", deliveryLockHeldOwnBlock, unrelatedTaskNoWaitAllow},
 		{"review names no worktree, even with force", reviewWorktreeBlock, reviewWorktreeAllow},
 		{"review names no branch, force overrides", reviewBranchBlock, reviewBranchForceAllow},
 		{"abort needs the endpoint proven absent", abortLiveEndpointBlock, abortAbsentEndpointAllow},
@@ -34,6 +36,7 @@ func TestRetirementRules(t *testing.T) {
 		{"ship PR is not open unmerged", openUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship merged PR head matches the identity", wrongPRHeadBlock, mergedMatchingHeadAllow},
 		{"ship canonical delivery outcome is completed", outcomeNotCompletedBlock, outcomeCompletedAllow},
+		{"merged poll needs a completed delivery outcome", mergedPollPartialOutcomeBlock, mergedPollCompletedOutcomeAllow},
 	} {
 		t.Run(rule.name+"/blocks", rule.block)
 		t.Run(rule.name+"/allows", rule.allow)

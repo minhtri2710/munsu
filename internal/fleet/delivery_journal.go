@@ -192,8 +192,9 @@ func abortDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal,
 // without resuming anything. A failed resume fails closed and keeps that
 // record active without preventing the other journals from being attempted;
 // every resume failure is returned joined. A completed record's terminal
-// truth is never resumed.
-func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock) error {
+// truth is never resumed. A non-empty taskID resumes only that task's journals
+// (every listed journal is still validated); an empty one resumes them all.
+func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock, taskID string) error {
 	idx, err := deliveryJournals.readIndex(h)
 	if err != nil {
 		return err
@@ -215,6 +216,9 @@ func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock) error {
 	}
 	var failures []error
 	for _, journal := range journals {
+		if taskID != "" && journal.TaskID != taskID {
+			continue
+		}
 		if _, err := resumeDeliveryJournal(h, lk, c, journal); err != nil {
 			failures = append(failures, fmt.Errorf("delivery journal %s: %w", journal.ID, err))
 		}
@@ -253,7 +257,7 @@ func RecoverDeliveryJournals(homeDir string) error {
 		return err
 	}
 	defer lk.Release()
-	return recoverPendingDeliveryJournals(h, lk)
+	return recoverPendingDeliveryJournals(h, lk, "")
 }
 
 var deliveryCrashHook = func(string) {}
