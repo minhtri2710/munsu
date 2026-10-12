@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -22,24 +23,49 @@ import (
 
 func (l layout) claudeStateDir() string { return filepath.Join(l.home, "state", "T-1.claude-config") }
 
-// outsideDir returns a fresh directory under the real user home: neither a temp
-// root nor a dev path, so only a profile rule can make it writable.
+// outsideDir returns a fresh directory outside every temp root the fence grants
+// (/private/tmp and /private/var/folders), so only a profile rule can make it
+// writable. /var/tmp keeps it out of the real home; the home is the fallback.
 func outsideDir(t *testing.T) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
+	dir, err := os.MkdirTemp("/var/tmp", "fence-outside-")
+	if err != nil {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			t.Fatal(herr)
+		}
+		dir, err = os.MkdirTemp(home, ".fence-outside-")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := os.MkdirTemp(home, ".fence-outside-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { removeFenceOutside(t, dir) })
 	dir, err = filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// removeFenceOutside makes every directory searchable and writable before
+// RemoveAll, so a mode-000 tree left by a seat cannot survive cleanup.
+func removeFenceOutside(t *testing.T, dir string) {
+	t.Helper()
+	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.Chmod(p, 0o755)
+		}
+		return nil
+	})
+	if err := os.RemoveAll(dir); err != nil {
+		t.Errorf("remove %s: %v", dir, err)
+	}
+	if walkErr != nil {
+		t.Errorf("chmod walk %s: %v", dir, walkErr)
+	}
 }
 
 // seatEnv points the user home and the Go cache roots at dirs under out and
