@@ -38,6 +38,74 @@ func (f gateFixture) remote(t *testing.T, url string) {
 	gitInWorktree(t, f.primary, "remote", "add", "no-mistakes", url)
 }
 
+// ensureGateBranchReflog pre-creates the gate branch reflog as an empty regular
+// file so the fence can allow the seat to append to it while refusing the
+// create the first push would otherwise need (B1, fence-reflog-symlink-deputy).
+// It fails closed when the path is not a regular file, and never writes through
+// a planted symlink.
+func TestEnsureGateBranchReflog(t *testing.T) {
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reflogIn := func(gate string) string {
+		return filepath.Join(gate, "logs", "refs", "heads", "mu", "T-1")
+	}
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, gate string) // state before the call
+		wantErr string                          // substring; "" means it must succeed
+	}{
+		{name: "absent: creates an empty regular reflog and its parents"},
+		{name: "regular file: kept", seed: func(t *testing.T, gate string) {
+			p := reflogIn(gate)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("prior"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlink: refused, victim untouched", wantErr: "not a regular file", seed: func(t *testing.T, gate string) {
+			p := reflogIn(gate)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, p); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "directory: refused", wantErr: "not a regular file", seed: func(t *testing.T, gate string) {
+			if err := os.MkdirAll(reflogIn(gate), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := filepath.Join(t.TempDir(), "g.git")
+			if tc.seed != nil {
+				tc.seed(t, gate)
+			}
+			err := ensureGateBranchReflog(gate, "mu/T-1")
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("ensureGateBranchReflog = %v, want success", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("ensureGateBranchReflog = %v, want an error containing %q", err, tc.wantErr)
+			}
+			if tc.wantErr == "" {
+				if fi, err := os.Lstat(reflogIn(gate)); err != nil || !fi.Mode().IsRegular() {
+					t.Fatalf("reflog is not a regular file: %v", err)
+				}
+			}
+			// Fail-closed must never follow a planted link and write the victim.
+			if b, _ := os.ReadFile(victim); string(b) != "safe" {
+				t.Errorf("victim was written through a symlink: %q", b)
+			}
+		})
+	}
+}
+
 func (f gateFixture) repos(t *testing.T) string {
 	t.Helper()
 	repos := filepath.Join(f.nmHome, "repos")

@@ -2052,6 +2052,9 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 			if launch.GateRepo, err = projectGate(primary); err != nil {
 				return fmt.Errorf("launch fence: %w", err)
 			}
+			if err := ensureGateBranchReflog(launch.GateRepo, launch.Branch); err != nil {
+				return fmt.Errorf("launch fence: %w", err)
+			}
 		}
 	}
 	f, err := fence.New(launch)

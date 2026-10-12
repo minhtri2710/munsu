@@ -118,6 +118,42 @@ func mustRefuse(t *testing.T, f *Fence, paths ...string) {
 	}
 }
 
+// mustAppend requires the fence to allow appending to an existing file: the
+// file-write-data allow on a reflog the seat owns, with create, unlink and
+// rename still refused around it.
+func mustAppend(t *testing.T, f *Fence, p string) {
+	t.Helper()
+	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", p); err != nil {
+		t.Errorf("append to %s refused: %v %s", p, err, o)
+	}
+}
+
+// mustNotSwap requires the fence to refuse every way of replacing an existing
+// file p — unlink, symlink-over, rename-over — and that p stays the same regular
+// file, so the seat cannot swap its reflog for a link an unfenced writer follows.
+func mustNotSwap(t *testing.T, f *Fence, p string) {
+	t.Helper()
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading %s: %v", p, err)
+	}
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.WriteFile(src, []byte("evil"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{{"/bin/rm", "-f", p}, {"/bin/ln", "-sf", src, p}, {"/bin/mv", src, p}} {
+		if o, err := fenced(t, f, argv...); err == nil || !strings.Contains(o, "Operation not permitted") {
+			t.Errorf("%v on %s was not refused by the fence: %v %s", argv, p, err, o)
+		}
+	}
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("%s is not the original regular file after swaps the fence must refuse: %v", p, err)
+	}
+	if after, _ := os.ReadFile(p); string(after) != string(before) {
+		t.Errorf("%s content changed by a swap the fence must refuse", p)
+	}
+}
+
 func TestSoldierFenceWritableSet(t *testing.T) {
 	out := outsideDir(t)
 	uhome := seatEnv(t, out)
@@ -130,7 +166,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	mkdirs(t, filepath.Join(gateRepo, "objects", "info"), filepath.Join(gateRepo, "refs", "heads", "mu"), filepath.Join(gateRepo, "logs", "refs", "heads", "mu"),
 		filepath.Join(gateRepo, "hooks"), filepath.Join(l.common, "objects"), filepath.Join(l.common, "hooks"),
 		filepath.Join(l.common, "refs", "remotes"), filepath.Join(l.common, "refs", "heads"),
-		filepath.Join(l.common, "logs", "refs", "remotes"), filepath.Join(l.common, "logs", "refs", "heads"), filepath.Join(out, "wt2"))
+		filepath.Join(l.common, "logs", "refs", "remotes"), filepath.Join(l.common, "logs", "refs", "heads", "mu"), filepath.Join(l.gitDir, "logs"), filepath.Join(out, "wt2"))
 	launch := l.soldier()
 	launch.HarnessStateDir = l.claudeStateDir()
 	// The seat dir is built as a launch builds it, linking the Human's settings.
@@ -156,13 +192,23 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		f    *Fence
 		repo string
 	}{{f, gateRepo}, {mustNew(t, tempLaunch), tempGate}} {
-		// What a push writes in the gate.
-		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"),
-			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-1"))
-		// Outside objects/, refs/ and logs/ (G1151): a program, configuration
-		// and data; and objects/info, the alternates (G1085).
+		// What a push creates in the gate: objects/ and refs/.
+		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"))
+		// The branch reflog (B1): munsu pre-creates it at spawn, the seat appends
+		// to it, but cannot unlink, link- or rename-swap it, nor create any other
+		// reflog under logs/. (G1168, building on G1167.)
+		reflog := filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-1")
+		if err := os.WriteFile(reflog, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustAppend(t, gt.f, reflog)
+		mustNotSwap(t, gt.f, reflog)
+		// Outside objects/, refs/ and its own reflog (G1151, G1168): a program,
+		// configuration and data; objects/info, the alternates (G1085); and a new
+		// reflog file or dir under logs/ a symlink swap would need.
 		mustRefuse(t, gt.f, filepath.Join(gt.repo, "hooks", "pre-receive"), filepath.Join(gt.repo, "config"),
-			filepath.Join(gt.repo, "HEAD"), filepath.Join(gt.repo, "objects", "info", "alternates"))
+			filepath.Join(gt.repo, "HEAD"), filepath.Join(gt.repo, "objects", "info", "alternates"),
+			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-2"), filepath.Join(gt.repo, "logs", "refs", "heads", "evil"))
 	}
 
 	mustWrite(t, f,
@@ -236,21 +282,36 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		return
 	}
 
-	// Only the task's own branch and the dirs git creates for its slashed name
-	// are writable in the common dir.
+	// The task's own branch ref and the dirs git creates for its slashed name
+	// are writable in the common dir; its reflog under logs/ is append-only.
 	if o, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "refs", "heads", "mu")); err != nil {
 		t.Fatalf("creating the branch namespace dir: %v %s", err, o)
 	}
-	if o, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "logs", "refs", "heads", "mu")); err != nil {
-		t.Fatalf("creating the branch log namespace dir: %v %s", err, o)
-	}
-	for _, tree := range []string{"refs", filepath.Join("logs", "refs")} {
-		dir := filepath.Join(l.common, tree, "heads", "mu")
-		mustWrite(t, f, filepath.Join(dir, "T-1"), filepath.Join(dir, "T-1.lock"))
-		mustRefuse(t, f, filepath.Join(dir, "other"), filepath.Join(dir, "T-2"), filepath.Join(dir, "T-1x"))
-	}
+	refDir := filepath.Join(l.common, "refs", "heads", "mu")
+	mustWrite(t, f, filepath.Join(refDir, "T-1"), filepath.Join(refDir, "T-1.lock"))
+	mustRefuse(t, f, filepath.Join(refDir, "other"), filepath.Join(refDir, "T-2"), filepath.Join(refDir, "T-1x"))
 	if _, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "refs", "heads", "rogue")); err == nil {
 		t.Error("a namespace dir other than the task's branch was created")
+	}
+	// The common-dir branch reflog and the worktree HEAD reflog (B1): both
+	// pre-created by `git worktree add`, append-only, with no swap; the seat
+	// cannot create another reflog or a new logs namespace dir. (G1168, G1167.)
+	for _, reflog := range []string{
+		filepath.Join(l.common, "logs", "refs", "heads", "mu", "T-1"),
+		filepath.Join(l.gitDir, "logs", "HEAD"),
+	} {
+		if err := os.WriteFile(reflog, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustAppend(t, f, reflog)
+		mustNotSwap(t, f, reflog)
+	}
+	mustRefuse(t, f,
+		filepath.Join(l.common, "logs", "refs", "heads", "mu", "other"),
+		filepath.Join(l.common, "logs", "refs", "heads", "mu", "T-2"),
+		filepath.Join(l.gitDir, "logs", "other"))
+	if o, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "logs", "refs", "heads", "rogue")); err == nil {
+		t.Errorf("a reflog namespace dir was created under the common logs/ despite B1: %s", o)
 	}
 }
 

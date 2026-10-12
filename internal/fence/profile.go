@@ -71,6 +71,13 @@ func New(l Launch) (*Fence, error) {
 		return nil, err
 	}
 
+	var branch string
+	if l.Role == RoleSoldier {
+		if branch, err = soldierBranch(l.Branch); err != nil {
+			return nil, err
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
 	denySessionSockets(&b, sessionSocketDirs())
@@ -104,13 +111,15 @@ func New(l Launch) (*Fence, error) {
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
-		// Only what a push writes is writable in the gate: objects/, refs/ and
-		// logs/. The whole gate is refused first, after the temp-root allow, so
+		// objects/ and refs/ are writable in the gate (whole subpaths); under
+		// logs/ the seat may only append to its own branch reflog (allowed
+		// below). The whole gate is refused first, after the temp-root allow, so
 		// this holds wherever the gate lives, and its root cannot be renamed
 		// away. Human words (domain.Words): grantor the Human, channel
 		// supervisor-relay:dialog, words=selected, G1151: "Allowlist
 		// (Recommended): only objects/, refs/, logs/ writable in the
-		// no-mistakes gate repo". objects/info (alternates) is refused, and so
+		// no-mistakes gate repo"; logs/ is narrowed to the branch reflog by
+		// G1168 (quoted below). objects/info (alternates) is refused, and so
 		// are the names objects, refs and logs themselves (rename, removal,
 		// chmod, creating one that is absent), so none can be swapped for a
 		// tree of the seat's own whose info/alternates the next unfenced push
@@ -118,11 +127,7 @@ func New(l Launch) (*Fence, error) {
 		// channel supervisor-relay:dialog, words=selected, G1085: "Quy tắc
 		// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay
 		// cấu hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
-		// session ngoài session của nó." Bound: a gate with no logs/ and
-		// core.logAllRefUpdates true or always takes no push; no-mistakes
-		// never sets it. Residual: a seat can plant a symlink under logs/ that
-		// an unfenced push then appends through; tracked as
-		// fence-reflog-symlink-deputy. The gate's state database is not
+		// session ngoài session của nó." The gate's state database is not
 		// allowed: state.sqlite and its -wal, -shm and -journal files stay
 		// under the profile's first deny, so with the daemon stopped the
 		// seat's no-mistakes reads fail to open the database. Human words
@@ -137,18 +142,46 @@ func New(l Launch) (*Fence, error) {
 		g := p.gateRepo
 		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
 		deny(&b, "subpath", g)
-		allowRoots(obj, refs, logs)
+		allowRoots(obj, refs)
 		deny(&b, "subpath", filepath.Join(obj, "info"))
 		deny(&b, "literal", obj, refs, logs)
+		// logs/ is not a root (that let a seat plant a symlink an unfenced push
+		// then appended through: fence-reflog-symlink-deputy). The seat may only
+		// append to its own gate branch reflog, which munsu pre-creates at spawn
+		// (ensureGateBranchReflog); it cannot create, unlink or rename any reflog,
+		// so it cannot swap one for a link. Human words (domain.Words): grantor
+		// the Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
+		// (Recommended): B on the seat branch reflog, worktree HEAD and gate
+		// reflog; munsu pre-creates the gate branch reflog at spawn (probe first);
+		// logs/refs/remotes residual becomes its own task", building on G1167: "B:
+		// dò trước rồi làm (Recommended): munsu pre-creates the soldier's own
+		// branch reflog files; fence allows data writes to exactly those, refuses
+		// create/unlink/rename elsewhere in logs/".
+		allowData(&b, filepath.Join(logs, "refs", "heads", filepath.FromSlash(branch)))
 	}
 	if l.Role == RoleSoldier {
-		branch, err := soldierBranch(l.Branch)
-		if err != nil {
-			return nil, err
-		}
 		allowRoots(p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
 			filepath.Join(p.commonDir, "refs", "remotes"), filepath.Join(p.commonDir, "logs", "refs", "remotes"))
-		allow(&b, "literal", gitBranchFiles(p.commonDir, branch)...)
+		allow(&b, "literal", gitBranchRefFiles(p.commonDir, branch)...)
+		// The seat appends to its own reflogs but cannot swap one for a symlink
+		// an unfenced push or fetch then writes through (fence-reflog-symlink-
+		// deputy): its worktree HEAD reflog and its common-dir branch reflog,
+		// both created by `git worktree add`, are append-only, with create,
+		// unlink and rename refused under their logs/. The gitDir deny comes
+		// after the gitDir root allow so it wins. <common>/logs/refs/remotes
+		// stays a root (fetch creates its remote-tracking reflogs on the fly);
+		// that residual is the separate task fence-reflog-remotes-residual.
+		// Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1168: "B1 (Recommended): B
+		// on the seat branch reflog, worktree HEAD and gate reflog; munsu
+		// pre-creates the gate branch reflog at spawn (probe first);
+		// logs/refs/remotes residual becomes its own task", building on G1167:
+		// "B: dò trước rồi làm (Recommended): munsu pre-creates the soldier's
+		// own branch reflog files; fence allows data writes to exactly those,
+		// refuses create/unlink/rename elsewhere in logs/".
+		deny(&b, "subpath", filepath.Join(p.gitDir, "logs"))
+		allowData(&b, filepath.Join(p.gitDir, "logs", "HEAD"),
+			filepath.Join(p.commonDir, "logs", "refs", "heads", filepath.FromSlash(branch)))
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
 	}
@@ -482,21 +515,20 @@ func soldierBranch(b string) (string, error) {
 	return b, nil
 }
 
-// gitBranchFiles are the exact common-dir paths a commit on branch writes: the
-// loose ref and its lock, the ref's reflog and its lock, and the intermediate
-// directories git creates for a slashed name. The primary's main, HEAD,
+// gitBranchRefFiles are the exact common-dir ref paths a commit on branch
+// writes: the loose ref and its lock, and the intermediate directories git
+// creates for a slashed name. The branch's reflog under logs/ is append-only
+// (allowData at the call site), not here. The primary's main, HEAD,
 // packed-refs, config and hooks stay refused.
-func gitBranchFiles(commonDir, branch string) []string {
+func gitBranchRefFiles(commonDir, branch string) []string {
 	var out []string
-	for _, tree := range []string{filepath.Join(commonDir, "refs", "heads"), filepath.Join(commonDir, "logs", "refs", "heads")} {
-		parts := strings.Split(branch, "/")
-		for i := 1; i < len(parts); i++ {
-			out = append(out, filepath.Join(tree, filepath.Join(parts[:i]...)))
-		}
-		ref := filepath.Join(tree, filepath.FromSlash(branch))
-		out = append(out, ref, ref+".lock")
+	tree := filepath.Join(commonDir, "refs", "heads")
+	parts := strings.Split(branch, "/")
+	for i := 1; i < len(parts); i++ {
+		out = append(out, filepath.Join(tree, filepath.Join(parts[:i]...)))
 	}
-	return out
+	ref := filepath.Join(tree, filepath.FromSlash(branch))
+	return append(out, ref, ref+".lock")
 }
 
 // harnessState returns the writable directories of a harness kind beyond the
@@ -660,6 +692,14 @@ func quote(s string) string {
 
 func allow(b *strings.Builder, filter string, paths ...string) {
 	rule(b, "allow", "file-write*", filter, paths)
+}
+
+// allowData allows appending to each exact existing file while the surrounding
+// create, unlink and rename denies stand: the seat may write its own reflog's
+// data, but cannot unlink it, rename over it, or create a new one, so it cannot
+// swap the file for a symlink an unfenced push or fetch then writes through.
+func allowData(b *strings.Builder, paths ...string) {
+	rule(b, "allow", "file-write-data", "literal", paths)
 }
 func deny(b *strings.Builder, filter string, paths ...string) {
 	rule(b, "deny", "file-write*", filter, paths)

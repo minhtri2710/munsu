@@ -221,6 +221,43 @@ func projectGate(primary string) (string, error) {
 	return repo, nil
 }
 
+// ensureGateBranchReflog pre-creates, unfenced before the soldier launches, the
+// gate branch reflog the seat's first `git push no-mistakes HEAD:refs/heads/<branch>`
+// (brief.go) appends to, so the fence can allow the seat to write that file's
+// data while refusing create, unlink and rename under the gate's logs/ (B1): the
+// seat cannot swap the reflog for a symlink an unfenced push then writes through
+// (fence-reflog-symlink-deputy). It fails closed: if the path already exists as
+// anything but a regular file (a symlink or a directory), it refuses the launch
+// rather than follow or replace it, and it creates the file with O_EXCL so it
+// never follows or truncates one a racing writer planted. A regular file left by
+// a prior run is kept (git appends to it). Human words (domain.Words): grantor
+// the Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
+// (Recommended): B on the seat branch reflog, worktree HEAD and gate reflog;
+// munsu pre-creates the gate branch reflog at spawn (probe first);
+// logs/refs/remotes residual becomes its own task", building on G1167: "B: dò
+// trước rồi làm (Recommended): munsu pre-creates the soldier's own branch reflog
+// files; fence allows data writes to exactly those, refuses create/unlink/rename
+// elsewhere in logs/".
+func ensureGateBranchReflog(gateRepo, branch string) error {
+	reflog := filepath.Join(gateRepo, "logs", "refs", "heads", filepath.FromSlash(branch))
+	switch fi, err := os.Lstat(reflog); {
+	case err == nil && fi.Mode().IsRegular():
+		return nil
+	case err == nil:
+		return fmt.Errorf("gate branch reflog %s exists but is not a regular file; refusing to launch", reflog)
+	case !os.IsNotExist(err):
+		return fmt.Errorf("gate branch reflog %s: %w", reflog, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(reflog), 0o755); err != nil {
+		return fmt.Errorf("gate branch reflog dir: %w", err)
+	}
+	f, err := os.OpenFile(reflog, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("gate branch reflog %s: %w", reflog, err)
+	}
+	return f.Close()
+}
+
 func codexNeutralizationPreserved(args []string) bool {
 	for i, arg := range args {
 		value := ""
