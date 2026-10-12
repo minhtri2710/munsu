@@ -342,11 +342,6 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if _, err := r.launchAndConfirm(reviewing); err != nil {
 		return "", err
 	}
-	// A failure is reported as a warning: the task is already working and the
-	// window is live, so the spawn itself never rolls back.
-	if err := r.touchMetaAfterConfirm(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-	}
 	r.appendSpawnedStatus()
 	r.printEndpointInfo()
 	r.armWatcher()
@@ -2630,20 +2625,6 @@ func (r *Runner) writeTaskMeta() error {
 	})
 	if err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
-	}
-	return nil
-}
-
-// touchMetaAfterConfirm rewrites the task .meta without changing any key once
-// ConfirmSpawn committed, bumping its mtime.
-//
-// Constraint: .meta mtime is the staleness witness for AcceptOrRefuseStale
-// (orchestrator/supervision_check.go), and the spawn has always advanced it
-// after ConfirmSpawn; removal condition: task check-staleness-canonical-witness
-// moves the staleness rule to a canonical witness.
-func (r *Runner) touchMetaAfterConfirm() error {
-	if err := home.UpdateMeta(r.homeDir, r.args.ID, func(map[string]string) error { return nil }); err != nil {
-		return fmt.Errorf("touching task meta after confirm: %w", err)
 	}
 	return nil
 }

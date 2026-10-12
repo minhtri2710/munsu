@@ -65,8 +65,7 @@ func newMergeStatusCmd() *cobra.Command {
 		Short: "Query delivery merge status via provider-neutral seam",
 		Long: `Query the current merge status of a delivery identity (PR or MR)
 via the provider-neutral QueryDeliveryMergeStatus seam.
-Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.
-Used by watcher .check scripts.`,
+Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			err := fleet.MergeStatus(ctx.Home, args[0])

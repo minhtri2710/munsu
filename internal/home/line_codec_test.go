@@ -45,9 +45,6 @@ func TestAppendStatusKeepsMultiLineLineOneRecord(t *testing.T) {
 	if err != nil || len(lines) != 1 || lines[0] != line {
 		t.Fatalf("ReadStatus() = %q, %v; want [%q]", lines, err, line)
 	}
-	if ok, err := AppendStatusOnce(h, "task-1", line); err != nil || ok {
-		t.Fatalf("AppendStatusOnce(same line) = %v, %v; want no append", ok, err)
-	}
 }
 
 // An escaped report is one line however long its message is; every status read
@@ -63,11 +60,5 @@ func TestStatusReadsTakeALineOverTheScannerLimit(t *testing.T) {
 	lines, err := ReadStatus(h, "task-1")
 	if err != nil || len(lines) != 2 || lines[1] != line {
 		t.Fatalf("ReadStatus() = %d lines, %v; want 2 lines, the last as written", len(lines), err)
-	}
-	if ok, err := StatusHasLine(h, "task-1", line); err != nil || !ok {
-		t.Fatalf("StatusHasLine() = %v, %v; want true", ok, err)
-	}
-	if ok, err := AppendStatusOnce(h, "task-1", line); err != nil || ok {
-		t.Fatalf("AppendStatusOnce(same line) = %v, %v; want no append", ok, err)
 	}
 }

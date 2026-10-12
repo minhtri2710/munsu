@@ -83,7 +83,11 @@ func newTaskCmd() *cobra.Command {
 			}
 			// .meta and .status are post-commit projections: a projection
 			// failure must not roll back the authoritative Task Generation.
-			if perr := touchTaskMeta(ctx.Home, id); perr != nil {
+			// createQueuedTaskMeta creates the queued task's .meta so the
+			// captain in-flight scan (fleet.inFlightSoldierIDs) sees it;
+			// removal condition: canonical-live-binding moves that scan to
+			// the canonical phase.
+			if perr := createQueuedTaskMeta(ctx.Home, id); perr != nil {
 				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: perr}
 			}
 			if perr := home.AppendStatus(ctx.Home, id, "queued: cli task add"); perr != nil {
@@ -508,14 +512,9 @@ func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []st
 	return nil
 }
 
-// touchTaskMeta rewrites the task .meta without changing any key, bumping its
-// mtime. It is the post-commit write of task add, promote and the scout-done
-// report; no task field is copied into .meta (the canonical Task is the only
-// owner of those).
-//
-// Constraint: .meta mtime is the staleness witness for AcceptOrRefuseStale
-// (orchestrator/supervision_check.go); removal condition: the staleness rule
-// moves to a canonical witness, which refuses more and needs Human words.
-func touchTaskMeta(homeDir, taskID string) error {
+// createQueuedTaskMeta writes the task .meta without setting any key, creating
+// it when absent. No task field is copied into .meta (the canonical Task is the
+// only owner of those).
+func createQueuedTaskMeta(homeDir, taskID string) error {
 	return home.UpdateMeta(homeDir, taskID, func(map[string]string) error { return nil })
 }

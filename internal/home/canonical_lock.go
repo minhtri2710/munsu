@@ -41,9 +41,6 @@ type Lock struct {
 	released bool
 }
 
-// FenceToken returns the fencing generation held by this lock.
-func (l *Lock) FenceToken() FenceToken { return l.token }
-
 // Release releases the lock and closes its file handle.
 func (l *Lock) Release() error {
 	if l.released {
