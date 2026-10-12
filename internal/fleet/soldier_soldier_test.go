@@ -606,8 +606,8 @@ func TestBuildLaunchArgs_UnknownHarness(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchArgs_PiUsesTemplateDefaults(t *testing.T) {
-	// When model/effort are empty, BuildLaunchArgs should use Template defaults.
+func TestBuildLaunchArgs_PiWithoutModelOrEffort(t *testing.T) {
+	// With model and effort empty, pi launches with the prompt as its last argument.
 	bin, args, err := BuildLaunchArgs("/tmp/home", "pi", "", "", "test prompt")
 	if err != nil {
 		t.Fatal(err)
@@ -808,8 +808,8 @@ func TestBuildLaunchArgs_PiArgvCapture(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchArgs_PiDefaultModel(t *testing.T) {
-	// When model is empty, Pi template defines no DefaultModel, so only thinking+prompt.
+func TestBuildLaunchArgs_PiEmptyModelOmitsModelFlag(t *testing.T) {
+	// With model empty, pi launches without --model.
 	_, args, err := BuildLaunchArgs("/tmp/home", "pi", "", "medium", "test prompt")
 	if err != nil {
 		t.Fatal(err)
@@ -824,11 +824,8 @@ func TestBuildLaunchArgs_PiDefaultModel(t *testing.T) {
 			}
 		}
 	}
-	// Pi doesn't have DefaultModel in Template, but flag should not appear without value.
 	if foundModel {
-		// Pi Template has ModelFlag="--model" but no DefaultModel.
-		// With empty model, it should not emit --model flag.
-		t.Error("with empty model, pi should not emit --model flag (no DefaultModel)")
+		t.Error("with empty model, pi should not emit --model flag")
 	}
 }
 

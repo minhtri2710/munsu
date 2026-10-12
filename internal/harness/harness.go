@@ -150,13 +150,11 @@ func matchProcessName(name string) string {
 	return matchProcessNameFromAdapter(name)
 }
 
-// Template describes the CLI flags and defaults for spawning a harness.
+// Template describes the CLI flags for spawning a harness.
 type Template struct {
-	ModelFlag     string
-	EffortFlag    string
-	DefaultModel  string
-	DefaultEffort string
-	ExtraArgs     []string // Additional CLI arguments for launch (autonomy, interactive, etc.)
+	ModelFlag  string
+	EffortFlag string
+	ExtraArgs  []string // Additional CLI arguments for launch (autonomy, interactive, etc.)
 }
 
 // ErrNoSoldierHarnessInSnapshot is returned by ResolveSoldierFromSnapshot when

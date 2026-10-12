@@ -464,21 +464,17 @@ func TestHarnessAdaptersLaunchTemplateTable(t *testing.T) {
 	rows := map[string]string{}
 	for _, line := range strings.Split(table, "\n") {
 		cells := strings.Split(strings.Trim(line, "| "), " | ")
-		if len(cells) == 5 {
+		if len(cells) == 4 {
 			rows[cells[0]] = line
 		}
 	}
 	for name, adapter := range harness.Adapters {
 		tmpl := adapter.LaunchTemplate
-		defaults := "none"
-		if tmpl.DefaultModel != "" {
-			defaults = "`" + tmpl.DefaultModel + "` / `" + tmpl.DefaultEffort + "`"
-		}
 		extra := "none"
 		if len(tmpl.ExtraArgs) > 0 {
 			extra = "`" + strings.Join(tmpl.ExtraArgs, " ") + "`"
 		}
-		want := fmt.Sprintf("| %s | %s | %s | %s | %s |", name, flag(tmpl.ModelFlag), flag(tmpl.EffortFlag), defaults, extra)
+		want := fmt.Sprintf("| %s | %s | %s | %s |", name, flag(tmpl.ModelFlag), flag(tmpl.EffortFlag), extra)
 		if rows[name] != want {
 			t.Errorf("Launch templates row for %s = %q, want %q", name, rows[name], want)
 		}
