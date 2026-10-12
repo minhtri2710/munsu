@@ -130,30 +130,6 @@ func TestRetirePartialLaunchRefusesDeliveryIdentityBeforeMutation(t *testing.T) 
 	}
 }
 
-func TestRetireTaskAuthoritativelyRefusesPartialLaunchDeliveryIdentity(t *testing.T) {
-	f := newLaunchFixture(t, "partial-launch-authoritative-identity")
-	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
-		t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
-	}
-	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"pr_url": "https://github.com/minhtri2710/munsu/pull/42",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	meta, err := home.ReadMeta(f.homeDir, f.taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = retireTaskAuthoritatively(Options{HomeDir: f.homeDir, ID: f.taskID}, meta, f.auth)
-	if err == nil || !strings.Contains(err.Error(), "partial launch partial-launch-authoritative-identity cannot carry delivery identity") {
-		t.Fatalf("retireTaskAuthoritatively error = %v, want partial-launch identity refusal", err)
-	}
-	if after := f.aggregate(); after.Phase != taskauthority.PhaseQueued || after.CleanupClaim != nil {
-		t.Fatalf("refusal mutated canonical state: phase=%q claim=%+v", after.Phase, after.CleanupClaim)
-	}
-}
-
 func TestShipSafetyCheckPartialLaunchRefusesDeliveryIdentity(t *testing.T) {
 	meta := map[string]string{"pr_url": "https://github.com/minhtri2710/munsu/pull/42"}
 	binding := testWorktreeBinding(t.TempDir(), strings.Repeat("a", 64))

@@ -17,7 +17,15 @@ func TestRetirementRules(t *testing.T) {
 	}{
 		{"captain with in-flight soldiers, force overrides", captainInFlightBlock, captainInFlightForceAllow},
 		{"scout unresolved decision holds", scoutHoldsBlock, scoutHoldsAllow},
-		{"completed delivery outcome required", completedOutcomeBlock, completedOutcomeAllow},
+		{"unanswered delivery authorization, force overrides", deliveryReauthorizedBlock, deliveryReauthorizedForceAllow},
+		{"this task's delivery holds the delivery lock, force overrides", deliveryLockHeldOwnBlock, deliveryLockHeldForceAllow},
+		{"crashed delivery is recovered before the check", crashedDeliveryHeldBlock, crashedDeliveryHealsAllow},
+		{"reopen while waiting for the delivery lock refuses a pinned teardown", reopenDuringLockWaitPinnedBlock, crashedDeliveryHealsAllow},
+		{"reopen while waiting for the delivery lock refuses an unpinned teardown", reopenDuringLockWaitUnpinnedBlock, crashedDeliveryHealsAllow},
+		{"task change while waiting for the delivery lock refuses", changeDuringLockWaitBlock, crashedDeliveryHealsAllow},
+		{"released delivery authorization does not block", deliveryReauthorizedBlock, deliveryReleasedAllow},
+		{"outcome of its own authorization does not block", deliveryReauthorizedBlock, deliveryOwnOutcomeAllow},
+		{"another task's delivery lock does not hold an unrelated task", deliveryLockHeldOwnBlock, unrelatedTaskNoWaitAllow},
 		{"review names no worktree, even with force", reviewWorktreeBlock, reviewWorktreeAllow},
 		{"abort needs the endpoint proven absent", abortLiveEndpointBlock, abortAbsentEndpointAllow},
 		{"stale teardown never retires a reopened generation", staleRetryBlock, explicitGenerationAllow},
@@ -27,6 +35,7 @@ func TestRetirementRules(t *testing.T) {
 		{"ship PR is not open unmerged", openUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship merged PR head matches the identity", wrongPRHeadBlock, mergedMatchingHeadAllow},
 		{"ship canonical delivery outcome is completed", outcomeNotCompletedBlock, outcomeCompletedAllow},
+		{"merged poll needs a completed delivery outcome", mergedPollPartialOutcomeBlock, mergedPollCompletedOutcomeAllow},
 	} {
 		t.Run(rule.name+"/blocks", rule.block)
 		t.Run(rule.name+"/allows", rule.allow)

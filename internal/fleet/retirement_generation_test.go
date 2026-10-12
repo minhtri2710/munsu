@@ -910,9 +910,8 @@ func TestRetirementCleanupFailurePreservesCanonicalEvidenceAndMergedTruth(t *tes
 	homeDir := t.TempDir()
 	taskID := "evidence-preserved"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
-	// The identity-bearing retirement prerequisite is the canonical completed
-	// delivery outcome (#414 B hard cut), not any .meta projection;
-	// seedMergedDelivery also binds the worktree/endpoint.
+	// seedMergedDelivery binds the worktree/endpoint and commits the canonical
+	// completed delivery outcome; no .meta projection is involved.
 	seedMergedDelivery(t, auth, homeDir, taskID)
 	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktrees", taskID))
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}

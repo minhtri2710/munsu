@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -344,7 +345,7 @@ func TestResolveRetiredCleanupEvidence_RetiredNoEvidence(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestRetireTaskAuthoritatively_NilAuthority(t *testing.T) {
-	_, err := retireTaskAuthoritatively(Options{ID: "t1"}, nil, nil)
+	_, err := retireTaskAuthoritatively(Options{ID: "t1"}, nil)
 	if err == nil {
 		t.Fatal("expected nil authority error, got nil")
 	}
@@ -353,33 +354,280 @@ func TestRetireTaskAuthoritatively_NilAuthority(t *testing.T) {
 	}
 }
 
-// retireWithOutcome retires an identity-bearing task whose canonical delivery
-// outcome has the given status.
-func retireWithOutcome(t *testing.T, status taskauthority.DeliveryOutcomeStatus) error {
+// The delivery-authorization rows below drive retireTaskAuthoritatively, the
+// one owner of the refusal, over a real home with canonical delivery state.
+const unansweredText = "has no outcome yet, so a merge may be in flight; check munsu delivery merge-status t1, re-run munsu delivery pr-merge t1 <pr-url> to finish it, or retire anyway with munsu teardown --force t1"
+
+func retireDeliveryTask(t *testing.T, c *taskauthority.Canonical, homeDir string, force bool) error {
 	t.Helper()
-	homeDir := t.TempDir()
-	taskID := "retire-outcome"
-	auth := mergeTestAuth(t, homeDir, taskID)
-	seedDeliveryOutcome(t, auth, taskID, status, "1111111111111111111111111111111111111111")
-	meta := map[string]string{
-		"pr_url":    "https://github.com/test-owner/test-repo/pull/1",
-		"pr_number": "1",
-	}
-	_, err := retireTaskAuthoritatively(Options{ID: taskID}, meta, auth)
+	_, err := retireTaskAuthoritatively(Options{HomeDir: homeDir, ID: "t1", Force: force}, c)
 	return err
 }
 
-func completedOutcomeBlock(t *testing.T) {
-	err := retireWithOutcome(t, taskauthority.DeliveryOutcomeRetryable)
-	if err == nil || !strings.Contains(err.Error(), `canonical delivery outcome is "retryable"; a committed completed outcome is required`) {
-		t.Fatalf("retireTaskAuthoritatively err = %v, want the completed-outcome refusal", err)
+func assertRefusedNotRetired(t *testing.T, c *taskauthority.Canonical, err error, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		if err == nil || !strings.Contains(err.Error(), w) {
+			t.Fatalf("retirement err = %v, want it to contain %q", err, w)
+		}
+	}
+	agg, gerr := c.Get(mustFleetTaskID(t, "t1"))
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if agg.Phase == taskauthority.PhaseRetired || agg.CleanupClaim != nil {
+		t.Fatalf("refused retirement mutated the task: phase=%q claim=%+v", agg.Phase, agg.CleanupClaim)
 	}
 }
 
-func completedOutcomeAllow(t *testing.T) {
-	if err := retireWithOutcome(t, taskauthority.DeliveryOutcomeCompleted); err != nil {
-		t.Fatalf("retireTaskAuthoritatively with a completed outcome: %v", err)
+func assertRetired(t *testing.T, c *taskauthority.Canonical, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("retirement: %v", err)
 	}
+	agg, gerr := c.Get(mustFleetTaskID(t, "t1"))
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if agg.Phase != taskauthority.PhaseRetired {
+		t.Fatalf("phase = %q, want retired", agg.Phase)
+	}
+}
+
+// authorizeDeliveryDirect issues a delivery authorization for t1 with no
+// journal, as an in-flight Deliver leaves it before its outcome.
+func authorizeDeliveryDirect(t *testing.T, c *taskauthority.Canonical, opID string) {
+	t.Helper()
+	agg, err := c.Get(mustFleetTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalDeliveryAuthorizationRequest{
+		HomeID:        c.HomeID(),
+		TaskID:        mustFleetTaskID(t, "t1"),
+		Precondition:  domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Kind:          taskauthority.DeliveryAuthorizationProviderMerge,
+		Identity:      deliveryTestIdentity(),
+		Preconditions: []taskauthority.DeliveryPrecondition{taskauthority.DeliveryPreconditionPRMergeable},
+		Words:         deliveryWords(),
+	}
+	if _, err := c.AuthorizeDelivery(mustFleetOperation(t, opID, req), req); err != nil {
+		t.Fatalf("AuthorizeDelivery: %v", err)
+	}
+}
+
+// reauthorizedDelivery leaves t1 with a released retryable delivery and a new
+// authorization issued after it: the index still points at the old outcome.
+func reauthorizedDelivery(t *testing.T) (*taskauthority.Canonical, string) {
+	t.Helper()
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	installScriptedProviderFor(t, "open")
+	res, err := Deliver(homeDir, "t1", deliverRequest())
+	if err != nil || res.Status != taskauthority.DeliveryOutcomeRetryable {
+		t.Fatalf("Deliver = %+v, %v, want a retryable outcome", res, err)
+	}
+	authorizeDeliveryDirect(t, c, "op-reauthorize-t1")
+	return c, homeDir
+}
+
+// holdDeliveryLock holds the home's delivery lock for the rest of the test.
+func holdDeliveryLock(t *testing.T, homeDir string) {
+	t.Helper()
+	lk, err := mustHome(t, homeDir).Lock(deliveryLockScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lk.Release() })
+}
+
+// deliveryReauthorizedBlock also leaves t2 crashed mid-merge: t1's teardown
+// recovers only t1's journals, so t2's stays for its own delivery.
+func deliveryReauthorizedBlock(t *testing.T) {
+	c, homeDir := reauthorizedDelivery(t)
+	mustWorkingDeliveryTask(t, c, "t2", deliveryTestGitHubForge)
+	runDeliveryCrashHelper(t, homeDir, "t2", "mutating", "open-then-merged")
+	assertRefusedNotRetired(t, c, retireDeliveryTask(t, c, homeDir, false), "delivery authorization op-reauthorize-t1 "+unansweredText)
+	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, "t2")); err != nil || !unansweredAuthorization(cur) {
+		t.Fatalf("t2 delivery = %+v, %v, want its journal left to its own delivery", cur, err)
+	}
+}
+
+func deliveryReauthorizedForceAllow(t *testing.T) {
+	c, homeDir := reauthorizedDelivery(t)
+	assertRetired(t, c, retireDeliveryTask(t, c, homeDir, true))
+}
+
+func deliveryLockHeldOwnBlock(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	authorizeDeliveryDirect(t, c, "op-inflight-t1")
+	holdDeliveryLock(t, homeDir)
+	assertRefusedNotRetired(t, c, retireDeliveryTask(t, c, homeDir, false), "delivery authorization op-inflight-t1 "+unansweredText)
+}
+
+func deliveryLockHeldForceAllow(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	authorizeDeliveryDirect(t, c, "op-inflight-t1")
+	holdDeliveryLock(t, homeDir)
+	assertRetired(t, c, retireDeliveryTask(t, c, homeDir, true))
+}
+
+// crashedDeliveryHeldBlock: the merge ran and a matching delivery hold refuses
+// the outcome commit, so recovery cannot answer the authorization.
+func crashedDeliveryHeldBlock(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	deliverWithHoldAt(t, c, homeDir, "t1", "mutating")
+	assertRefusedNotRetired(t, c, retireDeliveryTask(t, c, homeDir, false), unansweredText, "(delivery recovery failed: ", string(taskauthority.DeliveryCurrencyMatchingHold))
+}
+
+// crashedDeliveryHealsAllow: a delivery crashed at the mutating boundary and
+// the provider reports merged; teardown recovers the completed outcome first,
+// advancing the revision it retires at.
+func crashedDeliveryHealsAllow(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	runDeliveryCrashHelper(t, homeDir, "t1", "mutating", "open-then-merged")
+	installScriptedProviderFor(t, "merged")
+	assertRetired(t, c, retireDeliveryTask(t, c, homeDir, false))
+	out, err := c.DeliveryOutcome(mustFleetTaskID(t, "t1"))
+	if err != nil || out.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("outcome = %+v, %v, want the recovered completed outcome", out, err)
+	}
+}
+
+// unrelatedTaskNoWaitAllow: t2's delivery is in flight and holds the delivery
+// lock; t1 has no delivery of its own, so it retires without waiting for it.
+func unrelatedTaskNoWaitAllow(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	holdDeliveryLock(t, homeDir)
+	start := time.Now()
+	assertRetired(t, c, retireDeliveryTask(t, c, homeDir, false))
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("teardown waited %s for another task's delivery lock", waited)
+	}
+}
+
+// retireDuringLockWait starts a retirement of t1 while the test holds the
+// delivery lock, applies change once the retirement has read the task and is
+// waiting for the lock, then releases the lock and returns its error.
+func retireDuringLockWait(t *testing.T, c *taskauthority.Canonical, homeDir string, opts Options, change func()) error {
+	t.Helper()
+	lk, err := mustHome(t, homeDir).Lock(deliveryLockScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := retireTaskAuthoritatively(opts, c)
+		done <- err
+	}()
+	time.Sleep(700 * time.Millisecond)
+	change()
+	if err := lk.Release(); err != nil {
+		t.Fatal(err)
+	}
+	return <-done
+}
+
+// assertGeneration2Untouched asserts the reopened generation 2 is queued and
+// was not retired.
+func assertGeneration2Untouched(t *testing.T, c *taskauthority.Canonical) {
+	t.Helper()
+	agg, err := c.Get(mustFleetTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Generation != 2 || agg.Phase != taskauthority.PhaseQueued || agg.CleanupClaim != nil {
+		t.Fatalf("reopened generation disturbed: generation=%s phase=%q claim=%+v", agg.Generation, agg.Phase, agg.CleanupClaim)
+	}
+}
+
+// completeT1 completes t1 to done at its current precondition.
+func completeT1(t *testing.T, c *taskauthority.Canonical) {
+	t.Helper()
+	agg, err := c.Get(mustFleetTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := taskauthority.CanonicalCompleteRequest{
+		HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, "t1"), Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), To: taskauthority.PhaseDone, Reason: "done",
+	}
+	if _, err := c.Complete(mustFleetOperation(t, "op-complete-t1", complete), complete); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// healingDeliveryTask leaves t1 with a delivery crashed at the mutating
+// boundary that recovery answers (the provider reports merged), so its teardown
+// waits for the delivery lock and would retire once recovery ran.
+func healingDeliveryTask(t *testing.T) (*taskauthority.Canonical, string) {
+	t.Helper()
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	runDeliveryCrashHelper(t, homeDir, "t1", "mutating", "open-then-merged")
+	installScriptedProviderFor(t, "merged")
+	return c, homeDir
+}
+
+// reopenDuringLockWaitPinnedBlock: a teardown pinned to generation 1 waits for
+// the delivery lock while the task reopens to generation 2.
+func reopenDuringLockWaitPinnedBlock(t *testing.T) {
+	c, homeDir := healingDeliveryTask(t)
+	completeT1(t, c)
+	gen1 := taskauthority.Generation(1)
+	err := retireDuringLockWait(t, c, homeDir, Options{HomeDir: homeDir, ID: "t1", ExpectedGeneration: &gen1}, func() { reopenQueued(t, c, "t1") })
+	var conflict *RetirementTargetConflictError
+	if !errors.As(err, &conflict) || conflict.Target != 1 || conflict.Current != 2 {
+		t.Fatalf("retirement err = %v, want the target conflict for generation 1 vs 2", err)
+	}
+	assertGeneration2Untouched(t, c)
+}
+
+// reopenDuringLockWaitUnpinnedBlock: an unpinned teardown bound to generation 1
+// waits for the delivery lock while the task reopens to generation 2.
+func reopenDuringLockWaitUnpinnedBlock(t *testing.T) {
+	c, homeDir := healingDeliveryTask(t)
+	completeT1(t, c)
+	err := retireDuringLockWait(t, c, homeDir, Options{HomeDir: homeDir, ID: "t1"}, func() { reopenQueued(t, c, "t1") })
+	var stale *RetirementStaleTeardownError
+	if !errors.As(err, &stale) || stale.PriorGeneration != 1 || stale.CurrentGeneration != 2 {
+		t.Fatalf("retirement err = %v, want the stale teardown error for generation 1 vs 2", err)
+	}
+	assertGeneration2Untouched(t, c)
+}
+
+// changeDuringLockWaitBlock: the task completes, in the same generation, while
+// the teardown waits for the delivery lock.
+func changeDuringLockWaitBlock(t *testing.T) {
+	c, homeDir := healingDeliveryTask(t)
+	err := retireDuringLockWait(t, c, homeDir, Options{HomeDir: homeDir, ID: "t1"}, func() { completeT1(t, c) })
+	assertRefusedNotRetired(t, c, err, "task t1 changed while teardown waited for the delivery lock; retry munsu teardown t1")
+}
+
+// deliveryReleasedAllow: the provider was unreachable before the merge, so
+// Deliver failed closed and released its authorization with no outcome.
+func deliveryReleasedAllow(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	installScriptedProviderFor(t, "unreachable")
+	var failClosed *DeliveryFailClosedError
+	if _, err := Deliver(homeDir, "t1", deliverRequest()); !errors.As(err, &failClosed) || failClosed.ReleaseErr != nil {
+		t.Fatalf("Deliver err = %v, want a released fail-closed delivery", err)
+	}
+	assertRetired(t, c, retireDeliveryTask(t, c, homeDir, false))
+}
+
+// deliveryOwnOutcomeAllow: a retryable outcome is committed against the
+// current authorization and its release has not committed.
+func deliveryOwnOutcomeAllow(t *testing.T) {
+	homeDir := t.TempDir()
+	c := mergeTestAuth(t, homeDir, "t1")
+	seedDeliveryOutcome(t, c, "t1", taskauthority.DeliveryOutcomeRetryable, "")
+	assertRetired(t, c, retireDeliveryTask(t, c, homeDir, false))
 }
 
 // ----------------------------------------------------------------------------
