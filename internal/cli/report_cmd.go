@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -64,19 +63,12 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			}
 
 			parentHome := os.Getenv("MUNSU_PARENT_STATUS")
-
-			// The review-ready flush names its sender; derive it before anything
-			// is delivered so a refused identity leaves no half-done report.
-			var flushSender string
-			if role == "soldier" && state == "review-ready" {
-				var identErr error
-				if flushSender, _, identErr = home.ReadHomeIdentity(homeDir); identErr != nil {
-					return fmt.Errorf("report: deriving sender identity: %w", identErr)
-				}
-			}
+			// A soldier's launch names its task kind; reading it from the
+			// canonical record would open the dispatcher's home.
+			taskKind := os.Getenv("MUNSU_TASK_KIND")
 
 			// A review soldier's outcome is its verdict file, never a status report.
-			if role == "soldier" && isTaskKind(parentHome, taskID, taskauthority.KindReview) {
+			if role == "soldier" && taskKind == taskauthority.KindReview {
 				return operationError("review_task",
 					"A review task reports through its verdict file, not munsu report",
 					fmt.Sprintf("report: task %s is a review task", taskID))
@@ -109,7 +101,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// transition before sending the uplink so teardown can observe the
 			// canonical terminal phase without requiring --force.
 			if role == "soldier" && state == "done" {
-				if isTaskKind(parentHome, taskID, taskauthority.KindScout) {
+				if taskKind == taskauthority.KindScout {
 					if err := enforceScoutReportBudget(parentHome, taskID, time.Now()); err != nil {
 						if budgetErr := new(orchestrator.ScoutBudgetError); errors.As(err, &budgetErr) {
 							_ = home.AppendStatus(parentHome, taskID, "failed: scout runtime deadline evidence: "+formatScoutBudgetEvidence(budgetErr.Evidence))
@@ -129,7 +121,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 
 			var receipt *orchestrator.WakeReceipt
 			var uplinkResult *orchestrator.ReportResult
-			if role == "soldier" && state == "done" && isTaskKind(parentHome, taskID, taskauthority.KindScout) {
+			if role == "soldier" && state == "done" && taskKind == taskauthority.KindScout {
 				var err error
 				receipt, err = orchestrator.DeliverWake(orchestrator.DeliverRequest{
 					HomeDir: homeDir, ParentHome: parentHome, TaskID: taskID,
@@ -200,20 +192,6 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			// 1.6. For soldier review-ready/idle states: emit a durable ready event
-			// and flush one pending command automatically.
-			if role == "soldier" && state == "review-ready" {
-				metaGeneration, genErr := currentTaskGeneration(homeDir, taskID)
-				if genErr != nil {
-					return fmt.Errorf("report: reading task aggregate: %w", genErr)
-				}
-				fleet.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
-
-				if fr := fleet.FlushPendingSoldierCommands(homeDir, taskID, flushSender, newSessionSoldierEndpoints()); fr.Err != nil {
-					fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
-				}
-			}
-
 			var injectResult *ReportInjection
 			watcherID := identifyWatcher(homeDir)
 			var enqueueTimestamp, receiptTimestamp int64
@@ -250,11 +228,6 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 	cmd.Flags().StringVar(&key, "key", "", "Optional status key/slug for correlation and idempotency")
 	cmd.Flags().StringVar(&ring, "ring", "auto", "Ring policy: auto, ring, no-ring")
 	return cmd
-}
-
-func isTaskKind(homeDir, taskID, kind string) bool {
-	got, err := canonicalTaskKind(homeDir, taskID)
-	return err == nil && got == kind
 }
 
 // canonicalTaskKind reads the task's kind from its canonical record. A task

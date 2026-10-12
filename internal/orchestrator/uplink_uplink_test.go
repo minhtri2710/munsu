@@ -195,6 +195,10 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	if pending != nil {
 		t.Fatal("accepted pending should be removed")
 	}
+	// The receiver keeps an acked payload; the sender's recovery removes it.
+	if payload, err := mhome.NewStore(receiverHome).ReadEnvelope("captain-1", result.MessageID); err != nil || payload != nil {
+		t.Fatalf("receiver payload after recovery = %+v, %v; want removed", payload, err)
+	}
 }
 
 func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {

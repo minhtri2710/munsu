@@ -248,7 +248,7 @@ func newSessionStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session-start",
 		Short: "Lock, bootstrap, ensure watcher for in-flight work, and print the session-start digest",
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+		RunE: refuseInSoldierSeat("session-start", withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			output, err := contractOutput(cmd)
 			if err != nil {
 				return err
@@ -299,7 +299,7 @@ func newSessionStartCmd() *cobra.Command {
 					Message:         "Session started. Lock: " + lockState + ". Watcher: " + watcherState + ".",
 				},
 			})
-		}),
+		})),
 	}
 	configureContractCommand(cmd)
 	cmd.Flags().BoolVar(&recover, "recover", false, "Relaunch launched-but-dead captain endpoints detected during the liveness probe")

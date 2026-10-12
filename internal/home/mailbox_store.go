@@ -1,8 +1,10 @@
 package home
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,7 +19,7 @@ import (
 //
 //	receiverStore := mailbox.NewStore(receiverHome)
 //	receiverStore.WriteEnvelope(env)
-//	receiverStore.WriteAck(ack)
+//	receiverStore.WriteAck(ack) // into the receiver's own ack log
 //
 //	senderStore := mailbox.NewStore(senderHome)
 //	senderStore.WritePending(env)
@@ -53,18 +55,16 @@ func (s *Store) inboxPath(senderIdentity, messageID string) (string, error) {
 	return filepath.Join(dir, messageID+".json"), nil
 }
 
-func (s *Store) ackPath(senderIdentity, messageID string) (string, error) {
-	if err := ValidatePathComponent(senderIdentity, "sender identity"); err != nil {
-		return "", err
+// ackLogPath returns the receiver's own ack log in this home, one
+// ProcessingAck JSON object per line. A soldier's is the task's
+// state/<durable stem>.acks beside its status file, so a soldier writes only
+// files of its own task; the home owner's (its General or Captain) is
+// state/.acks. A task stem is never empty, so the two never meet.
+func (s *Store) ackLogPath(rank Rank, taskID string) (string, error) {
+	if rank == RankSoldier {
+		return DurableFilePath(StateDir(s.homeDir), taskID, ".acks")
 	}
-	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
-		return "", err
-	}
-	dir, err := s.inboxDir(senderIdentity)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, messageID+".ack"), nil
+	return filepath.Join(StateDir(s.homeDir), ".acks"), nil
 }
 
 func (s *Store) pendingDir(senderIdentity string) (string, error) {
@@ -254,17 +254,9 @@ func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
 		if err := ValidatePathComponent(messageID, "message ID"); err != nil {
 			continue
 		}
-		// Skip if ack or supersession exists. A tombstone is authoritative;
+		// Skip a superseded or acked envelope. A tombstone is authoritative;
 		// opportunistically remove any payload left by a crash between the
 		// durable tombstone and the original unlink.
-		ackPath, err := s.ackPath(senderIdentity, messageID)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(ackPath); err == nil {
-			s.removeInboxPayload(senderIdentity, messageID)
-			continue
-		}
 		if s.IsSuperseded(senderIdentity, messageID) {
 			s.removeInboxPayload(senderIdentity, messageID)
 			continue
@@ -280,6 +272,9 @@ func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
 		if env.MessageID != messageID || ValidateEnvelope(&env) != nil || PayloadHashHex(env.Payload) != env.PayloadHash {
 			continue
 		}
+		if s.IsAcked(&env) {
+			continue
+		}
 		envelopes = append(envelopes, &env)
 	}
 	sort.Slice(envelopes, func(i, j int) bool {
@@ -293,11 +288,11 @@ func (s *Store) ListInbox(senderIdentity string) ([]*Envelope, error) {
 
 // --- Ack I/O ---
 
-// WriteAck writes a ProcessingAck to the receiver's inbox alongside the
-// envelope. The ack is written atomically.
+// WriteAck appends a ProcessingAck to its receiver's own ack log (see
+// ackLogPath) under an exclusive lock on that log.
 //
 // Idempotent: writing the exact same ack twice is OK.
-// Conflict: writing a different ack for the same message ID returns an error.
+// Conflict: writing a different ack for the same message returns an error.
 func (s *Store) WriteAck(ack *ProcessingAck) error {
 	// Validate ack fields.
 	if ack.ProcessedAt <= 0 {
@@ -318,77 +313,105 @@ func (s *Store) WriteAck(ack *ProcessingAck) error {
 
 	ack.SchemaVersion = AckSchemaVersion
 
-	// Check for existing ack with same message ID.
-	path, err := s.ackPath(ack.SenderIdentity, ack.MessageID)
+	path, err := s.ackLogPath(ack.ReceiverRank, ack.TaskID)
 	if err != nil {
 		return fmt.Errorf("write ack: %w", err)
 	}
-	if existing, err := os.ReadFile(path); err == nil {
-		var old ProcessingAck
-		if err := json.Unmarshal(existing, &old); err == nil {
-			// Compare all identity fields — exact same ack is idempotent.
-			if old.MessageID == ack.MessageID &&
-				old.SenderRank == ack.SenderRank &&
-				old.SenderIdentity == ack.SenderIdentity &&
-				old.ReceiverRank == ack.ReceiverRank &&
-				old.ReceiverID == ack.ReceiverID &&
-				old.TaskID == ack.TaskID &&
-				old.Key == ack.Key &&
-				old.PayloadHash == ack.PayloadHash &&
-				old.Outcome == ack.Outcome {
-				return nil // idempotent: exact same ack, OK
-			}
-			return fmt.Errorf("write ack: conflict: message ID %q already has a different ack", ack.MessageID)
+	if err := validateStatePath(s.homeDir, path, true); err != nil {
+		return fmt.Errorf("write ack: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		return fmt.Errorf("write ack: opening ack log: %w", err)
+	}
+	defer f.Close()
+	if err := secureFile(path); err != nil {
+		return fmt.Errorf("write ack: securing ack log: %w", err)
+	}
+	if err := lockFile(f, false); err != nil {
+		return fmt.Errorf("write ack: locking ack log: %w", err)
+	}
+	defer unlockFile(f)
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("write ack: reading ack log: %w", err)
+	}
+	if old := findAck(content, ack.SenderIdentity, ack.MessageID); old != nil {
+		// Compare all identity fields — exact same ack is idempotent.
+		if old.SenderRank == ack.SenderRank &&
+			old.ReceiverRank == ack.ReceiverRank &&
+			old.ReceiverID == ack.ReceiverID &&
+			old.TaskID == ack.TaskID &&
+			old.Key == ack.Key &&
+			old.PayloadHash == ack.PayloadHash &&
+			old.Outcome == ack.Outcome {
+			return nil // idempotent: exact same ack, OK
 		}
-		// Existing file is corrupt; overwrite is allowed.
+		return fmt.Errorf("write ack: conflict: message ID %q already has a different ack", ack.MessageID)
 	}
-
-	dir, err := s.inboxDir(ack.SenderIdentity)
-	if err != nil {
-		return fmt.Errorf("write ack: %w", err)
-	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create ack dir: %w", err)
-	}
-	data, err := json.MarshalIndent(ack, "", "  ")
+	line, err := json.Marshal(ack)
 	if err != nil {
 		return fmt.Errorf("marshal ack: %w", err)
 	}
-	return canonicalAtomicWrite(path, data)
+	// A torn last line from a crash stays its own (unreadable) line.
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		line = append([]byte("\n"), line...)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		return fmt.Errorf("write ack: %w", err)
+	}
+	return f.Sync()
 }
 
-// ReadAck reads a ProcessingAck from the receiver's inbox.
-// Returns nil, nil if not found.
-func (s *Store) ReadAck(senderIdentity, messageID string) (*ProcessingAck, error) {
-	path, err := s.ackPath(senderIdentity, messageID)
+// findAck returns the last ack in an ack log for the message, or nil. A line
+// that does not decode (a torn write) is no ack.
+func findAck(content []byte, senderIdentity, messageID string) *ProcessingAck {
+	var found *ProcessingAck
+	for _, line := range bytes.Split(content, []byte("\n")) {
+		var a ProcessingAck
+		if len(bytes.TrimSpace(line)) == 0 || json.Unmarshal(line, &a) != nil {
+			continue
+		}
+		if a.SenderIdentity == senderIdentity && a.MessageID == messageID {
+			found = &a
+		}
+	}
+	return found
+}
+
+// readAck reads the ack for a message from the ack log of the receiver
+// (rank, taskID). Returns nil, nil if there is none.
+func (s *Store) readAck(rank Rank, taskID, senderIdentity, messageID string) (*ProcessingAck, error) {
+	path, err := s.ackLogPath(rank, taskID)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	var ack ProcessingAck
-	if err := json.Unmarshal(data, &ack); err != nil {
-		return nil, fmt.Errorf("unmarshal ack %s: %w", messageID, err)
-	}
-	if ack.MessageID != messageID {
-		return nil, fmt.Errorf("read ack %s: path message ID %q does not match decoded message ID %q", path, messageID, ack.MessageID)
-	}
-	return &ack, nil
+	return findAck(content, senderIdentity, messageID), nil
 }
 
-// IsAcked returns true if an ack file exists for the given message.
-func (s *Store) IsAcked(senderIdentity, messageID string) bool {
-	path, err := s.ackPath(senderIdentity, messageID)
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(path)
-	return err == nil
+// ReadAck reads the ack for env from its receiver's ack log.
+// Returns nil, nil if not found.
+func (s *Store) ReadAck(env *Envelope) (*ProcessingAck, error) {
+	return s.readAck(env.ReceiverRank, env.TaskID, env.SenderIdentity, env.MessageID)
+}
+
+// ReadOwnerAck reads the ack the home's owner (its General or Captain) wrote
+// for a message, from the owner's ack log. Returns nil, nil if not found.
+func (s *Store) ReadOwnerAck(senderIdentity, messageID string) (*ProcessingAck, error) {
+	return s.readAck("", "", senderIdentity, messageID)
+}
+
+// IsAcked returns true if env's receiver has acked it.
+func (s *Store) IsAcked(env *Envelope) bool {
+	ack, err := s.ReadAck(env)
+	return err == nil && ack != nil
 }
 
 // --- Pending I/O ---
@@ -508,6 +531,15 @@ func (s *Store) RemovePendingAfterAck(senderIdentity, messageID string, ack *Pro
 		return err
 	}
 	return nil
+}
+
+// RemoveAckedPayload removes env's payload from this home's inbox once its
+// receiver has acked it. The sender's reconcile calls it: a receiver never
+// removes a payload, since a soldier writes only its own task's files.
+func (s *Store) RemoveAckedPayload(env *Envelope) {
+	if s.IsAcked(env) {
+		s.removeInboxPayload(env.SenderIdentity, env.MessageID)
+	}
 }
 
 // ListAllPending returns all pending records across all sender identities.

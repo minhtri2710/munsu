@@ -255,9 +255,10 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 // tombstones in place. This is best-effort: stale files that cannot be removed
 // (permissions, in-flight I/O) log a diagnostic and do not block.
 func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity string, current *home.Envelope) error {
-	// ListInbox reclaims payload residue for already-acked or superseded
-	// records. Older actionable requirements are durably superseded here before
-	// their payloads are removed; replay tombstones are never deleted.
+	// ListInbox reclaims payload residue for superseded records. Older
+	// actionable requirements are durably superseded here before their
+	// payloads are removed; replay tombstones are never deleted. An acked
+	// payload is removed below with its pending record.
 	receiverStore := home.NewStore(captainHome)
 	envelopes, err := receiverStore.ListInbox(senderIdentity)
 	if err == nil {
@@ -279,9 +280,10 @@ func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity stri
 			if env.Key != ConfigRereadKey || env.MessageID == current.MessageID {
 				continue
 			}
-			if !receiverStore.IsAcked(senderIdentity, env.MessageID) && !receiverStore.IsSuperseded(senderIdentity, env.MessageID) {
+			if !receiverStore.IsAcked(env) && !receiverStore.IsSuperseded(senderIdentity, env.MessageID) {
 				continue
 			}
+			receiverStore.RemoveAckedPayload(env)
 			pendingPath := filepath.Join(
 				parentHome, "state", home.OutboxDir, senderIdentity, env.MessageID+".pending",
 			)
@@ -329,7 +331,7 @@ func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
 	captainStore := home.NewStore(canonCaptain)
 
 	// Check if the latest said is acked.
-	if !captainStore.IsAcked(senderIdentity, latestID) {
+	if ack, err := captainStore.ReadOwnerAck(senderIdentity, latestID); err != nil || ack == nil {
 		return nil // Not acked yet — no cleanup.
 	}
 

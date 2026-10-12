@@ -194,26 +194,25 @@ func TestReceiveAndAckRefuseEnvelopesThatFailProvenance(t *testing.T) {
 	}
 }
 
-// An ack already on disk is the receiver's own prior decision. A second Ack
-// with the same outcome replays it; a different outcome on disk means somebody
-// else recorded a conflicting decision for this message, and that fails closed
-// rather than being overwritten.
-func TestReceiverTreatsGCdEnvelopeAsHandledNotFound(t *testing.T) {
+// An ack already in the receiver's ack log is its own prior decision: Receive
+// refuses the message, and a second Ack replays the ack even once the sender's
+// reconcile has removed the payload.
+func TestReceiverTreatsAckedEnvelopeAsHandled(t *testing.T) {
 	r, store, _ := newGuardReceiver(t)
 	env, ref := deliverGuardEnvelope(t, store)
 	ack, err := r.Ack(ref)
 	if err != nil {
 		t.Fatalf("initial Ack: %v", err)
 	}
-	if ack == nil || !store.IsAcked(env.SenderIdentity, env.MessageID) {
+	if ack == nil || !store.IsAcked(&env) {
 		t.Fatal("initial ack was not persisted")
 	}
-	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload != nil {
-		t.Fatalf("payload after initial ack = (%+v, %v), want absent", payload, err)
+	if _, err := r.Receive(ref); err == nil || !strings.Contains(err.Error(), "receive envelope already acked") {
+		t.Fatalf("Receive after ack error = %v, want already acked", err)
 	}
-
-	if _, err := r.Receive(ref); err == nil || !strings.Contains(err.Error(), "envelope not found") {
-		t.Fatalf("Receive after payload GC error = %v, want envelope not found", err)
+	store.RemoveAckedPayload(&env)
+	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload != nil {
+		t.Fatalf("payload after reconcile = (%+v, %v), want absent", payload, err)
 	}
 	replayed, err := r.Ack(ref)
 	if err != nil {
@@ -222,8 +221,8 @@ func TestReceiverTreatsGCdEnvelopeAsHandledNotFound(t *testing.T) {
 	if replayed == nil || replayed.MessageID != ack.MessageID || replayed.ProcessedAt != ack.ProcessedAt {
 		t.Fatalf("replayed ack = %+v, want original %+v", replayed, ack)
 	}
-	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
-		t.Fatal("ack tombstone disappeared after payload GC")
+	if !store.IsAcked(&env) {
+		t.Fatal("ack log entry disappeared after payload GC")
 	}
 }
 
@@ -236,7 +235,6 @@ func TestAckRejectsMismatchedAckOnlyRecord(t *testing.T) {
 		{name: "invalid processed timestamp", corrupt: func(ack *ProcessingAck) { ack.ProcessedAt = 0 }, want: "existing record invalid"},
 		{name: "invalid outcome", corrupt: func(ack *ProcessingAck) { ack.Outcome = "finished" }, want: "existing record invalid"},
 		{name: "conflicting outcome", corrupt: func(ack *ProcessingAck) { ack.Outcome = OutcomeFailed }, want: "ack conflicting"},
-		{name: "sender identity", corrupt: func(ack *ProcessingAck) { ack.SenderIdentity = "other-sender" }, want: "sender identity mismatch"},
 		{name: "receiver identity", corrupt: func(ack *ProcessingAck) { ack.ReceiverID = "captain-2" }, want: "receiver identity mismatch"},
 		{name: "receiver rank", corrupt: func(ack *ProcessingAck) { ack.ReceiverRank = RankGeneral }, want: "receiver rank mismatch"},
 	}
@@ -257,11 +255,11 @@ func TestAckRejectsMismatchedAckOnlyRecord(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal forged ack: %v", err)
 			}
-			path, err := store.ackPath(env.SenderIdentity, env.MessageID)
+			path, err := store.ackLogPath(RankCaptain, "")
 			if err != nil {
-				t.Fatalf("ackPath: %v", err)
+				t.Fatalf("ackLogPath: %v", err)
 			}
-			if err := os.WriteFile(path, data, 0644); err != nil {
+			if err := os.WriteFile(path, append(data, '\n'), 0600); err != nil {
 				t.Fatalf("write forged ack: %v", err)
 			}
 			if err := removeEnvelopePayload(t, store, env); err != nil {
@@ -300,7 +298,17 @@ func TestSoldierAckRejectsMismatchedAckOnlyTask(t *testing.T) {
 		ReceiverID: env.ReceiverID, TaskID: "task:other", PayloadHash: env.PayloadHash,
 		ProcessedAt: 1, Outcome: OutcomeAccepted,
 	}
-	if err := store.WriteAck(ack); err != nil {
+	// WriteAck files an ack under its own task, so only a forged line puts
+	// another task's ack in this task's log.
+	path, err := store.ackLogPath(RankSoldier, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(ack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(line, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := removeEnvelopePayload(t, store, *env); err != nil {
@@ -370,7 +378,7 @@ func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "sender rank underivable") {
 		t.Fatalf("fresh Ack error = %v, want underivable provenance", err)
 	}
-	if store.IsAcked(fresh.SenderIdentity, fresh.MessageID) {
+	if store.IsAcked(&fresh) {
 		t.Fatal("fresh envelope received an ack after provenance teardown")
 	}
 }
@@ -395,7 +403,7 @@ func TestAckRefusesMismatchedPersistedAcceptedAck(t *testing.T) {
 		t.Fatalf("error = %v, want the persisted-ack mismatch refusal", err)
 	}
 
-	unchanged, err := store.ReadAck(env.SenderIdentity, env.MessageID)
+	unchanged, err := store.ReadAck(&env)
 	if err != nil {
 		t.Fatalf("ReadAck after refusal: %v", err)
 	}
@@ -608,7 +616,7 @@ func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "task ID mismatch") {
 		t.Fatalf("ack error = %v, want task-ID mismatch", err)
 	}
-	if store.IsAcked(env.SenderIdentity, env.MessageID) {
+	if store.IsAcked(env) {
 		t.Fatal("colliding task envelope received an ack")
 	}
 }

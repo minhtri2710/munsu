@@ -48,7 +48,7 @@ func RecoverInboxWithSender(sender home.BoundSender, receiverHome string, env *h
 	}
 
 	store := home.NewStore(receiverHome)
-	if store.IsAcked(env.SenderIdentity, env.MessageID) {
+	if store.IsAcked(env) {
 		ra.AlreadyAck = true
 		os.WriteFile(markerPath, []byte("acked\n"), 0644)
 		return ra

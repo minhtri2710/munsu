@@ -494,6 +494,25 @@ for (const row of modeRows) {
   if (row.claims) await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
 }
 
+// --- Test 10: a soldier seat runs no session-start and claims no wakes ---
+mock.configGet = { code: 0, stdout: "", stderr: "" };
+const execCount = (cmd: string[]) => mock.execCalls.filter((c: any) => cmd.every((a, i) => c.args[i] === a)).length;
+const roleRows: Array<{ role: string; event: string; cmd: string[]; runs: boolean }> = [
+  { role: "soldier", event: "session_start", cmd: ["session-start"], runs: false },
+  { role: "general", event: "session_start", cmd: ["session-start"], runs: true },
+  { role: "soldier", event: "agent_settled", cmd: ["wake", "claim"], runs: false },
+  { role: "general", event: "agent_settled", cmd: ["wake", "claim"], runs: true },
+];
+for (const row of roleRows) {
+  process.env.MUNSU_ROLE = row.role;
+  const before = execCount(row.cmd);
+  await mock.fire(row.event, { reason: "startup" }, { ...mockCtx, sessionManager: { getEntries: () => [] }, isIdle: () => true });
+  const ran = execCount(row.cmd) - before;
+  if (ran !== (row.runs ? 1 : 0)) throw new Error(row.role + " " + row.event + ": " + row.cmd.join(" ") + " ran " + ran + " times, want " + (row.runs ? 1 : 0));
+  if (row.runs && row.event === "agent_settled") await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
+}
+delete process.env.MUNSU_ROLE;
+
 // All tests passed!
 console.log("ALL TESTS PASSED");
 `

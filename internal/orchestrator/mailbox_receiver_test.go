@@ -230,7 +230,7 @@ func TestReceiver_Receive_Valid(t *testing.T) {
 	}
 
 	// Verify NO ack was written.
-	ack, err := store.ReadAck("general-main", env.MessageID)
+	ack, err := store.ReadOwnerAck("general-main", env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestReceiver_Receive_ReturnsMarkedPayload(t *testing.T) {
 	}
 
 	// Verify no ack was written.
-	ack, _ := store.ReadAck("general-main", env.MessageID)
+	ack, _ := store.ReadOwnerAck("general-main", env.MessageID)
 	if ack != nil {
 		t.Fatal("Receive must not write ack")
 	}
@@ -565,7 +565,7 @@ func TestReceiver_Ack_Valid(t *testing.T) {
 	}
 
 	// Verify ack was written to disk.
-	diskAck, err := store.ReadAck("general-main", env.MessageID)
+	diskAck, err := store.ReadOwnerAck("general-main", env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}
@@ -855,10 +855,10 @@ func TestReceiver_Ack_DuplicateSameOutcome(t *testing.T) {
 		t.Errorf("duplicate returned different ProcessedAt: original=%d, duplicate=%d",
 			ack1.ProcessedAt, ack2.ProcessedAt)
 	}
-	// Only one ack file on disk.
-	count := countAckFiles(t, home, "general-1", env.MessageID)
+	// Only one ack in the owner's ack log.
+	count := countAcks(t, home, "general-1", env.MessageID)
 	if count != 1 {
-		t.Errorf("expected 1 ack file on disk, got %d", count)
+		t.Errorf("expected 1 ack in the ack log, got %d", count)
 	}
 }
 
@@ -1135,11 +1135,19 @@ func TestNotifyReceiver_UsesEncode(t *testing.T) {
 
 // --- Helper ---
 
-func countAckFiles(t *testing.T, home, senderID, messageID string) int {
+// countAcks counts the acks for one message in the home owner's ack log.
+func countAcks(t *testing.T, home, senderID, messageID string) int {
 	t.Helper()
-	ackPath := filepath.Join(home, "state", mhome.InboxDir, senderID, messageID+".ack")
-	if _, err := os.Stat(ackPath); err != nil {
+	data, err := os.ReadFile(filepath.Join(home, "state", ".acks"))
+	if err != nil {
 		return 0
 	}
-	return 1
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		var ack mhome.ProcessingAck
+		if json.Unmarshal([]byte(line), &ack) == nil && ack.SenderIdentity == senderID && ack.MessageID == messageID {
+			n++
+		}
+	}
+	return n
 }

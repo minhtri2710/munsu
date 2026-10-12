@@ -432,7 +432,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		t.Fatal(err)
 	}
 	workflowRunCLI(t, spawnHome, map[string]string{
-		"MUNSU_ROLE": "soldier", "MUNSU_HOME": spawnHome,
+		"MUNSU_ROLE": "soldier", "MUNSU_TASK_KIND": "scout", "MUNSU_HOME": spawnHome,
 		"MUNSU_TASK_ID": taskID, "MUNSU_PARENT_STATUS": spawnHome,
 	}, "report", "done", "findings recorded", "--key", taskID, "--ring", "no-ring")
 

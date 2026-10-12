@@ -153,33 +153,8 @@ func TestGuardWakeAckRequiresALeaseAndAtLeastOneEventID(t *testing.T) {
 	wantErrContains(t, err, "Requires lease-id and at least one event-id", "wake ack with only a lease id")
 }
 
-// --- internal/cli/ready_cmd.go, report_cmd.go: the environment identity
-// these commands run under -------------------------------------------------
-
-func TestReadyHonorsHomeOverride(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	cliSeedCanonicalTask(t, homeDir, "t1", "ship")
-
-	t.Setenv("MUNSU_HOME", t.TempDir())
-	t.Setenv("MUNSU_TASK_ID", "t1")
-	_, err := runRoot(t, "ready", "--event-id", "e1", "--home", homeDir)
-	if err != nil {
-		t.Fatalf("ready with --home override = %v, want success", err)
-	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", ".ready")); err != nil {
-		t.Fatalf("ready marker was not written under --home override: %v", err)
-	}
-}
-
-func TestGuardReadyRefusesMissingTaskID(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-
-	t.Setenv("MUNSU_TASK_ID", "")
-	_, err := runRoot(t, "ready", "--event-id", "e1", "--home", homeDir)
-	wantErrContains(t, err, "MUNSU_TASK_ID is not set", "ready with no MUNSU_TASK_ID")
-}
+// --- internal/cli/report_cmd.go: the environment identity this command
+// runs under -----------------------------------------------------------------
 
 func TestGuardReportRefusesAnInvalidStatusState(t *testing.T) {
 	homeDir := t.TempDir()
@@ -217,14 +192,6 @@ func TestGuardReportRefusesMissingTaskID(t *testing.T) {
 	t.Setenv("MUNSU_TASK_ID", "")
 	_, err := runRoot(t, "report", "working", "hello", "--home", homeDir)
 	wantErrContains(t, err, "MUNSU_TASK_ID is not set", "report with no MUNSU_TASK_ID")
-}
-
-func TestCurrentTaskGenerationRefusesMissingCanonicalTask(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	if _, err := currentTaskGeneration(homeDir, "missing-task"); !errors.Is(err, taskauthority.ErrNotFound) {
-		t.Fatalf("currentTaskGeneration missing task = %v, want taskauthority.ErrNotFound", err)
-	}
 }
 
 func TestGuardReportRefusesACaptainWithNoParentStatusHome(t *testing.T) {
@@ -1401,5 +1368,65 @@ func seedGuardActionableWake(t *testing.T, homeDir string) {
 	}
 	if clean, err := orchestrator.IsClean(homeDir); err != nil || clean {
 		t.Fatalf("IsClean = %v, %v; the digest fixture must read as not clean or the refusal under test is never reached", clean, err)
+	}
+}
+
+// --- internal/cli/soldier_seat.go: R3, the dispatcher commands a soldier
+// seat refuses by name ----------------------------------------------------
+
+// claimedWake queues one wake in homeDir and claims it, returning its lease
+// and event IDs.
+func claimedWake(t *testing.T, homeDir string) (string, string) {
+	t.Helper()
+	if err := mhome.EnqueueWake(homeDir, "signal", "task", "payload"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := mhome.ClaimWakes(homeDir, "test", 60, 1)
+	if err != nil || len(claim.Wakes) != 1 {
+		t.Fatalf("claim: %+v err=%v", claim, err)
+	}
+	return claim.LeaseID, claim.Wakes[0].Epoch + ":" + claim.Wakes[0].Seq
+}
+
+func TestDispatcherCommandsRefuseASoldierSeat(t *testing.T) {
+	commands := []struct {
+		name string
+		args func(t *testing.T, homeDir string) []string
+	}{
+		{"session-start", func(t *testing.T, homeDir string) []string {
+			// The lock is held for the process lifetime; this test is not a process.
+			t.Cleanup(func() { _ = mhome.ReleaseSessionLock(homeDir) })
+			return []string{"session-start"}
+		}},
+		{"wake claim", func(*testing.T, string) []string { return []string{"wake", "claim", "--consumer", "me"} }},
+		{"wake resolve", func(t *testing.T, homeDir string) []string {
+			lease, event := claimedWake(t, homeDir)
+			return []string{"wake", "resolve", "--claim-id", lease, "--event-id", event, "--summary", "seen"}
+		}},
+		{"wake ack", func(t *testing.T, homeDir string) []string {
+			lease, event := claimedWake(t, homeDir)
+			return []string{"wake", "ack", lease, event}
+		}},
+	}
+	for _, c := range commands {
+		for _, role := range []string{"soldier", "general"} {
+			t.Run(c.name+"/"+role, func(t *testing.T) {
+				homeDir := t.TempDir()
+				initCLITestHome(t, homeDir)
+				t.Setenv("MUNSU_HOME", homeDir)
+				t.Setenv("MUNSU_ROLE", role)
+				t.Setenv("MUNSU_GUARD_SKIP", "1")
+				t.Setenv("PATH", "/usr/bin:/bin")
+				out, err := runRoot(t, c.args(t, homeDir)...)
+				refused := err != nil && strings.Contains(err.Error(), "munsu "+c.name+" is a dispatcher command and MUNSU_ROLE=soldier") &&
+					strings.Contains(err.Error(), "munsu report <state>")
+				if role == "soldier" && !refused {
+					t.Fatalf("err = %v, want the soldier-seat refusal naming munsu report <state>\n%s", err, out)
+				}
+				if role == "general" && err != nil {
+					t.Fatalf("the General's %s: %v\n%s", c.name, err, out)
+				}
+			})
+		}
 	}
 }

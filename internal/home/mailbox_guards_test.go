@@ -296,43 +296,6 @@ func TestStoreReadEnvelopeRefusesPathMessageIDMismatch(t *testing.T) {
 	}
 }
 
-func TestStoreReadAckRefusesPathMessageIDMismatch(t *testing.T) {
-	dir := t.TempDir()
-	store := NewStore(dir)
-	ack := validGuardAck()
-	path, err := store.ackPath(ack.SenderIdentity, "other-message")
-	if err != nil {
-		t.Fatalf("ackPath: %v", err)
-	}
-	data, err := json.MarshalIndent(ack, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal ack: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("mkdir ack inbox: %v", err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatalf("write ack: %v", err)
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read ack fixture: %v", err)
-	}
-
-	if _, err := store.ReadAck(ack.SenderIdentity, "other-message"); err == nil {
-		t.Fatal("ReadAck accepted a mismatched decoded message ID")
-	} else if !strings.Contains(err.Error(), "other-message") || !strings.Contains(err.Error(), ack.MessageID) {
-		t.Fatalf("error = %v, want both message IDs", err)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read ack after refusal: %v", err)
-	}
-	if !bytes.Equal(before, after) {
-		t.Fatal("ReadAck changed the mismatched ack")
-	}
-}
-
 func TestStoreWriteEnvelopeRefusesConflictingContentUnderOneMessageID(t *testing.T) {
 	store := NewStore(t.TempDir())
 	env := validGuardEnvelope()
@@ -430,7 +393,7 @@ func TestStoreListInboxExcludesSupersededRecords(t *testing.T) {
 	}
 }
 
-func TestStoreListInboxGarbageCollectsTombstonedPayloadResidue(t *testing.T) {
+func TestStoreListInboxSkipsAnAckedPayload(t *testing.T) {
 	store := NewStore(t.TempDir())
 	env := validGuardEnvelope()
 	if err := store.WriteEnvelope(&env); err != nil {
@@ -440,13 +403,6 @@ func TestStoreListInboxGarbageCollectsTombstonedPayloadResidue(t *testing.T) {
 	if err := store.WriteAck(&ack); err != nil {
 		t.Fatalf("WriteAck: %v", err)
 	}
-	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload == nil {
-		t.Fatalf("payload before ListInbox cleanup = (%+v, %v), want present", payload, err)
-	}
-	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
-		t.Fatal("ack tombstone was not retained")
-	}
-
 	got, err := store.ListInbox(env.SenderIdentity)
 	if err != nil {
 		t.Fatalf("ListInbox: %v", err)
@@ -454,13 +410,8 @@ func TestStoreListInboxGarbageCollectsTombstonedPayloadResidue(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("ListInbox returned acked record: %+v", got)
 	}
-	payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID)
-	if err != nil || payload != nil {
-		t.Fatalf("payload after ListInbox cleanup = (%+v, %v), want absent", payload, err)
-	}
-	readAck, err := store.ReadAck(env.SenderIdentity, env.MessageID)
-	if err != nil || readAck == nil {
-		t.Fatalf("ReadAck after payload GC = (%+v, %v)", readAck, err)
+	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload == nil {
+		t.Fatalf("payload after ListInbox = (%+v, %v), want kept for the sender's reconcile", payload, err)
 	}
 }
 
@@ -474,10 +425,11 @@ func TestStoreRemovePendingAfterAckWorksAfterReceiverPayloadGC(t *testing.T) {
 	if _, err := r.Ack(ref); err != nil {
 		t.Fatalf("receiver Ack: %v", err)
 	}
+	receiver.RemoveAckedPayload(&env)
 	if payload, err := receiver.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload != nil {
-		t.Fatalf("receiver payload after ack = (%+v, %v), want absent", payload, err)
+		t.Fatalf("receiver payload after reconcile = (%+v, %v), want absent", payload, err)
 	}
-	readAck, err := receiver.ReadAck(env.SenderIdentity, env.MessageID)
+	readAck, err := receiver.ReadAck(&env)
 	if err != nil || readAck == nil {
 		t.Fatalf("receiver ReadAck = (%+v, %v)", readAck, err)
 	}
@@ -652,4 +604,109 @@ func pendingIDs(envelopes []*Envelope) []string {
 		ids[i] = env.MessageID
 	}
 	return ids
+}
+
+// An ack lands in its receiver's own log: a soldier's in its task's log, the
+// home owner's in the owner's. A torn last line left by a crash does not
+// swallow the next ack.
+func TestStoreAckLogBelongsToItsReceiver(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		rank, other Rank
+		torn        bool
+	}{
+		{"a soldier's ack is in its task's log", RankSoldier, RankCaptain, false},
+		{"the owner's ack is in the owner's log", RankCaptain, RankSoldier, false},
+		{"an ack after a torn line is readable", RankCaptain, RankSoldier, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			ack := validGuardAck()
+			ack.ReceiverRank = tc.rank
+			if tc.torn {
+				path, err := store.ackLogPath(tc.rank, ack.TaskID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(`{"message_id":"torn`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := store.WriteAck(&ack); err != nil {
+				t.Fatalf("WriteAck: %v", err)
+			}
+			at := func(rank Rank) *Envelope {
+				return &Envelope{SenderIdentity: ack.SenderIdentity, MessageID: ack.MessageID, ReceiverRank: rank, TaskID: ack.TaskID}
+			}
+			if !store.IsAcked(at(tc.rank)) {
+				t.Fatal("the ack is not in its receiver's log")
+			}
+			if store.IsAcked(at(tc.other)) {
+				t.Fatalf("a %s ack is visible in the %s log", tc.rank, tc.other)
+			}
+		})
+	}
+}
+
+// An ack is keyed by (sender, message) in its receiver's log: a different ack
+// for an acked message is refused and the stored one stands, the same ack is
+// accepted without a second line, and another sender's message with the same
+// ID stays unacked and listed.
+func TestStoreWriteAckKeysTheLogBySenderAndMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		second  func(*ProcessingAck)
+		wantErr string
+	}{
+		{"a different ack for the same message is refused", func(a *ProcessingAck) { a.Outcome = OutcomeDone }, "already has a different ack"},
+		{"the same ack again is accepted", func(*ProcessingAck) {}, ""},
+		{"the same message ID from another sender stays unacked", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			first := validGuardAck()
+			if err := store.WriteAck(&first); err != nil {
+				t.Fatalf("WriteAck: %v", err)
+			}
+			if tc.second == nil {
+				other := validGuardEnvelope()
+				other.SenderIdentity = "other-home"
+				if err := store.WriteEnvelope(&other); err != nil {
+					t.Fatalf("WriteEnvelope: %v", err)
+				}
+				if store.IsAcked(&other) {
+					t.Fatal("another sender's message with the same ID reads as acked")
+				}
+				listed, err := store.ListInbox(other.SenderIdentity)
+				if err != nil || len(listed) != 1 {
+					t.Fatalf("ListInbox(other sender) = (%d, %v), want the unacked message listed", len(listed), err)
+				}
+				return
+			}
+			path, err := store.ackLogPath(first.ReceiverRank, first.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second := validGuardAck()
+			tc.second(&second)
+			err = store.WriteAck(&second)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("WriteAck = %v, want %q", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("WriteAck: %v", err)
+			}
+			if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+				t.Fatalf("ack log = (%s, %v), want unchanged:\n%s", after, err, before)
+			}
+		})
+	}
 }

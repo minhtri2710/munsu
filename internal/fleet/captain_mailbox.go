@@ -169,7 +169,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender home.BoundSender
 		}
 
 		// Check for ack in captain's inbox.
-		ack, err := captainStore.ReadAck(senderIdentity, env.MessageID)
+		ack, err := captainStore.ReadAck(env)
 		if err != nil {
 			return fmt.Errorf("%s: reading ack for %s: %w", sm.ID, env.MessageID, err)
 		}
@@ -186,6 +186,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender home.BoundSender
 		if err := parentStore.RemovePendingAfterAck(senderIdentity, env.MessageID, ack); err != nil {
 			return fmt.Errorf("%s: removing pending for %s: ack validation failed: %w", sm.ID, env.MessageID, err)
 		}
+		captainStore.RemoveAckedPayload(env)
 	}
 
 	return nil

@@ -250,7 +250,7 @@ func TestRecoverAllInboxesWithSenderSkipsAckOnlyInboxRecord(t *testing.T) {
 	if len(sender.payloads) != 0 {
 		t.Fatalf("ack-only record was redelivered: %v", sender.payloads)
 	}
-	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
+	if !store.IsAcked(env) {
 		t.Fatal("ack tombstone was not retained")
 	}
 }
