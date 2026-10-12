@@ -140,15 +140,18 @@ func New(l Launch) (*Fence, error) {
 		// is stopped accepted". A temp-root NM_HOME keeps its other files and
 		// state.sqlite writable through the temp-root allow (the fence does
 		// not know the state path); no lane runs that, and the temp-root
-		// allow covers it. The daemon's socket name is refused even there, so
-		// a seat cannot move another session's socket onto the one path it
-		// may connect to (G1085, quoted above).
+		// allow covers it. Even there the daemon's socket name is refused, and
+		// every directory above it is locked against unlink and rename, so a
+		// seat can neither move another session's socket onto that name nor
+		// swap NM_HOME for a dir holding one: G1085 (quoted above) keeps
+		// G1153's carve-out to the daemon's own socket.
 		g := p.gateRepo
 		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
 		deny(&b, "subpath", g)
 		allowRoots(obj, refs, logs)
 		deny(&b, "subpath", filepath.Join(obj, "info"))
 		deny(&b, "literal", obj, refs, logs, gateSocket)
+		denyUnlink(&b, ancestors(gateSocket)...)
 	}
 	if l.Role == RoleSoldier {
 		branch, err := soldierBranch(l.Branch)
@@ -241,14 +244,6 @@ func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked
 		}
 		return dedupe(out), nil
 	}
-	ancestorsOf := func(in []string) (out []string) {
-		for _, d := range in {
-			for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
-				out = append(out, a)
-			}
-		}
-		return dedupe(out)
-	}
 	if dirs, err = expand(pathDirs); err != nil {
 		return nil, nil, nil, err
 	}
@@ -259,8 +254,8 @@ func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked
 		}
 	}
 	dirs = dedupe(append(dirs, shimDirs...))
-	shimAncestors := ancestorsOf(shimDirs)
-	for _, a := range ancestorsOf(dirs) {
+	shimAncestors := ancestors(shimDirs...)
+	for _, a := range ancestors(dirs...) {
 		if slices.Contains(roots, a) && !slices.Contains(shimAncestors, a) {
 			removable = append(removable, a)
 		} else {
@@ -604,13 +599,18 @@ func denySocketConnects(b *strings.Builder, gateSocket string) {
 // unlink/rename/replace of sockets in /tmp/cc-socks and the tmux dir".
 func denySocketRemoval(b *strings.Builder, dirs []string) {
 	rule(b, "deny", "file-write-unlink", "subpath", dirs)
-	var ancestors []string
-	for _, d := range dirs {
+	denyUnlink(b, ancestors(dirs...)...)
+}
+
+// ancestors returns every directory above each path, "/" excluded, once.
+func ancestors(paths ...string) []string {
+	var out []string
+	for _, d := range paths {
 		for a := filepath.Dir(d); a != filepath.Dir(a); a = filepath.Dir(a) {
-			ancestors = append(ancestors, a)
+			out = append(out, a)
 		}
 	}
-	denyUnlink(b, dedupe(ancestors)...)
+	return dedupe(out)
 }
 
 // goCaches returns the Go build cache, module cache (with the checksum db) and

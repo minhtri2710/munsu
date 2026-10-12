@@ -743,6 +743,7 @@ func TestSeatConnectsOnlyToDNSAndItsGateSocket(t *testing.T) {
 	}
 	sh := func(script string) []string { return []string{"/bin/sh", "-c", script} }
 	ccu, moved, victim, own := filepath.Join(tmp, "cc-socks-"+uid), filepath.Join(tmp, "moved"), filepath.Join(tmp, "v", "1.sock"), filepath.Join(tmp, "own.sock")
+	swap, sib := filepath.Join(tmp, "x"), filepath.Join(tmp, "sib")
 	for _, tt := range []struct {
 		name          string
 		network, addr string   // the listener the test holds; none when network is ""
@@ -757,8 +758,11 @@ func TestSeatConnectsOnlyToDNSAndItsGateSocket(t *testing.T) {
 		{"a socket in a sibling temp dir", "unix", filepath.Join(tmp, "other", "s.sock"), nil, nil},
 		{"the seat's own listener", "", "", perl(`my ($s, $c); socket($s, AF_UNIX, SOCK_STREAM, 0) && bind($s, pack_sockaddr_un($ARGV[0])) && listen($s, 1) or die "listen: $!\n"; `+
 			`socket($c, AF_UNIX, SOCK_STREAM, 0) && connect($c, pack_sockaddr_un($ARGV[0])) or die "connect: $!\n"`, own), nil},
-		{"the no-mistakes daemon's socket", "unix", filepath.Join(nm, "socket"), nil, []string{withGate}},
+		{"the no-mistakes daemon's socket, after the seat renames its own files beside NM_HOME", "unix", filepath.Join(nm, "socket"),
+			append(sh(`mkdir "$0" && : > "$0/f" && mv "$0/f" "$0/g" && mv "$0" "$0.moved" && /usr/bin/nc -U "$1"`), sib, filepath.Join(nm, "socket")), []string{withGate}},
 		{"a sibling socket in NM_HOME", "unix", filepath.Join(nm, "other.sock"), nil, nil},
+		{"another socket in a dir the seat swaps in for NM_HOME", "unix", filepath.Join(swap, "socket"),
+			append(sh(`mv "$0" "$0.old" && mv "$1" "$0" && /usr/bin/nc -U "$0/socket"`), nm, swap), nil},
 		{"another socket the seat moves onto the daemon's name", "unix", victim,
 			append(sh(`mv "$0" "$1" && /usr/bin/nc -U "$1"`), victim, filepath.Join(nm, "socket")), nil},
 		{"a DNS lookup", "", "", perl(`my ($e) = Socket::getaddrinfo("github.com", "443"); die "getaddrinfo: $e\n" if $e`), []string{withGate, "soldier without a gate", "reviewer"}},
@@ -767,6 +771,15 @@ func TestSeatConnectsOnlyToDNSAndItsGateSocket(t *testing.T) {
 		for _, fc := range fences {
 			t.Run(fc.name+"/"+tt.name, func(t *testing.T) {
 				// What an earlier row's seat moved or bound.
+				if _, err := os.Stat(nm + ".old"); err == nil {
+					os.RemoveAll(nm)
+					if err := os.Rename(nm+".old", nm); err != nil {
+						t.Fatal(err)
+					}
+				}
+				os.RemoveAll(swap)
+				os.RemoveAll(sib)
+				os.RemoveAll(sib + ".moved")
 				os.RemoveAll(moved)
 				os.Remove(filepath.Join(nm, "socket"))
 				os.Remove(own)
