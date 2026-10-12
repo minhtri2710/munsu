@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -149,8 +150,12 @@ func TestFencedSoldierAppendsItsStatus(t *testing.T) {
 	}
 }
 
-// fencedOpenHome names the home the child process below opens.
-const fencedOpenHome = "MUNSU_TEST_FENCED_OPEN_HOME"
+// fencedOpenHome names the home the child process below opens; the child
+// prints fencedHomeOpened once the open succeeded.
+const (
+	fencedOpenHome   = "MUNSU_TEST_FENCED_OPEN_HOME"
+	fencedHomeOpened = "munsu-test: fenced home opened"
+)
 
 // TestFencedOpenHomeChild is the body TestFencedSoldierOpensItsHome runs inside
 // the fence: the home open every soldier-side munsu command makes.
@@ -162,6 +167,7 @@ func TestFencedOpenHomeChild(t *testing.T) {
 	if _, err := home.Open(dir); err != nil {
 		t.Fatal(err)
 	}
+	fmt.Println(fencedHomeOpened)
 }
 
 // The fence locks every ancestor of the git shim, the home included, so that
@@ -188,8 +194,10 @@ func TestFencedSoldierOpensItsHome(t *testing.T) {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), fencedOpenHome+"="+f.home)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the home open failed under the fence: %v\n%s", err, out)
+	// The marker, not the exit status alone: a child that skipped or matched no
+	// test exits 0 without opening the home.
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), fencedHomeOpened) {
+		t.Fatalf("the home open did not succeed under the fence: %v\n%s", err, out)
 	}
 }
 
