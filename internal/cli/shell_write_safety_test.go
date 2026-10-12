@@ -2351,24 +2351,30 @@ func TestShellWriteReadsSubscriptAssignments(t *testing.T) {
 	}
 }
 
+// fastestRuns returns the fastest of five runs of small and of large. The
+// runs alternate, each after a collection, so load and GC reach both sizes
+// alike. Sixteen times the input costs about sixteen times as much in linear
+// time and about 256 in quadratic; a budget of 64 leaves four times either
+// way for a busy host or -race, where a quarter left only two.
+func fastestRuns(small, large func()) (time.Duration, time.Duration) {
+	fastest := [2]time.Duration{time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)}
+	for range 5 {
+		for i, run := range [2]func(){small, large} {
+			runtime.GC()
+			start := time.Now()
+			run()
+			fastest[i] = min(fastest[i], time.Since(start))
+		}
+	}
+	return fastest[0], fastest[1]
+}
+
 // TestShellWriteReadsLongPrefixesInLinearTime pins R5 of review-80b12d4f0a2e:
 // a run of words before the command word, and a directory stack pushd
-// grows, cost linear time. Four times the words cost about four times as
-// much; the budget is eight. Comparing two sizes under the same load keeps
-// -race and a busy host from deciding the verdict.
+// grows, cost linear time (fastestRuns).
 func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
 	dir := t.TempDir()
-	cost := func(command string, want []string) time.Duration {
-		best := time.Duration(math.MaxInt64)
-		for range 3 {
-			start := time.Now()
-			if targets, ambiguous := shellWriteTargets(dir, command); ambiguous || !slices.Equal(targets, want) {
-				t.Fatalf("shellWriteTargets of %d runes = %q ambiguous=%v, want %q", len(command), targets, ambiguous, want)
-			}
-			best = min(best, time.Since(start))
-		}
-		return best
-	}
+	want := []string{filepath.Join(dir, "x")}
 	for _, shape := range []struct {
 		name, repeat, tail string
 	}{
@@ -2376,11 +2382,16 @@ func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
 		{"time -p", "time -p ", "rm x"},
 		{"pushd", "pushd " + dir + "; ", "rm x"},
 	} {
-		want := []string{filepath.Join(dir, "x")}
-		small := cost(strings.Repeat(shape.repeat, 5000)+shape.tail, want)
-		large := cost(strings.Repeat(shape.repeat, 20000)+shape.tail, want)
-		if large > 8*small {
-			t.Errorf("%s × 20000 took %v, %.1f times 5000 (%v), want under 8", shape.name, large, float64(large)/float64(small), small)
+		run := func(n int) func() {
+			command := strings.Repeat(shape.repeat, n) + shape.tail
+			return func() {
+				if targets, ambiguous := shellWriteTargets(dir, command); ambiguous || !slices.Equal(targets, want) {
+					t.Fatalf("shellWriteTargets of %s × %d = %q ambiguous=%v, want %q", shape.name, n, targets, ambiguous, want)
+				}
+			}
+		}
+		if small, large := fastestRuns(run(1250), run(20000)); large > 64*small {
+			t.Errorf("%s × 20000 took %v, %.1f times 1250 (%v), want under 64", shape.name, large, float64(large)/float64(small), small)
 		}
 	}
 }
@@ -2390,13 +2401,12 @@ func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
 // per name until a definition changes it, within one budget per command, so
 // a chain of n functions none of which moves it, each read as its body calls
 // the one before, then called n times with another redefined before each
-// call, costs linear time. The budget is eight times the cost of a quarter.
-// The final chain also owns the fail-closed verdict when an inert DFS exceeds
-// the command's work budget.
+// call, costs linear time (fastestRuns). The final chain also owns the
+// fail-closed verdict when an inert DFS exceeds the command's work budget.
 func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "x")
-	cost := func(n int) time.Duration {
+	chain := func(n int) func() {
 		var command strings.Builder
 		command.WriteString("f0() { :; }; ")
 		for i := 1; i < n; i++ {
@@ -2406,34 +2416,26 @@ func TestShellWriteResolvesFunctionChainsInLinearTime(t *testing.T) {
 			fmt.Fprintf(&command, "h() { :; }; f%d; ", n-1)
 		}
 		command.WriteString("rm " + target)
-		best := time.Duration(math.MaxInt64)
-		for range 3 {
-			start := time.Now()
+		return func() {
 			if targets, ambiguous := shellWriteTargets(dir, command.String()); ambiguous || !slices.Equal(targets, []string{target}) {
 				t.Fatalf("shellWriteTargets of a %d-function chain = %q ambiguous=%v, want %s", n, targets, ambiguous, target)
 			}
-			best = min(best, time.Since(start))
 		}
-		return best
 	}
-	if small, large := cost(500), cost(2000); large > 8*small {
-		t.Errorf("a 2000-function chain took %v, %.1f times 500 (%v), want under 8", large, float64(large)/float64(small), small)
+	if small, large := fastestRuns(chain(125), chain(2000)); large > 64*small {
+		t.Errorf("a 2000-function chain took %v, %.1f times 125 (%v), want under 64", large, float64(large)/float64(small), small)
 	}
 
-	commentGapCost := func(n int) time.Duration {
+	commentGap := func(n int) func() {
 		command := "f()\n" + strings.Repeat("# c\n", n) + "cd x; f; echo done"
-		best := time.Duration(math.MaxInt64)
-		for range 3 {
-			start := time.Now()
+		return func() {
 			if _, ambiguous := shellWriteTargets(dir, command); !ambiguous {
 				t.Fatalf("shellWriteTargets of a %d-line function gap ambiguous=false, want true", n)
 			}
-			best = min(best, time.Since(start))
 		}
-		return best
 	}
-	if small, large := commentGapCost(1000), commentGapCost(4000); large > 8*small {
-		t.Errorf("a 4000-line comment gap took %v, %.1f times 1000 lines (%v), want under 8", large, float64(large)/float64(small), small)
+	if small, large := fastestRuns(commentGap(250), commentGap(4000)); large > 64*small {
+		t.Errorf("a 4000-line comment gap took %v, %.1f times 250 lines (%v), want under 64", large, float64(large)/float64(small), small)
 	}
 
 	n := maxWriteReadings + 144
