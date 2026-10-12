@@ -221,6 +221,69 @@ func projectGate(primary string) (string, error) {
 	return repo, nil
 }
 
+// ensureBranchReflog pre-creates, unfenced before the soldier launches, the
+// branch reflog <gitDir>/logs/refs/heads/<branch> as an empty regular file. A
+// detached `git worktree add` (internal/backend/worktree.go) leaves it absent,
+// so the seat's first fenced `git checkout -b <branch>` (common dir) and its
+// `git push no-mistakes HEAD:refs/heads/<branch>` (gate) would have to create
+// it; the fence refuses create, unlink and rename under logs/ and allows only
+// appending to this exact file (B1), so the seat cannot swap the reflog for a
+// symlink an unfenced push or fetch then writes through
+// (fence-reflog-symlink-deputy). gitDir is the common git dir for the common
+// branch reflog and the gate repository for the gate branch reflog; both are
+// git directories whose reflog lives at the same path.
+//
+// It fails closed: every directory component from logs/ down to the reflog's
+// parent must be a real directory (os.Lstat and os.MkdirAll both follow a
+// symlinked component, which would move the O_EXCL create into the link's
+// target); the reflog itself must be absent or already a regular file; and it
+// is created with O_EXCL so a link a racing writer planted is never followed or
+// truncated. A regular file left by a prior run is kept (git appends to it).
+//
+// Human words (domain.Words): grantor the Human, channel supervisor-relay:dialog,
+// words=selected, G1168: "B1 (Recommended): B on the seat branch reflog,
+// worktree HEAD and gate reflog; munsu pre-creates the gate branch reflog at
+// spawn (probe first); logs/refs/remotes residual becomes its own task",
+// building on G1167: "B: dò trước rồi làm (Recommended): munsu pre-creates the
+// soldier's own branch reflog files; fence allows data writes to exactly those,
+// refuses create/unlink/rename elsewhere in logs/".
+func ensureBranchReflog(gitDir, branch string) error {
+	logs := filepath.Join(gitDir, "logs")
+	dirs := []string{logs, filepath.Join(logs, "refs"), filepath.Join(logs, "refs", "heads")}
+	parts := strings.Split(branch, "/")
+	parent := filepath.Join(logs, "refs", "heads")
+	for _, p := range parts[:len(parts)-1] {
+		parent = filepath.Join(parent, p)
+		dirs = append(dirs, parent)
+	}
+	for _, d := range dirs {
+		switch fi, err := os.Lstat(d); {
+		case os.IsNotExist(err):
+			if err := os.Mkdir(d, 0o755); err != nil {
+				return fmt.Errorf("branch reflog dir %s: %w", d, err)
+			}
+		case err != nil:
+			return fmt.Errorf("branch reflog dir %s: %w", d, err)
+		case !fi.IsDir():
+			return fmt.Errorf("branch reflog dir %s is a symlink or not a directory; refusing to launch", d)
+		}
+	}
+	reflog := filepath.Join(parent, parts[len(parts)-1])
+	switch fi, err := os.Lstat(reflog); {
+	case err == nil && fi.Mode().IsRegular():
+		return nil
+	case err == nil:
+		return fmt.Errorf("branch reflog %s is a symlink or not a regular file; refusing to launch", reflog)
+	case !os.IsNotExist(err):
+		return fmt.Errorf("branch reflog %s: %w", reflog, err)
+	}
+	f, err := os.OpenFile(reflog, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("branch reflog %s: %w", reflog, err)
+	}
+	return f.Close()
+}
+
 func codexNeutralizationPreserved(args []string) bool {
 	for i, arg := range args {
 		value := ""

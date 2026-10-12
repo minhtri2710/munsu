@@ -105,14 +105,15 @@ func TestSoldierBranch(t *testing.T) {
 	}
 }
 
-func TestGitBranchFilesAreExactlyTheCommitWriteSet(t *testing.T) {
-	got := gitBranchFiles("/c", "mu/T-1")
+func TestGitBranchRefFilesAreExactlyTheRefWriteSet(t *testing.T) {
+	// The refs tree only: the branch reflog under logs/ is append-only
+	// (allowData), not a create-allowed literal.
+	got := gitBranchRefFiles("/c", "mu/T-1")
 	want := []string{
 		"/c/refs/heads/mu", "/c/refs/heads/mu/T-1", "/c/refs/heads/mu/T-1.lock",
-		"/c/logs/refs/heads/mu", "/c/logs/refs/heads/mu/T-1", "/c/logs/refs/heads/mu/T-1.lock",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("gitBranchFiles = %q, want %q", got, want)
+		t.Fatalf("gitBranchRefFiles = %q, want %q", got, want)
 	}
 }
 
