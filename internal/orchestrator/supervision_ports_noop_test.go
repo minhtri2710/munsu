@@ -32,6 +32,11 @@ type acceptingCheckValidationPort struct{}
 
 func (acceptingCheckValidationPort) ValidateCheck(string) error { return nil }
 
+// NoopActiveDeliveryPort reports no active delivery journals.
+type NoopActiveDeliveryPort struct{}
+
+func (NoopActiveDeliveryPort) ActiveDeliveries(string) ([]ActiveDelivery, error) { return nil, nil }
+
 type NoopWatcherHooks struct{}
 
 func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
