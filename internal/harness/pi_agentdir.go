@@ -51,11 +51,14 @@ func HumanPiAgentDir(stateDir string) (string, error) {
 
 // BuildPiAgentDir builds the per-task pi agent dir dst from the Human's agent
 // dir src. Every entry is a symlink to src's entry (auth, models, npm packages,
-// extensions, skills, prompts and themes resolve as the Human's do) except
-// settings.json, a private copy whose skills array blocks OrchestrationSkill.
-// Relative local paths in the copy are rewritten absolute against src, because
-// pi resolves them from the agent dir. It is built in buildDir (SeatBuildDir)
-// and renamed into place; an existing dst is kept (see installSeatDir).
+// extensions, skills, prompts and themes resolve as the Human's do), which a
+// fenced seat reads but cannot write, except the entries pi writes for the
+// seat itself: settings.json, a private copy whose skills array blocks
+// OrchestrationSkill; trust.json, a private copy, so a seat's trust answer
+// stays its own; and sessions, which pi creates in dst. Relative local paths in
+// the settings copy are rewritten absolute against src, because pi resolves
+// them from the agent dir. It is built in buildDir (SeatBuildDir) and renamed
+// into place; an existing dst is kept (see installSeatDir).
 func BuildPiAgentDir(src, buildDir, dst string) error {
 	return installSeatDir("pi agent dir", buildDir, dst, func(dir string) error {
 		home, err := os.UserHomeDir()
@@ -69,13 +72,28 @@ func BuildPiAgentDir(src, buildDir, dst string) error {
 	})
 }
 
+// auth.json stays a link the fenced seat cannot write. That is safe only while
+// the Human's pi auth.json holds api_key entries alone; it is wrong the moment
+// an OAuth provider is added to pi: pi refreshes at the provider before it
+// writes auth.json, so a seat's refused write loses the rotated refresh token
+// for the Human too.
 func fillPiAgentDir(src, dir, dst, home string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	for _, e := range entries {
-		if e.Name() == "settings.json" {
+		switch e.Name() {
+		case "settings.json", "sessions":
+			continue
+		case "trust.json":
+			raw, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err == nil {
+				err = writeNewFile(filepath.Join(dir, e.Name()), raw)
+			}
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if err := os.Symlink(filepath.Join(src, e.Name()), filepath.Join(dir, e.Name())); err != nil {

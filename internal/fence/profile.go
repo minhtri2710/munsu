@@ -450,10 +450,10 @@ func gitBranchFiles(commonDir, branch string) []string {
 	return out
 }
 
-// harnessState returns the writable directories of a harness kind, and for pi
-// the launch's own state dir. binDirs are the directories inside those roots
-// that the harness itself puts on its commands' PATH, which the seat must not
-// write. An unmodeled kind fails closed.
+// harnessState returns the writable directories of a harness kind beyond the
+// launch's own state dir, which New allows. binDirs are the directories in the
+// harness's agent dirs that the harness itself puts on its commands' PATH,
+// which the seat must not write. An unmodeled kind fails closed.
 //
 // A claude seat writes its own config dir (CLAUDE_CONFIG_DIR, the launch's
 // state dir, which New opens inside state/) and claude's log cache, never ~/.claude or ~/.claude.json: the
@@ -464,6 +464,15 @@ func gitBranchFiles(commonDir, branch string) []string {
 // Seat có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
 // fence sẽ chạy, và không gửi input vào session ngoài session của nó."
 //
+// A pi seat writes only its own agent dir (PI_CODING_AGENT_DIR, the launch's
+// state dir, which New opens inside state/), never ~/.pi/agent: the unfenced
+// pi runs its install, launcher, extensions and packages from there, executes
+// commands named in auth.json and models.json, and reads its settings, trust
+// answers, model catalog and extension data there. The seat's dir links them
+// read-only (the fence resolves links); its sessions, settings and trust
+// answers are its own. Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1085, quoted above.
+//
 // Claude puts none on PATH (2.1.296 appends only a host-supplied dir the CLI
 // never sets). Pi prepends <agent dir>/bin to every command its bash tool runs,
 // where the agent dir is PI_CODING_AGENT_DIR (the launch's state dir) or
@@ -473,12 +482,11 @@ func harnessState(kind, userHome, stateDir string) (dirs, binDirs []string, err 
 	case harness.Claude:
 		return []string{filepath.Join(userHome, "Library", "Caches", "claude-cli-nodejs")}, nil, nil
 	case harness.Pi:
-		agent := filepath.Join(userHome, ".pi", "agent")
-		dirs, binDirs = []string{agent}, []string{filepath.Join(agent, "bin")}
+		binDirs = []string{filepath.Join(userHome, ".pi", "agent", "bin")}
 		if stateDir != "" {
-			dirs, binDirs = append(dirs, stateDir), append(binDirs, filepath.Join(stateDir, "bin"))
+			binDirs = append(binDirs, filepath.Join(stateDir, "bin"))
 		}
-		return dirs, binDirs, nil
+		return nil, binDirs, nil
 	}
 	return nil, nil, fmt.Errorf("fence: no state profile for harness %q", kind)
 }

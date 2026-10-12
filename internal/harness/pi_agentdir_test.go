@@ -202,9 +202,16 @@ func agentDirFixture(t *testing.T) (home, src, dst string) {
 }
 
 func TestBuildPiAgentDir(t *testing.T) {
-	t.Run("every entry is the Human's symlink except a private settings copy", func(t *testing.T) {
+	t.Run("every entry is the Human's symlink except private settings and trust copies and no sessions", func(t *testing.T) {
 		_, src, dst := agentDirFixture(t)
 		if err := os.WriteFile(filepath.Join(src, "settings.json"), []byte(`{"skills":["keep"]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		const trust = `{"/w": true}`
+		if err := os.WriteFile(filepath.Join(src, "trust.json"), []byte(trust), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(src, "sessions"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if err := BuildPiAgentDir(src, seatBuildDirOf(dst), dst); err != nil {
@@ -215,9 +222,17 @@ func TestBuildPiAgentDir(t *testing.T) {
 				t.Errorf("%s: readlink = %q, %v; want %q", name, got, err, filepath.Join(src, name))
 			}
 		}
-		fi, err := os.Lstat(filepath.Join(dst, "settings.json"))
-		if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
-			t.Fatalf("settings.json lstat = %v, %v; want a private regular 0600 file", fi, err)
+		for _, name := range []string{"settings.json", "trust.json"} {
+			fi, err := os.Lstat(filepath.Join(dst, name))
+			if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
+				t.Fatalf("%s lstat = %v, %v; want a private regular 0600 file", name, fi, err)
+			}
+		}
+		if raw, _ := os.ReadFile(filepath.Join(dst, "trust.json")); string(raw) != trust {
+			t.Fatalf("trust copy = %s, want %s", raw, trust)
+		}
+		if _, err := os.Lstat(filepath.Join(dst, "sessions")); !os.IsNotExist(err) {
+			t.Fatalf("sessions in the seat dir: %v; want none, so pi creates its own", err)
 		}
 		if runtime.GOOS != "windows" {
 			if fi, err := os.Stat(dst); err != nil || fi.Mode().Perm() != 0o700 {
