@@ -98,30 +98,34 @@ func New(l Launch) (*Fence, error) {
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
-		allowRoots(p.gateRepo)
 		allowFiles(&b, p.gateState, p.gateState+"-wal", p.gateState+"-shm", p.gateState+"-journal")
-		// The gate's programs, its git and no-mistakes configuration and the
-		// files that redirect git to another repository (commondir, .git,
-		// gitdir, submodule repos in modules/) are refused after the allow: the
-		// next unfenced push to the gate and the no-mistakes daemon run them.
-		// The gate root's own name is refused for unlink, so it cannot be
-		// renamed away and replaced. A push writes only objects/, refs/ and
-		// logs/. This denylist may still miss a name git reads; it is the bound
-		// within G1085 until the Human's words on the allowlist form (objects,
-		// refs and logs only, the rest of the gate being data), which then
-		// replaces it. A temp-root NM_HOME keeps its other files writable
-		// through the temp-root allow; no lane runs that, and the temp-root
-		// allow covers it. Human words (domain.Words): grantor the Human,
+		// Only what a push writes is writable in the gate: objects/, refs/ and
+		// logs/. The whole gate is refused first, after the temp-root allow, so
+		// this holds wherever the gate lives, and its root cannot be renamed
+		// away. Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1151: "Allowlist
+		// (Recommended): only objects/, refs/, logs/ writable in the
+		// no-mistakes gate repo". objects/info (alternates) is refused, and so
+		// are the names objects, refs and logs themselves (rename, removal,
+		// chmod, creating one that is absent), so none can be swapped for a
+		// tree of the seat's own whose info/alternates the next unfenced push
+		// and the daemon read. Human words (domain.Words): grantor the Human,
 		// channel supervisor-relay:dialog, words=selected, G1085: "Quy tắc
 		// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay
 		// cấu hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
-		// session ngoài session của nó."
+		// session ngoài session của nó." Bound: a gate with no logs/ and
+		// core.logAllRefUpdates true or always takes no push; no-mistakes
+		// never sets it. Residual: a seat can plant a symlink under logs/ that
+		// an unfenced push then appends through; tracked as
+		// fence-reflog-symlink-deputy. A temp-root NM_HOME keeps its other
+		// files writable through the temp-root allow; no lane runs that, and
+		// the temp-root allow covers it.
 		g := p.gateRepo
-		deny(&b, "subpath", filepath.Join(g, "hooks"), filepath.Join(g, "info"), filepath.Join(g, "worktrees"),
-			filepath.Join(g, "objects", "info"), filepath.Join(g, "remotes"), filepath.Join(g, "branches"), filepath.Join(g, "modules"))
-		deny(&b, "literal", filepath.Join(g, "config"), filepath.Join(g, "config.worktree"), filepath.Join(g, "no-mistakes-gate-config"),
-			filepath.Join(g, "commondir"), filepath.Join(g, ".git"), filepath.Join(g, "gitdir"))
-		denyUnlink(&b, g)
+		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
+		deny(&b, "subpath", g)
+		allowRoots(obj, refs, logs)
+		deny(&b, "subpath", filepath.Join(obj, "info"))
+		deny(&b, "literal", obj, refs, logs)
 	}
 	if l.Role == RoleSoldier {
 		branch, err := soldierBranch(l.Branch)
