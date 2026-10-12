@@ -720,7 +720,7 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 	sigCh := make(chan os.Signal)
 	done := make(chan *WakeReason, 1)
 	go func() {
-		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, raceTaskStatePort{}, port, NoopDeliveryRecoveryPort{})
+		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, raceTaskStatePort{}, port, NoopActiveDeliveryPort{})
 		done <- reason
 	}()
 

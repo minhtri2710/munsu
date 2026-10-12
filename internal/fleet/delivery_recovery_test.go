@@ -56,6 +56,54 @@ func TestDeliverCrashBeforeMutationRetriesSafely(t *testing.T) {
 	}
 }
 
+// TestActiveDeliveryJournalsReadsWithoutResuming pins the daemon's read: an
+// interrupted delivery's journal is listed and left exactly as it was, and a
+// live Deliver holding the delivery scope makes the read refuse instead of
+// listing a journal that delivery is still completing.
+func TestActiveDeliveryJournalsReadsWithoutResuming(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
+	installScriptedProviderFor(t, "open-then-merged")
+	runDeliveryCrashHelper(t, homeDir, taskID, "authorized", "open-then-merged")
+	before := listActiveDeliveryJournals(t, homeDir)
+	if len(before) != 1 {
+		t.Fatalf("active journals = %v, want exactly 1", before)
+	}
+
+	provider := installScriptedProviderFor(t, "open-then-merged")
+	got, err := ActiveDeliveryJournals(homeDir)
+	want := []ActiveDeliveryJournal{{ID: before[0], TaskID: taskID, Stage: deliveryStageAuthorized}}
+	if err != nil || len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("ActiveDeliveryJournals = %+v, %v, want %+v", got, err, want)
+	}
+	if provider.merges != 0 {
+		t.Fatalf("listing merged %d time(s), want none", provider.merges)
+	}
+	if _, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); err == nil {
+		t.Fatal("listing committed a delivery outcome")
+	}
+
+	h, err := home.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := h.Lock(deliveryLockScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	if got, err := ActiveDeliveryJournals(homeDir); !errors.Is(err, home.ErrLockTimeout) {
+		t.Fatalf("ActiveDeliveryJournals under a held scope = %+v, %v, want a lock timeout", got, err)
+	}
+	if after := listActiveDeliveryJournals(t, homeDir); len(after) != 1 || after[0] != before[0] {
+		t.Fatalf("active journals after listing = %v, want %v untouched", after, before)
+	}
+	if journal, err := readDeliveryJournal(h, before[0]); err != nil || journal.Stage != deliveryStageAuthorized || journal.Phase != deliveryPhasePrepared {
+		t.Fatalf("journal after listing = %+v, %v, want stage %s and phase %s", journal, err, deliveryStageAuthorized, deliveryPhasePrepared)
+	}
+}
+
 // TestDeliverCrashAfterMutationNeverRepeatsMutation proves a crash after the
 // irreversible mutation (outcome committed, journal incomplete) is recovered
 // by replaying the committed truth; the mutation is NEVER repeated.

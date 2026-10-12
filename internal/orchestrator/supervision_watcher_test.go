@@ -1559,7 +1559,7 @@ func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
 		return time.NewTicker(time.Millisecond)
 	}
 
-	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil, NoopDeliveryRecoveryPort{})
+	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil, NoopActiveDeliveryPort{})
 	if err == nil || !strings.Contains(err.Error(), "writing watcher beat") || reason != nil {
 		t.Fatalf("run = %+v, %v, want a writing-watcher-beat error and no wake", reason, err)
 	}
@@ -1568,47 +1568,63 @@ func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
 	}
 }
 
-// scriptedDeliveryRecoveryPort returns err and counts its calls. Its first
-// call runs first, which ends the daemon after the cycle in progress.
-type scriptedDeliveryRecoveryPort struct {
-	err   error
-	calls int
-	first func()
+// activeDeliveryReply is one scripted ActiveDeliveries result.
+type activeDeliveryReply struct {
+	active []ActiveDelivery
+	err    error
 }
 
-func (p *scriptedDeliveryRecoveryPort) RecoverDeliveries(string) error {
+// scriptedActiveDeliveryPort answers one reply per call and records whether a
+// watcher beat existed at its first call. Its last reply runs last, which ends
+// the daemon after the cycle in progress.
+type scriptedActiveDeliveryPort struct {
+	replies    []activeDeliveryReply
+	calls      int
+	beatAtCall bool
+	last       func()
+}
+
+func (p *scriptedActiveDeliveryPort) ActiveDeliveries(homeDir string) ([]ActiveDelivery, error) {
 	p.calls++
 	if p.calls == 1 {
-		p.first()
+		_, _, p.beatAtCall = ReadBeat(homeDir)
 	}
-	return p.err
+	if p.calls > len(p.replies) {
+		return nil, fmt.Errorf("unscripted call %d", p.calls)
+	}
+	if p.calls == len(p.replies) {
+		p.last()
+	}
+	r := p.replies[p.calls-1]
+	return r.active, r.err
 }
 
-// The daemon runs the delivery recovery gate at its cycle boundary, and a gate
-// failure is reported without ending the daemon or the cycle's wakes: the
-// failed journals stay pending and are retried at the next boundary.
-func TestRunDeliveryRecoveryGateAtTheCycleBoundary(t *testing.T) {
+// The daemon reads the active delivery journals at each cycle boundary, after
+// the cycle's beat, and wakes the General once per journal or read failure. It
+// resumes nothing: the port can only list, and fleet's
+// TestActiveDeliveryJournalsReadsWithoutResuming pins that the listing leaves
+// the journal active.
+func TestRunWakesOnActiveDeliveryJournals(t *testing.T) {
+	stuck := []ActiveDelivery{{ID: "dj-1", TaskID: "task-1", Stage: "authorized"}}
+	readErr := fmt.Errorf("corrupt delivery journal index: unexpected end of JSON input")
+	held := fmt.Errorf("home: %w", mhome.ErrLockTimeout)
+	stuckMsg := "delivery journal dj-1 of task task-1 is still active at stage authorized after an interrupted delivery; run `munsu watch run` or pr-merge to resume it"
+	readErrMsg := "delivery journals could not be read: corrupt delivery journal index: unexpected end of JSON input; run `munsu watch run` to retry recovery"
 	cases := []struct {
-		name     string
-		err      error
-		stderr   string
-		unwanted []string
+		name    string
+		replies []activeDeliveryReply
+		want    []string // "key|payload" of every queued wake, in order
 	}{
-		{"resume fails", fmt.Errorf("delivery journal dj-1: provider observation failed"),
-			"delivery recovery gate failed (journals left pending, retried next cycle): delivery journal dj-1: provider observation failed",
-			[]string{"skipped", "recovered"}},
-		{"resume succeeds", nil, "", []string{"delivery recovery gate"}},
+		{"active journal wakes once", []activeDeliveryReply{{active: stuck}, {active: stuck}},
+			[]string{"delivery:dj-1|" + stuckMsg}},
+		{"no journals", []activeDeliveryReply{{}, {}}, nil},
+		{"read error wakes once per failure", []activeDeliveryReply{{err: readErr}, {err: readErr}, {}, {err: readErr}},
+			[]string{deliveryRecoveryKey + "|" + readErrMsg, deliveryRecoveryKey + "|" + readErrMsg}},
+		{"scope held by a live delivery", []activeDeliveryReply{{err: held}, {err: held}}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
-			checksDir := filepath.Join(homeDir, "state", "checks")
-			if err := os.MkdirAll(checksDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(checksDir, "global.check"), []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
 			resetRecovery()
 
 			sigCh := make(chan os.Signal, 1)
@@ -1618,44 +1634,45 @@ func TestRunDeliveryRecoveryGateAtTheCycleBoundary(t *testing.T) {
 				default:
 				}
 			}
-			// Backstop for a daemon that never reaches the gate.
+			// Backstop for a daemon that never reaches the port.
 			backstop := time.AfterFunc(3*time.Second, stop)
 			defer backstop.Stop()
 			var ticker *time.Ticker
 			newTicker := func(time.Duration) *time.Ticker {
+				// Clear run's startup beat, so only the cycle's own beat can
+				// exist when the port is first called.
+				ClearBeat(homeDir)
 				ticker = time.NewTicker(10 * time.Millisecond)
 				return ticker
 			}
-			port := &scriptedDeliveryRecoveryPort{err: tc.err, first: func() {
+			port := &scriptedActiveDeliveryPort{replies: tc.replies, last: func() {
 				ticker.Stop()
 				stop()
 			}}
 
-			var reason *WakeReason
-			var err error
-			stderr := captureStderr(t, func() {
-				reason, err = run(homeDir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil, port)
-			})
+			reason, err := run(homeDir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil, port)
 			if err != nil || reason == nil || reason.Kind != "signal" {
 				t.Fatalf("run = %+v, %v, want the daemon to keep running until signalled", reason, err)
 			}
-			if port.calls != 1 {
-				t.Fatalf("delivery recovery gate ran %d times, want once at the one cycle boundary", port.calls)
+			if port.calls != len(tc.replies) {
+				t.Fatalf("active deliveries read %d times, want once per cycle (%d)", port.calls, len(tc.replies))
+			}
+			if !port.beatAtCall {
+				t.Fatal("the daemon read the active deliveries before the cycle wrote its beat")
 			}
 			wakes, err := mhome.PeekWakes(homeDir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(wakes) != 1 || wakes[0].Kind != "check" {
-				t.Fatalf("wakes = %#v, want the cycle's one check wake", wakes)
-			}
-			if !strings.Contains(stderr, tc.stderr) {
-				t.Errorf("stderr = %q, want %q", stderr, tc.stderr)
-			}
-			for _, u := range tc.unwanted {
-				if strings.Contains(stderr, u) {
-					t.Errorf("stderr = %q, must not contain %q", stderr, u)
+			var got []string
+			for _, w := range wakes {
+				if w.Kind != "check" {
+					t.Fatalf("wake %#v, want only check wakes", w)
 				}
+				got = append(got, w.Key+"|"+w.Payload)
+			}
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("wakes =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
 			}
 		})
 	}

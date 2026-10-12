@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -227,30 +226,46 @@ type CheckValidationPort interface {
 	ValidateCheck(path string) error
 }
 
-// DeliveryRecoveryPort resumes every pending delivery journal of a home. It
-// returns an error wrapping home.ErrLockTimeout when another process holds the
-// delivery scope.
-type DeliveryRecoveryPort interface {
-	RecoverDeliveries(homeDir string) error
+// ActiveDelivery names one delivery journal an interrupted delivery left
+// active.
+type ActiveDelivery struct {
+	ID, TaskID, Stage string
 }
 
-// DeliveryRecoveryGate converges pending delivery journals at a watcher cycle
-// boundary so an interrupted delivery completes first and the cycle observes
-// truthful state. It is the one gate both `munsu watch run` and the daemon
-// run; each caller owns what a returned error does to its cycle.
-//
-// A held delivery scope is not a gate failure. It means a Deliver is running
-// right now, holding that scope across a provider merge that can outlast the
-// lock budget, and that Deliver converges the pending journals itself before
-// it creates a new one. Failing on it would emit no wakes at all for as long
-// as somebody is merging -- so the gate is reported as skipped and returns nil.
-func DeliveryRecoveryGate(homeDir string, port DeliveryRecoveryPort, w io.Writer) error {
-	err := port.RecoverDeliveries(homeDir)
+// ActiveDeliveryPort lists the active delivery journals of a home without
+// resuming any. It returns an error wrapping home.ErrLockTimeout while a live
+// delivery holds the delivery scope.
+type ActiveDeliveryPort interface {
+	ActiveDeliveries(homeDir string) ([]ActiveDelivery, error)
+}
+
+// deliveryRecoveryKey keys the wake of a delivery journal read failure.
+const deliveryRecoveryKey = "delivery-recovery"
+
+// wakeActiveDeliveries wakes the General once per delivery journal an
+// interrupted delivery left active, and once per journal read failure. The
+// daemon resumes nothing; resume stays operator-run. A held delivery scope is
+// a live Deliver that completes its own journal, so it wakes nothing.
+func wakeActiveDeliveries(homeDir string, port ActiveDeliveryPort, obs *cycleObservation) error {
+	active, err := port.ActiveDeliveries(homeDir)
 	if errors.Is(err, home.ErrLockTimeout) {
-		fmt.Fprintln(w, "delivery recovery gate skipped: another process holds the delivery scope and converges its own journals")
 		return nil
 	}
-	return err
+	if err != nil {
+		_, err = enqueueCheckWakeOnce(homeDir, deliveryRecoveryKey, fmt.Sprintf("delivery journals could not be read: %v; run `munsu watch run` to retry recovery", err), obs)
+		return err
+	}
+	// A readable index ends the failure, so the next failure wakes again.
+	if err := os.Remove(home.WatcherSeenMarkerPath(homeDir, "check:"+deliveryRecoveryKey)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, d := range active {
+		msg := fmt.Sprintf("delivery journal %s of task %s is still active at stage %s after an interrupted delivery; run `munsu watch run` or pr-merge to resume it", d.ID, d.TaskID, d.Stage)
+		if _, err := enqueueCheckWakeOnce(homeDir, "delivery:"+d.ID, msg, obs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RunWithProbeSenderAndEvents starts the persistent watcher and also runs the
@@ -259,7 +274,7 @@ func DeliveryRecoveryGate(homeDir string, port DeliveryRecoveryPort, w io.Writer
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling; a nil check-validation port is refused as a
 // fatal cycle capability error.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries DeliveryRecoveryPort) (*WakeReason, error) {
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
 	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events, deliveries)
 }
 
@@ -269,7 +284,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries DeliveryRecoveryPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -312,18 +327,16 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		eventPulses = startEventLane(homeDir, NewEventWaiter(events), stopLane)
 	}
 
-	// cycle is one daemon cycle boundary: the beat, the delivery recovery
-	// gate, then the scan. A gate failure is reported and the cycle runs: the
-	// failed journals stay pending and are retried at the next boundary, and
-	// failing here would exit the daemon and stop every wake over one journal.
+	// cycle is one daemon cycle boundary: the beat, the active delivery
+	// journal wakes, then the scan.
 	cycle := func() error {
 		if err := WriteBeat(homeDir); err != nil {
 			return fmt.Errorf("writing watcher beat: %w", err)
 		}
-		if err := DeliveryRecoveryGate(homeDir, deliveries, os.Stderr); err != nil {
-			fmt.Fprintf(os.Stderr, "delivery recovery gate failed (journals left pending, retried next cycle): %v\n", err)
-		}
 		obs := newCycleObservation()
+		if err := wakeActiveDeliveries(homeDir, deliveries, obs); err != nil {
+			return err
+		}
 		if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
 			return err
 		}
@@ -965,24 +978,13 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			return emitted, err
 		}
 
-		fingerprint := "check\n" + msg
-		marker := home.WatcherSeenMarkerPath(homeDir, "check:"+checkID)
-		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
-			if obs != nil {
-				obs.suppressedDuplicates++
-			}
-			continue
-		}
-		if err := EnqueueWake(homeDir, "check", checkID, msg); err != nil {
-			return emitted, fmt.Errorf("enqueue check wake: %w", err)
-		}
-		if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		queued, err := enqueueCheckWakeOnce(homeDir, checkID, msg, obs)
+		if err != nil {
 			return emitted, err
 		}
-		if err := os.WriteFile(marker, []byte(fingerprint), 0644); err != nil {
-			return emitted, err
+		if queued {
+			emitted = true
 		}
-		emitted = true
 	}
 
 	if err := reconcileCheckRefusalMarkers(homeDir, plugins); err != nil {
@@ -1000,6 +1002,30 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	// Normal rank-aware communication goes directly via SendReport.
 
 	return emitted, nil
+}
+
+// enqueueCheckWakeOnce enqueues a check wake for id unless the last check
+// wake enqueued for id carried the same message, and reports whether it
+// enqueued one.
+func enqueueCheckWakeOnce(homeDir, id, msg string, obs *cycleObservation) (bool, error) {
+	fingerprint := "check\n" + msg
+	marker := home.WatcherSeenMarkerPath(homeDir, "check:"+id)
+	if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
+		if obs != nil {
+			obs.suppressedDuplicates++
+		}
+		return false, nil
+	}
+	if err := EnqueueWake(homeDir, "check", id, msg); err != nil {
+		return false, fmt.Errorf("enqueue check wake: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(marker, []byte(fingerprint), 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func wakeFingerprint(homeDir string, reason *WakeReason) string {

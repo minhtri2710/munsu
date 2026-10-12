@@ -260,4 +260,40 @@ func RecoverDeliveryJournals(homeDir string) error {
 	return recoverPendingDeliveryJournals(h, lk, "")
 }
 
+// ActiveDeliveryJournal names one active delivery journal.
+type ActiveDeliveryJournal struct {
+	ID, TaskID, Stage string
+}
+
+// ActiveDeliveryJournals lists the active delivery journals of a home without
+// resuming or changing any. It reads under the delivery scope only to tell a
+// live delivery from a crashed one: a running Deliver holds that scope until
+// its journal completes, so a journal still active once the scope is acquired
+// belongs to a delivery that was interrupted. A held scope returns an error
+// wrapping home.ErrLockTimeout.
+func ActiveDeliveryJournals(homeDir string) ([]ActiveDeliveryJournal, error) {
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	lk, err := h.Lock(deliveryLockScope)
+	if err != nil {
+		return nil, err
+	}
+	defer lk.Release()
+	idx, err := deliveryJournals.readIndex(h)
+	if err != nil {
+		return nil, err
+	}
+	active := make([]ActiveDeliveryJournal, 0, len(idx.Active))
+	for _, id := range idx.Active {
+		journal, err := readActiveDeliveryJournal(h, id)
+		if err != nil {
+			return nil, err
+		}
+		active = append(active, ActiveDeliveryJournal{ID: journal.ID, TaskID: journal.TaskID, Stage: journal.Stage})
+	}
+	return active, nil
+}
+
 var deliveryCrashHook = func(string) {}

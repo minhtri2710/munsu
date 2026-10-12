@@ -32,11 +32,10 @@ type acceptingCheckValidationPort struct{}
 
 func (acceptingCheckValidationPort) ValidateCheck(string) error { return nil }
 
-// NoopDeliveryRecoveryPort is a delivery recovery capability with no
-// pending journals.
-type NoopDeliveryRecoveryPort struct{}
+// NoopActiveDeliveryPort reports no active delivery journals.
+type NoopActiveDeliveryPort struct{}
 
-func (NoopDeliveryRecoveryPort) RecoverDeliveries(string) error { return nil }
+func (NoopActiveDeliveryPort) ActiveDeliveries(string) ([]ActiveDelivery, error) { return nil, nil }
 
 type NoopWatcherHooks struct{}
 
