@@ -76,9 +76,19 @@ type HumanNotifier interface {
 
 // BackendMetaExtras is an optional interface that a Backend can implement
 // to provide extra metadata fields to write into task meta after NewWindow.
+// Its keys are the Meta* constants.
 type BackendMetaExtras interface {
 	MetaExtras() map[string]string
 }
+
+// Task meta keys for the endpoint identity a backend records beyond the
+// window handle. They are the .meta projection of the endpoint binding's
+// SessionOwner, WorkspaceID and TabID.
+const (
+	MetaSessionOwner = "session_owner"
+	MetaWorkspaceID  = "workspace_id"
+	MetaTabID        = "tab_id"
+)
 
 // constructBackend is the ONE private construction path for session adapters:
 // it verifies the REQUESTED capability health (binary present on PATH) and
@@ -163,8 +173,8 @@ func Resolve(name string) (Backend, string, error) {
 //
 // For the "herdr" backend, the session name is bound from task metadata
 // AFTER verification, resolved from (in order):
-//  1. meta["herdr_session"]
-//  2. ParseWindow(meta["window"]).session
+//  1. meta[MetaSessionOwner]
+//  2. HandleSession(meta["window"])
 //  3. HERDR_SESSION env or "default" (from the verified base construction)
 //
 // This is session BINDING from task metadata, not selection. It ensures
@@ -188,19 +198,19 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 		}
 		hb := bk.(*HerdrBackend)
 		if meta != nil {
-			// Session binding: meta herdr_session > ParseWindow(window).session
+			// Session binding: meta session owner > HandleSession(window)
 			// > verified base (HERDR_SESSION env or "default").
-			if sess := meta["herdr_session"]; sess != "" {
+			if sess := meta[MetaSessionOwner]; sess != "" {
 				hb.Session = sess
-			} else if wsess, _ := ParseWindow(meta["window"]); wsess != "" {
+			} else if wsess := HandleSession(meta["window"]); wsess != "" {
 				hb.Session = wsess
 			}
 			// Seed durable teardown tab ID from meta
-			if tabID := meta["herdr_tab_id"]; tabID != "" {
+			if tabID := meta[MetaTabID]; tabID != "" {
 				hb.SeedTeardownTab(tabID)
 			}
 			// Seed durable workspace ID from meta for husk cleanup
-			if wsID := meta["herdr_workspace_id"]; wsID != "" {
+			if wsID := meta[MetaWorkspaceID]; wsID != "" {
 				hb.TeardownWorkspaceID = wsID
 			}
 			// Set workspace label for label-safe close. Prefer the task's own home

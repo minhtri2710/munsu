@@ -111,9 +111,6 @@ func scanBoundEndpoints(homeDir string) ([]boundEndpoint, error) {
 		}
 		handle := meta["window"]
 		if handle == "" {
-			handle = meta["herdr_pane_id"]
-		}
-		if handle == "" {
 			continue
 		}
 		bk := meta["backend"]

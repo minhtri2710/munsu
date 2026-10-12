@@ -323,7 +323,7 @@ func TestRunPrune_MetaReferencedSkipped(t *testing.T) {
 	tag := Hometag(homeDir)
 
 	// Write a meta file that references a workspace.
-	metaContent := "herdr_workspace_id=wReferenced\nbackend=herdr\n"
+	metaContent := "workspace_id=wReferenced\nbackend=herdr\n"
 	if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -441,27 +441,6 @@ func TestDenyListedLabel(t *testing.T) {
 	}
 }
 
-func TestIsLiveAgent(t *testing.T) {
-	tests := []struct {
-		status string
-		live   bool
-	}{
-		{"working", true},
-		{"idle", true},
-		{"done", true},
-		{"blocked", true},
-		{"unknown", true},
-		{"none", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		got := isLiveAgent(tt.status)
-		if got != tt.live {
-			t.Errorf("isLiveAgent(%q) = %v, want %v", tt.status, got, tt.live)
-		}
-	}
-}
-
 func TestRunPrune_DryRunDoesNotClose(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, "home")
@@ -538,7 +517,7 @@ func TestRunPrune_RefusesWhenTaskMetaScanFails(t *testing.T) {
 			if err := os.MkdirAll(stateDir, 0755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("herdr_workspace_id=wLive\n"), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("workspace_id=wLive\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
 			wsJSON := `[{"label":"` + Hometag(homeDir) + `","workspace_id":"wLive","tab_count":0,"agent_status":"none"}]`

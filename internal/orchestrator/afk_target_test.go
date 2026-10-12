@@ -22,7 +22,7 @@ func TestResolveTargetWithSource_ConfigPrecedesRuntime(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, generalPaneConfig), []byte("lab:pane-1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, generalPaneConfig), []byte("lab:w1:p1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TMUX_PANE", "%42")
@@ -31,7 +31,7 @@ func TestResolveTargetWithSource_ConfigPrecedesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Source != ConfigSource || got.Handle != "lab:pane-1" || got.Session != "lab" {
+	if got.Source != ConfigSource || got.Handle != "lab:w1:p1" || got.Session != "lab" {
 		t.Fatalf("result = %+v", got)
 	}
 }

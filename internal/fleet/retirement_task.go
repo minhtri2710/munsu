@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -173,14 +174,14 @@ func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 }
 
 // clearSessionMeta removes the backend session projection (window, backend
-// and the backend's herdr_* extras) from a task's .meta once its endpoint is
+// and the backend's endpoint identity keys) from a task's .meta once its endpoint is
 // proven absent, keeping every other key. A reopened generation then does not
 // read the dead session as a live one.
 func clearSessionMeta(homeDir, taskID string) error {
 	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
 		removed := false
-		for k := range meta {
-			if k == "window" || k == "backend" || strings.HasPrefix(k, "herdr_") {
+		for _, k := range []string{"window", "backend", backend.MetaSessionOwner, backend.MetaWorkspaceID, backend.MetaTabID} {
+			if _, ok := meta[k]; ok {
 				delete(meta, k)
 				removed = true
 			}
@@ -474,9 +475,9 @@ func retirementMetaForEvidence(meta map[string]string, ev *taskauthority.Retirem
 	if endpoint != nil {
 		out["backend"] = endpoint.Backend
 		out["window"] = endpoint.Handle
-		out["herdr_session"] = endpoint.SessionOwner
-		out["herdr_workspace_id"] = endpoint.WorkspaceID
-		out["herdr_tab_id"] = endpoint.TabID
+		out[backend.MetaSessionOwner] = endpoint.SessionOwner
+		out[backend.MetaWorkspaceID] = endpoint.WorkspaceID
+		out[backend.MetaTabID] = endpoint.TabID
 	}
 	return out
 }
@@ -1898,14 +1899,14 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) ([]string, error
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
+		meta, err := home.ReadMetaFile(filepath.Join(stateDir, entry.Name()))
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return nil, err
 		}
-		if strings.Contains(string(data), "herdr_workspace_id="+workspaceID) {
+		if meta[backend.MetaWorkspaceID] == workspaceID {
 			refs = append(refs, taskID)
 		}
 	}

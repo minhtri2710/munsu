@@ -12,13 +12,13 @@ import (
 
 func TestLiveWorkspaceIDsFromTaskMetaRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
-	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"herdr_workspace_id": "W1"}); err != nil {
+	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"workspace_id": "W1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(tmp, "plain", map[string]string{"herdr_workspace_id": "W2"}); err != nil {
+	if err := home.WriteMeta(tmp, "plain", map[string]string{"workspace_id": "W2"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home.StateDir(tmp), "weird%2.meta"), []byte("herdr_workspace_id=W3\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(home.StateDir(tmp), "weird%2.meta"), []byte("workspace_id=W3\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	ids, err := liveWorkspaceIDsFromTaskMeta(tmp)

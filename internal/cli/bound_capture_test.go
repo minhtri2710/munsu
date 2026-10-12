@@ -26,12 +26,12 @@ func (b *captureBackend) Teardown(string) error { return nil }
 func TestSessionBoundCapturePreservesBoundRequest(t *testing.T) {
 	b := &captureBackend{output: "captured"}
 	c := sessionBoundCapture{resolve: func(home string, meta map[string]string) (backend.Backend, string, error) {
-		if home != "/home" || meta["herdr_workspace_id"] != "workspace-1" || meta["herdr_tab_id"] != "tab-1" {
+		if home != "/home" || meta["workspace_id"] != "workspace-1" || meta["tab_id"] != "tab-1" {
 			t.Fatalf("home=%q meta=%v", home, meta)
 		}
 		return b, "herdr", nil
 	}}
-	out, err := c.Capture("/home", map[string]string{"backend": "herdr", "window": "session-1:pane-1", "herdr_session": "session-1", "herdr_workspace_id": "workspace-1", "herdr_tab_id": "tab-1"}, 42)
+	out, err := c.Capture("/home", map[string]string{"backend": "herdr", "window": "session-1:pane-1", "session_owner": "session-1", "workspace_id": "workspace-1", "tab_id": "tab-1"}, 42)
 	if err != nil || out != "captured" || b.handle != "session-1:pane-1" || b.lines != 42 {
 		t.Fatalf("out=%q err=%v backend=%+v", out, err, b)
 	}

@@ -89,7 +89,7 @@ func dispatchHerdrWake(homeDir string) error {
 	if err != nil {
 		return err
 	}
-	meta := map[string]string{"backend": "herdr", "window": target.Handle, "herdr_session": target.Session}
+	meta := map[string]string{"backend": "herdr", "window": target.Handle, backend.MetaSessionOwner: target.Session}
 	bk, name, err := backend.BackendForTask(homeDir, meta)
 	if err != nil || name != "herdr" {
 		return err

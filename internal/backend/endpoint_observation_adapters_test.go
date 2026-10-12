@@ -126,7 +126,6 @@ func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
 		want   Activity
 	}{
 		{"working", ActivityBusy},
-		{"busy", ActivityBusy},
 		{"idle", ActivityIdle},
 		{"done", ActivityIdle},
 		{"blocked", ActivityBlocked},
@@ -135,7 +134,6 @@ func TestObserveEndpoint_AliveAgentStatusPopulatesActivity(t *testing.T) {
 		{"{malformed", ActivityUnknown},
 		{"Idle", ActivityIdle},
 		{" WORKING ", ActivityBusy},
-		{"  busy  ", ActivityBusy},
 		{"Blocked", ActivityBlocked},
 		{"DONE", ActivityIdle},
 	}

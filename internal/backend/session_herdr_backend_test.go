@@ -120,14 +120,14 @@ func TestHerdrBackend_NewWindow_CreatesWorkspace(t *testing.T) {
 	if extras == nil {
 		t.Fatal("MetaExtras returned nil")
 	}
-	if extras["herdr_session"] != "test-session" {
-		t.Errorf("herdr_session = %q, want test-session", extras["herdr_session"])
+	if extras["session_owner"] != "test-session" {
+		t.Errorf("session_owner = %q, want test-session", extras["session_owner"])
 	}
-	if extras["herdr_tab_id"] != "wTest:t1" {
-		t.Errorf("herdr_tab_id = %q, want wTest:t1", extras["herdr_tab_id"])
+	if extras["tab_id"] != "wTest:t1" {
+		t.Errorf("tab_id = %q, want wTest:t1", extras["tab_id"])
 	}
-	if extras["herdr_pane_id"] != "wTest:p1" {
-		t.Errorf("herdr_pane_id = %q, want wTest:p1", extras["herdr_pane_id"])
+	if len(extras) != 3 || extras["workspace_id"] == "" {
+		t.Errorf("MetaExtras = %v, want exactly session_owner, workspace_id and tab_id", extras)
 	}
 }
 
@@ -390,28 +390,6 @@ func TestHerdrBackend_CheckAgentAlive_PaneNotFound(t *testing.T) {
 	}
 }
 
-func TestParseWindow(t *testing.T) {
-	tests := []struct {
-		handle      string
-		wantSession string
-		wantPaneID  string
-	}{
-		{"test-session:wTest:p1", "test-session", "wTest:p1"},
-		{"bare:p1", "bare", "p1"},
-		{"nocolon", "", "nocolon"},
-		{"a:b:c", "a", "b:c"},
-	}
-	for _, tt := range tests {
-		session, paneID := ParseWindow(tt.handle)
-		if session != tt.wantSession {
-			t.Errorf("ParseWindow(%q) session = %q, want %q", tt.handle, session, tt.wantSession)
-		}
-		if paneID != tt.wantPaneID {
-			t.Errorf("ParseWindow(%q) paneID = %q, want %q", tt.handle, paneID, tt.wantPaneID)
-		}
-	}
-}
-
 func TestHerdrBackend_PaneIDAndEffectiveSession(t *testing.T) {
 	h := NewHerdrBackend("default")
 
@@ -523,10 +501,10 @@ func TestBackendForTask_HerdrSessionFromMeta(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// With herdr_session in meta
+	// With session_owner in meta
 	meta := map[string]string{
 		"backend":       "herdr",
-		"herdr_session": "my-lab-session",
+		"session_owner": "my-lab-session",
 		"window":        "default:w1:p1",
 	}
 	bk, name, err := BackendForTask(tmpDir, meta)
@@ -541,7 +519,7 @@ func TestBackendForTask_HerdrSessionFromMeta(t *testing.T) {
 		t.Fatalf("expected *HerdrBackend, got %T", bk)
 	}
 	if hb.Session != "my-lab-session" {
-		t.Errorf("Session = %q, want my-lab-session (from meta herdr_session)", hb.Session)
+		t.Errorf("Session = %q, want my-lab-session (from meta session_owner)", hb.Session)
 	}
 }
 
@@ -552,7 +530,7 @@ func TestBackendForTask_HerdrSessionFromWindow(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// With window session prefix but no herdr_session
+	// With window session prefix but no session_owner
 	meta := map[string]string{
 		"backend": "herdr",
 		"window":  "my-session:w1:p1",
@@ -569,7 +547,7 @@ func TestBackendForTask_HerdrSessionFromWindow(t *testing.T) {
 		t.Fatalf("expected *HerdrBackend, got %T", bk)
 	}
 	if hb.Session != "my-session" {
-		t.Errorf("Session = %q, want my-session (from ParseWindow(window))", hb.Session)
+		t.Errorf("Session = %q, want my-session (from HandleSession(window))", hb.Session)
 	}
 }
 
@@ -580,7 +558,7 @@ func TestBackendForTask_HerdrSessionFallsBackToDefault(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// No herdr_session, no window session prefix
+	// No session_owner, no window session prefix
 	meta := map[string]string{
 		"backend": "herdr",
 		"window":  "bare-pane",

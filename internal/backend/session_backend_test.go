@@ -73,7 +73,7 @@ func TestBackendForTask_BoundHerdrSessionBinding(t *testing.T) {
 	tmpDir := t.TempDir()
 	meta := map[string]string{
 		"backend":       "herdr",
-		"herdr_session": "my-lab-session",
+		"session_owner": "my-lab-session",
 		"window":        "w1",
 	}
 	bk, name, err := BackendForTask(tmpDir, meta)
@@ -92,6 +92,27 @@ func TestBackendForTask_BoundHerdrSessionBinding(t *testing.T) {
 	}
 }
 
+// TestBackendForTask_HerdrSessionFromHandle pins the handle grammar the
+// session fallback reads: herdr pane ids contain a colon, so only a three-part
+// handle names a session and a two-part handle is a bare pane id.
+func TestBackendForTask_HerdrSessionFromHandle(t *testing.T) {
+	fakeBin := fakeExecutables(t, "herdr")
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	t.Setenv("HERDR_SESSION", "")
+	for _, tc := range []struct{ window, want string }{
+		{"lab:w1:p1", "lab"},
+		{"w1:p1", "default"},
+	} {
+		bk, _, err := BackendForTask(t.TempDir(), map[string]string{"backend": "herdr", "window": tc.window})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := bk.(*HerdrBackend).Session; got != tc.want {
+			t.Errorf("window %q: Session = %q, want %q", tc.window, got, tc.want)
+		}
+	}
+}
+
 // TestBackendForTask_HerdrFailsClosedWhenAbsent verifies the REWORK ruling:
 // the herdr branch of BackendForTask verifies capability health BEFORE session
 // binding — herdr absent from PATH FAILS CLOSED at resolution, and no
@@ -104,7 +125,7 @@ func TestBackendForTask_HerdrFailsClosedWhenAbsent(t *testing.T) {
 	tmpDir := t.TempDir()
 	meta := map[string]string{
 		"backend":       "herdr",
-		"herdr_session": "bound-session",
+		"session_owner": "bound-session",
 		"window":        "w1",
 	}
 	bk, name, err := BackendForTask(tmpDir, meta)
@@ -134,12 +155,12 @@ func TestBackendForTask_HerdrVerifiesBeforeSessionBinding(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	meta := map[string]string{
-		"backend":            "herdr",
-		"herdr_session":      "bound-session",
-		"window":             "w1",
-		"herdr_tab_id":       "tab-1",
-		"herdr_workspace_id": "ws-1",
-		"home":               tmpDir,
+		"backend":       "herdr",
+		"session_owner": "bound-session",
+		"window":        "w1",
+		"tab_id":        "tab-1",
+		"workspace_id":  "ws-1",
+		"home":          tmpDir,
 	}
 	bk, name, err := BackendForTask(tmpDir, meta)
 	if err != nil {
@@ -153,7 +174,7 @@ func TestBackendForTask_HerdrVerifiesBeforeSessionBinding(t *testing.T) {
 		t.Fatalf("expected *HerdrBackend, got %T", bk)
 	}
 	if hb.Session != "bound-session" {
-		t.Errorf("Session = %q, want bound-session (meta herdr_session binds AFTER verification)", hb.Session)
+		t.Errorf("Session = %q, want bound-session (meta session_owner binds AFTER verification)", hb.Session)
 	}
 	if hb.TeardownTabID != "tab-1" {
 		t.Errorf("TeardownTabID = %q, want tab-1 (durable meta seed)", hb.TeardownTabID)

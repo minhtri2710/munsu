@@ -20,12 +20,12 @@ func (p *watcherProbe) Probe(_ string, meta map[string]string) (bool, error) {
 func TestScanTaskWithProbePreservesHerdrIdentity(t *testing.T) {
 	h := t.TempDir()
 	os.MkdirAll(filepath.Join(h, "state"), 0700)
-	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("kind=ship\nwindow=session-1:pane-1\nbackend=herdr\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\n"), 0600)
+	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("kind=ship\nwindow=session-1:pane-1\nbackend=herdr\nsession_owner=session-1\nworkspace_id=workspace-1\ntab_id=tab-1\n"), 0600)
 	p := &watcherProbe{alive: true}
 	if reason := scanTaskWithProbe(h, "task", p, testTaskStatePort{}, testSeatLiveness); reason != nil {
 		t.Fatalf("reason=%+v", reason)
 	}
-	if p.meta["herdr_session"] != "session-1" || p.meta["herdr_workspace_id"] != "workspace-1" || p.meta["herdr_tab_id"] != "tab-1" {
+	if p.meta["session_owner"] != "session-1" || p.meta["workspace_id"] != "workspace-1" || p.meta["tab_id"] != "tab-1" {
 		t.Fatalf("meta=%v", p.meta)
 	}
 }

@@ -32,7 +32,7 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 	}
 	// Seed through the production writer: the persisted filename is the
 	// platform durable key for "captain:captain-reproduction", never the
-	// logical id. The meta deliberately omits herdr_pane_id -- that absence is
+	// logical id. The meta deliberately omits window -- that absence is
 	// the condition this reproduction pins.
 	if err := mhome.WriteMeta(parentHome, "captain:captain-reproduction", map[string]string{
 		"kind":    "captain",
@@ -89,7 +89,7 @@ func TestReproductionCaptainRelayMissingPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("pending_after=%d messages=%v", len(pending), pending)
-	if crossErr == nil || crossErr.Error() != "captain meta has no herdr_pane_id" || crossTarget.Handle != "" {
+	if crossErr == nil || crossErr.Error() != "captain meta has no window" || crossTarget.Handle != "" {
 		t.Fatalf("unexpected cross-process resolution: target=%+v error=%v", crossTarget, crossErr)
 	}
 	if !crossResult.Queued() || crossResult.Acknowledged() || crossTransport.calls != 0 {

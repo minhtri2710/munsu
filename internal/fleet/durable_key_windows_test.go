@@ -64,10 +64,10 @@ func TestInFlightSoldierIDsRoundTrip(t *testing.T) {
 
 func TestOtherWorkspaceRefsRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
-	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"herdr_workspace_id": "W1"}); err != nil {
+	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"workspace_id": "W1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(tmp, "task-x", map[string]string{"herdr_workspace_id": "W1"}); err != nil {
+	if err := home.WriteMeta(tmp, "task-x", map[string]string{"workspace_id": "W1"}); err != nil {
 		t.Fatal(err)
 	}
 	refs, err := otherWorkspaceRefs(tmp, "task-x", "W1")
@@ -89,7 +89,7 @@ func TestCurrentEndpointKindRoundTrip(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "P1")
 	t.Setenv("TMUX_PANE", "")
 	tmp := t.TempDir()
-	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"kind": "captain", "herdr_pane_id": "P1"}); err != nil {
+	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"kind": "captain", "backend": "herdr", "window": "default:P1"}); err != nil {
 		t.Fatal(err)
 	}
 	kind, found, err := currentEndpointKind(tmp)

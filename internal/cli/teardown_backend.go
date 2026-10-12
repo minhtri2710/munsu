@@ -44,7 +44,7 @@ func (s sessionBoundTeardown) Probe(home string, meta map[string]string) (fleet.
 }
 
 func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req fleet.DisposeRequest) error {
-	if req.Home != home || req.Backend != meta["backend"] || req.Handle != meta["window"] || req.SessionOwner != meta["herdr_session"] || req.WorkspaceID != meta["herdr_workspace_id"] || req.TabID != meta["herdr_tab_id"] {
+	if req.Home != home || req.Backend != meta["backend"] || req.Handle != meta["window"] || req.SessionOwner != meta[backend.MetaSessionOwner] || req.WorkspaceID != meta[backend.MetaWorkspaceID] || req.TabID != meta[backend.MetaTabID] {
 		return fmt.Errorf("dispose request does not match bound endpoint metadata")
 	}
 	bk, name, err := s.resolveBound(home, meta)

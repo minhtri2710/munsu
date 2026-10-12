@@ -69,8 +69,8 @@ func popupTask(t *testing.T, homeDir, taskID string, meta map[string]string) {
 func TestPopupHumanNeededNamesVerbAndTaskOnTheTaskBackendAndAuditsIt(t *testing.T) {
 	logPath, _ := fakeHerdrForPopups(t)
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "task-a", map[string]string{"backend": "herdr", "herdr_session": "s1"})
-	popupTask(t, homeDir, "task-b", map[string]string{"backend": "herdr", "herdr_session": "s2"})
+	popupTask(t, homeDir, "task-a", map[string]string{"backend": "herdr", "session_owner": "s1"})
+	popupTask(t, homeDir, "task-b", map[string]string{"backend": "herdr", "session_owner": "s2"})
 
 	popupHumanNeeded(homeDir, []humanNeededEvent{
 		{TaskID: "task-a", Line: "needs-decision [key=x]: pick a branch"},
@@ -98,7 +98,7 @@ func TestPopupHumanNeededAuditsAFailedPopupAndNeverRetriesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "task-a", map[string]string{"backend": "herdr", "herdr_session": "s1"})
+	popupTask(t, homeDir, "task-a", map[string]string{"backend": "herdr", "session_owner": "s1"})
 
 	out := captureStderr(t, func() {
 		popupHumanNeeded(homeDir, []humanNeededEvent{{TaskID: "task-a", Line: "blocked: needs credentials"}})
@@ -146,9 +146,9 @@ func TestPopupHumanNeededSkipsWhatHasNoNotifier(t *testing.T) {
 func TestRunCyclePopsUpOnlyFreshHumanNeededSignals(t *testing.T) {
 	logPath, _ := fakeHerdrForPopups(t)
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "needs", map[string]string{"kind": "ship", "backend": "herdr", "herdr_session": "s1", "window": "s1:p1"})
-	popupTask(t, homeDir, "finished", map[string]string{"kind": "ship", "backend": "herdr", "herdr_session": "s1", "window": "s1:p2"})
-	popupTask(t, homeDir, "idle", map[string]string{"kind": "ship", "backend": "herdr", "herdr_session": "s1", "window": "s1:p3"})
+	popupTask(t, homeDir, "needs", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p1"})
+	popupTask(t, homeDir, "finished", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p2"})
+	popupTask(t, homeDir, "idle", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p3"})
 	if err := home.AppendStatus(homeDir, "idle", "working: still going"); err != nil {
 		t.Fatal(err)
 	}

@@ -42,7 +42,7 @@ func setupProbeHome(t *testing.T, h string, metaContent string) {
 
 func TestReadWithProbePreservesBoundMetadata(t *testing.T) {
 	h := t.TempDir()
-	setupProbeHome(t, h, "window=pane-1\nbackend=herdr\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\n")
+	setupProbeHome(t, h, "window=pane-1\nbackend=herdr\nsession_owner=session-1\nworkspace_id=workspace-1\ntab_id=tab-1\n")
 	probe := &stateProbe{alive: true}
 	state, err := ReadWithProbe(h, "task", probe)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestReadWithProbePreservesBoundMetadata(t *testing.T) {
 	if !state.PaneAlive {
 		t.Fatal("expected alive")
 	}
-	if probe.meta["herdr_session"] != "session-1" || probe.meta["herdr_workspace_id"] != "workspace-1" || probe.meta["herdr_tab_id"] != "tab-1" {
+	if probe.meta["session_owner"] != "session-1" || probe.meta["workspace_id"] != "workspace-1" || probe.meta["tab_id"] != "tab-1" {
 		t.Fatalf("meta=%v", probe.meta)
 	}
 }

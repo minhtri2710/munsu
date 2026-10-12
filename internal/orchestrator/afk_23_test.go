@@ -19,29 +19,6 @@ func (f *fakePaneCapture) Capture(_ string, _ int) (string, error) {
 	return f.content, f.err
 }
 
-func TestSplitTargetHandle(t *testing.T) {
-	tests := []struct {
-		handle      string
-		wantSession string
-		wantPaneID  string
-	}{
-		{"my-session:my-pane", "my-session", "my-pane"},
-		{"session:123", "session", "123"},
-		{"bare", "", "bare"},
-		{"a:b:c", "a", "b:c"},
-		{"", "", ""},
-	}
-	for _, tt := range tests {
-		session, paneID := splitTargetHandle(tt.handle)
-		if session != tt.wantSession {
-			t.Errorf("splitTargetHandle(%q) session = %q, want %q", tt.handle, session, tt.wantSession)
-		}
-		if paneID != tt.wantPaneID {
-			t.Errorf("splitTargetHandle(%q) paneID = %q, want %q", tt.handle, paneID, tt.wantPaneID)
-		}
-	}
-}
-
 // --- IsSafeInjectTarget tests ---
 
 func TestIsSafeInjectTarget_ClaudePrompt(t *testing.T) {

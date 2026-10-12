@@ -122,7 +122,7 @@ func TestActivateOnReceiptDecodesDurableTaskStem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(metaPath, []byte("kind=captain\nherdr_pane_id=p1\nherdr_session=w1\n"), 0644); err != nil {
+	if err := os.WriteFile(metaPath, []byte("kind=captain\nwindow=w1:p1\nsession_owner=w1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteReceipt(captainHome, taskID, termKey, "done", "complete"); err != nil {

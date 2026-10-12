@@ -13,6 +13,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -95,20 +96,31 @@ var (
 	ErrEventReaderFailure = errors.New("native observation event reader failure")
 )
 
+// agentStatuses is the one table of herdr agent-status words. Every reader of
+// a raw status (activity hint, liveness, prompt readiness, prompt queueing)
+// classifies through classifyAgentStatus.
+var agentStatuses = map[string]Activity{
+	"idle":    ActivityIdle,
+	"done":    ActivityIdle,
+	"working": ActivityBusy,
+	"blocked": ActivityBlocked,
+	"unknown": ActivityUnknown,
+}
+
+// classifyAgentStatus normalizes case and surrounding space and reports the
+// word's Activity and whether the word is a known agent status at all.
+func classifyAgentStatus(status string) (Activity, bool) {
+	a, ok := agentStatuses[strings.ToLower(strings.TrimSpace(status))]
+	if !ok {
+		return ActivityUnknown, false
+	}
+	return a, true
+}
+
 // NormalizeActivityHint maps a backend-specific wire status string to the
 // normalized Activity hint. Unknown/malformed statuses map to ActivityUnknown
 // (never idle, never busy): missing evidence is unknown, not a claim.
 func NormalizeActivityHint(status string) Activity {
-	switch status {
-	case "busy", "working":
-		return ActivityBusy
-	case "idle", "done":
-		return ActivityIdle
-	case "blocked":
-		return ActivityBlocked
-	case "unknown":
-		return ActivityUnknown
-	default:
-		return ActivityUnknown
-	}
+	a, _ := classifyAgentStatus(status)
+	return a
 }

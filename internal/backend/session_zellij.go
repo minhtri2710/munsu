@@ -92,8 +92,10 @@ type zellijPaneEntry struct {
 
 // paneID extracts the pane ID part from a window handle (session:pane or bare pane).
 func (z *ZellijBackend) paneID(windowID string) string {
-	_, p := ParseWindow(windowID)
-	return p
+	if i := strings.Index(windowID, ":"); i >= 0 {
+		return windowID[i+1:]
+	}
+	return windowID
 }
 
 // NewWindow ensures the zellij session exists and creates a new pane.
