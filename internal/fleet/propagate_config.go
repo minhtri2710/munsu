@@ -215,7 +215,8 @@ func ensureOrHealRequirement(
 	}
 
 	// Check ack state.
-	isAcked := captainStore.IsAcked(senderIdentity, envelopeID)
+	ack, err := captainStore.ReadOwnerAck(senderIdentity, envelopeID)
+	isAcked := err == nil && ack != nil
 	if envExists && isAcked {
 		// Already fully processed → no action needed.
 		return RequirementReused, NotificationSkipped,

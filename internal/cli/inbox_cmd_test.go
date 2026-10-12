@@ -281,7 +281,7 @@ func TestInboxAck_SoldierIdentifiedByItsTask(t *testing.T) {
 	if out, err := runInbox(t, "inbox", "ack", ref.Encode()); err != nil {
 		t.Fatalf("inbox ack: %v (%s)", err, out)
 	}
-	if !store.IsAcked("captain-main", env.MessageID) {
+	if !store.IsAcked(env) {
 		t.Fatal("inbox ack wrote no ack the captain queue can reconcile against")
 	}
 

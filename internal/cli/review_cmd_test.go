@@ -145,6 +145,7 @@ func TestReportRefusesAReviewTask(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "rev-1")
 	t.Setenv("MUNSU_ROLE", "soldier")
+	t.Setenv("MUNSU_TASK_KIND", "review")
 	t.Setenv("MUNSU_PARENT_STATUS", homeDir)
 
 	out, err := runTaskCommand(t, []string{"report", "done", "looks fine", "--key", "rev-1", "--ring", "no-ring"})

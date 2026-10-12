@@ -17,7 +17,7 @@ func newWakeCmd() *cobra.Command {
 		Use:   "claim",
 		Short: "Claim wakes from the queue under a lease",
 		Args:  contractNoArgs,
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+		RunE: refuseInSoldierSeat("wake claim", withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			consumer, _ := cmd.Flags().GetString("consumer")
 			leaseSec, _ := cmd.Flags().GetInt("lease-seconds")
 			limit, _ := cmd.Flags().GetInt("limit")
@@ -66,7 +66,7 @@ func newWakeCmd() *cobra.Command {
 					Wakes:        wakes,
 				},
 			})
-		}),
+		})),
 	}
 	claimCmd.Flags().String("consumer", "", "Consumer identifier (required)")
 	claimCmd.Flags().Int("lease-seconds", 60, "Lease duration in seconds")
@@ -76,7 +76,7 @@ func newWakeCmd() *cobra.Command {
 		Use:   "resolve",
 		Short: "Resolve one claimed wake with durable evidence",
 		Args:  contractNoArgs,
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+		RunE: refuseInSoldierSeat("wake resolve", withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			claimID, _ := cmd.Flags().GetString("claim-id")
 			eventID, _ := cmd.Flags().GetString("event-id")
 			summary, _ := cmd.Flags().GetString("summary")
@@ -93,7 +93,7 @@ func newWakeCmd() *cobra.Command {
 				Status:        "success",
 				Data:          newWakeAck(eventID, claimID, "resolved", unaccepted),
 			})
-		}),
+		})),
 	}
 	resolveCmd.Flags().String("claim-id", "", "Exact wake lease ID")
 	resolveCmd.Flags().String("event-id", "", "Exact wake event ID")
@@ -108,7 +108,7 @@ func newWakeCmd() *cobra.Command {
 			}
 			return nil
 		},
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+		RunE: refuseInSoldierSeat("wake ack", withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			leaseID := args[0]
 			eventIDs := args[1:]
 
@@ -131,7 +131,7 @@ func newWakeCmd() *cobra.Command {
 				Status:        "success",
 				Data:          newWakeAck(ackedCount, leaseID, state, unaccepted),
 			})
-		}),
+		})),
 	}
 
 	// Activation evidence proves new contracts are safe — drain compatibility sugar removed.

@@ -190,7 +190,7 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if req.ReceiverRank != "" && env.ReceiverRank != req.ReceiverRank {
 			continue
 		}
-		ack, err := mhome.NewStore(req.ReceiverHome).ReadAck(env.SenderIdentity, env.MessageID)
+		ack, err := mhome.NewStore(req.ReceiverHome).ReadAck(env)
 		if err != nil {
 			return nil, err
 		}
@@ -208,6 +208,7 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 			if err := mhome.NewStore(req.SenderHome).RemovePendingAfterAck(env.SenderIdentity, env.MessageID, ack); err != nil {
 				return nil, err
 			}
+			mhome.NewStore(req.ReceiverHome).RemoveAckedPayload(env)
 			_ = os.Remove(notificationAttemptPath(req.SenderHome, env.MessageID))
 			result.Accepted++
 			continue

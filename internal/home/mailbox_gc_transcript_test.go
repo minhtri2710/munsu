@@ -14,15 +14,14 @@ import (
 // writes a human-readable transcript (including the raw on-disk mailbox layout)
 // to MAILBOX_GC_TRANSCRIPT for reviewer-visible evidence.
 //
-// It proves every reader treats a tombstone-without-payload as a first-class
-// handled/absent state:
-//   - Receiver.Ack GCs the .json payload right after the .ack tombstone is
-//     made durable, keeps the tombstone forever, and replays idempotently even
-//     when the payload is already gone.
+// It proves every reader treats an ack-log entry as a first-class handled
+// state, whether or not the payload is still on disk:
+//   - Receiver.Ack appends the ack to the receiver's ack log and leaves the
+//     payload; the sender's Store.RemoveAckedPayload removes it later.
+//   - Receiver.Ack replays idempotently even when the payload is already gone.
 //   - Store.MarkSuperseded GCs the payload after the .superseded tombstone.
-//   - Receiver.Receive returns a deterministic envelope-not-found once the
-//     payload is gone but the ack exists.
-//   - Store.ListInbox skips the record and opportunistically reclaims residue.
+//   - Receiver.Receive refuses an acked message.
+//   - Store.ListInbox skips an acked record.
 //   - Store.IsAcked stays true.
 func TestMailboxGCEndToEndTranscript(t *testing.T) {
 	const transcriptPath = "MAILBOX_GC_TRANSCRIPT"
@@ -62,8 +61,8 @@ func TestMailboxGCEndToEndTranscript(t *testing.T) {
 	log("=== Mailbox handled-message garbage collection transcript ===")
 	log("")
 
-	// ---- Scenario 1: Receiver.Ack GCs payload, keeps .ack tombstone ----
-	log("--- Scenario 1: Receiver.Ack garbage-collects the payload ---")
+	// ---- Scenario 1: Receiver.Ack keeps the payload; the sender removes it ----
+	log("--- Scenario 1: Receiver.Ack logs the ack, the sender removes the payload ---")
 	r, store, homeDir := newGuardReceiver(t)
 	env, ref := deliverGuardEnvelope(t, store)
 	log("delivered envelope sender=%s msg=%s (payload on disk)", env.SenderIdentity, env.MessageID)
@@ -78,27 +77,34 @@ func TestMailboxGCEndToEndTranscript(t *testing.T) {
 	}
 	log("Receiver.Ack accepted the message")
 	listInbox("after-ack", homeDir, env.SenderIdentity)
-
-	// Payload must be gone; tombstone must remain.
+	if payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload == nil {
+		t.Fatalf("ReadEnvelope after Ack = %v, %v; want the payload kept for the sender", payload, err)
+	}
+	if listed, err := store.ListInbox(env.SenderIdentity); err != nil || len(listed) != 0 {
+		t.Fatalf("ListInbox after Ack = %d records, %v; want the acked record skipped", len(listed), err)
+	}
+	store.RemoveAckedPayload(&env)
+	log("Store.RemoveAckedPayload (the sender's reconcile) ran")
+	listInbox("after-reconcile", homeDir, env.SenderIdentity)
 	payload, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadEnvelope: %v", err)
 	}
 	if payload != nil {
-		t.Fatal("payload still present after Ack GC")
+		t.Fatal("payload still present after the sender's reconcile")
 	}
-	if !store.IsAcked(env.SenderIdentity, env.MessageID) {
-		t.Fatal("ack tombstone was removed by GC")
+	if !store.IsAcked(&env) {
+		t.Fatal("ack log entry was removed by GC")
 	}
-	log("assert: payload .json gone, .ack tombstone retained (IsAcked=true)")
+	log("assert: payload .json gone, ack log entry retained (IsAcked=true)")
 
-	// ---- Scenario 2: Receiver.Receive returns envelope-not-found ----
+	// ---- Scenario 2: Receiver.Receive refuses an acked message ----
 	log("")
-	log("--- Scenario 2: Receiver.Receive sees a handled/absent envelope ---")
-	if _, err := r.Receive(ref); err == nil || !strings.Contains(err.Error(), "envelope not found") {
-		t.Fatalf("Receive error = %v, want envelope not found", err)
+	log("--- Scenario 2: Receiver.Receive sees a handled message ---")
+	if _, err := r.Receive(ref); err == nil || !strings.Contains(err.Error(), "receive envelope already acked") {
+		t.Fatalf("Receive error = %v, want already acked", err)
 	}
-	log("Receiver.Receive returned deterministic error: %q", "envelope not found")
+	log("Receiver.Receive returned deterministic error: %q", "receive envelope already acked")
 
 	// ---- Scenario 3: Receiver.Ack replays idempotently from ack-only record ----
 	log("")

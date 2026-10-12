@@ -1242,7 +1242,7 @@ func reportOwnsStatus(homeDir, taskID, line string) bool {
 		if json.Unmarshal(data, &ev) != nil {
 			continue
 		}
-		if ack, _ := store.ReadAck(sender, ev.MessageID); ack != nil {
+		if ack, _ := store.ReadOwnerAck(sender, ev.MessageID); ack != nil {
 			if ack.PayloadHash == hash {
 				return true
 			}

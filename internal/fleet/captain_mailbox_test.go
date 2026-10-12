@@ -305,6 +305,10 @@ func TestReconcileMailboxPending_ExactAckRemovesPending(t *testing.T) {
 	if pending != nil {
 		t.Error("pending should be removed after exact ack reconcile")
 	}
+	// The captain keeps an acked payload; the General's reconcile removes it.
+	if payload, err := captainStore.ReadEnvelope(env.SenderIdentity, env.MessageID); err != nil || payload != nil {
+		t.Errorf("captain payload after reconcile = %+v, %v; want removed", payload, err)
+	}
 }
 
 // TestReconcileMailboxPending_WrongAckFailsClosed verifies that a mismatched
@@ -463,7 +467,7 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	}
 
 	// Verify ack file was written on disk.
-	ack2, err := captainStore.ReadAck("general-main", env.MessageID)
+	ack2, err := captainStore.ReadOwnerAck("general-main", env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}

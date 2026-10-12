@@ -119,7 +119,6 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newSpawnCmd())
 	root.AddCommand(newSendCmd())
 	root.AddCommand(newReportCmd())
-	root.AddCommand(newReadyCmd())
 	root.AddCommand(newConsumeReadyCmd())
 	root.AddCommand(newPeekCmd())
 	root.AddCommand(newSoldierStateCmd())

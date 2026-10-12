@@ -347,7 +347,7 @@ func TestRemoveStaleConfigRereadRecordsRetainsTombstonesWhileCollectingPayloads(
 	if payload, err := receiverStore.ReadEnvelope(senderIdentity, staleAcked.MessageID); err != nil || payload != nil {
 		t.Fatalf("stale acked payload = (%+v, %v), want absent", payload, err)
 	}
-	if !receiverStore.IsAcked(senderIdentity, staleAcked.MessageID) {
+	if ack, _ := receiverStore.ReadOwnerAck(senderIdentity, staleAcked.MessageID); ack == nil {
 		t.Fatal("stale ack tombstone was removed")
 	}
 	if payload, err := receiverStore.ReadEnvelope(senderIdentity, current.MessageID); err != nil || payload == nil {

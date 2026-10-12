@@ -24,6 +24,7 @@ func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "scout-report")
 	t.Setenv("MUNSU_ROLE", "soldier")
+	t.Setenv("MUNSU_TASK_KIND", "scout")
 	t.Setenv("MUNSU_PARENT_STATUS", homeDir)
 
 	root := NewRootCommand()

@@ -2155,7 +2155,7 @@ func (r *Runner) submitLaunch() error {
 	if r.review != nil {
 		artifact, err = buildLaunchArtifact(LaunchArtifactInput{
 			WorktreePath: r.cwd, LaunchDir: r.launchDir, Review: r.review, HomeDir: r.homeDir,
-			TaskID: r.args.ID, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
+			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
 			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
 		})
@@ -2271,7 +2271,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 		snapshotDigest = r.projectConfig.SnapshotDigest
 	}
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
-		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
+		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID, TaskKind: r.kind,
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath,

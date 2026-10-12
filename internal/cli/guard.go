@@ -112,6 +112,11 @@ func guardWarnWatcher() error {
 	if os.Getenv("MUNSU_GUARD_SKIP") == "1" {
 		return nil
 	}
+	// A soldier cannot repair its dispatcher's watcher, and its munsu commands
+	// (run on every tool call by its hooks) must not open the dispatcher's home.
+	if os.Getenv("MUNSU_ROLE") == "soldier" {
+		return nil
+	}
 
 	homeDir, err := home.Resolve(homeOverride)
 	if err != nil {

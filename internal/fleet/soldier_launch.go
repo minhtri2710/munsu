@@ -304,6 +304,7 @@ type LaunchArtifactInput struct {
 	Review         *ReviewLaunch
 	HomeDir        string
 	TaskID         string
+	TaskKind       string // MUNSU_TASK_KIND: the soldier reads its kind here, not from the home
 	SnapshotDigest string
 	LaunchBin      string
 	LaunchArgs     []string
@@ -360,6 +361,8 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	b.WriteString("export MUNSU_ROLE=soldier\n")
 	b.WriteString("export MUNSU_TASK_ID=")
 	b.WriteString(shQuote(in.TaskID))
+	b.WriteString("\nexport MUNSU_TASK_KIND=")
+	b.WriteString(shQuote(in.TaskKind))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_PARENT_STATUS=")
 	b.WriteString(shQuote(in.HomeDir))
