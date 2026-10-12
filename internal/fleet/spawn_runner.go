@@ -2049,7 +2049,7 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 			return fmt.Errorf("launch fence: %w", err)
 		}
 		if r.effectiveMode == "no-mistakes" {
-			if launch.GateRepo, launch.GateState, err = projectGate(primary); err != nil {
+			if launch.GateRepo, err = projectGate(primary); err != nil {
 				return fmt.Errorf("launch fence: %w", err)
 			}
 		}
