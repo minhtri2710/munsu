@@ -343,6 +343,107 @@ func TestResolveLaunchRefusals(t *testing.T) {
 	})
 }
 
+// A seat can replace its own file with a link. The next launch's Files entry
+// must still name the literal path, never the link's target (here the project
+// registry), so the allow rule cannot reach the target. Each role has the
+// link row and the nearest valid one, a regular file at the same name. New
+// refuses off darwin, so the rows read the resolved launch and the rule text
+// New writes from it.
+func TestFilesAreNamedLiterally(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		role Role
+		file string
+		link bool
+	}{
+		{"a soldier's ack log that is a link to the registry", RoleSoldier, "T-1.acks", true},
+		{"a soldier's ack log that is a regular file", RoleSoldier, "T-1.acks", false},
+		{"a reviewer's verdict that is a link to the registry", RoleReviewer, "R-1.verdict.json", true},
+		{"a reviewer's verdict that is a regular file", RoleReviewer, "R-1.verdict.json", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newLayout(t)
+			registry := filepath.Join(l.home, "state", "fleet-registry", "projects.json")
+			if err := os.MkdirAll(filepath.Dir(registry), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(registry, []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(l.home, "state", tt.file)
+			plant := func() error { return os.WriteFile(file, nil, 0o600) }
+			if tt.link {
+				plant = func() error { return os.Symlink(registry, file) }
+			}
+			if err := plant(); err != nil {
+				t.Fatal(err)
+			}
+			launch := l.soldier()
+			if tt.role == RoleReviewer {
+				launch = l.reviewer()
+			}
+			launch.Files = []string{file}
+			p, err := resolveLaunch(launch)
+			if err != nil {
+				t.Fatalf("resolveLaunch: %v", err)
+			}
+			var rule strings.Builder
+			allowFiles(&rule, p.files...)
+			if !slices.Equal(p.files, []string{file}) || !strings.Contains(rule.String(), quote(file)) || strings.Contains(rule.String(), "projects.json") {
+				t.Fatalf("files = %q, rule = %s; want only the literal %s named", p.files, rule.String(), file)
+			}
+		})
+	}
+}
+
+// A home root that is a link escapes the profile's denies, which name it, for
+// both roles (G1058, G1122). Each role has a blocked row and the nearest
+// allowed one.
+func TestLinkedHomeRootRefusals(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		role   Role
+		root   string
+		link   bool
+		refuse bool
+	}{
+		{"a soldier whose state root is a link", RoleSoldier, "state", true, true},
+		{"a soldier whose journal root is a link", RoleSoldier, ".journal", true, true},
+		{"a soldier whose home roots are directories", RoleSoldier, "state", false, false},
+		{"a reviewer whose state root is a link", RoleReviewer, "state", true, true},
+		{"a reviewer whose data root is a link", RoleReviewer, "data", true, true},
+		{"a reviewer whose home roots are directories", RoleReviewer, "state", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newLayout(t)
+			root := filepath.Join(l.home, tt.root)
+			if tt.link {
+				real := filepath.Join(l.root, tt.root+"-real")
+				if err := os.Mkdir(real, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(root); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(real, root); err != nil {
+					t.Fatal(err)
+				}
+			}
+			launch := l.soldier()
+			if tt.role == RoleReviewer {
+				launch = l.reviewer()
+			}
+			_, err := resolveLaunch(launch)
+			if !tt.refuse && err != nil {
+				t.Fatalf("resolveLaunch: %v", err)
+			}
+			if tt.refuse && (err == nil || !strings.Contains(err.Error(), "home root "+root+" is a symlink or not a directory")) {
+				t.Fatalf("err = %v, want the linked %s refused", err, tt.root)
+			}
+		})
+	}
+}
+
 func TestResolveStateDirRefusals(t *testing.T) {
 	l := newLayout(t)
 	state := filepath.Join(l.home, "state")
@@ -355,6 +456,18 @@ func TestResolveStateDirRefusals(t *testing.T) {
 		{"the home's state root itself", func(x *Launch) { x.HarnessStateDir = state }, "is not a proper subdirectory"},
 		{"outside home/state", func(x *Launch) { x.HarnessStateDir = filepath.Join(l.home, "data", "T.pi-agent") }, "is not a proper subdirectory"},
 		{"sibling sharing the state prefix", func(x *Launch) { x.HarnessStateDir = state + "-x" }, "is not a proper subdirectory"},
+		// G1086: a link would be resolved and allowed wherever it points inside
+		// state/; the accepted row below is its nearest valid case.
+		{"a link to another state dir", func(x *Launch) {
+			other := filepath.Join(state, "T-9.pi-agent")
+			if err := os.Mkdir(other, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			x.HarnessStateDir = filepath.Join(state, "T-2.pi-agent")
+			if err := os.Symlink(other, x.HarnessStateDir); err != nil {
+				t.Fatal(err)
+			}
+		}, "harness state dir " + filepath.Join(state, "T-2.pi-agent") + " is a symlink"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

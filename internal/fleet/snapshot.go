@@ -328,7 +328,7 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 
 		// LastStatus is a diagnostic display line (never state truth).
 		if statusPath, err := mhome.StatusFilePath(taskHome, id); err == nil {
-			if data, err := os.ReadFile(statusPath); err == nil {
+			if data, err := mhome.ReadRegularFile(statusPath); err == nil {
 				lines := strings.TrimSpace(string(data))
 				if lines != "" {
 					parts := strings.Split(lines, "\n")

@@ -4,11 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // fenceFixture is a primary checkout with one linked worktree and a home.
@@ -100,6 +104,7 @@ func TestProbeFenceRefusals(t *testing.T) {
 	})
 	t.Run("a fence that cannot be built refuses the launch", func(t *testing.T) {
 		r := f.runner("direct-PR")
+		t.Chdir(t.TempDir()) // spawn's meta lock lands under the relative home
 		r.homeDir = "relative/home"
 		allowUnfenced(t, r)
 		err := r.probeFence(BoundWorktree{path: f.worktree})
@@ -181,6 +186,55 @@ func TestProbeFenceOnAHostWithoutAFence(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "launch fence refused the launch") ||
 				!strings.Contains(err.Error(), "fence-unsupported allow") || r.fenceRecord.Reason != "" {
 				t.Fatalf("err = %v record = %+v, want the unfenced launch refused", err, r.fenceRecord)
+			}
+		})
+	}
+}
+
+// A soldier's fence Files are its status file and ack log, and for a scout its
+// current generation's report; the launch creates the meta lock its status
+// append locks, which the fence lets it lock but not create.
+func TestSoldierFilesAreItsOwnHomeFiles(t *testing.T) {
+	for _, tt := range []struct {
+		kind   string
+		report bool
+	}{
+		{taskauthority.KindShip, false},
+		{taskauthority.KindScout, true},
+	} {
+		t.Run(tt.kind, func(t *testing.T) {
+			homeDir := t.TempDir()
+			if _, err := home.Init(homeDir); err != nil {
+				t.Fatal(err)
+			}
+			auth := canonicalAtHome(t, homeDir)
+			req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: mustTaskID(t, "task-1"),
+				Owner: "general", Description: "d", Kind: tt.kind, Reason: "test"}
+			if tt.report {
+				req.ScoutScope = "s"
+			}
+			op, err := domain.NewOperation(mustOpID(t, "op-create"), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := auth.Create(op, req); err != nil {
+				t.Fatal(err)
+			}
+			r := NewRunner(Args{ID: "task-1", HomeDir: homeDir, Authority: auth})
+			r.homeDir, r.kind = homeDir, tt.kind
+			got, err := r.soldierFiles()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{filepath.Join(homeDir, "state", "task-1.status"), filepath.Join(homeDir, "state", "task-1.acks")}
+			if tt.report {
+				want = append(want, filepath.Join(homeDir, "data", "task-1", "report-g1.md"))
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("soldierFiles = %q, want %q", got, want)
+			}
+			if _, err := os.Stat(filepath.Join(homeDir, "state", "task-1.meta.lock")); err != nil {
+				t.Fatalf("meta lock: %v", err)
 			}
 		})
 	}

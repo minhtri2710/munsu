@@ -30,9 +30,9 @@ type ChangeItem struct {
 var ErrInDoubt = errors.New("home: commit durable but not yet applied")
 
 // ErrJournalRoot refuses a change item outside state, the one root a journal
-// writes: every canonical writer commits state documents. A fenced soldier can
-// write .journal, so a record naming config or projects would otherwise be
-// applied by the next unfenced Open.
+// writes: every canonical writer commits state documents. A record naming
+// config or projects would otherwise be applied by the next unfenced Open. No
+// seat's fence allows .journal; this refusal holds even if one did.
 //
 // Human words (domain.Words): grantor the Human, channel
 // supervisor-relay:dialog, words=selected, G1085: "Quy tắc chung (Recommended):

@@ -12,9 +12,10 @@ import (
 // binary strips this same path so its own git runs unfenced
 // (cli.stripShimDirFromPath, which matches this suffix rather than rederiving
 // the absolute dir, so the strip does not depend on MUNSU_HOME). It sits beside
-// the home's state/ tree, not inside it: a soldier writes state/, and no seat
-// may chmod, rename or replace the shim dir or any directory above it. It is
-// never inside a worktree, so it needs no launch-envelope manifest entry.
+// the home's state/ tree, not inside it: a soldier writes its own files in
+// state/, and no seat may chmod, rename or replace the shim dir or any
+// directory above it. It is never inside a worktree, so it needs no
+// launch-envelope manifest entry.
 const GitShimBinRelPath = "git-shim/bin"
 
 func gitShimDir(homeDir string) string {

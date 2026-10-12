@@ -47,7 +47,7 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if src, err := os.ReadFile(statusPath); err == nil {
+	if src, err := home.ReadRegularFile(statusPath); err == nil {
 		if err := os.WriteFile(filepath.Join(backupDir, filepath.Base(statusPath)), src, 0600); err != nil {
 			return nil, err
 		}

@@ -339,12 +339,14 @@ func evaluateGitArgvSafety(checkPath string, gitArgs []string) (bool, string) {
 // read from the canonical Task Authority (current-truth only): the v1 aggregate
 // store is gone, and an uninitialized home fails closed. Current truth never
 // carries a stale generation's binding, so a mutation target on a superseded
-// generation is refused by the binding checks below.
+// generation is refused by the binding checks below. Only a soldier seat sets
+// MUNSU_TASK_ID, and its fence refuses journal recovery's writes, so the
+// binding is read as last committed (committedTaskAuthority).
 func evaluateParsedGitMutation(homeDir, taskID string, parsed gitCommandSafety) (bool, string) {
 	if homeDir == "" || taskID == "" {
 		return true, "git mutation requires active munsu task worktree binding"
 	}
-	auth, err := taskAuthorityForRead(homeDir)
+	auth, err := committedTaskAuthority(homeDir)
 	if err != nil {
 		return true, "git mutation worktree binding unavailable: " + err.Error()
 	}

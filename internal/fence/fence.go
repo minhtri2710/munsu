@@ -31,13 +31,14 @@ const (
 
 // Launch carries the facts one fenced launch needs. Every path must be absolute
 // and exist (except Files and HarnessStateDir, whose parent must exist); New
-// resolves symlinks.
+// resolves symlinks, for Files in the parent only.
 type Launch struct {
 	Role    Role
 	Harness string // harness kind; selects the harness state directories
-	// Home is the munsu home. A soldier's state/, data/, .journal/ and .lock/
-	// stay writable. A reviewer's home is never writable: it is named only so
-	// HarnessStateDir can be validated against it, and may be empty without one.
+	// Home is the munsu home. No seat writes its state/, data/, .journal/ or
+	// .lock/: a soldier writes only its own Files there (its status, ack log
+	// and current scout report) and its HarnessStateDir. A reviewer may leave
+	// it empty when it has no HarnessStateDir.
 	Home    string
 	Primary string // primary checkout; never writable
 	// Worktree is the soldier's bound worktree (writable) or the reviewer's
@@ -46,7 +47,7 @@ type Launch struct {
 	GitDir    string   // the worktree's git dir: <CommonDir>/worktrees/<name>
 	CommonDir string   // the repository's common git dir
 	Branch    string   // soldier only: the task-local branch, e.g. mu/<task>
-	Files     []string // exact files also writable, with their atomic .tmp.<pid>.<hex> siblings
+	Files     []string // exact files also writable, with their atomic .tmp.<pid>.<hex> siblings; a soldier's own home files
 	// HarnessStateDir is the per-launch harness state directory (the task's
 	// PI_CODING_AGENT_DIR for pi, its CLAUDE_CONFIG_DIR for claude). It is
 	// writable under both roles: a proper subdirectory of Home's state/, never a

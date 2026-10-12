@@ -347,10 +347,12 @@ func ReportPath(homeDir, id string, gen taskauthority.Generation) string {
 }
 
 // ReportExists checks whether the generation's report exists for the given
-// task ID.
+// task ID as a regular file: the scout writes it, so it can put a link, a FIFO
+// or a directory there. Human words (domain.Words): G1086, quoted at
+// home.ReadRegularFile.
 func ReportExists(homeDir, id string, gen taskauthority.Generation) bool {
-	_, err := os.Stat(ReportPath(homeDir, id, gen))
-	return err == nil
+	fi, err := os.Lstat(ReportPath(homeDir, id, gen))
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // isReportName reports whether name is a generation-scoped report name:

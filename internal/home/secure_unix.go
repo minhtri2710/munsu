@@ -8,8 +8,14 @@ import (
 )
 
 // secureFile establishes owner-private protection on an already-created file,
-// equivalent to Unix 0600. It fails closed if the mode cannot be set.
+// equivalent to Unix 0600. It fails closed if the mode cannot be set. A file
+// already at 0600 is left alone: a fenced soldier's fence refuses even a
+// same-mode chmod of the lock and state files its status append passes
+// through.
 func secureFile(path string) error {
+	if fi, err := os.Stat(path); err == nil && fi.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0600 {
+		return nil
+	}
 	return os.Chmod(path, 0600)
 }
 
@@ -27,6 +33,11 @@ func restrictDir(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
+	}
+	// Already owner-private: no chmod, which a fenced soldier's fence refuses
+	// on state/ even at the same mode (see secureFile).
+	if info.Mode()&(0o077|os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0 {
+		return nil
 	}
 	return os.Chmod(path, info.Mode().Perm()&0o700)
 }
