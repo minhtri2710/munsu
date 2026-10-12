@@ -19,8 +19,9 @@ func newDoctorCmd() *cobra.Command {
 		Long: `Run bootstrap diagnostics and print fix commands for each issue.
 
 Hard-required tools (doctor exits non-zero if missing):
-  git, session backend (tmux or herdr), and at least one coding harness
-  (pi, claude, agy, etc.) if soldier-harness detection fails.
+  git, session backend (herdr, or tmux: tmux has no prompt support yet, so
+  wake, mailbox, nudge, uplink and captain prompts need herdr), and at least
+  one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
   treehouse, no-mistakes, gh-axi, gh, and GitHub auth.
@@ -164,7 +165,7 @@ Use --role for role-specific integration matrix:
 			}
 
 			if isMissing(result.MissingTools, "herdr") {
-				fmt.Println("herdr: optional (needed only if not using tmux)")
+				fmt.Println("herdr: optional with tmux, but tmux has no prompt support yet (wake, mailbox, nudge, uplink and captain prompts need herdr)")
 			}
 
 			if exitCode != 0 {

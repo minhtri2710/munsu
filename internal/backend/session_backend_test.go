@@ -10,11 +10,11 @@ import (
 )
 
 // TestBackendIdentity is the one table for the backend identity owner,
-// requireIdentity, through both of its callers. The tmux binary is present and
-// the env markers name tmux and herdr, so a refused row cannot be a missing
-// binary or an auto-detection.
+// requireIdentity, and the supported set, through both callers. Every named
+// binary is present and the env markers name tmux and herdr, so a refused row
+// cannot be a missing binary or an auto-detection.
 func TestBackendIdentity(t *testing.T) {
-	testutil.PrependPath(t, fakeExecutables(t, "tmux"))
+	testutil.PrependPath(t, fakeExecutables(t, "tmux", "herdr", "zellij", "cmux", "orca"))
 	t.Setenv("TMUX", "/tmp/tmux-socket")
 	t.Setenv("HERDR_ENV", "1")
 	home := t.TempDir()
@@ -25,21 +25,33 @@ func TestBackendIdentity(t *testing.T) {
 	bound := func(meta map[string]string) func() (Backend, string, error) {
 		return func() (Backend, string, error) { return BackendForTask(home, meta) }
 	}
+	const supported = "(supported: herdr, tmux (tmux has no prompt support yet))"
+	const setHint = "; set one with: munsu config set backend herdr|tmux"
+	const unbound = "; munsu cannot operate this endpoint: close it in its own multiplexer"
 	tests := []struct {
-		name string
-		call func() (Backend, string, error)
-		want string // "" allows
+		name  string
+		call  func() (Backend, string, error)
+		want  string // refusal text; "" allows
+		allow string // backend name an allowed call resolves
 	}{
-		{"Resolve empty", resolve(""), `no session backend identity: ""`},
-		{"Resolve auto", resolve("auto"), `no session backend identity: "auto"`},
-		{"Resolve unknown", resolve("nonexistent"), `unknown session backend: "nonexistent"`},
-		{"Resolve tmux", resolve("tmux"), ""},
-		{"BackendForTask nil meta", bound(nil), `meta["backend"]: no session backend identity: ""`},
-		{"BackendForTask meta without backend", bound(map[string]string{"window": "@test"}), `meta["backend"]: no session backend identity: ""`},
-		{"BackendForTask empty backend", bound(map[string]string{"backend": ""}), `meta["backend"]: no session backend identity: ""`},
-		{"BackendForTask auto", bound(map[string]string{"backend": "auto"}), `meta["backend"]: no session backend identity: "auto"`},
-		{"BackendForTask unknown", bound(map[string]string{"backend": "nonexistent"}), `unknown bound session backend: "nonexistent"`},
-		{"BackendForTask tmux", bound(map[string]string{"backend": "tmux"}), ""},
+		{"Resolve empty", resolve(""), `no session backend identity: "" is not an explicit backend ` + supported + "; no auto-detection" + setHint, ""},
+		{"Resolve auto", resolve("auto"), `no session backend identity: "auto"`, ""},
+		{"Resolve unknown", resolve("nonexistent"), `unknown session backend: "nonexistent" ` + supported + setHint, ""},
+		{"Resolve zellij", resolve("zellij"), `unknown session backend: "zellij" ` + supported + setHint, ""},
+		{"Resolve cmux", resolve("cmux"), `unknown session backend: "cmux" ` + supported + setHint, ""},
+		{"Resolve orca", resolve("orca"), `unknown session backend: "orca" ` + supported + setHint, ""},
+		{"Resolve tmux", resolve("tmux"), "", "tmux"},
+		{"Resolve herdr", resolve("herdr"), "", "herdr"},
+		{"BackendForTask nil meta", bound(nil), `meta["backend"]: no session backend identity: ""`, ""},
+		{"BackendForTask meta without backend", bound(map[string]string{"window": "@test"}), `meta["backend"]: no session backend identity: ""`, ""},
+		{"BackendForTask empty backend", bound(map[string]string{"backend": ""}), `meta["backend"]: no session backend identity: "" is not an explicit backend ` + supported + "; no auto-detection", ""},
+		{"BackendForTask auto", bound(map[string]string{"backend": "auto"}), `meta["backend"]: no session backend identity: "auto"`, ""},
+		{"BackendForTask unknown", bound(map[string]string{"backend": "nonexistent"}), `unknown bound session backend: "nonexistent" ` + supported + unbound, ""},
+		{"BackendForTask zellij", bound(map[string]string{"backend": "zellij"}), `unknown bound session backend: "zellij" ` + supported + unbound, ""},
+		{"BackendForTask cmux", bound(map[string]string{"backend": "cmux"}), `unknown bound session backend: "cmux" ` + supported + unbound, ""},
+		{"BackendForTask orca", bound(map[string]string{"backend": "orca"}), `unknown bound session backend: "orca" ` + supported + unbound, ""},
+		{"BackendForTask tmux", bound(map[string]string{"backend": "tmux"}), "", "tmux"},
+		{"BackendForTask herdr", bound(map[string]string{"backend": "herdr"}), "", "herdr"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,8 +65,10 @@ func TestBackendIdentity(t *testing.T) {
 				}
 				return
 			}
-			if _, ok := bk.(*TmuxBackend); err != nil || !ok || name != "tmux" {
-				t.Fatalf("got %T, %q, %v; want the tmux backend", bk, name, err)
+			_, isTmux := bk.(*TmuxBackend)
+			_, isHerdr := bk.(*HerdrBackend)
+			if err != nil || name != tt.allow || isTmux != (tt.allow == "tmux") || isHerdr != (tt.allow == "herdr") {
+				t.Fatalf("got %T, %q, %v; want the %s backend", bk, name, err, tt.allow)
 			}
 		})
 	}
