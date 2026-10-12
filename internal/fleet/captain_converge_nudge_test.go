@@ -58,7 +58,7 @@ func TestConvergeSubmitsFastForwardAndPendingNudges(t *testing.T) {
 	if endpoint.calls != 1 {
 		t.Fatalf("fast-forward nudge calls = %d, want 1", endpoint.calls)
 	}
-	assertConvergeNudgeApplied(t, parent, id, updatedCommit)
+	assertConvergeNudgeCleared(t, parent, id)
 
 	// A pending marker left by an earlier failed send is retried even when no
 	// new fast-forward occurs in this converge cycle.
@@ -76,10 +76,10 @@ func TestConvergeSubmitsFastForwardAndPendingNudges(t *testing.T) {
 	if endpoint.calls != 2 {
 		t.Fatalf("pending nudge retry calls = %d, want 2 total", endpoint.calls)
 	}
-	assertConvergeNudgeApplied(t, parent, id, updatedCommit)
+	assertConvergeNudgeCleared(t, parent, id)
 }
 
-func assertConvergeNudgeApplied(t *testing.T, parent, id, commit string) {
+func assertConvergeNudgeCleared(t *testing.T, parent, id string) {
 	t.Helper()
 	marker, err := readNudgeMarker(parent, id)
 	if err != nil {
@@ -87,16 +87,6 @@ func assertConvergeNudgeApplied(t *testing.T, parent, id, commit string) {
 	}
 	if marker != nil {
 		t.Fatalf("nudge marker remains after acknowledged submission: %v", marker)
-	}
-	meta, err := home.ReadMeta(parent, taskIDForCaptain(id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta["applied_commit"] != commit {
-		t.Fatalf("applied_commit = %q, want %q", meta["applied_commit"], commit)
-	}
-	if meta["applied_digest"] == "" {
-		t.Fatal("applied_digest is empty after acknowledged nudge")
 	}
 }
 

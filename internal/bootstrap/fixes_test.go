@@ -18,7 +18,6 @@ func TestFixCommand(t *testing.T) {
 		{"tmux", "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
 		{"fuser", "Install psmisc: apt install psmisc  |  dnf install psmisc (macOS ships fuser)"},
 		{"herdr", "Install herdr from the herdr repository, or set HERDR_ENV=1 if already installed"},
-		{"zellij", "Install zellij: brew install zellij  |  see https://zellij.dev/documentation/installation" + "\n\tExperimental: set backend zellij in the fleet base config or --backend zellij. Not auto-detected."},
 	}
 
 	for _, tt := range tests {

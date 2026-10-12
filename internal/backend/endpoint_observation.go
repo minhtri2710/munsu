@@ -1,6 +1,5 @@
 // Package backend provides terminal/session resolution, session adapters
-// (tmux, herdr, zellij, cmux, orca), worktree pool management, and home tag
-// helpers.
+// (tmux, herdr), worktree pool management, and home tag helpers.
 //
 // Endpoint observation is the typed, orthogonal runtime diagnostic of one
 // exact bound endpoint. It is NOT Task lifecycle truth: the
@@ -180,14 +179,10 @@ func (s ObservationSource) Valid() bool {
 	return s >= SourceProbe && s <= SourceEvent
 }
 
-// EndpointRef identifies one exact bound endpoint for a typed probe. Incarnation
-// is the opaque launch-operation provenance token minted and persisted by Fleet.
-// An adapter carries the requested reference but never attests the
-// incarnation itself; the field is populated by Fleet's freshness authorization.
+// EndpointRef identifies one exact bound endpoint for a typed probe.
 type EndpointRef struct {
-	Backend     string
-	Handle      string
-	Incarnation string
+	Backend string
+	Handle  string
 }
 
 // EndpointObservation is the typed, orthogonal runtime diagnostic of one exact

@@ -19,7 +19,6 @@ func TestRetirementRules(t *testing.T) {
 		{"scout unresolved decision holds", scoutHoldsBlock, scoutHoldsAllow},
 		{"completed delivery outcome required", completedOutcomeBlock, completedOutcomeAllow},
 		{"review names no worktree, even with force", reviewWorktreeBlock, reviewWorktreeAllow},
-		{"review names no branch, force overrides", reviewBranchBlock, reviewBranchForceAllow},
 		{"abort needs the endpoint proven absent", abortLiveEndpointBlock, abortAbsentEndpointAllow},
 		{"stale teardown never retires a reopened generation", staleRetryBlock, explicitGenerationAllow},
 		{"terminal cleanup claim is never resumed", terminalCleanupClaimBlock, activeCleanupClaimAllow},

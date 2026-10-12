@@ -2246,9 +2246,8 @@ func hasSurfaceDiff(home, before, after string) bool {
 
 // sendNudge sends a short re-read message to a captain via its
 // session-backed endpoint. It reads task meta, validates endpoint
-// identity, sends the message, removes the pending marker, and
-// updates applied instruction identity only after success.
-// On failure, the marker remains.
+// identity, sends the message, re-validates the binding, and removes the
+// pending marker only after success. On failure, the marker remains.
 func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := home.ReadMeta(parentHome, taskID)
@@ -2320,19 +2319,17 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 		return fmt.Errorf("%s: send not acknowledged (status=%s) — marker remains", sm.ID, result.Status)
 	}
 
-	// After successful prompt submission, update durable meta with actual applied
-	// commit and deterministic digest BEFORE removing home. The two fields are
-	// overlaid onto the meta as it stands now, not onto the snapshot validated
-	// above: the send is a network round-trip, and a concurrent writer that
-	// landed during it must not be erased. The lock covers only this overlay,
-	// never the send.
+	// After successful prompt submission, re-validate the captain binding
+	// against the meta as it stands now, not the snapshot validated above: the
+	// send is a network round-trip, and a replacement captain may have bound
+	// during it. The rewrite changes no key; it bumps the .meta mtime.
+	//
+	// Constraint: .meta mtime is the staleness witness for AcceptOrRefuseStale
+	// (orchestrator/supervision_check.go), and an acknowledged nudge has always
+	// advanced it; removal condition: task check-staleness-canonical-witness
+	// moves the staleness rule to a canonical witness.
 	if metaErr := home.UpdateMeta(parentHome, taskID, func(current map[string]string) error {
-		if err := validateCaptainBinding(current, sm, binding); err != nil {
-			return err
-		}
-		current["applied_commit"] = marker["commit"]
-		current["applied_digest"] = marker["instructions"]
-		return nil
+		return validateCaptainBinding(current, sm, binding)
 	}); metaErr != nil {
 		return fmt.Errorf("%s: meta update failed after send (marker remains): %v", sm.ID, metaErr)
 	}
@@ -2346,7 +2343,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 
 // retryNudge checks for a pending parent-home nudge marker and attempts
 // to resolve the endpoint and send the re-read message. On success,
-// the marker is removed and applied instruction identity updated.
+// the marker is removed.
 // On failure, the marker remains for the next converge cycle.
 func retryNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	marker, err := readNudgeMarker(parentHome, sm.ID)

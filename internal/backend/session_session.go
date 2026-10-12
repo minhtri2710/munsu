@@ -90,6 +90,13 @@ const (
 	MetaTabID        = "tab_id"
 )
 
+// supportedBackends is the one statement of backend support that refusals
+// print. herdr is the only backend that can submit prompts.
+const supportedBackends = "herdr, tmux (tmux has no prompt support yet)"
+
+// setBackendHint names the command that sets a backend identity.
+const setBackendHint = "set one with: munsu config set backend herdr|tmux"
+
 // constructBackend is the ONE private construction path for session adapters:
 // it verifies the REQUESTED capability health (binary present on PATH) and
 // constructs the matching base adapter. Resolve and BackendForTask both
@@ -97,7 +104,7 @@ const (
 // capability FAILS CLOSED at resolution with a typed failure — never deferred
 // to first exec.
 //
-// Supported: "tmux", "herdr", "zellij", "cmux", "orca" (experimental).
+// Supported: "herdr", "tmux".
 // Distinguishable failures: unknown identity ("unknown session backend: …")
 // and missing binary ("<name>: not found on PATH").
 func constructBackend(name string) (Backend, error) {
@@ -112,23 +119,8 @@ func constructBackend(name string) (Backend, error) {
 			return nil, err
 		}
 		return &TmuxBackend{}, nil
-	case "zellij":
-		if _, err := lookBackendBin("zellij"); err != nil {
-			return nil, err
-		}
-		return NewZellijBackend(""), nil
-	case "cmux":
-		if _, err := lookBackendBin("cmux"); err != nil {
-			return nil, err
-		}
-		return newCmuxBackend(), nil
-	case "orca":
-		if _, err := lookBackendBin("orca"); err != nil {
-			return nil, err
-		}
-		return NewOrcaBackend(), nil
 	default:
-		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", name)
+		return nil, fmt.Errorf("unknown session backend: %q (supported: %s); %s", name, supportedBackends, setBackendHint)
 	}
 }
 
@@ -136,7 +128,7 @@ func constructBackend(name string) (Backend, error) {
 // Resolve and BackendForTask: empty and "auto" name no backend.
 func requireIdentity(name string) error {
 	if name == "" || name == "auto" {
-		return fmt.Errorf("no session backend identity: %q is not an explicit backend (tmux, herdr, zellij, cmux, orca); no auto-detection", name)
+		return fmt.Errorf("no session backend identity: %q is not an explicit backend (supported: %s); no auto-detection", name, supportedBackends)
 	}
 	return nil
 }
@@ -153,7 +145,7 @@ func requireIdentity(name string) error {
 // by spawn to NewWindow. See BackendForTask for session binding from task metadata.
 func Resolve(name string) (Backend, string, error) {
 	if err := requireIdentity(name); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("%w; %s", err, setBackendHint)
 	}
 
 	bk, err := constructBackend(name)
@@ -225,16 +217,7 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 	case "tmux":
 		bk, err := constructBackend("tmux")
 		return bk, "tmux", err
-	case "zellij":
-		bk, err := constructBackend("zellij")
-		return bk, "zellij", err
-	case "cmux":
-		bk, err := constructBackend("cmux")
-		return bk, "cmux", err
-	case "orca":
-		bk, err := constructBackend("orca")
-		return bk, "orca", err
 	default:
-		return nil, "", fmt.Errorf("unknown bound session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", bkName)
+		return nil, "", fmt.Errorf("unknown bound session backend: %q (supported: %s); munsu cannot operate this endpoint: close it in its own multiplexer", bkName, supportedBackends)
 	}
 }

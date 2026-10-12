@@ -2,14 +2,12 @@ package fleet
 
 import (
 	"crypto/sha256"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // writeUnreadableMeta writes a .meta file whose first lines are valid keys and
@@ -30,50 +28,6 @@ func writeUnreadableMeta(t *testing.T, homeDir, taskID string) string {
 		t.Fatalf("writing unreadable meta: %v", err)
 	}
 	return p
-}
-
-// TestProjectAttestationEvidence_UnreadableMetaIsNotErased proves the projection
-// refuses to write when the existing .meta cannot be read for a reason other than
-// absence, instead of replacing the file with its own key alone.
-func TestProjectAttestationEvidence_UnreadableMetaIsNotErased(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-unreadable-meta"
-	p := writeUnreadableMeta(t, homeDir, taskID)
-
-	before, readErr := os.ReadFile(p)
-	if readErr != nil {
-		t.Fatalf("reading meta before projection: %v", readErr)
-	}
-	beforeHash := sha256.Sum256(before)
-	err := projectAttestationEvidence(homeDir, taskID, taskauthority.Generation(1))
-
-	raw, readErr := os.ReadFile(p)
-	if readErr != nil {
-		t.Fatalf("reading meta back: %v", readErr)
-	}
-	afterHash := sha256.Sum256(raw)
-	t.Logf("attestation projection error: %v; meta SHA-256 before=%x after=%x", err, beforeHash, afterHash)
-	if !strings.Contains(string(raw), "project=existing-project") {
-		t.Error("pre-existing project key was erased by the projection")
-	}
-	if !strings.Contains(string(raw), "worktree=/tmp/wt") {
-		t.Error("pre-existing worktree key was erased by the projection")
-	}
-	if strings.Contains(string(raw), "attestation_generation") {
-		t.Error("projection wrote its own key over an unreadable meta")
-	}
-	if string(before) != string(raw) || beforeHash != afterHash {
-		t.Fatalf("refused projection changed meta: before=%x after=%x", beforeHash, afterHash)
-	}
-	t.Logf("attempted projection key absent: attestation_generation")
-
-	if err == nil {
-		t.Fatal("projectAttestationEvidence returned nil for an unreadable .meta")
-	}
-	var typed *AttestationProjectionError
-	if !errors.As(err, &typed) {
-		t.Fatalf("projection error = %v, want *AttestationProjectionError", err)
-	}
 }
 
 func TestWriteTaskMetaUnreadableMetaIsNotErased(t *testing.T) {

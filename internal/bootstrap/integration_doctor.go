@@ -122,7 +122,7 @@ func checkSessionBackend() StatusEntry {
 		return StatusEntry{
 			Subsystem: "session_backend",
 			Status:    StatusCurrent,
-			Detail:    "tmux found on PATH",
+			Detail:    "tmux found on PATH (no prompt support yet: wake, mailbox, nudge, uplink and captain prompts need herdr)",
 		}
 	}
 	// Check herdr env
@@ -136,8 +136,8 @@ func checkSessionBackend() StatusEntry {
 	return StatusEntry{
 		Subsystem: "session_backend",
 		Status:    StatusAbsent,
-		Detail:    "no session backend (tmux or herdr) detected",
-		RepairCmd: "install tmux: brew install tmux | apt install tmux",
+		Detail:    "no session backend (herdr, or tmux without prompt support) detected",
+		RepairCmd: "run munsu inside herdr (HERDR_ENV=1), or install tmux (no prompt support yet): brew install tmux | apt install tmux",
 	}
 }
 

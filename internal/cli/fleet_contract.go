@@ -47,7 +47,7 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 		return incomplete, fmt.Errorf("bound endpoint identity is incomplete")
 	}
 	switch endpoint.Backend {
-	case "tmux", "herdr", "zellij", "cmux", "orca":
+	case "tmux", "herdr":
 	default:
 		return fleet.EndpointStatus{
 			Lifecycle:      fleet.LifecycleUnknown,
@@ -148,7 +148,7 @@ func runFleetSnapshot(cmd *cobra.Command, ctx Ctx) error {
 		}
 		row := Soldier{TaskID: entry.ID, Status: status}
 		if fields["branch"] {
-			row.Branch = branchFor(map[string]string{"worktree": entry.Worktree})
+			row.Branch = branchFor(entry.Worktree)
 		}
 		soldiers = append(soldiers, row)
 	}

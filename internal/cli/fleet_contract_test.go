@@ -89,12 +89,35 @@ func TestCLIEndpointProbePreservesBoundMetadata(t *testing.T) {
 }
 
 func TestCLIEndpointProbeRejectsIncompleteAndUnknownIdentity(t *testing.T) {
-	probe := cliEndpointProbe{}
-	if _, err := probe.ProbeEndpoint(fleet.EndpointRef{}); err == nil {
-		t.Fatal("expected incomplete error")
-	}
-	if _, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "unknown", Handle: "p", Home: "/home"}); err == nil {
-		t.Fatal("expected backend error")
+	for _, tc := range []struct {
+		name    string
+		backend string
+		handle  string
+		want    string // "" allows
+	}{
+		{"incomplete identity", "", "", "bound endpoint identity is incomplete"},
+		{"unknown blocks", "unknown", "p", `unsupported bound backend "unknown"`},
+		{"zellij blocks", "zellij", "p", `unsupported bound backend "zellij"`},
+		{"cmux blocks", "cmux", "p", `unsupported bound backend "cmux"`},
+		{"orca blocks", "orca", "p", `unsupported bound backend "orca"`},
+		{"herdr allows", "herdr", "p", ""},
+		{"tmux allows", "tmux", "p", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := cliEndpointProbe{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+				return &captainProbeBackend{paneAlive: true, agentAlive: true}, tc.backend, nil
+			}}
+			_, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: tc.backend, Handle: tc.handle, Home: "/home"})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("ProbeEndpoint(%s) = %v, want acceptance", tc.backend, err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("ProbeEndpoint(%s) = %v, want %q", tc.backend, err, tc.want)
+			}
+		})
 	}
 }
 

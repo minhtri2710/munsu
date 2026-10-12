@@ -371,6 +371,18 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	if err != nil {
 		t.Fatalf("read task meta: %v", err)
 	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spawned, err := auth.Get(tid)
+	if err != nil {
+		t.Fatalf("read task after spawn: %v", err)
+	}
+	if spawned.Launch == nil {
+		t.Fatal("spawned task has no launch intent")
+	}
+	digest := spawned.Launch.SnapshotDigest
 	// The model and the snapshot digest are named only by the config surface
 	// this policy may read (published snapshot for captain-mediated, fleet
 	// base for general-direct). Reading the other surface resolves the other
@@ -380,14 +392,12 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	}
 	switch {
 	case tc.digest != "":
-		if meta["config_snapshot_digest"] != tc.digest {
-			t.Fatalf("meta config_snapshot_digest = %q, want the assigned published snapshot %q",
-				meta["config_snapshot_digest"], tc.digest)
+		if digest != tc.digest {
+			t.Fatalf("launch snapshot digest = %q, want the assigned published snapshot %q", digest, tc.digest)
 		}
 	default:
-		got := meta["config_snapshot_digest"]
-		if got == "" || got == workflowPublishedDigest {
-			t.Fatalf("meta config_snapshot_digest = %q, want a fleet-base-resolved digest", got)
+		if digest == "" || digest == workflowPublishedDigest {
+			t.Fatalf("launch snapshot digest = %q, want a fleet-base-resolved digest", digest)
 		}
 	}
 	if meta["window"] == "" || meta["worktree"] == "" {
@@ -426,10 +436,6 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		"MUNSU_TASK_ID": taskID, "MUNSU_PARENT_STATUS": spawnHome,
 	}, "report", "done", "findings recorded", "--key", taskID, "--ring", "no-ring")
 
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	agg, err := auth.Get(tid)
 	if err != nil {
 		t.Fatal(err)
@@ -557,7 +563,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		t.Fatalf("phase after teardown = %s, want retired", retired.Phase)
 	}
 	t.Logf("workflow evidence: policy=%s model=%s digest=%s parent=%s endpoint(create=%d submit=%d ready-captures=%d) receipt-acked=%t relay-open=%t pending(before=%d after-replay=%d final=%d) supervision-emitted=%t activations=%d teardown(phase=%s returned=%d disposed=%d)",
-		tc.policy, meta["model"], meta["config_snapshot_digest"], tc.parentCaptainID,
+		tc.policy, meta["model"], digest, tc.parentCaptainID,
 		endpoints.creates, endpoints.submits, endpoints.captures, receiptAcked, relayOpen,
 		pendingBeforeReplay, pendingAfterReplay, pendingFinal, supervisionEmitted,
 		activation.attempts, retired.Phase, teardown.returned, teardown.disposed)

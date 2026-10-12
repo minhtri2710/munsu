@@ -730,8 +730,8 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 	}
 }
 
-// reviewTaskRetire retires a canonical review task whose meta carries extra.
-func reviewTaskRetire(t *testing.T, extra map[string]string, force bool) error {
+// reviewTaskRetire force-retires a canonical review task whose meta carries extra.
+func reviewTaskRetire(t *testing.T, extra map[string]string) error {
 	t.Helper()
 	homeDir := t.TempDir()
 	auth := mergeTestAuth(t, homeDir, "ship-1")
@@ -749,33 +749,20 @@ func reviewTaskRetire(t *testing.T, extra map[string]string, force bool) error {
 	if err := mhome.WriteMeta(homeDir, "review-1", meta); err != nil {
 		t.Fatal(err)
 	}
-	_, err := RetireTask(Options{HomeDir: homeDir, ID: "review-1", Force: force}, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	_, err := RetireTask(Options{HomeDir: homeDir, ID: "review-1", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	return err
 }
 
 func reviewWorktreeBlock(t *testing.T) {
-	err := reviewTaskRetire(t, map[string]string{"worktree": "/wt"}, true)
+	err := reviewTaskRetire(t, map[string]string{"worktree": "/wt"})
 	if err == nil || !strings.Contains(err.Error(), "meta names a worktree; a review owns none") {
 		t.Fatalf("RetireTask(force) of a review naming a worktree = %v, want the worktree refusal", err)
 	}
 }
 
 func reviewWorktreeAllow(t *testing.T) {
-	if err := reviewTaskRetire(t, nil, true); err != nil {
+	if err := reviewTaskRetire(t, nil); err != nil {
 		t.Fatalf("RetireTask(force) of a review naming no worktree: %v", err)
-	}
-}
-
-func reviewBranchBlock(t *testing.T) {
-	err := reviewTaskRetire(t, map[string]string{"branch": "mu/x"}, false)
-	if err == nil || !strings.Contains(err.Error(), "meta names a branch; a review owns none") {
-		t.Fatalf("RetireTask of a review naming a branch = %v, want the branch refusal", err)
-	}
-}
-
-func reviewBranchForceAllow(t *testing.T) {
-	if err := reviewTaskRetire(t, map[string]string{"branch": "mu/x"}, true); err != nil {
-		t.Fatalf("RetireTask(force) of a review naming a branch: %v", err)
 	}
 }
 

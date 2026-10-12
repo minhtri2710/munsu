@@ -82,7 +82,7 @@ func newBackendCmd() *cobra.Command {
 		}),
 	}
 	configureContractCommand(capabilitiesCmd)
-	capabilitiesCmd.Flags().String("backend", "", "Backend name (tmux|herdr)")
+	capabilitiesCmd.Flags().String("backend", "", "Backend name (herdr|tmux; tmux has no prompt support yet)")
 	cmd.AddCommand(capabilitiesCmd)
 	return cmd
 }
@@ -143,7 +143,7 @@ func newTaskObserveCmd() *cobra.Command {
 				result.Description = state.Description
 			}
 			if fields["branch"] && hasMeta {
-				result.Branch = branchFor(meta)
+				result.Branch = branchFor(meta["worktree"])
 			}
 			if fields["no_mistakes_step"] {
 				result.NoMistakesStep = state.NoMistakesRunStep
@@ -321,11 +321,7 @@ func contractFields(cmd *cobra.Command, allowed []string) (map[string]bool, erro
 	return fields, nil
 }
 
-func branchFor(meta map[string]string) string {
-	if branch := meta["branch"]; branch != "" {
-		return branch
-	}
-	worktreePath := meta["worktree"]
+func branchFor(worktreePath string) string {
 	if worktreePath == "" {
 		return ""
 	}

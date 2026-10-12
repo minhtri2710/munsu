@@ -550,31 +550,6 @@ func TestWaitForHarnessReadyRefusesUnreadableObservation(t *testing.T) {
 	}
 }
 
-// The attestation reference is the projected evidence of the accepted
-// capability attestation. A missing attestation or a missing home binding
-// would project a malformed reference, so acceptance refuses first.
-func TestValidateAttestationReferenceRefusesIncompleteReference(t *testing.T) {
-	if err := validateAttestationReference(nil); err == nil {
-		t.Fatal("acceptance passed with no capability attestation")
-	} else if !strings.Contains(err.Error(), "requires a capability attestation") {
-		t.Fatalf("error = %v, want the missing-attestation refusal", err)
-	}
-
-	att := &CapabilityAttestation{Project: "test-proj", Home: "  "}
-	if err := validateAttestationReference(att); err == nil {
-		t.Fatal("acceptance passed with no home binding")
-	} else if !strings.Contains(err.Error(), "requires a home binding") {
-		t.Fatalf("error = %v, want the missing-home refusal", err)
-	}
-
-	// Control: the project binding was already present, so repairing only the
-	// home binding is accepted.
-	att.Home = "/homes/general"
-	if err := validateAttestationReference(att); err != nil {
-		t.Fatalf("complete reference refused: %v", err)
-	}
-}
-
 func TestCaptainBacklogAuthorityHelperUnknownPhaseRefuses(t *testing.T) {
 	r := &Runner{homeDir: t.TempDir()}
 	err := r.checkCaptainBacklogAuthorityForPhase("task-unknown", taskauthority.Phase("unknown"))
