@@ -29,6 +29,25 @@ type ChangeItem struct {
 // expected revision.
 var ErrInDoubt = errors.New("home: commit durable but not yet applied")
 
+// ErrJournalRoot refuses a change item outside state, the one root a journal
+// writes: every canonical writer commits state documents. A fenced soldier can
+// write .journal, so a record naming config or projects would otherwise be
+// applied by the next unfenced Open.
+//
+// Human words (domain.Words): grantor the Human, channel
+// supervisor-relay:dialog, words=selected, G1085: "Quy tắc chung (Recommended):
+// Seat có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
+// fence sẽ chạy, và không gửi input vào session ngoài session của nó."
+var ErrJournalRoot = errors.New("home: a journal writes only the state root")
+
+// journalItemPath returns the contained, no-follow path a change item writes.
+func (h *Home) journalItemPath(it ChangeItem) (string, error) {
+	if it.Root != RootState {
+		return "", fmt.Errorf("%w: item root %q", ErrJournalRoot, it.Root)
+	}
+	return h.Path(it.Root, it.Key)
+}
+
 // commitStep runs before each step of Commit's first pass (every item apply,
 // the revision write, the record removal); tests replace it to inject a
 // failure or crash at any cut after the record is durable.
@@ -104,7 +123,7 @@ func (h *Home) Commit(lk *Lock, txnID string, expectedRevision uint64, items []C
 	}
 	// Validate every item's containment before writing any journal intent.
 	for _, it := range items {
-		if _, err := h.Path(it.Root, it.Key); err != nil {
+		if _, err := h.journalItemPath(it); err != nil {
 			return 0, err
 		}
 	}
@@ -307,7 +326,12 @@ func (h *Home) validateRecord(scope, path string, rec journalRecord) error {
 		return fmt.Errorf("home: journal record %s has no items", name)
 	}
 	for _, it := range rec.Items {
-		if _, err := h.Path(it.Root, it.Key); err != nil {
+		if _, err := h.journalItemPath(it); err != nil {
+			if errors.Is(err, ErrJournalRoot) {
+				// The record name is the writer's choice: quote it for the shell.
+				return fmt.Errorf("home: journal record %s writes root %q; a journal writes only state; remove it: rm '%s'",
+					name, it.Root, strings.ReplaceAll(path, "'", `'\''`))
+			}
 			return fmt.Errorf("home: journal record %s: %w", name, err)
 		}
 	}
@@ -353,15 +377,8 @@ func decodeJournalRecord(path string, data []byte) (journalRecord, error) {
 }
 
 func (h *Home) applyItem(it ChangeItem) error {
-	rootPath, err := h.RootFor(it.Root)
+	path, err := h.journalItemPath(it)
 	if err != nil {
-		return err
-	}
-	path, err := joinContained(rootPath, it.Key)
-	if err != nil {
-		return err
-	}
-	if err := verifyNoFollow(rootPath, path); err != nil {
 		return err
 	}
 	return canonicalAtomicWrite(path, it.Data)
