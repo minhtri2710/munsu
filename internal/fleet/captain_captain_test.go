@@ -2382,9 +2382,10 @@ func TestUnregister_MissingIDIdempotent(t *testing.T) {
 
 // TestInFlightSoldierIDs pins that the roster is the task's .meta and the
 // kind is the canonical task's: .meta carries no kind for a soldier, a .meta
-// with no canonical task is not a soldier, and a task added and never spawned
-// (task add writes a key-free .meta) is counted. A canonical record that
-// cannot be read refuses the scan instead of dropping the task.
+// with no canonical task is not a soldier, a task added and never spawned
+// (task add writes a key-free .meta) is counted, and a canonical task with no
+// .meta (handed off or reopened, never spawned here) is not. A canonical
+// record that cannot be read refuses the scan instead of dropping the task.
 func TestInFlightSoldierIDs(t *testing.T) {
 	dir := t.TempDir()
 	seedTaskInHome(t, dir, "TASK-1", taskauthority.KindShip)
@@ -2401,6 +2402,7 @@ func TestInFlightSoldierIDs(t *testing.T) {
 	}
 	seedTaskInHome(t, dir, "TASK-6", taskauthority.KindShip) // added, never spawned: key-free .meta
 	os.WriteFile(filepath.Join(dir, "state", "TASK-6.meta"), nil, 0644)
+	seedTaskInHome(t, dir, "TASK-7", taskauthority.KindShip) // canonical, no .meta
 
 	ids, err := inFlightSoldierIDs(dir)
 	if err != nil {

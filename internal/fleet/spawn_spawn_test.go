@@ -469,11 +469,11 @@ func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckBacklogAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
-	// Working without live meta/window must pass this pre-check; beginLaunchIntent decides.
+func TestCheckBacklogAuthority_PassesWorkingWithoutBoundEndpoint(t *testing.T) {
+	// Working with no bound endpoint must pass this pre-check; beginLaunchIntent decides.
 	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: t.TempDir()}
 	if err := r.checkBacklogAuthority(); err != nil {
-		t.Fatalf("working without live meta must pass the pre-check, got: %v", err)
+		t.Fatalf("working without a bound endpoint must pass the pre-check, got: %v", err)
 	}
 }
 

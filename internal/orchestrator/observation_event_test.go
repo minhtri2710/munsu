@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // fakeEventSource is a scriptable ObservationEventSource for tests.
@@ -693,7 +693,7 @@ func TestBetterOutcome(t *testing.T) {
 // probe invocation is attributable to the event lane (event-to-reprobe order).
 func TestEventLane_EventToReprobe(t *testing.T) {
 	homeDir := t.TempDir()
-	mustWriteMeta(t, homeDir, "task-1", map[string]string{"backend": "herdr", "window": "w:p", "home": homeDir})
+	seedBoundSoldier(t, homeDir, "task-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "w:p"})
 
 	sig := backend.ObservationSignal{
 		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
@@ -878,8 +878,8 @@ func TestEventLane_ReaderFailureBackoff(t *testing.T) {
 // it must not race on cursor state or wake markers.
 func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 	homeDir := t.TempDir()
-	mustWriteMeta(t, homeDir, "task-1", map[string]string{"backend": "herdr", "window": "w:p", "home": homeDir})
-	mustWriteMeta(t, homeDir, "task-2", map[string]string{"backend": "herdr", "window": "w:q", "home": homeDir})
+	seedBoundSoldier(t, homeDir, "task-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "w:p"})
+	seedBoundSoldier(t, homeDir, "task-2", taskauthority.EndpointBinding{Backend: "herdr", Handle: "w:q"})
 
 	// Event reader: emits a fresh-cursor signal each wait so the lane keeps
 	// delivering wake hints concurrently with polling.
@@ -1026,23 +1026,4 @@ type raceTaskStatePort struct{}
 
 func (raceTaskStatePort) ReadTaskState(homeDir, taskID string) (*ObservedTaskState, error) {
 	return &ObservedTaskState{Status: "working:" + taskID}, nil
-}
-
-func mustWriteMeta(t *testing.T, homeDir, id string, kv map[string]string) {
-	t.Helper()
-	stateDir := filepath.Join(homeDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	var b []byte
-	for k, v := range kv {
-		b = append(b, []byte(k+"="+v+"\n")...)
-	}
-	metaPath, err := home.MetaFilePath(homeDir, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metaPath, b, 0644); err != nil {
-		t.Fatal(err)
-	}
 }

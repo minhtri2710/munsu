@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestLogcycleObservation_EmitsStaleTaskAndAge(t *testing.T) {
@@ -63,15 +64,12 @@ func TestRunCycleWithProbeAndSenderLogsObservation(t *testing.T) {
 }
 
 // TestCycleObservation_ScannedCount asserts the watcher scan count equals the
-// number of task .meta files examined for staleness in one cycle. Deterministic
-// with a fixed set of alive tasks: none wake, all are counted.
+// number of live, bound tasks examined for staleness in one cycle.
+// Deterministic with a fixed set of alive tasks: none wake, all are counted.
 func TestCycleObservation_ScannedCount(t *testing.T) {
 	home := t.TempDir()
-	for i := 0; i < 4; i++ {
-		mustWriteMeta(t, home, "task-"+string(rune('a'+i)), map[string]string{
-			"backend": "herdr",
-			"window":  "w:" + string(rune('a'+i)),
-		})
+	for i := range 4 {
+		seedBoundSoldier(t, home, "task-"+string(rune('a'+i)), taskauthority.EndpointBinding{Backend: "herdr", Handle: "w:" + string(rune('a'+i))})
 	}
 
 	// aliveTaskProbe reports every pane alive, so no task wakes.
@@ -113,10 +111,7 @@ func TestStaleAge_Exact(t *testing.T) {
 // fixed observation clock and verifies that age remains observation-only.
 func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 	home := t.TempDir()
-	mustWriteMeta(t, home, "task-z", map[string]string{
-		"backend": "herdr",
-		"window":  "w:z",
-	})
+	seedBoundSoldier(t, home, "task-z", taskauthority.EndpointBinding{Backend: "herdr", Handle: "w:z"})
 	// No status file -> a dead pane is not general-relevant, not absorbable.
 	seedAge := 5 * time.Second
 	ref := time.Unix(1700000000, 0)
@@ -178,10 +173,7 @@ func TestCycleObservation_CheckDuplicateSuppression(t *testing.T) {
 // fingerprint is stable.
 func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 	home := t.TempDir()
-	mustWriteMeta(t, home, "task-d", map[string]string{
-		"backend": "herdr",
-		"window":  "w:d",
-	})
+	seedBoundSoldier(t, home, "task-d", taskauthority.EndpointBinding{Backend: "herdr", Handle: "w:d"})
 	if mhome.HasQueuedWakes(home) {
 		t.Fatal("queue should start empty")
 	}

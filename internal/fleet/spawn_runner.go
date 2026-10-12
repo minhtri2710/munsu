@@ -604,7 +604,7 @@ func (r *Runner) resolveDispatchPolicy() error {
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
 // the task has a canonical Task Authority record that is not done or blocked.
-// It refuses a task whose meta names a live window or pane, so a duplicate live
+// It refuses a task with a live soldier session (liveSession), so a duplicate live
 // execution never starts; --force skips the whole check and is an emergency
 // bypass only. This check passes a queued or a working task; whether spawn may
 // proceed is decided later by beginLaunchIntent, which requires queued and
@@ -618,19 +618,25 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.spawnRole != "captain" {
 		return nil
 	}
-	if window := recordedWindow(r.homeDir, r.args.ID); window != "" {
-		return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
-	}
 	agg, err := r.taskAggregate()
 	if err != nil {
 		return err
 	}
+	if window := liveSession(r.homeDir, r.args.ID, agg); window != "" {
+		return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
+	}
 	return r.checkCaptainBacklogAuthorityForPhase(r.args.ID, agg.Phase)
 }
 
-// recordedWindow returns the live-session window a task's meta records, or ""
-// when it records none.
-func recordedWindow(homeDir, taskID string) string {
+// liveSession returns the window of a task's live soldier session: its
+// canonical endpoint is bound and its .meta still names the window, else "".
+// Constraint: the .meta half only narrows the canonical one, so a bound task
+// whose .meta lost its window passes, as it did when .meta alone decided;
+// removal condition: Human words on refusing that task.
+func liveSession(homeDir, taskID string, agg taskauthority.Aggregate) string {
+	if agg.Endpoint == nil {
+		return ""
+	}
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return ""
@@ -824,31 +830,20 @@ func (r *Runner) checkBacklogAuthority() error {
 		return err
 	}
 
-	// Check already-live: existing meta with a window or pane means a soldier session exists
-	metaExists := recordedWindow(r.homeDir, r.args.ID) != ""
-
 	// State-based checks. Running `munsu task start` first is refused: spawn
-	// needs a queued task. A working task without live meta passes this check
-	// only so beginLaunchIntent can resume a launch that already holds its
-	// endpoint; it refuses any other working task.
+	// needs a queued task. A working task with no live session passes this
+	// check and beginLaunchIntent decides it. A queued task that holds only a
+	// pre-bind acquired endpoint passes too: beginLaunchIntent re-enters the
+	// launch and re-adopts the pane.
 	switch agg.Phase {
 	case taskauthority.PhaseBlocked:
 		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", r.args.ID, r.args.ID)
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("lifecycle guard: task %q is done; reopen it with 'munsu task reopen %s' before spawning", r.args.ID, r.args.ID)
-	case taskauthority.PhaseWorking:
-		// Allow when no live session; refuse only duplicate live execution.
-		if metaExists {
-			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
-		}
-		return nil
 	}
-
-	// Live session without matching state still refuses (stale meta after teardown failure).
-	if metaExists {
-		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
+	if window := liveSession(r.homeDir, r.args.ID, agg); window != "" {
+		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
 	}
-
 	return nil
 }
 
@@ -908,11 +903,12 @@ func (r *Runner) preflightNoMistakes() error {
 // attempt consumes the durable reservation identity). It is re-entrant under
 // the committed launch intent: when the aggregate already holds the durable
 // worktree binding (recovery after a crash), the bound path is adopted and no
-// provider call happens. A recovery of an acquired-but-unbound reservation is
-// passed to the provider, which must return the SAME reservation-owned
-// worktree (git fallback: deterministic reservation-keyed path) or fail
-// closed (treehouse: no reservation-keyed recovery) — never allocate a
-// replacement. The binding identity is verified at bindWorktree.
+// provider call happens. A re-entry with no binding is passed to the provider
+// as a recovery: it returns the SAME reservation-owned worktree (git fallback:
+// deterministic reservation-keyed path), acquires afresh a reservation nothing
+// holds (treehouse: lease-holder lookup), or fails closed (treehouse: a held
+// reservation it cannot re-acquire) — never a replacement for a held lease.
+// The binding identity is verified at bindWorktree.
 func (r *Runner) acquireWorktree() error {
 	if r.args.Authority != nil {
 		if taskID, err := domain.NewTaskID(r.args.ID); err == nil {

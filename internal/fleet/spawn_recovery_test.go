@@ -396,8 +396,9 @@ func TestRecordedEndpointWaitsForGuardWithoutResubmission(t *testing.T) {
 // process may still be running, and gives both ways out: fix the cause and
 // re-run `munsu spawn <id> <project>`, or stop the pane by hand. Each row then
 // takes only those steps. Where the re-run resumes, it adopts the same endpoint
-// and works the task; where the cause persists (the task stays blocked, .meta
-// names the window) the re-run is refused with the existing refusal's own reason.
+// and works the task; where the cause persists (the task stays blocked) the
+// re-run is refused with the existing refusal's own reason. The .meta window a
+// failed run leaves behind decides nothing: only a bound endpoint is live.
 // The submitted launch command executes the real launch artifact, so the harness
 // launch count is the number of soldier processes.
 func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
@@ -484,11 +485,12 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			wantSubmits: 1,
 		},
 		{
-			// The meta path is a directory, so reading it fails; the file never
-			// names a window, so the re-run is admitted. The read error is an
-			// *fs.PathError for the read of that path on every platform: os.File.Read
-			// wraps every failure through File.wrapErr (os/file.go), whatever errno
-			// the platform gives for reading a directory.
+			// The meta path is a directory, so writing the projection fails;
+			// the task is still queued with no bound endpoint, so the re-run is
+			// admitted. The read error is an *fs.PathError for the read of that
+			// path on every platform: os.File.Read wraps every failure through
+			// File.wrapErr (os/file.go), whatever errno the platform gives for
+			// reading a directory.
 			name: "task meta",
 			inject: func(f *launchFixture) func() {
 				path, err := home.MetaFilePath(f.homeDir, f.taskID)
@@ -511,6 +513,38 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				var pe *fs.PathError
 				return perr == nil && errors.As(err, &pe) && pe.Op == "read" && pe.Path == path
 			},
+			wantSubmits: 1,
+		},
+		{
+			// A spawn hold lands after the .meta projection names the window,
+			// so the final bind refuses. The operator releases the hold and the
+			// re-run re-adopts the pane and binds it.
+			name: "final bind",
+			inject: func(f *launchFixture) func() {
+				hold := taskauthority.CanonicalAddHoldRequest{
+					HomeID: f.auth.HomeID(), HoldID: "hold-bind", Scope: taskauthority.DispatchHoldScope{TaskIDs: []string{f.taskID}},
+					Actions: []taskauthority.DispatchAction{taskauthority.DispatchActionSpawn}, Reason: "freeze",
+				}
+				probes := 0
+				f.endpoints.onProbe = func() error {
+					if probes++; probes == 3 {
+						if _, err := f.auth.AddHold(mustFleetOperation(f.t, "op-hold-bind-"+f.taskID, hold), hold); err != nil {
+							f.t.Fatal(err)
+						}
+					}
+					return nil
+				}
+				return func() {
+					release := taskauthority.CanonicalReleaseHoldRequest{
+						HomeID: f.auth.HomeID(), HoldID: "hold-bind", Reason: "resume",
+						Words: domain.Words{Grantor: "beo", Channel: "supervisor-relay:typed", Quote: "munsu: dong y"},
+					}
+					if _, err := f.auth.ReleaseHold(mustFleetOperation(f.t, "op-hold-release-"+f.taskID, release), release); err != nil {
+						f.t.Fatal(err)
+					}
+				}
+			},
+			wantCause:   func(_ *launchFixture, err error) bool { return errors.Is(err, taskauthority.ErrDispatchHeld) },
 			wantSubmits: 1,
 		},
 	} {
@@ -543,7 +577,7 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			}
 
 			if tc.refusal != "" {
-				// The cause persists (the task stays blocked, .meta names the window).
+				// The cause persists (the task stays blocked).
 				before := f.aggregate().Revision
 				if _, err := rf.run(); err == nil || !strings.Contains(err.Error(), tc.refusal) {
 					t.Fatalf("re-run = %v, want the refusal %q", err, tc.refusal)
@@ -887,7 +921,7 @@ func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
 		t.Fatalf("beginLaunchIntent: %v", err)
 	}
 	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-	fakeTreehouseOnPath(t, logPath)
+	fakeTreehouseOnPath(t, logPath, "[]")
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
@@ -904,51 +938,75 @@ func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
 	}
 }
 
-// TestLaunchWorktreeTreehouseRecoveryFailsClosed proves the treehouse
-// provider fails closed on recovery of an acquired-but-unbound reservation
+// TestLaunchWorktreeTreehouseReentry decides a treehouse re-entry from the
+// lease holders, not from the committed intent alone. A first run that
+// committed BeginSpawn and failed before acquiring (or returned what it
+// acquired) left no lease, so the re-entry acquires the reservation as the
+// first attempt does; a reservation a pooled worktree still holds fails closed
 // instead of allocating a replacement (the CLI has no reservation-keyed
 // get/recover — DEPENDENCY_REQUEST evidence).
-func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
-	f := newLaunchFixture(t, "wt-treehouse-recover")
-	if err := f.runner.beginLaunchIntent(); err != nil {
-		t.Fatalf("beginLaunchIntent: %v", err)
-	}
-	// Re-entry (intent pre-existed) is detected by a second begin.
-	if err := f.runner.beginLaunchIntent(); err != nil {
-		t.Fatalf("re-entry beginLaunchIntent: %v", err)
-	}
-	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-	fakeTreehouseOnPath(t, logPath)
-	if err := f.runner.acquireWorktree(); err == nil {
-		t.Fatal("treehouse recovery must fail closed, got nil")
-	} else if !strings.Contains(err.Error(), "DEPENDENCY_REQUEST") {
-		t.Fatalf("error = %v, want DEPENDENCY_REQUEST fail-closed", err)
-	}
-	logData, err := os.ReadFile(logPath)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(logData), "get") {
-		t.Fatalf("treehouse recovery must never allocate: %q", string(logData))
+func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		holders string // `treehouse status --json`; RES is the launch reservation
+		refused bool
+	}{
+		{"reservation still held", `[{"path":"/pool/held","lease_holder":"RES"}]`, true},
+		{"reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchFixture(t, "wt-treehouse-reentry")
+			if err := runLaunchPhases(f, "begin"); !errors.Is(err, errCrashSimulated) {
+				t.Fatalf("first run: %v", err)
+			}
+			if err := f.runner.beginLaunchIntent(); err != nil || !f.runner.launchReentry {
+				t.Fatalf("re-entry beginLaunchIntent = %v, reentry = %v; want the committed intent re-entered", err, f.runner.launchReentry)
+			}
+			res := f.runner.wtReservationID()
+			logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
+			fakeTreehouseOnPath(t, logPath, strings.ReplaceAll(tc.holders, "RES", res))
+			err := f.runner.acquireWorktree()
+			logData, readErr := os.ReadFile(logPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			log := string(logData)
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "DEPENDENCY_REQUEST") {
+					t.Fatalf("error = %v, want DEPENDENCY_REQUEST fail-closed", err)
+				}
+				if strings.Contains(log, "get") {
+					t.Fatalf("treehouse recovery of a held reservation must never allocate: %q", log)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("re-entry with no held lease refused: %v", err)
+			}
+			if !strings.Contains(log, "get") || !strings.Contains(log, "--lease-holder "+res) {
+				t.Fatalf("re-entry did not acquire the launch reservation as lease holder: %q", log)
+			}
+		})
 	}
 }
 
 // fakeTreehouseOnPath installs a fake treehouse CLI that appends its arguments
-// to logPath and returns an existing directory as the acquired worktree, and
-// prepends it to PATH for the duration of the test.
+// to logPath, answers `status` with holders and every other call with an
+// existing directory as the acquired worktree, and prepends it to PATH for the
+// duration of the test.
 //
 // Without it the provider finds no treehouse on windows, falls back to real
 // `git worktree`, and the test measures git rather than the fake it installed
 // (#549 group 8); testutil.FakeOnPath owns why a shell script needs a companion
 // to be visible there. PATH is prepended to rather than replaced because the
 // fallback this test is trying not to reach still needs to find git.
-func fakeTreehouseOnPath(t *testing.T, logPath string) {
+func fakeTreehouseOnPath(t *testing.T, logPath, holders string) {
 	t.Helper()
 	wt := t.TempDir()
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nmkdir -p %q\nprintf '%%s\\n' %q\n", logPath, wt, wt)
+	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = status ]; then printf '%%s\\n' '%s'; exit 0; fi\nmkdir -p %q\nprintf '%%s\\n' %q\n", logPath, holders, wt, wt)
 	testutil.FakeOnPath(t, "treehouse", content)
 }
 
