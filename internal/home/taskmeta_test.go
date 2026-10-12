@@ -20,7 +20,7 @@ func setHomeEnv(t *testing.T, path string) {
 
 func TestDurableFilePathValidatesSuffixWithoutRejectingDotExtensions(t *testing.T) {
 	dir := t.TempDir()
-	for _, suffix := range []string{".meta", ".receipt"} {
+	for _, suffix := range []string{".meta", ".report-cursor"} {
 		path, err := DurableFilePath(dir, "task-1", suffix)
 		if err != nil {
 			t.Fatalf("DurableFilePath suffix %q: %v", suffix, err)

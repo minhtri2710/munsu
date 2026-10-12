@@ -2183,11 +2183,11 @@ func TestSafeFF_ParentFeatureCheckoutStillTargetsDefaultBranch(t *testing.T) {
 
 func TestConverge_EmptyRegistry(t *testing.T) {
 	parent := t.TempDir()
-	_, err := Converge(parent, nil, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: nil, Mailbox: nil})
+	_, err := Converge(parent, nil, ConvergeCapabilities{Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Mailbox: nil})
 	if err != nil {
 		t.Fatalf("Converge(nil) error: %v", err)
 	}
-	_, err = Converge(parent, []Info{}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: nil, Mailbox: nil})
+	_, err = Converge(parent, []Info{}, ConvergeCapabilities{Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Mailbox: nil})
 	if err != nil {
 		t.Fatalf("Converge(empty) error: %v", err)
 	}
@@ -2198,7 +2198,7 @@ func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 
 	_, err := Converge(parent, []Info{
 		{ID: "test-sm", Home: "/nonexistent"},
-	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -2239,7 +2239,7 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	_, err := Converge(parent, []Info{
 		{ID: "sm-alpha", Home: sm1},
 		{ID: "sm-beta", Home: sm2},
-	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Mailbox: &captainTestMailboxSender{}})
 
 	if err != nil {
 		t.Fatalf("converge should succeed for current worktree homes: %v", err)
@@ -2275,7 +2275,7 @@ func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	// But registry says "wrong-id".
 	_, err := Converge(parent, []Info{
 		{ID: "wrong-id", Home: smHome},
-	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("expected error for ID mismatch")
 	}

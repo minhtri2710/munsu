@@ -91,7 +91,7 @@ func TestShipBriefTemplateLocalOnly(t *testing.T) {
 }
 
 func TestScoutBriefTemplate(t *testing.T) {
-	tmpl := mustScoutBrief(t, "test-scout-1", "munsu", "direct-PR", false, "security", 0, 1)
+	tmpl := mustScoutBrief(t, "test-scout-1", "munsu", "direct-PR", false, "security", 1)
 
 	checks := []string{
 		"Scout brief: test-scout-1",
@@ -366,7 +366,7 @@ func TestShipBriefContainsStatusReporting(t *testing.T) {
 }
 
 func TestScoutBriefHasReportContract(t *testing.T) {
-	tmpl := mustScoutBrief(t, "scout-r", "repo", "direct-PR", false, "", 0, 1)
+	tmpl := mustScoutBrief(t, "scout-r", "repo", "direct-PR", false, "", 1)
 
 	if !strings.Contains(tmpl, "Write your findings") {
 		t.Error("scout brief should include report instructions")
@@ -419,7 +419,7 @@ func TestShipBriefModeLinePresent(t *testing.T) {
 func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 	for name, tmpl := range map[string]string{
 		"ship":  mustShipBrief(t, "t1", "repo", "no-mistakes", false),
-		"scout": mustScoutBrief(t, "s1", "repo", "direct-PR", false, "", 0, 1),
+		"scout": mustScoutBrief(t, "s1", "repo", "direct-PR", false, "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}") {
@@ -442,7 +442,7 @@ func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 func TestScoutBriefUnknownModeFailsLoud(t *testing.T) {
 	for _, mode := range []string{"", "direct-pr", "no-mistake", "yolo"} {
 		t.Run(mode, func(t *testing.T) {
-			tmpl, err := scoutBriefTemplate("s1", "repo", mode, false, "", 0, 1)
+			tmpl, err := scoutBriefTemplate("s1", "repo", mode, false, "", 1)
 			if err == nil {
 				t.Fatalf("scout brief rendered for unknown delivery mode %q", mode)
 			}
@@ -470,9 +470,9 @@ func TestScaffoldRefusesUnknownScoutMode(t *testing.T) {
 	}
 }
 
-func mustScoutBrief(t *testing.T, id, repo, mode string, yolo bool, scope string, budget int64, gen taskauthority.Generation) string {
+func mustScoutBrief(t *testing.T, id, repo, mode string, yolo bool, scope string, gen taskauthority.Generation) string {
 	t.Helper()
-	tmpl, err := scoutBriefTemplate(id, repo, mode, yolo, scope, budget, gen)
+	tmpl, err := scoutBriefTemplate(id, repo, mode, yolo, scope, gen)
 	if err != nil {
 		t.Fatalf("scoutBriefTemplate(%q): %v", mode, err)
 	}

@@ -2,12 +2,6 @@ package fleet
 
 import "github.com/minhtri2710/munsu/internal/home"
 
-type noopCaptainContinuity struct{}
-
-func (noopCaptainContinuity) Reconcile(string, CaptainEndpoint) (CaptainContinuityResult, error) {
-	return CaptainContinuityResult{}, nil
-}
-
 type noopCaptainMessaging struct{}
 
 func (noopCaptainMessaging) ReconcilePending(string, CaptainEndpoint, home.BoundSender) error {

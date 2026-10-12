@@ -301,7 +301,9 @@ func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
 
 type countingRetirementJournals struct{ finalized int }
 
-func (j *countingRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (j *countingRetirementJournals) VerifyRetirementContinuity(string, string, string) error {
+	return nil
+}
 func (j *countingRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
 	return nil, nil
 }
@@ -705,7 +707,7 @@ func TestRetirementClaimBarrierBeforeWorktreeReturn(t *testing.T) {
 // individual filesystem removals are in progress.
 type barrierJournals struct{ onFinalize func() }
 
-func (barrierJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (barrierJournals) VerifyRetirementContinuity(string, string, string) error { return nil }
 func (barrierJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
 	return nil, nil
 }
@@ -1978,7 +1980,7 @@ func canonicalScoutTestAuth(t *testing.T, homeDir, taskID string) *taskauthority
 	}
 	req := taskauthority.CanonicalCreateRequest{
 		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Owner: "general", Description: "Ready", Kind: taskauthority.KindScout,
-		ScoutScope: "investigate the requested question", ScoutRuntimeBudgetSecs: 300, Reason: "test",
+		ScoutScope: "investigate the requested question", Reason: "test",
 	}
 	if _, err := auth.Create(mustOp(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatalf("Create(%s): %v", taskID, err)

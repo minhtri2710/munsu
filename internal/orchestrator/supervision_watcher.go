@@ -36,8 +36,8 @@ type WakeReason struct {
 	Kind    string // signal, stale, check
 	TaskIDs []string
 	Message string
-	// ReportOwned marks a signal whose status line an uplink report already
-	// delivered as its own wake; the cycle records it but enqueues no second one.
+	// ReportOwned marks a signal whose status line is a report: its report wake
+	// is derived from the line, so the cycle records it but enqueues no second.
 	ReportOwned bool
 }
 
@@ -47,8 +47,8 @@ type TaskEndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
 
+// WatcherHooks is the per-cycle work the composition root adds to the watcher.
 type WatcherHooks interface {
-	Reconcile(homeDir string, startup bool) error
 	Activate(homeDir string)
 }
 
@@ -484,7 +484,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 			Kind:        "signal",
 			TaskIDs:     []string{match.TaskID},
 			Message:     match.LastLine,
-			ReportOwned: reportOwnsStatus(homeDir, match.TaskID, match.LastLine),
+			ReportOwned: domain.IsReportLine(match.LastLine),
 		}
 		if !reason.ReportOwned {
 			if r := repeatedFailureReason(homeDir, match.TaskID, lv, reason); r != nil {
@@ -714,11 +714,6 @@ func runRecovery(homeDir string, sender home.BoundSender, hooks WatcherHooks) er
 			}
 		}
 	}
-
-	// Recovery step 2: reconcile mailbox uplinks once.
-	if err := hooks.Reconcile(homeDir, true); err != nil {
-		fmt.Fprintf(os.Stderr, "mailbox reconcile recovery: %v\n", err)
-	}
 	return nil
 }
 
@@ -750,8 +745,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		return false, err
 	}
 
-	// Snapshot recovery state before the call — prevents double invocation
-	// of the mailbox reconcile hook on cycle 1 (recovery handles startup).
+	// Snapshot recovery state before the call: the activation hook runs on
+	// cycles after the first (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
 
 	// Run one-shot recovery on first cycle for this home.
@@ -769,22 +764,13 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		fmt.Fprintf(os.Stderr, "process-event recovery: %d re-announced\n", reannounced)
 	}
 
-	// Per-cycle mailbox uplink recovery (cycles after startup only;
-	// startup recovery already handles the first cycle via runRecovery).
-	// The underlying ReconcileCaptainHook recovery is idempotent, so
-	// calling it every cycle is safe. On error, the error is logged and
-	// the cycle continues (bounded failure).
-	if recoveryWasDone {
-		if err := hooks.Reconcile(homeDir, false); err != nil {
-			fmt.Fprintf(os.Stderr, "mailbox reconcile cycle: %v\n", err)
-		}
+	// Derive the report wakes of new report lines before the activation hook
+	// dispatches the queue. A failure is logged; the next claim derives them.
+	if err := home.DeriveReportWakes(homeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "report wake derivation: %v\n", err)
 	}
 
-	// Per-cycle captain agent activation on receipt discovery.
-	// After startup recovery (cycle 1), each subsequent cycle checks
-	// for new soldier receipts that haven't yet triggered an activation
-	// nudge to the captain agent pane. Idempotent: already-seen receipts
-	// are skipped via durable markers. Nil hook = no-op.
+	// Per-cycle activation (cycles after startup only). Nil hook = no-op.
 	if recoveryWasDone {
 		hooks.Activate(homeDir)
 	}
@@ -1218,39 +1204,6 @@ func isPausedBeyondResurface(homeDir, id string, after time.Duration) bool {
 		return false
 	}
 	return time.Since(fi.ModTime()) > after
-}
-
-// reportOwnsStatus reports whether line, taskID's last status line, is the
-// status projection of an uplink report. The report's payload hash is durable
-// on its envelope while it is open and on its ack once accepted, so the match
-// holds before and after the General settles the report's wake.
-func reportOwnsStatus(homeDir, taskID, line string) bool {
-	i := strings.LastIndex(line, " [key=")
-	if i < 0 || !strings.HasSuffix(line, "]") {
-		return false
-	}
-	key := strings.TrimSuffix(line[i+len(" [key="):], "]")
-	hash := home.PayloadHashHex(fmt.Sprintf("%s [task=%s key=%s]", line[:i], taskID, key))
-	store := home.NewStore(homeDir)
-	sender := home.ReceiverIDForTask(taskID)
-	for _, path := range []string{openEvidencePath(homeDir, taskID, key), acceptedEvidencePath(homeDir, taskID, key)} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var ev evidence
-		if json.Unmarshal(data, &ev) != nil {
-			continue
-		}
-		if ack, _ := store.ReadOwnerAck(sender, ev.MessageID); ack != nil {
-			if ack.PayloadHash == hash {
-				return true
-			}
-		} else if env, _ := store.ReadEnvelope(sender, ev.MessageID); env != nil && env.PayloadHash == hash {
-			return true
-		}
-	}
-	return false
 }
 
 // isStatusGeneralRelevant checks whether the task's last status line contains

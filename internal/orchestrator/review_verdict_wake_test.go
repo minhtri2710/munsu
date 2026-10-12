@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -45,7 +44,7 @@ func (p *fakeReviewPort) RecordReviewVerdict(_, taskID string, generation uint64
 }
 
 // reviewVerdictHome is a General home hosting the review task rev-1, so the
-// uplink of its verdict has a receiver.
+// report of its verdict has a receiver.
 func reviewVerdictHome(t *testing.T) string {
 	t.Helper()
 	generalHome, _ := directGeneralHome(t)
@@ -63,11 +62,16 @@ func runReviewCycle(t *testing.T, homeDir string, reviews ReviewVerdictPort) {
 	}
 }
 
-func uplinkWakes(t *testing.T, homeDir string) []WakeRecord {
+// reportWakes derives the report wakes of the home's report lines and returns
+// them, as the next watcher cycle or wake claim would.
+func reportWakes(t *testing.T, homeDir string) []WakeRecord {
 	t.Helper()
+	if err := home.DeriveReportWakes(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	var out []WakeRecord
 	for _, r := range mustReadWakeQueue(t, homeDir) {
-		if r.Kind == "uplink" {
+		if r.Kind == home.ReportWakeKind {
 			out = append(out, r)
 		}
 	}
@@ -124,7 +128,7 @@ func TestReviewVerdictEventsAreOptionalAndNeverFailTheCycle(t *testing.T) {
 	}
 }
 
-func TestRunCycleRecordsAReviewVerdictFileAndUplinksItOnce(t *testing.T) {
+func TestRunCycleRecordsAReviewVerdictFileAndReportsItOnce(t *testing.T) {
 	homeDir := reviewVerdictHome(t)
 	port := &fakeReviewPort{
 		targets: []ReviewVerdictTarget{{TaskID: "rev-1", Generation: 1}},
@@ -135,17 +139,17 @@ func TestRunCycleRecordsAReviewVerdictFileAndUplinksItOnce(t *testing.T) {
 	if len(port.recorded) != 1 || port.recorded[0] != "rev-1:1@digest-one" {
 		t.Fatalf("recorded = %v, want one record of rev-1 generation 1 at the file digest", port.recorded)
 	}
-	wakes := uplinkWakes(t, homeDir)
-	if len(wakes) != 1 || wakes[0].Key != "rev-1" || wakes[0].Payload != "done: recorded PASS verdict for rev-1 [task=rev-1 key=review-verdict:digest-one]" {
-		t.Fatalf("uplink wakes = %+v, want one done uplink keyed by the file digest", wakes)
+	wakes := reportWakes(t, homeDir)
+	if len(wakes) != 1 || wakes[0].Key != "rev-1" || wakes[0].Payload != "rev-1: done: recorded PASS verdict for rev-1 [key=review-verdict:digest-one]" {
+		t.Fatalf("report wakes = %+v, want one done report keyed by the file digest", wakes)
 	}
 	if rec := mustReadProcessEvent(t, homeDir, reviewVerdictEventID("rev-1", 1)); rec.AckedGeneration != rec.Generation {
-		t.Fatalf("record = %+v, want acked after the uplink", rec)
+		t.Fatalf("record = %+v, want acked after the report", rec)
 	}
 
 	runReviewCycle(t, homeDir, port)
-	if len(port.recorded) != 1 || len(uplinkWakes(t, homeDir)) != 1 {
-		t.Fatalf("second cycle recorded %v and uplinked %d times, want no retry after the ack", port.recorded, len(uplinkWakes(t, homeDir)))
+	if len(port.recorded) != 1 || len(reportWakes(t, homeDir)) != 1 {
+		t.Fatalf("second cycle recorded %v and reported %d times, want no retry after the ack", port.recorded, len(reportWakes(t, homeDir)))
 	}
 }
 
@@ -158,10 +162,10 @@ func TestRunCycleReportsARefusedReviewVerdictOnceAndAcksIt(t *testing.T) {
 	}
 
 	runReviewCycle(t, homeDir, port)
-	wakes := uplinkWakes(t, homeDir)
-	want := "failed: review verdict not recorded: verdict does not speak for this head [task=rev-1 key=review-verdict:digest-bad]"
+	wakes := reportWakes(t, homeDir)
+	want := "rev-1: failed: review verdict not recorded: verdict does not speak for this head [key=review-verdict:digest-bad]"
 	if len(wakes) != 1 || wakes[0].Payload != want {
-		t.Fatalf("uplink wakes = %+v, want one failed uplink %q", wakes, want)
+		t.Fatalf("report wakes = %+v, want one failed report %q", wakes, want)
 	}
 	if rec := mustReadProcessEvent(t, homeDir, reviewVerdictEventID("rev-1", 1)); rec.AckedGeneration != rec.Generation {
 		t.Fatalf("record = %+v, want a refused verdict acked (no retry)", rec)
@@ -179,9 +183,9 @@ func TestRecordReviewVerdictWakeKeysAnUnreadableFileByItsOwnKey(t *testing.T) {
 	rec := &ProcessEventRecord{EventID: eventID, Payload: `{"taskId":"rev-1","generation":1}`}
 
 	recordReviewVerdictWake(homeDir, port, ProcessEventWake{EventID: eventID, Generation: 1}, rec)
-	wakes := uplinkWakes(t, homeDir)
-	if len(wakes) != 1 || !strings.HasSuffix(wakes[0].Payload, "[task=rev-1 key=review-verdict:unreadable]") {
-		t.Fatalf("uplink wakes = %+v, want a report keyed review-verdict:unreadable", wakes)
+	wakes := reportWakes(t, homeDir)
+	if len(wakes) != 1 || !strings.HasSuffix(wakes[0].Payload, "[key=review-verdict:unreadable]") {
+		t.Fatalf("report wakes = %+v, want a report keyed review-verdict:unreadable", wakes)
 	}
 }
 
@@ -210,28 +214,32 @@ func TestRecordReviewVerdictWakeDropsWhatItDoesNotOwn(t *testing.T) {
 			if fake, ok := tc.port.(*fakeReviewPort); ok && len(fake.recorded) != 0 {
 				t.Fatalf("a dropped wake recorded %v", fake.recorded)
 			}
-			if wakes := uplinkWakes(t, homeDir); len(wakes) != 0 {
-				t.Fatalf("a dropped wake uplinked %+v", wakes)
+			if wakes := reportWakes(t, homeDir); len(wakes) != 0 {
+				t.Fatalf("a dropped wake reported %+v", wakes)
 			}
 		})
 	}
 }
 
-// An uplink that cannot be written leaves the event unacked so a restart
+// A report that cannot be written leaves the event unacked so a restart
 // re-announces it; the verdict record is replaced on re-entry.
-func TestRecordReviewVerdictWakeLeavesTheEventUnackedWhenTheUplinkCannotBeWritten(t *testing.T) {
+func TestRecordReviewVerdictWakeLeavesTheEventUnackedWhenTheReportCannotBeWritten(t *testing.T) {
 	homeDir := reviewVerdictHome(t)
 	port := &fakeReviewPort{
 		targets: []ReviewVerdictTarget{{TaskID: "rev-1", Generation: 1}},
 		files:   map[string]string{reviewKey("rev-1", 1): "digest-one"},
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, home.CaptainProvenanceMarkerName), []byte("malformed"), 0600); err != nil {
+	statusPath, err := home.StatusFilePath(homeDir, "rev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(statusPath, 0700); err != nil {
 		t.Fatal(err)
 	}
 
 	out := captureStderr(t, func() { runReviewCycle(t, homeDir, port) })
-	if !strings.Contains(out, "review-verdict uplink for rev-1 failed (re-announced on restart)") {
-		t.Fatalf("stderr = %q, want the logged uplink failure", out)
+	if !strings.Contains(out, "review-verdict report for rev-1 failed (re-announced on restart)") {
+		t.Fatalf("stderr = %q, want the logged report failure", out)
 	}
 	if rec := mustReadProcessEvent(t, homeDir, reviewVerdictEventID("rev-1", 1)); rec.AckedGeneration == rec.Generation {
 		t.Fatalf("record = %+v, want it unacked so a restart re-announces it", rec)

@@ -47,23 +47,22 @@ type Runner struct {
 	// harness runs in and launchDir is where the launch files live: both are
 	// wtPath for a soldier; a reviewer runs in the reviewed task's worktree and
 	// keeps its launch files under the home, so its checkout is never written.
-	kind            string
-	wtPath          string
-	cwd             string
-	launchDir       string
-	harness         string
-	model           string
-	effort          string
-	taskScoutScope  string
-	taskScoutBudget int64
-	reviewTask      string
-	reviewHead      string
-	review          *ReviewLaunch
-	endpoints       EndpointCapabilities
-	endpoint        CreatedEndpoint
-	briefData       []byte
-	windowID        string
-	spawnRole       string
+	kind           string
+	wtPath         string
+	cwd            string
+	launchDir      string
+	harness        string
+	model          string
+	effort         string
+	taskScoutScope string
+	reviewTask     string
+	reviewHead     string
+	review         *ReviewLaunch
+	endpoints      EndpointCapabilities
+	endpoint       CreatedEndpoint
+	briefData      []byte
+	windowID       string
+	spawnRole      string
 
 	// dispatchPolicy is the explicit Fleet-boundary topology choice resolved
 	// once per Run (ResolveDispatchPolicy, issue #546 Slice 6): GeneralDirect
@@ -1144,7 +1143,6 @@ func (r *Runner) beginLaunchIntent() error {
 		return fmt.Errorf("launch intent: resolving task %s: %w", r.args.ID, err)
 	}
 	r.taskScoutScope = agg.Definition.ScoutScope
-	r.taskScoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	// Resolve the opaque endpoint incarnation BEFORE any acquisition so a crash
 	// after create but before attach can reuse the same token.
@@ -1867,20 +1865,19 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 
 	// Build the prompt input struct.
 	input := LaunchPromptInput{
-		TaskID:                 r.args.ID,
-		TaskKind:               r.kind,
-		DeliveryMode:           r.effectiveMode,
-		Repository:             r.args.ProjectName,
-		ParentCaptainID:        parentCaptainID,
-		ParentHome:             r.homeDir,
-		WorktreePath:           bound.Path(),
-		HomeDir:                r.homeDir,
-		BriefContent:           briefData,
-		RequiredSkills:         requiredSkills,
-		OptionalSkills:         optionalSkills,
-		HarnessName:            r.harness,
-		ScoutScope:             r.taskScoutScope,
-		ScoutRuntimeBudgetSecs: r.taskScoutBudget,
+		TaskID:          r.args.ID,
+		TaskKind:        r.kind,
+		DeliveryMode:    r.effectiveMode,
+		Repository:      r.args.ProjectName,
+		ParentCaptainID: parentCaptainID,
+		ParentHome:      r.homeDir,
+		WorktreePath:    bound.Path(),
+		HomeDir:         r.homeDir,
+		BriefContent:    briefData,
+		RequiredSkills:  requiredSkills,
+		OptionalSkills:  optionalSkills,
+		HarnessName:     r.harness,
+		ScoutScope:      r.taskScoutScope,
 	}
 
 	// Modes that do not hard-gate on skill presence still report what is absent,

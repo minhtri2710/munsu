@@ -44,7 +44,6 @@ func seedCanonicalTask(t *testing.T, homeDir, id, kind string) {
 	}
 	if kind == "scout" {
 		req.ScoutScope = "investigate scope"
-		req.ScoutRuntimeBudgetSecs = 300
 	}
 	opID, err := domain.NewOperationID("op-create-" + id)
 	if err != nil {

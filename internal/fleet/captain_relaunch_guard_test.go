@@ -266,14 +266,12 @@ func TestConverge_AutoRecoverRefusesArmedRelaunchGuard(t *testing.T) {
 	launch := &countingLaunchEndpoint{}
 
 	result, err := Converge(parent, []Info{{ID: "guarded-converge", Home: captainHome}}, ConvergeCapabilities{
-		Continuity:   noopCaptainContinuity{},
-		Messaging:    noopCaptainMessaging{},
-		Watcher:      noopCaptainWatcher{},
-		Notification: &captainNotificationTransport{acknowledged: true},
-		Mailbox:      &captainTestMailboxSender{},
-		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
-		Launch:       launch,
-		Probe:        &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
+		Messaging:   noopCaptainMessaging{},
+		Watcher:     noopCaptainWatcher{},
+		Mailbox:     &captainTestMailboxSender{},
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 	})
 	if err == nil {
 		t.Fatal("expected converge failure for guarded auto-recover")
@@ -296,14 +294,12 @@ func TestConverge_AutoRecoverProvesLivenessAfterExpiredRelaunchGuard(t *testing.
 	launch := &countingLaunchEndpoint{}
 
 	result, err := Converge(parent, []Info{{ID: "expired-converge", Home: captainHome}}, ConvergeCapabilities{
-		Continuity:   noopCaptainContinuity{},
-		Messaging:    noopCaptainMessaging{},
-		Watcher:      noopCaptainWatcher{},
-		Notification: &captainNotificationTransport{acknowledged: true},
-		Mailbox:      &captainTestMailboxSender{},
-		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
-		Launch:       launch,
-		Probe:        &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
+		Messaging:   noopCaptainMessaging{},
+		Watcher:     noopCaptainWatcher{},
+		Mailbox:     &captainTestMailboxSender{},
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
 	})
 	if err != nil {
 		t.Fatalf("converge error: %v", err)
@@ -336,14 +332,12 @@ func TestConverge_AliveCaptainClearsArmedRelaunchGuard(t *testing.T) {
 	launch := &countingLaunchEndpoint{}
 
 	_, err := Converge(parent, []Info{{ID: "alive-converge", Home: captainHome}}, ConvergeCapabilities{
-		Continuity:   noopCaptainContinuity{},
-		Messaging:    noopCaptainMessaging{},
-		Watcher:      noopCaptainWatcher{},
-		Notification: &captainNotificationTransport{acknowledged: true},
-		Mailbox:      &captainTestMailboxSender{},
-		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
-		Launch:       launch,
-		Probe:        &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}},
+		Messaging:   noopCaptainMessaging{},
+		Watcher:     noopCaptainWatcher{},
+		Mailbox:     &captainTestMailboxSender{},
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}},
 	})
 	if err != nil {
 		t.Fatalf("converge error: %v", err)

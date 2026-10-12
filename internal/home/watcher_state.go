@@ -23,8 +23,8 @@ const ProcessEventWakeKind = "process-event"
 var removeWakeQueueFile = os.Remove
 
 // WakeRecord is one queued wake. Ref is empty unless the producer owns a durable
-// record the wake points at (an uplink report's NotificationRef); the wake
-// layer stores it and hands it back, and never interprets it.
+// record the wake points at (a report wake's status line); the wake layer
+// stores it and hands it back, and never interprets it.
 type WakeRecord struct{ Epoch, Seq, Kind, Key, Payload, Ref string }
 type WatcherBeatStatus struct {
 	Exists, Stale bool
@@ -74,21 +74,6 @@ func EnqueueWake(h, kind, key, payload string) error {
 		return err
 	}
 	return enqueueWakeAt(h, kind, key, "", payload, time.Now())
-}
-
-// EnqueueRefWake enqueues a wake that carries ref, the identity of a durable
-// record the receiver settles when it resolves or acks the wake.
-func EnqueueRefWake(h, kind, key, ref, payload string) error {
-	if err := validateWakeIdentifier("kind", kind); err != nil {
-		return err
-	}
-	if err := validateWakeIdentifier("key", key); err != nil {
-		return err
-	}
-	if err := validateWakeIdentifier("ref", ref); err != nil {
-		return err
-	}
-	return enqueueWakeAt(h, kind, key, ref, payload, time.Now())
 }
 
 // WatcherSeenMarkerPath is the dedup marker the watcher keeps for one wake
@@ -208,16 +193,18 @@ func DrainWakes(h string) (records []WakeRecord, err error) {
 // same mutation path the lease claim uses, so a crash mid-write is recovered
 // on the next lock acquisition).
 func DrainWakesOfKind(h, kind string) ([]WakeRecord, error) {
-	return drainWakesPartition(h, func(r WakeRecord) bool { return r.Kind == kind })
+	return drainWakesPartition(h, false, func(r WakeRecord) bool { return r.Kind == kind })
 }
 
 // DrainWakesExcludingKind is the complement of DrainWakesOfKind: it removes
 // and returns every queued record whose Kind differs from kind.
+// It derives report wakes first: the AFK daemon drains with it, with or
+// without a watcher.
 func DrainWakesExcludingKind(h, kind string) ([]WakeRecord, error) {
-	return drainWakesPartition(h, func(r WakeRecord) bool { return r.Kind != kind })
+	return drainWakesPartition(h, true, func(r WakeRecord) bool { return r.Kind != kind })
 }
 
-func drainWakesPartition(h string, take func(WakeRecord) bool) (records []WakeRecord, err error) {
+func drainWakesPartition(h string, derive bool, take func(WakeRecord) bool) (records []WakeRecord, err error) {
 	lock, err := acquireWakeLock(h)
 	if err != nil {
 		return nil, err
@@ -225,6 +212,11 @@ func drainWakesPartition(h string, take func(WakeRecord) bool) (records []WakeRe
 	defer joinWakeLockError(&err, lock)
 	if err := recoverWakeMutationLocked(h); err != nil {
 		return nil, err
+	}
+	if derive {
+		if err := deriveReportWakesLocked(h, time.Now()); err != nil {
+			return nil, err
+		}
 	}
 	queue, err := readWakeQueue(h)
 	if err != nil {
@@ -258,7 +250,16 @@ func newWakeRecord(kind, key, ref, payload string, at time.Time) WakeRecord {
 	}
 }
 
+// HasQueuedWakes reports whether a wake waits for a consumer. A report line no
+// wake carries yet counts: the next claim derives its wake.
 func HasQueuedWakes(h string) bool {
+	if _, ok := OldestUnderivedReport(h); ok {
+		return true
+	}
+	return hasQueuedRecords(h)
+}
+
+func hasQueuedRecords(h string) bool {
 	journal, err := readWakeMutationJournal(h)
 	if err != nil {
 		return true

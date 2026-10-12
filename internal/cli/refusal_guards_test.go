@@ -1295,7 +1295,6 @@ func seedGuardTask(t *testing.T, auth *taskauthority.Canonical, taskID, kind str
 	}
 	if kind == "scout" {
 		req.ScoutScope = "investigate"
-		req.ScoutRuntimeBudgetSecs = 300
 	}
 	if _, err := auth.Create(mustCanonicalOp(t, "op-guard-create-"+taskID+"-"+kind, req), req); err != nil {
 		t.Fatal(err)

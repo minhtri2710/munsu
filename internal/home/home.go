@@ -3,7 +3,7 @@
 //
 // Layout under a home: state/ (task-authority/ documents, fleet-registry/
 // registries, the .meta and .status projections with the <id>.meta.lock
-// file, the .lock, .wake-claim.lock, .watch.lock and .afk.lock files, wakes and receipts), data/<id>/
+// file, the .lock, .wake-claim.lock, .watch.lock and .afk.lock files, wakes and report cursors), data/<id>/
 // brief.md, git-shim/bin (the git shim on every seat PATH), config/ (typed documents and the published snapshot), projects/
 // (cloned project repositories), captains/ (Captain homes), .journal/ (the
 // write-ahead journal) and .lock/ (scoped lock files). Durable paths are

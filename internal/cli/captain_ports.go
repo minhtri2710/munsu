@@ -3,27 +3,7 @@ package cli
 import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
-
-type captainContinuityAdapter struct {
-	notification orchestrator.NotificationTransport
-}
-
-func (a captainContinuityAdapter) Reconcile(parentHome string, captain fleet.CaptainEndpoint) (fleet.CaptainContinuityResult, error) {
-	result := fleet.CaptainContinuityResult{}
-	uplink, err := orchestrator.Recover(orchestrator.RecoverRequest{
-		SenderHome: captain.Home, ReceiverHome: parentHome, ReceiverRank: home.RankGeneral,
-		Notify: func(ref home.NotificationRef) orchestrator.UplinkNotifyResult {
-			return orchestrator.NotifyParentWithTransport(captain.Home, parentHome, ref, a.notification)
-		},
-	})
-	if err != nil {
-		return result, err
-	}
-	result.Accepted, result.Notified, result.Queued = uplink.Accepted, uplink.Notified, uplink.Queued
-	return result, nil
-}
 
 type captainMessagingAdapter struct{}
 

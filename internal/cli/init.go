@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/term"
 
@@ -39,7 +38,9 @@ func newInitCmd() *cobra.Command {
 Creates the directory structure: {state, data, config, projects}.
 Auto-detects and persists the soldier harness.
 Writes starter configuration files and the orchestrator operating manual (AGENTS.md).
-Also installs the munsu skills so coding-agent harnesses can discover them.
+With --skill global|local (or MUNSU_INIT_SKILL), installs the munsu-ops skill so
+coding-agent harnesses can discover it, replacing any copy already there.
+Without either, skill install is skipped.
 
 Use --reconfigure to re-run auto-detection and overwrite existing config files and the orchestrator operating manual (AGENTS.md).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -165,24 +166,12 @@ func autoDetectConfig(homeDir string) error {
 	return nil
 }
 
-// runSkillInstall resolves the skill destination (flag, env, or interactive prompt)
-// and writes the embedded skills there. Existing skills are confirmed before overwrite.
+// runSkillInstall resolves the skill destination (flag, then env; unset skips)
+// and replaces the munsu-ops skill there with the embedded copy.
 func runSkillInstall(cmd *cobra.Command, homeDir string) error {
 	choice := skillChoice
-
-	// 1. If no flag, check env override
 	if choice == "" {
 		choice = os.Getenv("MUNSU_INIT_SKILL")
-	}
-
-	// 2. If still unset and stdin is not a terminal, default to skip
-	if choice == "" && !isStdinTerminal() {
-		choice = skillSkip
-	}
-
-	// 3. Prompt interactively if still unset
-	if choice == "" {
-		choice = promptSkillChoice()
 	}
 
 	switch choice {
@@ -207,42 +196,21 @@ func isStdinTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-// promptSkillChoice asks the user where to install skills.
-func promptSkillChoice() string {
-	fmt.Println("\nInstall munsu skills?")
-	fmt.Println("  [1] global  (~/.agents/skills/)   — available in every project")
-	fmt.Println("  [2] local   (<home>/.agents/skills/) — scoped to this munsu home")
-	fmt.Println("  [3] skip")
-	fmt.Print("Choose [1-3]: ")
-	var resp string
-	if _, err := fmt.Scanln(&resp); err != nil {
-		return skillSkip
-	}
-	switch strings.TrimSpace(resp) {
-	case "1", skillGlobal:
-		return skillGlobal
-	case "2", skillLocal:
-		return skillLocal
-	default:
-		return skillSkip
-	}
-}
-
-// installSkillsTo writes the munsu-ops skill (the entry-point skill) under dest,
-// the binary and are read on demand via 'munsu skill show <name>'.
+// installSkillsTo replaces the munsu-ops skill (the entry-point skill) under dest
+// with the embedded copy. The auxiliary skills stay in the binary and are read on
+// demand via 'munsu skill show <name>'.
 func installSkillsTo(dest string) error {
 	name := "munsu-ops"
-	overwrite := skillExistsAt(dest, name) && confirmOverwrite(name)
-	ok, err := installOneSkill(dest, name, overwrite)
+	replaced, err := replaceSkill(dest, name)
 	if err != nil {
 		return fmt.Errorf("installing %s to %s: %w", name, dest, err)
 	}
-	if !ok {
-		fmt.Printf("Skill %q kept as-is at %s\n", name, dest)
+	if replaced {
+		fmt.Printf("Replaced skill %q at %s\n", name, dest)
 	} else {
 		fmt.Printf("Installed skill %q to %s\n", name, dest)
-		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, captain-provisioning, stuck-soldier-recovery")
-		fmt.Println("  Run: munsu skill show <name>")
 	}
+	fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, captain-provisioning, stuck-soldier-recovery")
+	fmt.Println("  Run: munsu skill show <name>")
 	return nil
 }

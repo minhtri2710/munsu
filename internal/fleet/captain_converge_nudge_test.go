@@ -43,13 +43,11 @@ func TestConvergeSubmitsFastForwardAndPendingNudges(t *testing.T) {
 
 	endpoint := &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}
 	caps := ConvergeCapabilities{
-		Continuity:   noopCaptainContinuity{},
-		Messaging:    noopCaptainMessaging{},
-		Watcher:      noopCaptainWatcher{},
-		Notification: &captainNotificationTransport{acknowledged: true},
-		Mailbox:      &captainTestMailboxSender{acknowledged: true},
-		Probe:        &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}},
-		Nudge:        endpoint,
+		Messaging: noopCaptainMessaging{},
+		Watcher:   noopCaptainWatcher{},
+		Mailbox:   &captainTestMailboxSender{acknowledged: true},
+		Probe:     &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}},
+		Nudge:     endpoint,
 	}
 	registered := []Info{{ID: id, Home: captainHome}}
 	if _, err := Converge(parent, registered, caps); err != nil {

@@ -300,7 +300,6 @@ func cliSeedCanonicalTaskPhase(t *testing.T, homeDir, id, kind string, phase tas
 	}
 	if kind == "scout" {
 		createReq.ScoutScope = "investigate scope"
-		createReq.ScoutRuntimeBudgetSecs = 300
 	}
 	opID, err := domain.NewOperationID("op-create-" + id)
 	if err != nil {

@@ -313,7 +313,7 @@ func TestConverge_HomeWithoutWorktreeFailsFastForward(t *testing.T) {
 
 	result, err := Converge(parent, []Info{
 		{ID: "no-worktree-sm", Home: smHome},
-	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("Converge must fail for a captain home with no git worktree")
 	}

@@ -60,19 +60,18 @@ func (a *composerAdapter) Capture(window string, lines int) (string, error) {
 	return a.bk.Capture(window, lines)
 }
 
-type wakeDispatchHooks struct {
-	orchestrator.WatcherHooks
-}
+// wakeDispatchHooks is the watcher's per-cycle work: deliver the queue's
+// wakes to the General's herdr pane.
+type wakeDispatchHooks struct{}
 
-func (h wakeDispatchHooks) Activate(homeDir string) {
-	h.WatcherHooks.Activate(homeDir)
+func (wakeDispatchHooks) Activate(homeDir string) {
 	if err := dispatchHerdrWake(homeDir); err != nil {
 		fmt.Fprintf(os.Stderr, "wake dispatch: %v\n", err)
 	}
 }
 
 func watcherHooks() orchestrator.WatcherHooks {
-	return wakeDispatchHooks{WatcherHooks: orchestrator.NewCaptainWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport())}
+	return wakeDispatchHooks{}
 }
 
 // dispatchHerdrWake composes typed adapters, invokes the Orchestrator

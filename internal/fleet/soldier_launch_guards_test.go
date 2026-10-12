@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,83 +70,56 @@ func TestBuildLaunchPromptRefusesMissingHomeDir(t *testing.T) {
 	}
 }
 
-// A scout task without a scope or without a positive runtime budget has no
-// bounded contract to launch under, so the launch is refused before any
-// prompt is built.
+// A scout task without a scope has no bounded contract to launch under, so the
+// launch is refused before any prompt is built.
 func TestBuildLaunchPromptRefusesScoutWithoutBoundedContract(t *testing.T) {
-	cases := []struct {
-		name   string
-		scope  string
-		budget int64
-	}{
-		{"no scope", "", 900},
-		{"blank scope", "   ", 900},
-		{"zero budget", "map the delivery lane", 0},
-		{"negative budget", "map the delivery lane", -1},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, scope := range []string{"", "   "} {
+		t.Run(fmt.Sprintf("scope %q", scope), func(t *testing.T) {
 			in := launchPromptInputForGuards(t)
 			in.TaskKind = "scout"
-			in.ScoutScope = tc.scope
-			in.ScoutRuntimeBudgetSecs = tc.budget
+			in.ScoutScope = scope
 
 			_, _, err := BuildLaunchPrompt(in)
 			if err == nil {
 				t.Fatal("BuildLaunchPrompt accepted a scout with no bounded contract")
 			}
-			if !strings.Contains(err.Error(), "scout scope and positive runtime budget are required") {
+			if !strings.Contains(err.Error(), "scout scope is required") {
 				t.Fatalf("error = %v, want the scout-contract refusal", err)
 			}
 
-			// Control: the same scout input with a complete contract passes,
-			// so the refusal above came from this branch and no earlier one.
+			// Control: the same scout input with a scope passes, so the
+			// refusal above came from this branch and no earlier one.
 			in.ScoutScope = "map the delivery lane"
-			in.ScoutRuntimeBudgetSecs = 900
 			_, env, err := BuildLaunchPrompt(in)
 			if err != nil {
 				t.Fatalf("repaired scout input still refused: %v", err)
 			}
-			if env.ScoutScope != "map the delivery lane" || env.ScoutRuntimeBudgetSecs != 900 {
-				t.Fatalf("envelope scout contract = %q/%d, want the input contract", env.ScoutScope, env.ScoutRuntimeBudgetSecs)
+			if env.ScoutScope != "map the delivery lane" {
+				t.Fatalf("envelope scout scope = %q, want the input scope", env.ScoutScope)
 			}
 		})
 	}
 }
 
-// The mirror refusal: a ship task carrying scout fields would launch under a
+// The mirror refusal: a ship task carrying a scout scope would launch under a
 // contract its charter never states, so it is refused rather than silently
 // dropped.
 func TestBuildLaunchPromptRefusesScoutContractOnShipTask(t *testing.T) {
-	cases := []struct {
-		name   string
-		scope  string
-		budget int64
-	}{
-		{"scope on ship task", "map the delivery lane", 0},
-		{"budget on ship task", "", 900},
+	in := launchPromptInputForGuards(t)
+	in.TaskKind = "ship"
+	in.ScoutScope = "map the delivery lane"
+
+	_, _, err := BuildLaunchPrompt(in)
+	if err == nil {
+		t.Fatal("BuildLaunchPrompt accepted a ship task carrying a scout contract")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			in := launchPromptInputForGuards(t)
-			in.TaskKind = "ship"
-			in.ScoutScope = tc.scope
-			in.ScoutRuntimeBudgetSecs = tc.budget
+	if !strings.Contains(err.Error(), "scout contract is only valid for scout tasks") {
+		t.Fatalf("error = %v, want the ship/scout-contract refusal", err)
+	}
 
-			_, _, err := BuildLaunchPrompt(in)
-			if err == nil {
-				t.Fatal("BuildLaunchPrompt accepted a ship task carrying a scout contract")
-			}
-			if !strings.Contains(err.Error(), "scout contract is only valid for scout tasks") {
-				t.Fatalf("error = %v, want the ship/scout-contract refusal", err)
-			}
-
-			in.ScoutScope = ""
-			in.ScoutRuntimeBudgetSecs = 0
-			if _, _, err := BuildLaunchPrompt(in); err != nil {
-				t.Fatalf("repaired ship input still refused: %v", err)
-			}
-		})
+	in.ScoutScope = ""
+	if _, _, err := BuildLaunchPrompt(in); err != nil {
+		t.Fatalf("repaired ship input still refused: %v", err)
 	}
 }
 

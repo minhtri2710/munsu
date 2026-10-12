@@ -210,7 +210,7 @@ Fundamental loop:
 
 1. Ensure: `munsu watch ensure`.
 2. The watcher polls every 5s, queues actionable wakes, and stays alive.
-3. Receive each wake (below), then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result); `uplink` and `process-event` wakes are handled from their payload.
+3. Receive each wake (below), then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named poll result); `report` and `process-event` wakes are handled from their payload.
 4. Repair if needed: `munsu watch ensure`.
 
 Receiving wakes. Soldier and captain reports reach you only as queued wakes; nothing writes a report into your pane.
@@ -219,7 +219,7 @@ Receiving wakes. Soldier and captain reports reach you only as queued wakes; not
 - A dispatch refused before the claim leaves the wake queued: AFK is on, the harness is not claude, the composer holds input or is not recognized, or you are busy. A failure after the claim (the prompt is not accepted) leaves the wake claimed until its 300s lease expires, after which the next `munsu wake claim` reclaims it. `munsu inbox` shows queued and claimed wakes.
 - On any other backend or harness nothing is delivered: claim with `munsu wake claim --consumer <id>`, then settle each wake with `munsu wake resolve` or `munsu wake ack`.
 
-Settling an uplink wake, by `munsu wake resolve` or `munsu wake ack`, consumes the wake and also accepts the soldier's report: one ledger, so run no `munsu inbox ack` for a wake. The sender's pending report then retires on the watcher's next recovery pass, and teardown's acknowledgment check passes after that. If the report cannot be accepted the wake is still settled and the command prints the report's ref: run `munsu inbox ack '<ref>'` once the cause is fixed. `munsu afk return` accepts every uplink report in the digest it prints and lists any it could not accept with the same hint. `munsu inbox ack` otherwise stays for captain mailbox notifications.
+Settling a report wake, by `munsu wake resolve` or `munsu wake ack`, consumes the wake and settles the report it carries; `munsu afk return` settles every report in the digest it prints. Teardown refuses while a task has a report its parent has not settled; `munsu teardown --force` retires it anyway. Settling a scout's `done` report completes the scout task; if that fails the report is still settled and the command prints the scout's task ID with the hint to run `munsu task done <id>` once the cause is fixed. If settling the report itself fails, the report is not settled and still holds its task's teardown, and nothing settles it again: the hint says to retire the task with `munsu teardown <id> --force` once the cause is fixed. A Captain learns of its soldiers' reports the same way, at its next command, turn end or wake claim; nothing is pushed into its pane.
 
 Cross-cutting rules:
 - No turn ends blind while work is in flight.
@@ -303,11 +303,12 @@ Communication with soldiers and captains follows a strict direction policy:
 
 - **send** --- downlink only: `munsu send <id> "<line>"` sends a line DOWN the
   hierarchy (General -> Captain -> Soldier). It fails closed when used for
-  uplink targets (captain:* or general).
-- **report** --- uplink only: `munsu report <state> "<msg>"` reports status UP the
-  hierarchy (Soldier -> Captain, Captain -> General). Writes to the parent's
-  task .status file, the typed event log, and enqueues a wake for material
-  states (done, failed, needs-decision, blocked).
+  upward targets (captain:* or general).
+- **report** --- up only: `munsu report <state> "<msg>"` reports status UP the
+  hierarchy (Soldier -> Captain, Captain -> General). Appends one marked line
+  to the task .status file in the parent's home; the watcher or the parent's
+  next wake claim turns each material line (done, failed, needs-decision,
+  blocked) into one `report` wake.
 - **inbox** --- preview view: `munsu inbox` lists queued and claimed wakes and last captain status lines side by side.
   Use before `munsu wake claim` to preview what needs attention.
   Rank-aware: shows captain:* status lines from the General's state directory.

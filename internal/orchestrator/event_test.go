@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // readEventLog parses the typed event log the way the binary's writers lay it
@@ -161,38 +159,35 @@ func recordIDs(records []Record) []uint64 {
 	return ids
 }
 
-const deliverWakeHelperEnv = "MUNSU_TEST_DELIVER_WAKE_HOME"
+const appendHelperEnv = "MUNSU_TEST_APPEND_EVENT_HOME"
 
-// TestHelperDeliverWakeProcess is the child for
-// TestDeliverWakeEventIDsUniqueAcrossProcesses: one munsu report per process.
-func TestHelperDeliverWakeProcess(t *testing.T) {
-	homeDir := os.Getenv(deliverWakeHelperEnv)
+// TestHelperAppendEventProcess is the child for
+// TestAppendEventIDsUniqueAcrossProcesses: one event per process.
+func TestHelperAppendEventProcess(t *testing.T) {
+	homeDir := os.Getenv(appendHelperEnv)
 	if homeDir == "" {
 		return
 	}
-	if _, err := DeliverWake(DeliverRequest{
-		HomeDir: homeDir, TaskID: os.Getenv(deliverWakeHelperEnv + "_TASK"),
-		State: "working", Message: "progress", Role: "soldier",
-	}); err != nil {
+	if _, err := Append(homeDir, "task.status", "test", "", os.Getenv(appendHelperEnv+"_TASK")); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// TestDeliverWakeEventIDsUniqueAcrossProcesses: each munsu report is its own
+// TestAppendEventIDsUniqueAcrossProcesses: each munsu command is its own
 // process, so an in-process counter cannot make the IDs unique.
-func TestDeliverWakeEventIDsUniqueAcrossProcesses(t *testing.T) {
+func TestAppendEventIDsUniqueAcrossProcesses(t *testing.T) {
 	homeDir := t.TempDir()
 	for _, task := range []string{"t1", "t2"} {
-		child := exec.Command(os.Args[0], "-test.run=^TestHelperDeliverWakeProcess$")
-		child.Env = append(os.Environ(), deliverWakeHelperEnv+"="+homeDir, deliverWakeHelperEnv+"_TASK="+task)
+		child := exec.Command(os.Args[0], "-test.run=^TestHelperAppendEventProcess$")
+		child.Env = append(os.Environ(), appendHelperEnv+"="+homeDir, appendHelperEnv+"_TASK="+task)
 		if out, err := child.CombinedOutput(); err != nil {
-			t.Fatalf("report process for %s: %v\n%s", task, err, out)
+			t.Fatalf("append process for %s: %v\n%s", task, err, out)
 		}
 	}
 
 	records := readEventLog(t, homeDir)
 	if len(records) != 2 || records[0].ID == records[1].ID {
-		t.Fatalf("event records = %+v, want two task.status events with distinct IDs", records)
+		t.Fatalf("event records = %+v, want two events with distinct IDs", records)
 	}
 }
 
@@ -345,16 +340,6 @@ func TestEventReadersSkipAndCountMalformedLines(t *testing.T) {
 	}
 }
 
-// A line whose ID is unparsable is skipped by lastTaskStatusEvent as nextID
-// skips it; it no longer voids an earlier matching event.
-func TestLastTaskStatusEventSkipsMalformedLine(t *testing.T) {
-	home := t.TempDir()
-	writeEventLog(t, home, "7\t10\ttask.status\tt1\tk\tdone\nzz\t11\ttask.status\tt1\tk\tother\n")
-	if id, found := lastTaskStatusEvent(home, "t1", "k", "done"); !found || id != 7 {
-		t.Errorf("lastTaskStatusEvent() = %d, %v; want 7, true", id, found)
-	}
-}
-
 func TestAppendEmptyPayloadsGetDistinctIDs(t *testing.T) {
 	home := t.TempDir()
 	var ids []uint64
@@ -399,36 +384,6 @@ func TestAppendKeepsHazardousFieldsInOneRecord(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != id || got[0].Type != eventType || got[0].Producer != producer || got[0].Key != key || got[0].Payload != payload {
 		t.Fatalf("records = %+v, want the one appended record read back as written", got)
-	}
-}
-
-// A multi-line report message is one .status line and one event, and both read
-// back as the message was given.
-func TestDeliverWakeKeepsMultiLineMessageOneStatusLineAndEvent(t *testing.T) {
-	homeDir := t.TempDir()
-	const message = "step one\nfailed: forged [key=other]\r\nstep two"
-	if _, err := DeliverWake(DeliverRequest{HomeDir: homeDir, TaskID: "t1", State: "working", Message: message, Role: "soldier"}); err != nil {
-		t.Fatal(err)
-	}
-	want := "working: " + message + " [key=default]"
-	lines, err := mhome.ReadStatus(homeDir, "t1")
-	if err != nil || len(lines) != 1 || lines[0] != want {
-		t.Fatalf("ReadStatus() = %q, %v; want the one line %q", lines, err, want)
-	}
-	path, err := mhome.StatusFilePath(homeDir, "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := strings.Count(string(raw), "\n"); n != 1 {
-		t.Fatalf(".status holds %d lines, want 1: %q", n, raw)
-	}
-	events, skipped, err := LatestEvents(homeDir, 5)
-	if err != nil || skipped != 0 || len(events) != 1 || events[0].Payload != want {
-		t.Fatalf("events = %+v skipped=%d err=%v; want one event with payload %q", events, skipped, err, want)
 	}
 }
 

@@ -27,9 +27,7 @@ func mustDoneScout(t *testing.T, c *Canonical, taskID string) domain.Preconditio
 	create := createRequest(c, taskID)
 	create.Kind = "scout"
 	create.ScoutScope = "investigate the requested question"
-	create.ScoutRuntimeBudgetSecs = 300
 	create.ScoutScope = "investigate the requested question"
-	create.ScoutRuntimeBudgetSecs = 300
 	op := mustOperation(t, "op-create-"+taskID, create)
 	if _, err := c.Create(op, create); err != nil {
 		t.Fatal(err)

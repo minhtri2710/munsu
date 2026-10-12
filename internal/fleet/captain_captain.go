@@ -209,7 +209,7 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	b.WriteString(shQuote(cwd))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_ROLE=captain\n")
-	// Identity and parent routing for rank-aware uplink reporting.
+	// Identity and parent routing for rank-aware reporting.
 	taskID := taskIDForCaptain(captainID)
 	b.WriteString("export MUNSU_TASK_ID=")
 	b.WriteString(shQuote(taskID))
@@ -251,7 +251,7 @@ func taskIDForCaptain(smID string) string {
 
 // DefaultCaptainCharter returns the versioned, runtime-owned Captain charter.
 // It covers the full captain-charter-contract: domain, General authority, command envelope,
-// task authority, soldier lifecycle, downlink/uplink discipline, one-hop relay,
+// task authority, soldier lifecycle, downlink/uplink discipline,
 // delivery/merge with mode-specific behavior, AXI-first fail-closed, persistence/recovery,
 // watcher/AFK safety, forbidden actions, and concise command recipes.
 // parentHome must be the General home whose captain task status projection is the escalation channel.
@@ -338,7 +338,9 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
   %[6]smunsu task list%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
 - kind: ship (default) | scout — the delivery mode comes from the project's configured review and forge tools
 - After spawning, monitor soldier progress through their task state.
-- When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
+- A soldier's material report arrives in this home as a report wake. Settle it with %[6]smunsu wake resolve%[6]s or %[6]smunsu wake ack%[6]s, then report the domain result to General (see Uplink).
+- Teardown of a soldier is refused while one of its material reports is unsettled.
+- If the General sends a stop with a matching task key, stop the soldier immediately — do not wait for completion.
 - If a soldier is stuck, use the ladder: %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → interrupt → relaunch → fail.
 - After a ship PR is merged, run %[6]smunsu teardown <soldier-id>%[6]s.
 - Never launch another Captain.
@@ -349,25 +351,13 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 - Usage: %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s
 - States: working, needs-decision, blocked, paused, done, failed, resolved.
 - Material phases get [key=<slug>] so later done/failed/resolved supersede them.
-- Material Uplink Reports write a durable envelope, sender pending evidence, and a receiver wake before sending a NotificationRef.
-- The General settles the report's wake with %[6]smunsu wake resolve%[6]s or %[6]smunsu wake ack%[6]s, which accepts the report; it runs no inbox ack for it.
+- A report is a line in your status file in the General's home (%[5]s). Nothing is pushed to any pane: the General learns of it when its watcher or a wake claim derives the line.
+- A material report (done, failed, blocked, needs-decision) becomes a report wake the General settles with %[6]smunsu wake resolve%[6]s or %[6]smunsu wake ack%[6]s.
 - NEVER poll the General for work. NEVER sleep-loop.
 - %[6]smunsu peek%[6]s is only for stuck recovery (see Soldier Lifecycle).
 - Provider polling only after terminal PR notification — no early polling.
 - Fallback (only when %[6]smunsu report%[6]s is unavailable):
     echo "{state}: {one short line}" >> %[5]s
-
-## One-Hop Uplink Report
-
-Material reports (%[6]sdone%[6]s, %[6]sfailed%[6]s, %[6]sblocked%[6]s, %[6]sneeds-decision%[6]s) use the mailbox-only Uplink Report flow:
-
-1. %[6]smunsu report%[6]s writes an immutable envelope to the parent inbox, sender pending evidence, and a parent wake before attempting live notification.
-2. The pane receives only a NotificationRef. Read it with %[6]smunsu inbox receive '<ref>'%[6]s.
-3. After the report is accepted into context, write the exact Processing Ack with %[6]smunsu inbox ack '<ref>'%[6]s.
-4. A failed or busy live notification remains queued. Recovery retries once after watcher restart and otherwise after 60 seconds.
-5. For the same task and key, the latest material report supersedes older unacknowledged reports. Different keys remain independent.
-6. Teardown is allowed only after the parent Processing Ack has been reconciled into durable accepted evidence. Prompt submission alone is not an Ack.
-7. **Stop hooks**: If General sends a stop with a matching task key, stop the soldier immediately — do not wait for completion.
 
 ## Delivery / Merge Authorization
 
@@ -1636,15 +1626,13 @@ func removeNudgeMarker(parentHome, smID string) {
 
 // ConvergeCapabilities are the ports Converge calls for each captain.
 type ConvergeCapabilities struct {
-	Notification any
-	Continuity   CaptainContinuityPort
-	Messaging    CaptainMessagingPort
-	Watcher      CaptainWatcherPort
-	Mailbox      home.BoundSender
-	Integration  IntegrationPort
-	Launch       LaunchEndpoint
-	Probe        ProbeEndpoint
-	Nudge        NudgeEndpoint
+	Messaging   CaptainMessagingPort
+	Watcher     CaptainWatcherPort
+	Mailbox     home.BoundSender
+	Integration IntegrationPort
+	Launch      LaunchEndpoint
+	Probe       ProbeEndpoint
+	Nudge       NudgeEndpoint
 }
 
 // Converge performs a locked convergence sweep over registered captains. For
@@ -1653,13 +1641,10 @@ type ConvergeCapabilities struct {
 // if the instruction surface advanced); push inherited config; refresh the
 // charter; check liveness (a launched-but-dead endpoint is relaunched only when
 // its absence is proven and the relaunch guard is not armed); reconcile pending
-// config-reread, continuity and General-to-Captain mailbox records; and print
+// config-reread and General-to-Captain mailbox records; and print
 // the watcher status.
 func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (*ConvergeResult, error) {
 	sender := caps.Mailbox
-	if len(registered) > 0 && caps.Notification == nil {
-		return nil, fmt.Errorf("uplink notification transport capability is required")
-	}
 	if len(registered) > 0 && sender == nil {
 		return nil, fmt.Errorf("captain mailbox sender capability is required")
 	}
@@ -1844,20 +1829,6 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			errs = append(errs, mbErr.Error())
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeOK, Detail: "ok"})
-		}
-
-		// g. Captain continuity reconciliation.
-		if caps.Continuity == nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeFailed, Detail: "captain continuity capability is required"})
-			errs = append(errs, sm.ID+": captain continuity capability is required")
-		} else {
-			continuity, continuityErr := caps.Continuity.Reconcile(parentHome, CaptainEndpoint{ID: sm.ID, Home: sm.Home, Scope: sm.Scope, Project: sm.Project})
-			if continuityErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeFailed, Detail: continuityErr.Error()})
-				errs = append(errs, fmt.Sprintf("%s: continuity reconciliation failed: %v", sm.ID, continuityErr))
-			} else {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d", continuity.Accepted, continuity.Notified, continuity.Queued)})
-			}
 		}
 
 		// h. Mailbox pending reconciliation (General → Captain).

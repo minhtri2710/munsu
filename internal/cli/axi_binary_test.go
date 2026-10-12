@@ -370,7 +370,7 @@ func TestBinaryReport_StructuredError(t *testing.T) {
 	parentHome := t.TempDir()
 
 	binary := buildMunsuBinary(t)
-	cmd := exec.Command(binary, "--home", home, "report", "--ring", "no-ring", "done", "task complete")
+	cmd := exec.Command(binary, "--home", home, "report", "done", "task complete")
 	// Explicitly override MUNSU_TASK_ID to empty to test fail-closed even
 	// when the test runner inherits a MUNSU_TASK_ID from the parent shell.
 	cmd.Env = append(

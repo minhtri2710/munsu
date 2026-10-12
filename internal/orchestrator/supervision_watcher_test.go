@@ -90,16 +90,9 @@ func testScanFleet(home string) *WakeReason {
 }
 
 type testWatcherHooks struct {
-	reconcile func(string, bool) error
-	activate  func(string)
+	activate func(string)
 }
 
-func (h testWatcherHooks) Reconcile(home string, startup bool) error {
-	if h.reconcile != nil {
-		return h.reconcile(home, startup)
-	}
-	return nil
-}
 func (h testWatcherHooks) Activate(home string) {
 	if h.activate != nil {
 		h.activate(home)
@@ -1322,112 +1315,6 @@ func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	}
 }
 
-// TestNormalRunCycle_NoDiagnosticWake verifies that runCycle no longer
-// emits diagnostic wakes about missing parent-home. Pending receipts without
-// MUNSU_PARENT_STATUS are handled silently — the mailbox system makes them
-// durable and health-visible, not watcher-routed.
-func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	taskID := "test-soldier"
-	termKey := "uplink"
-
-	// Write provenance marker
-	markerPath := filepath.Join(tmp, mhome.CaptainProvenanceMarkerName)
-	os.MkdirAll(filepath.Dir(markerPath), 0755)
-	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
-
-	// Write receipt (but NO MUNSU_PARENT_STATUS)
-	if err := WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
-		t.Fatalf("WriteReceipt: %v", err)
-	}
-
-	// Ensure no hook is set and MUNSU_PARENT_STATUS is unset
-	origHooks := activeTestHooks
-	activeTestHooks = NoopWatcherHooks{}
-	defer func() { activeTestHooks = origHooks }()
-	recoveryDone = sync.Map{}
-
-	t.Setenv("MUNSU_PARENT_STATUS", "")
-
-	// Run one cycle — should NOT emit diagnostic wake about parent-home
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("runCycle: %v", err)
-	}
-	_ = emitted
-
-	// Receipt should NOT be acked (no relay happened — no parent, no hook)
-	if IsReceiptAcked(tmp, taskID, termKey) {
-		t.Error("receipt should NOT be acked without parent env or hook")
-	}
-
-	// Verify NO diagnostic wake about parent-home was enqueued
-	records, drainErr := DrainWakes(tmp)
-	if drainErr != nil {
-		t.Fatalf("DrainWakes: %v", drainErr)
-	}
-	for _, r := range records {
-		if strings.Contains(r.Payload, "parent-home not configured") {
-			t.Errorf("should NOT emit parent-home diagnostic: %+v", r)
-		}
-	}
-}
-
-// TestRunCycle_FailsGracefullyOnInvalidParent verifies that runCycle does not
-// fatally error when parent home is invalid. Recovery skips gracefully when
-// no hook is set or parent is missing.
-func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	taskID := "test-soldier"
-	termKey := "uplink"
-
-	// Write provenance marker
-	markerPath := filepath.Join(tmp, mhome.CaptainProvenanceMarkerName)
-	os.MkdirAll(filepath.Dir(markerPath), 0755)
-	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
-
-	// Write receipt
-	if err := WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
-		t.Fatalf("WriteReceipt: %v", err)
-	}
-	if err := InitTaskObligations(tmp, taskID, termKey); err != nil {
-		t.Fatalf("InitTaskObligations: %v", err)
-	}
-
-	// Set MUNSU_PARENT_STATUS to a non-existent path
-	t.Setenv("MUNSU_PARENT_STATUS", filepath.Join(tmp, "nonexistent"))
-
-	// No hook set — recovery does nothing, runCycle handles gracefully
-	origHooks := activeTestHooks
-	activeTestHooks = NoopWatcherHooks{}
-	defer func() { activeTestHooks = origHooks }()
-	recoveryDone = sync.Map{}
-
-	// Run one cycle — should NOT fail fatally
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("runCycle should not error on invalid parent: %v", err)
-	}
-	_ = emitted
-}
-
-// --- Per-cycle terminal reconciliation tests (supervision-level) ---
-//
-// These tests verify that the per-cycle terminal reconciliation hook in
-// runCycle is invoked correctly from the supervision side:
-//   - No double-call on cycle 1 (recovery handles startup)
-//   - Error does not exit the watcher and is observable on stderr
-//   - No hook = no-op
-//
-// Real-hook E2E tests (invoking RunCycle against the real captain
-// reconciliation hook) live in captain_relay_test.go.
-
 // setupRunCycleTest creates a home with state dir for runCycle tests.
 func setupRunCycleTest(t *testing.T) string {
 	t.Helper()
@@ -1439,137 +1326,6 @@ func setupRunCycleTest(t *testing.T) string {
 // resetRecovery resets recoveryDone for test isolation.
 func resetRecovery() {
 	recoveryDone = sync.Map{}
-}
-
-// TestRunCycle_NoDoubleCallOnCycle1 proves that runCycle does NOT invoke the
-// TerminalReconcileHook twice on cycle 1. Recovery handles startup; per-cycle
-// reconcile is skipped on the first cycle via the recoveryWasDone guard.
-func TestRunCycle_StartupRecoveryIsIndependentPerHome(t *testing.T) {
-	homeA := setupRunCycleTest(t)
-	homeB := setupRunCycleTest(t)
-	calls := map[string]int{}
-	origHooks := activeTestHooks
-	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error { calls[homeDir]++; return nil }}
-	defer func() { activeTestHooks = origHooks }()
-	recoveryDone = sync.Map{}
-
-	if _, err := testRunCycle(homeA); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := testRunCycle(homeB); err != nil {
-		t.Fatal(err)
-	}
-	if calls[homeA] != 1 || calls[homeB] != 1 {
-		t.Fatalf("startup calls = %#v, want one per home", calls)
-	}
-}
-
-func TestRunCycle_NoDoubleCallOnCycle1(t *testing.T) {
-	tmp := setupRunCycleTest(t)
-
-	callCount := 0
-	origHooks := activeTestHooks
-	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
-		callCount++
-		return nil
-	}}
-	defer func() { activeTestHooks = origHooks }()
-	resetRecovery()
-
-	// Cycle 1 — recovery calls the hook once; per-cycle is skipped.
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("first runCycle: %v", err)
-	}
-	_ = emitted
-
-	if callCount != 1 {
-		t.Errorf("expected exactly 1 hook call on cycle 1 (recovery only), got %d", callCount)
-	}
-
-	// Cycle 2 — recovery is already done; per-cycle calls the hook once.
-	emitted2, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("second runCycle: %v", err)
-	}
-	_ = emitted2
-
-	if callCount != 2 {
-		t.Errorf("expected exactly 2 hook calls after cycle 2 (1 recovery + 1 per-cycle), got %d", callCount)
-	}
-}
-
-// TestRunCycle_PerCycleReconcileErrorDoesNotExit verifies that when the
-// terminal reconcile hook returns an error during per-cycle reconcile,
-// the watcher cycle logs the error on stderr and continues rather than
-// failing fatally. Partial failure must not falsely ack/close obligations.
-func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
-	tmp := setupRunCycleTest(t)
-
-	t.Setenv("MUNSU_PARENT_STATUS", "/nonexistent")
-	origHooks := activeTestHooks
-	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
-		return fmt.Errorf("simulated reconcile error")
-	}}
-	defer func() { activeTestHooks = origHooks }()
-	resetRecovery()
-
-	// Capture stderr to verify error message is observable.
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	origStderr := os.Stderr
-	os.Stderr = stderrW
-
-	// Run a cycle — must NOT fail fatally despite hook error.
-	emitted, cycleErr := testRunCycle(tmp)
-	// Restore stderr before any assertions.
-	stderrW.Close()
-	os.Stderr = origStderr
-	stderrOut, _ := io.ReadAll(stderrR)
-	_ = stderrR.Close()
-
-	if cycleErr != nil {
-		t.Fatalf("runCycle should not exit on hook error: %v", cycleErr)
-	}
-	_ = emitted
-
-	// Verify error message is observable on stderr.
-	if !strings.Contains(string(stderrOut), "simulated reconcile error") {
-		t.Errorf("expected 'simulated reconcile error' on stderr, got: %s", string(stderrOut))
-	}
-
-	// Second cycle should also continue despite hook error.
-	emitted2, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("second runCycle should also not exit on hook error: %v", err)
-	}
-	_ = emitted2
-}
-
-// TestRunCycle_PerCycleReconcileNoHookIsNoop verifies that when no
-// TerminalReconcileHook is installed, the per-cycle reconcile is a no-op
-// and does not cause any issues.
-func TestRunCycle_PerCycleReconcileNoHookIsNoop(t *testing.T) {
-	tmp := setupRunCycleTest(t)
-
-	origHooks := activeTestHooks
-	activeTestHooks = NoopWatcherHooks{}
-	defer func() { activeTestHooks = origHooks }()
-	resetRecovery()
-
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("runCycle should work with nil hook: %v", err)
-	}
-	_ = emitted
-
-	emitted2, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("second runCycle should work with nil hook: %v", err)
-	}
-	_ = emitted2
 }
 
 // --- CaptainActivationHook tests ---
@@ -1811,11 +1567,10 @@ func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
 	}
 }
 
-// A status line an uplink report delivered is owned by the report's own wake,
-// open or accepted; a status line that came any other way still wakes the
-// General.
+// A status line `munsu report` filed is owned by its report wake, settled or
+// not; a status line that came any other way still raises a signal wake.
 func TestRunCycleWakesOnceForAReportedStatus(t *testing.T) {
-	signalWakes := func(t *testing.T, generalHome string) int {
+	wakesOfKind := func(t *testing.T, generalHome, kind string) int {
 		t.Helper()
 		wakes, err := mhome.PeekWakes(generalHome)
 		if err != nil {
@@ -1823,64 +1578,44 @@ func TestRunCycleWakesOnceForAReportedStatus(t *testing.T) {
 		}
 		n := 0
 		for _, w := range wakes {
-			if w.Kind == "signal" {
+			if w.Kind == kind {
 				n++
 			}
 		}
 		return n
 	}
-	report := func(t *testing.T) (string, *ReportResult) {
-		generalHome, identity := directGeneralHome(t)
-		res := reportUnderDirectGeneralDispatch(t, generalHome, identity, &countingTransport{})
-		if _, _, err := AppendReportStatus(generalHome, "direct-task", "failed", "direct dispatch failure", "default"); err != nil {
-			t.Fatal(err)
-		}
-		return generalHome, res
-	}
-	accept := func(t *testing.T, generalHome string, res *ReportResult) {
-		env, err := mhome.NewStore(generalHome).ReadEnvelope("direct-task", res.MessageID)
-		if err != nil || env == nil {
-			t.Fatalf("ReadEnvelope: %v", err)
-		}
-		if err := mhome.NewStore(generalHome).WriteAck(&mhome.ProcessingAck{
-			MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity,
-			ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
-			PayloadHash: env.PayloadHash, Outcome: mhome.OutcomeAccepted, ProcessedAt: time.Now().UnixNano(),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Recover(RecoverRequest{SenderHome: generalHome, ReceiverHome: generalHome}); err != nil {
-			t.Fatal(err)
-		}
-	}
 	cases := []struct {
-		name  string
-		setup func(t *testing.T) string
-		want  int
+		name            string
+		setup           func(t *testing.T, generalHome string)
+		signal, reports int
 	}{
-		{"open report", func(t *testing.T) string { g, _ := report(t); return g }, 0},
-		{"accepted report", func(t *testing.T) string {
-			g, res := report(t)
-			accept(t, g, res)
-			return g
-		}, 0},
-		{"status after the report", func(t *testing.T) string {
-			g, res := report(t)
-			accept(t, g, res)
+		{"open report", func(t *testing.T, g string) {
+			reportDone(t, g, "direct-task", "failed")
+		}, 0, 1},
+		{"settled report", func(t *testing.T, g string) {
+			reportDone(t, g, "direct-task", "failed")
+			settleAll(t, g)
+		}, 0, 0},
+		{"status after the report", func(t *testing.T, g string) {
+			reportDone(t, g, "direct-task", "failed")
+			settleAll(t, g)
 			if err := mhome.AppendStatus(g, "direct-task", "failed: a different failure [key=default]"); err != nil {
 				t.Fatal(err)
 			}
-			return g
-		}, 1},
+		}, 1, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			generalHome := tc.setup(t)
+			generalHome, _ := directGeneralHome(t)
+			tc.setup(t, generalHome)
 			if _, err := testRunCycle(generalHome); err != nil {
 				t.Fatal(err)
 			}
-			if got := signalWakes(t, generalHome); got != tc.want {
-				t.Fatalf("signal wakes = %d, want %d", got, tc.want)
+			if got := wakesOfKind(t, generalHome, "signal"); got != tc.signal {
+				t.Errorf("signal wakes = %d, want %d", got, tc.signal)
+			}
+			if got := wakesOfKind(t, generalHome, mhome.ReportWakeKind); got != tc.reports {
+				t.Errorf("report wakes = %d, want %d", got, tc.reports)
 			}
 		})
 	}

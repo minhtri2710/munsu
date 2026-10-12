@@ -589,13 +589,6 @@ func TestStorePendingOrderingUsesMessageIDForEqualCreatedAt(t *testing.T) {
 	if len(pending) != 2 || pending[0].MessageID != "a-message" || pending[1].MessageID != "z-message" {
 		t.Fatalf("ListPending = %v, want [a-message z-message]", pendingIDs(pending))
 	}
-	all, err := store.ListAllPending()
-	if err != nil {
-		t.Fatalf("ListAllPending: %v", err)
-	}
-	if len(all) != 2 || all[0].MessageID != "a-message" || all[1].MessageID != "z-message" {
-		t.Fatalf("ListAllPending = %v, want [a-message z-message]", pendingIDs(all))
-	}
 }
 
 func pendingIDs(envelopes []*Envelope) []string {
