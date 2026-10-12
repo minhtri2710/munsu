@@ -371,3 +371,50 @@ func TestProvisionPiSkillBlockRefusals(t *testing.T) {
 		t.Fatalf("no human home error = %v, want the agent dir refusal", err)
 	}
 }
+
+// A seat's tool caches resolve under its own temp dir and never under the
+// Human's home: the script, run for real, exports them and the child sees them.
+func TestLaunchScriptRedirectsToolCachesIntoTheSeatTemp(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	human := t.TempDir()
+	t.Setenv("HOME", human)
+	wt := t.TempDir()
+	out := filepath.Join(t.TempDir(), "env")
+	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
+		WorktreePath: wt, LaunchDir: wt, HomeDir: human, PathDirs: seatPathDirs(human), TaskID: "ship-cache", SnapshotDigest: "digest",
+		LaunchBin: "/bin/sh", LaunchArgs: []string{"-c", "env > " + out}, LaunchID: "lid", Generation: "1", EndpointFence: "fence",
+	})
+	if err != nil {
+		t.Fatalf("buildLaunchArtifact: %v", err)
+	}
+	if msg, err := exec.Command("/bin/bash", artifact.ScriptPath).CombinedOutput(); err != nil {
+		t.Fatalf("running the launch script: %v\n%s", err, msg)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(string(body), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			env[k] = v
+		}
+	}
+	seat := filepath.Join(tmp, "munsu-seat-"+labelComponent("ship-cache")+"-1")
+	want := map[string]string{
+		"npm_config_cache": "npm-cache", "npm_config_store_dir": "npm-store",
+		"PIP_CACHE_DIR": "pip-cache", "UV_CACHE_DIR": "uv-cache", "XDG_CACHE_HOME": "xdg-cache",
+		"GOCACHE": "go-build", "GOMODCACHE": "go-mod", "GOTELEMETRYDIR": "go-telemetry",
+	}
+	for k, sub := range want {
+		if got := env[k]; got != filepath.Join(seat, sub) {
+			t.Errorf("%s = %q, want %q", k, got, filepath.Join(seat, sub))
+		}
+	}
+	for k, v := range env {
+		if strings.HasPrefix(v, human) && strings.Contains(k, "CACHE") {
+			t.Errorf("%s = %q points into the Human's home", k, v)
+		}
+	}
+}
