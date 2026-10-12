@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -215,23 +214,10 @@ func newWatchRunCmd() *cobra.Command {
 
 			wakesBefore := countQueuedWakes(ctx.Home)
 
-			// Delivery recovery gate: converge any pending Fleet-owned delivery
-			// journals at the watcher cycle boundary so an interrupted delivery
-			// completes first and the cycle observes truthful state. Exactly one
-			// command boundary owns this recovery; Deliver also converges
-			// pending journals before creating a new one.
-			//
-			// A held delivery scope is not a cycle failure. It means a Deliver
-			// is running right now, holding that scope across a provider merge
-			// that can outlast the lock budget, and that Deliver converges the
-			// pending journals itself before it creates a new one. Failing the
-			// cycle here would emit no wakes at all for as long as somebody is
-			// merging -- so the gate is reported as skipped and the cycle runs.
-			if err := fleet.RecoverDeliveryJournals(ctx.Home); err != nil {
-				if !errors.Is(err, home.ErrLockTimeout) {
-					return err
-				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "delivery recovery gate skipped: another process holds the delivery scope and converges its own journals")
+			// One diagnostic cycle: a delivery recovery gate failure fails the
+			// command before the cycle runs.
+			if err := orchestrator.DeliveryRecoveryGate(ctx.Home, fleetDeliveryRecoveryPort{}, cmd.ErrOrStderr()); err != nil {
+				return err
 			}
 
 			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
@@ -264,6 +250,13 @@ func newWatchRunCmd() *cobra.Command {
 	}
 	configureContractCommand(cmd)
 	return cmd
+}
+
+// fleetDeliveryRecoveryPort resumes pending delivery journals through Fleet.
+type fleetDeliveryRecoveryPort struct{}
+
+func (fleetDeliveryRecoveryPort) RecoverDeliveries(homeDir string) error {
+	return fleet.RecoverDeliveryJournals(homeDir)
 }
 
 // countQueuedWakes returns the number of decodable wake records in the queue,

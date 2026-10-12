@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -226,14 +227,40 @@ type CheckValidationPort interface {
 	ValidateCheck(path string) error
 }
 
+// DeliveryRecoveryPort resumes every pending delivery journal of a home. It
+// returns an error wrapping home.ErrLockTimeout when another process holds the
+// delivery scope.
+type DeliveryRecoveryPort interface {
+	RecoverDeliveries(homeDir string) error
+}
+
+// DeliveryRecoveryGate converges pending delivery journals at a watcher cycle
+// boundary so an interrupted delivery completes first and the cycle observes
+// truthful state. It is the one gate both `munsu watch run` and the daemon
+// run; each caller owns what a returned error does to its cycle.
+//
+// A held delivery scope is not a gate failure. It means a Deliver is running
+// right now, holding that scope across a provider merge that can outlast the
+// lock budget, and that Deliver converges the pending journals itself before
+// it creates a new one. Failing on it would emit no wakes at all for as long
+// as somebody is merging -- so the gate is reported as skipped and returns nil.
+func DeliveryRecoveryGate(homeDir string, port DeliveryRecoveryPort, w io.Writer) error {
+	err := port.RecoverDeliveries(homeDir)
+	if errors.Is(err, home.ErrLockTimeout) {
+		fmt.Fprintln(w, "delivery recovery gate skipped: another process holds the delivery scope and converges its own journals")
+		return nil
+	}
+	return err
+}
+
 // RunWithProbeSenderAndEvents starts the persistent watcher and also runs the
 // bounded native observation event lane: a validated event hint
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling; a nil check-validation port is refused as a
 // fatal cycle capability error.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events)
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries DeliveryRecoveryPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, reviews, checks, states, events, deliveries)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -242,7 +269,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, retirement RetirementPort, reviews ReviewVerdictPort, checks CheckValidationPort, states TaskStatePort, events ObservationEventPort, deliveries DeliveryRecoveryPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -285,19 +312,33 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		eventPulses = startEventLane(homeDir, NewEventWaiter(events), stopLane)
 	}
 
+	// cycle is one daemon cycle boundary: the beat, the delivery recovery
+	// gate, then the scan. A gate failure is reported and the cycle runs: the
+	// failed journals stay pending and are retried at the next boundary, and
+	// failing here would exit the daemon and stop every wake over one journal.
+	cycle := func() error {
+		if err := WriteBeat(homeDir); err != nil {
+			return fmt.Errorf("writing watcher beat: %w", err)
+		}
+		if err := DeliveryRecoveryGate(homeDir, deliveries, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "delivery recovery gate failed (journals left pending, retried next cycle): %v\n", err)
+		}
+		obs := newCycleObservation()
+		if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
+			return err
+		}
+		logCycleObservation(obs)
+		return nil
+	}
+
 	for {
 		select {
 		case <-sigCh:
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
-			if err := WriteBeat(homeDir); err != nil {
-				return nil, fmt.Errorf("writing watcher beat: %w", err)
-			}
-			obs := newCycleObservation()
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
+			if err := cycle(); err != nil {
 				return nil, err
 			}
-			logCycleObservation(obs)
 		case pulse, ok := <-eventPulses:
 			if !ok {
 				// Event lane closed (no native surface / degraded): keep pure
@@ -311,14 +352,9 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				// exact binding before any recovery/relaunch/dispose decision.
 				// The hint itself is never lifecycle truth and never sets a
 				// Task phase.
-				if err := WriteBeat(homeDir); err != nil {
-					return nil, fmt.Errorf("writing watcher beat: %w", err)
-				}
-				obs := newCycleObservation()
-				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, reviews, checks, states, obs); err != nil {
+				if err := cycle(); err != nil {
 					return nil, err
 				}
-				logCycleObservation(obs)
 			}
 		}
 	}

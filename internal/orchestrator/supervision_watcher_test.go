@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1558,12 +1559,105 @@ func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
 		return time.NewTicker(time.Millisecond)
 	}
 
-	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil)
+	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil, NoopDeliveryRecoveryPort{})
 	if err == nil || !strings.Contains(err.Error(), "writing watcher beat") || reason != nil {
 		t.Fatalf("run = %+v, %v, want a writing-watcher-beat error and no wake", reason, err)
 	}
 	if _, statErr := os.Stat(filepath.Join(homeDir, "state")); !os.IsNotExist(statErr) {
 		t.Fatalf("the state directory was recreated: %v", statErr)
+	}
+}
+
+// scriptedDeliveryRecoveryPort returns err and counts its calls. Its first
+// call runs first, which ends the daemon after the cycle in progress.
+type scriptedDeliveryRecoveryPort struct {
+	err   error
+	calls int
+	first func()
+}
+
+func (p *scriptedDeliveryRecoveryPort) RecoverDeliveries(string) error {
+	p.calls++
+	if p.calls == 1 {
+		p.first()
+	}
+	return p.err
+}
+
+// The daemon runs the delivery recovery gate at its cycle boundary, and a gate
+// failure is reported without ending the daemon or the cycle's wakes: the
+// failed journals stay pending and are retried at the next boundary.
+func TestRunDeliveryRecoveryGateAtTheCycleBoundary(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		stderr   string
+		unwanted []string
+	}{
+		{"resume fails", fmt.Errorf("delivery journal dj-1: provider observation failed"),
+			"delivery recovery gate failed (journals left pending, retried next cycle): delivery journal dj-1: provider observation failed",
+			[]string{"skipped", "recovered"}},
+		{"resume succeeds", nil, "", []string{"delivery recovery gate"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			checksDir := filepath.Join(homeDir, "state", "checks")
+			if err := os.MkdirAll(checksDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(checksDir, "global.check"), []byte("#!/bin/sh\necho ready\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			resetRecovery()
+
+			sigCh := make(chan os.Signal, 1)
+			stop := func() {
+				select {
+				case sigCh <- syscall.SIGTERM:
+				default:
+				}
+			}
+			// Backstop for a daemon that never reaches the gate.
+			backstop := time.AfterFunc(3*time.Second, stop)
+			defer backstop.Stop()
+			var ticker *time.Ticker
+			newTicker := func(time.Duration) *time.Ticker {
+				ticker = time.NewTicker(10 * time.Millisecond)
+				return ticker
+			}
+			port := &scriptedDeliveryRecoveryPort{err: tc.err, first: func() {
+				ticker.Stop()
+				stop()
+			}}
+
+			var reason *WakeReason
+			var err error
+			stderr := captureStderr(t, func() {
+				reason, err = run(homeDir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, NoopRetirementPort{}, nil, acceptingCheckValidationPort{}, testTaskStatePort{}, nil, port)
+			})
+			if err != nil || reason == nil || reason.Kind != "signal" {
+				t.Fatalf("run = %+v, %v, want the daemon to keep running until signalled", reason, err)
+			}
+			if port.calls != 1 {
+				t.Fatalf("delivery recovery gate ran %d times, want once at the one cycle boundary", port.calls)
+			}
+			wakes, err := mhome.PeekWakes(homeDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(wakes) != 1 || wakes[0].Kind != "check" {
+				t.Fatalf("wakes = %#v, want the cycle's one check wake", wakes)
+			}
+			if !strings.Contains(stderr, tc.stderr) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.stderr)
+			}
+			for _, u := range tc.unwanted {
+				if strings.Contains(stderr, u) {
+					t.Errorf("stderr = %q, must not contain %q", stderr, u)
+				}
+			}
+		})
 	}
 }
 
