@@ -6,11 +6,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
 )
@@ -487,6 +491,98 @@ func TestSeatDirRefusals(t *testing.T) {
 		{"a reviewer writes a temp path outside the home", func() { mustWrite(t, reviewer, filepath.Join(l.root, "f")) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.check() })
+	}
+}
+
+// connects reports whether the fenced nc reached a listener the test holds at
+// sock, which proves the bytes arrived. nc prints no reason for a refused
+// connect, so a refusal is nc failing while the held listener accepts nothing.
+func connects(t *testing.T, f *Fence, sock string) (bool, error) {
+	t.Helper()
+	mkdirs(t, filepath.Dir(sock))
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	got := make(chan string, 1)
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			got <- ""
+			return
+		}
+		defer c.Close()
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		buf := make([]byte, len("typed"))
+		n, _ := io.ReadFull(c, buf)
+		got <- string(buf[:n])
+	}()
+	wrapped, err := f.Wrap([]string{"/usr/bin/nc", "-U", sock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	cmd.Stdin = strings.NewReader("typed")
+	runErr := cmd.Run()
+	// A connect that succeeded is queued before nc exits, so a short accept
+	// deadline cannot miss it.
+	l.(*net.UnixListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
+	return <-got == "typed", runErr
+}
+
+// A seat, soldier or reviewer, connects to no other session's input socket:
+// claude's message sockets, or a tmux server under its default dir or under
+// TMUX_TMPDIR (G1085). The allow rows are the nearest valid connects: a socket
+// in a sibling temp dir, and the herdr socket, which part 2 has not fenced yet.
+// The dirs sit in short scratch paths (a unix socket path is capped near 104
+// bytes), never the live ones.
+func TestSeatCannotReachAnotherSessionsSocket(t *testing.T) {
+	scratch, err := os.MkdirTemp("/tmp", "fsock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(scratch) })
+	if scratch, err = filepath.EvalSymlinks(scratch); err != nil {
+		t.Fatal(err)
+	}
+	origClaude, origTmux := claudeSocketDir, tmuxTempDir
+	t.Cleanup(func() { claudeSocketDir, tmuxTempDir = origClaude, origTmux })
+	claudeSocketDir, tmuxTempDir = filepath.Join(scratch, "cc-socks"), filepath.Join(scratch, "tmp")
+	t.Setenv("TMUX_TMPDIR", filepath.Join(scratch, "tmuxtmp"))
+	herdrSock := filepath.Join(scratch, "herdr", "herdr.sock")
+	t.Setenv("HERDR_SOCKET_PATH", herdrSock)
+	tmux := "tmux-" + strconv.Itoa(os.Getuid())
+
+	l := newLayout(t)
+	for _, role := range []struct {
+		name string
+		f    *Fence
+	}{{"soldier", mustNew(t, l.soldier())}, {"reviewer", mustNew(t, l.reviewer())}} {
+		for _, tt := range []struct {
+			name    string
+			sock    string
+			refused bool
+		}{
+			{"another claude session's message socket", filepath.Join(claudeSocketDir, "1.sock"), true},
+			{"a tmux server under its default dir", filepath.Join(tmuxTempDir, tmux, "default"), true},
+			{"a tmux server under TMUX_TMPDIR, the third term of one deny", filepath.Join(scratch, "tmuxtmp", tmux, "default"), true},
+			{"a socket in a sibling temp dir", filepath.Join(tmuxTempDir, "other", "s.sock"), false},
+			{"the herdr socket until part 2", herdrSock, false},
+		} {
+			t.Run(role.name+"/"+tt.name, func(t *testing.T) {
+				ok, err := connects(t, role.f, tt.sock)
+				if tt.refused && (ok || err == nil) {
+					t.Errorf("connect to %s was not refused by the fence: connected=%v nc=%v", tt.sock, ok, err)
+				}
+				if !tt.refused && (!ok || err != nil) {
+					t.Errorf("connect to %s was refused: connected=%v nc=%v", tt.sock, ok, err)
+				}
+			})
+		}
 	}
 }
 
