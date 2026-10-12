@@ -171,10 +171,10 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	// Supervision gate: handoff fails closed when the watcher lease of either
 	// home is degraded. Durable Dispatch Holds are evaluated by
 	// the fleet holds gate below.
-	if err := CheckSupervisionForDispatch(source, mhome.DispatchActionHandoff); err != nil {
+	if err := CheckSupervisionForDispatch(source); err != nil {
 		return err
 	}
-	if err := CheckSupervisionForDispatch(destination, mhome.DispatchActionHandoff); err != nil {
+	if err := CheckSupervisionForDispatch(destination); err != nil {
 		return err
 	}
 
@@ -195,16 +195,6 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 		return err
 	}
 
-	// Fleet-owned holds gate: every applicable durable Dispatch Hold on either
-	// home blocks the transfer before any intent (the matching rule lives in
-	// taskauthority.DispatchHold.Matches; only the orchestration stays here).
-	if err := checkHandoffHolds(sourceAuth, "", "", "", ""); err != nil {
-		return err
-	}
-	if err := checkHandoffHolds(destinationAuth, "", "", "", ""); err != nil {
-		return err
-	}
-
 	keys, err := resolveHandoffKeys(source, sourceAuth, itemKeys)
 	if err != nil {
 		return err
@@ -218,18 +208,13 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 		if err != nil {
 			return fmt.Errorf("handoff: reading source task %s: %w", taskID, err)
 		}
-		project := agg.Definition.Project
-		parentID := agg.Definition.ParentTaskID
-		if err := checkHandoffHolds(sourceAuth, taskID, project, agg.Generation.String(), parentID); err != nil {
+		// Task Authority owns the queued-only and hold rules; ReserveTransfer
+		// re-checks them under the dispatch lock.
+		if err := sourceAuth.CheckTransferable(agg); err != nil {
 			return err
 		}
-		if err := checkHandoffHolds(destinationAuth, taskID, project, agg.Generation.String(), parentID); err != nil {
+		if err := destinationAuth.CheckReceivable(agg); err != nil {
 			return err
-		}
-		if parentID != "" {
-			if err := checkHandoffHolds(sourceAuth, parentID, project, "", parentID); err != nil {
-				return err
-			}
 		}
 		// A destination that already owns the task quarantines the transfer
 		// with a typed conflict before any intent; the receive operation
@@ -288,26 +273,6 @@ func handoffCanonical(homeDir string) (*taskauthority.Canonical, error) {
 // idempotently and recovery continues the same Transfer.
 func transferOpID(transferID, taskID, step string) string {
 	return "transfer-" + transferID + "-" + taskID + "-" + step
-}
-
-// checkHandoffHolds is the fleet-owned dispatch-hold gate for the handoff
-// action: it lists the home's durable holds through the canonical Authority
-// and matches them against the task/project/generation/parent. The matching
-// rule lives in taskauthority.DispatchHold.Matches; only the orchestration
-// stays in fleet.
-func checkHandoffHolds(auth *taskauthority.Canonical, taskID, project, generation, parentID string) error {
-	holds, err := auth.ListHolds()
-	if err != nil {
-		return err
-	}
-	for _, hold := range holds {
-		if hold.Matches(taskauthority.DispatchActionHandoff, taskID, project, generation, parentID) {
-			return domain.NewError(domain.ErrorConflict,
-				fmt.Sprintf("dispatch is held: %s (%s)", hold.ID, hold.Reason),
-				domain.RetryNever, taskauthority.ErrDispatchHeld)
-		}
-	}
-	return nil
 }
 
 // handoffCandidateOwners returns every canonical home that currently owns the
@@ -409,12 +374,8 @@ func resolveHandoffKeys(source string, sourceAuth *taskauthority.Canonical, requ
 		if err != nil {
 			return nil, err
 		}
-		agg, err := sourceAuth.Get(tid)
-		if err != nil {
+		if _, err := sourceAuth.Get(tid); err != nil {
 			return nil, fmt.Errorf("handoff: key %s not owned by the source home: %w", resolved, err)
-		}
-		if agg.Phase != taskauthority.PhaseQueued {
-			return nil, fmt.Errorf("handoff: task %s has state %q — only queued tasks may be transferred", resolved, agg.Phase)
 		}
 		seen[resolved] = true
 		keys = append(keys, resolved)
