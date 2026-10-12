@@ -24,7 +24,7 @@ func TestSweepRejectsRecordScopeMismatch(t *testing.T) {
 		FenceToken:       1,
 		ExpectedRevision: 0,
 		NewRevision:      1,
-		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}},
+		Items:            []ChangeItem{{Root: RootState, Key: "k", Data: []byte("x")}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestSweepRejectsRecordScopeMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk.Release()
-	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k2", Data: []byte("y")}})
+	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k2", Data: []byte("y")}})
 	if err == nil || !strings.Contains(err.Error(), "does not match locked scope") {
 		t.Fatalf("Commit over scope-mismatched record: got %v, want a locked-scope mismatch error", err)
 	}
@@ -59,7 +59,7 @@ func TestSweepRejectsRecordFilenameMismatch(t *testing.T) {
 		FenceToken:       1,
 		ExpectedRevision: 0,
 		NewRevision:      1,
-		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}},
+		Items:            []ChangeItem{{Root: RootState, Key: "k", Data: []byte("x")}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestSweepRejectsRecordFilenameMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk.Release()
-	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k2", Data: []byte("y")}})
+	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k2", Data: []byte("y")}})
 	if err == nil || !strings.Contains(err.Error(), "does not match its scope/txn id") {
 		t.Fatalf("Commit over filename-mismatched record: got %v, want a scope/txn id mismatch error", err)
 	}

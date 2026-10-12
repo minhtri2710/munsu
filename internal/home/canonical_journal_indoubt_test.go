@@ -22,14 +22,14 @@ func TestCommitRollsForwardAfterDurableApplyFailure(t *testing.T) {
 	}
 	defer lk.Release()
 
-	rev, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("v")}})
+	rev, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("v")}})
 	if err != nil || rev != 1 {
 		t.Fatalf("Commit = %d, %v; want 1, nil", rev, err)
 	}
 	if got, err := h.readRevision("scope"); err != nil || got != 1 {
 		t.Fatalf("revision = %d, %v; want 1", got, err)
 	}
-	if data, err := h.Read(RootData, "k"); err != nil || string(data) != "v" {
+	if data, err := h.Read(RootState, "k"); err != nil || string(data) != "v" {
 		t.Fatalf("Read k = %q, %v; want v", data, err)
 	}
 	if _, err := os.Stat(h.journalPath("scope", "txn")); !os.IsNotExist(err) {
@@ -42,7 +42,7 @@ func TestCommitRollsForwardAfterDurableApplyFailure(t *testing.T) {
 // durable record.
 func TestCommitReturnsInDoubtWhenRollForwardFails(t *testing.T) {
 	h := newTestHome(t)
-	target, err := h.Path(RootData, "k")
+	target, err := h.Path(RootState, "k")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCommitReturnsInDoubtWhenRollForwardFails(t *testing.T) {
 	}
 	defer lk.Release()
 
-	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("v")}}); !errors.Is(err, ErrInDoubt) {
+	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("v")}}); !errors.Is(err, ErrInDoubt) {
 		t.Fatalf("Commit: got %v, want ErrInDoubt", err)
 	}
 	if _, err := os.Stat(h.journalPath("scope", "txn")); err != nil {
@@ -68,13 +68,13 @@ func TestCommitReturnsInDoubtWhenRollForwardFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Retrying from the old revision conflicts with its own now-applied change.
-	if _, err := h.Commit(lk, "next", 0, []ChangeItem{{Root: RootData, Key: "n", Data: []byte("n")}}); !errors.Is(err, ErrConflict) {
+	if _, err := h.Commit(lk, "next", 0, []ChangeItem{{Root: RootState, Key: "n", Data: []byte("n")}}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("Commit from stale revision: got %v, want ErrConflict", err)
 	}
-	if data, err := h.Read(RootData, "k"); err != nil || string(data) != "v" {
+	if data, err := h.Read(RootState, "k"); err != nil || string(data) != "v" {
 		t.Fatalf("Read k = %q, %v; want v", data, err)
 	}
-	if rev, err := h.Commit(lk, "next", 1, []ChangeItem{{Root: RootData, Key: "n", Data: []byte("n")}}); err != nil || rev != 2 {
+	if rev, err := h.Commit(lk, "next", 1, []ChangeItem{{Root: RootState, Key: "n", Data: []byte("n")}}); err != nil || rev != 2 {
 		t.Fatalf("Commit from applied revision = %d, %v; want 2, nil", rev, err)
 	}
 }
@@ -95,14 +95,14 @@ func TestCommitPreDurableFailureIsPlain(t *testing.T) {
 	}
 	defer lk.Release()
 
-	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("v")}})
+	_, err = h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("v")}})
 	if err == nil || errors.Is(err, ErrInDoubt) {
 		t.Fatalf("Commit: got %v, want a plain error", err)
 	}
 	if rev, err := h.readRevision("scope"); err != nil || rev != 0 {
 		t.Fatalf("revision = %d, %v; want 0", rev, err)
 	}
-	if _, err := h.Read(RootData, "k"); err == nil {
+	if _, err := h.Read(RootState, "k"); err == nil {
 		t.Fatal("item k written by a failed pre-durable commit")
 	}
 }
