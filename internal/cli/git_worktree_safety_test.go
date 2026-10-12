@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1119,49 +1118,46 @@ func TestSafetyCheckReadsLongCommandInLinearTime(t *testing.T) {
 	// sixteen times as much, where a list scan per target cost about 256.
 	// Comparing two sizes under the same load keeps -race and a busy host
 	// from deciding the verdict.
-	targetsCost := func(n int) time.Duration {
+	targets := func(n int) func() {
 		command := "rm " + strings.Join(strings.Fields(words.String())[:n], " ")
-		best := time.Duration(math.MaxInt64)
-		for range 3 {
-			start := time.Now()
+		return func() {
 			if targets, ambiguous := shellWriteTargets(worktree, command); len(targets) != n || ambiguous {
 				t.Errorf("shellWriteTargets of rm with %d words = %d targets ambiguous=%v, want %d", n, len(targets), ambiguous, n)
 			}
-			best = min(best, time.Since(start))
 		}
-		return best
 	}
-	if small, large := targetsCost(1000), targetsCost(16000); large > 64*small {
+	if small, large := fastestRuns(targets(1000), targets(16000)); large > 64*small {
 		t.Errorf("shellWriteTargets of rm with 16000 words took %v, %.0f times 1000 words (%v), want under 64", large, float64(large)/float64(small), small)
 	}
 	// The git guard reads each distinct word that reads as more than itself
 	// once: sixteen times the quoted words cost about fourteen times as much,
 	// where a list scan per word cost about 75.
-	echoCost := func(n int) time.Duration {
+	echo := func(n int) func() {
 		var command strings.Builder
 		command.WriteString("echo")
 		for i := range n {
 			fmt.Fprintf(&command, " 'a %d'", i)
 		}
-		best := time.Duration(math.MaxInt64)
-		for range 3 {
-			start := time.Now()
+		return func() {
 			if block, reason := runPiSafetyForGit(t, worktree, command.String()); block {
 				t.Errorf("echo of %d quoted words: block=true reason=%q, want allow", n, reason)
 			}
-			best = min(best, time.Since(start))
 		}
-		return best
 	}
-	if small, large := echoCost(4000), echoCost(64000); large > 32*small {
+	if small, large := fastestRuns(echo(4000), echo(64000)); large > 32*small {
 		t.Errorf("echo of 64000 quoted words took %v, %.0f times 4000 words (%v), want under 32", large, float64(large)/float64(small), small)
 	}
 }
 
 // TestSafetyCheckReadsNestedSubshellsInLinearTime pins F-E of
 // review-cf6153cd273e: a subshell shares the directory stack pushd built
-// instead of copying it, so n pushes under n nested subshells cost linear
-// time. The budget is eight times the cost of a quarter.
+// instead of copying it, so n pushes under n nested subshells allocate
+// linear memory. A copy per subshell allocates n² stack nodes. Allocation
+// does not vary with load or -race, where timing this walk could not
+// separate linear from quadratic by 2x either way: 32 times the pushes
+// allocate 34.5 times as much shared and 142 copied, and the budget is
+// their geometric middle. No lane pins a quadratic walk of the stack that
+// allocates nothing.
 func TestSafetyCheckReadsNestedSubshellsInLinearTime(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
@@ -1169,20 +1165,17 @@ func TestSafetyCheckReadsNestedSubshellsInLinearTime(t *testing.T) {
 	homeDir := bindSafetyWorktree(t, "ship-stack", primary, worktree)
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-stack")
-	cost := func(n int) time.Duration {
+	allocated := func(n int) uint64 {
 		command := strings.Repeat("pushd "+worktree+"; ", n) + strings.Repeat("(", n) + "git status" + strings.Repeat(")", n)
-		best := time.Duration(math.MaxInt64)
-		for range 3 {
-			start := time.Now()
+		bytes, _ := measureAllocation(func() {
 			if block, reason := runPiSafetyForGit(t, worktree, command); block {
 				t.Fatalf("%d pushes under %d subshells: block=true reason=%q, want allow", n, n, reason)
 			}
-			best = min(best, time.Since(start))
-		}
-		return best
+		})
+		return bytes
 	}
-	if small, large := cost(4000), cost(16000); large > 8*small {
-		t.Errorf("16000 pushes and subshells took %v, %.1f times 4000 (%v), want under 8", large, float64(large)/float64(small), small)
+	if small, large := allocated(250), allocated(8000); large > 70*small {
+		t.Errorf("8000 pushes and subshells allocated %d MiB, %.1f times 250 (%d KiB), want under 70", large>>20, float64(large)/float64(small), small>>10)
 	}
 }
 
