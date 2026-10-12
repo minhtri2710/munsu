@@ -51,15 +51,16 @@ func captureOutput(fn func()) (stdout, stderr string) {
 	return outBuf.String(), errBuf.String()
 }
 
-// TestInitNonInteractive verifies that init defaults to skip when
-// no --skill flag or MUNSU_INIT_SKILL env is set.
-func TestInitNonInteractive(t *testing.T) {
+// TestInitWithoutSkillFlagOrEnvSkips verifies that init skips skill install
+// when neither --skill nor MUNSU_INIT_SKILL is set.
+func TestInitWithoutSkillFlagOrEnvSkips(t *testing.T) {
 	savedChoice := skillChoice
 	skillChoice = ""
 	t.Cleanup(func() { skillChoice = savedChoice })
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_INIT_SKILL", "")
 
 	stdout, stderr := captureOutput(func() {
 		root := NewRootCommand()
@@ -77,11 +78,12 @@ func TestInitNonInteractive(t *testing.T) {
 	t.Logf("stderr: %s", stderr)
 
 	if !strings.Contains(stdout, "Skipping skill install.") {
-		t.Errorf("expected 'Skipping skill install.' without --skill, got: %s", stdout)
+		t.Errorf("expected 'Skipping skill install.' without --skill or MUNSU_INIT_SKILL, got: %s", stdout)
 	}
 }
 
-// TestInitSkillLocalFlag verifies that --skill local installs skills.
+// TestInitSkillLocalFlag verifies that --skill local installs skills, and that
+// a second run replaces the installed copy.
 func TestInitSkillLocalFlag(t *testing.T) {
 	savedChoice := skillChoice
 	skillChoice = skillLocal
@@ -117,6 +119,18 @@ func TestInitSkillLocalFlag(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Errorf("expected %s to be a directory", skillDir)
+	}
+
+	stdout, _ = captureOutput(func() {
+		root := NewRootCommand()
+		root.SetArgs([]string{"init", "--skill", "local"})
+		if err := root.Execute(); err != nil {
+			t.Errorf("second init --skill local failed: %v", err)
+		}
+	})
+	want := "Replaced skill \"munsu-ops\" at " + filepath.Dir(skillDir)
+	if !strings.Contains(stdout, want) {
+		t.Errorf("expected %q on the second --skill local run, got: %s", want, stdout)
 	}
 }
 
