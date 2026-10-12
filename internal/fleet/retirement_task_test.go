@@ -655,7 +655,6 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	// per-task pi agent dir among them (a directory with content).
 	residuals := []string{
 		"test-residual.status",
-		"test-residual.check",
 		"test-residual.turnend",
 		"test-residual.pi-ext.ts",
 		"test-residual." + harness.PiAgentDirSuffix,
@@ -707,15 +706,15 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 		want []string
 	}{
 		{"ship with pi", taskauthority.KindShip, map[string]string{"harness": "pi"}, []string{
-			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
+			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
 		{"review also removes its launch home", taskauthority.KindReview, map[string]string{"harness": "pi"}, []string{
-			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
+			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
 		{"unknown harness has only the native artifacts", taskauthority.KindShip, map[string]string{}, []string{
-			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.check"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
+			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1020,11 +1019,11 @@ func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
 }
 
 // blockResidualRemoval leaves a residual the projection cleanup cannot remove: a
-// "<id>.check" directory whose own mode forbids unlinking its content. The
+// "<id>.turnend" directory whose own mode forbids unlinking its content. The
 // returned func lifts the block so the retry can succeed.
 func blockResidualRemoval(t *testing.T, stateDir, taskID string) (lift func()) {
 	t.Helper()
-	blocked := filepath.Join(stateDir, taskID+".check")
+	blocked := filepath.Join(stateDir, taskID+".turnend")
 	if err := os.MkdirAll(blocked, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1121,7 +1120,7 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 		t.Fatalf("error = %T %v, want projection error", err, err)
 	}
 	lift()
-	if err := os.RemoveAll(filepath.Join(tmp, "state", taskID+".check")); err != nil {
+	if err := os.RemoveAll(filepath.Join(tmp, "state", taskID+".turnend")); err != nil {
 		t.Fatal(err)
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))

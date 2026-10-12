@@ -35,7 +35,6 @@ func TestRetirementRules(t *testing.T) {
 		{"ship PR is not open unmerged", openUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship merged PR head matches the identity", wrongPRHeadBlock, mergedMatchingHeadAllow},
 		{"ship canonical delivery outcome is completed", outcomeNotCompletedBlock, outcomeCompletedAllow},
-		{"merged poll needs a completed delivery outcome", mergedPollPartialOutcomeBlock, mergedPollCompletedOutcomeAllow},
 	} {
 		t.Run(rule.name+"/blocks", rule.block)
 		t.Run(rule.name+"/allows", rule.allow)

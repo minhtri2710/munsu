@@ -26,7 +26,7 @@ import (
 //
 // Durable order per resolution (must not be reordered):
 //  1. capture the resolver's result into the event's own record
-//     (temp + fsync + rename, the WriteRetirementRecord pattern);
+//     (temp + fsync + rename);
 //  2. enqueue exactly one wake through home.EnqueueWake, the sole delivery
 //     substrate -- announceProcessEvent refuses to enqueue for
 //     a record whose durable copy does not carry a captured result;
@@ -40,8 +40,8 @@ import (
 // re-delivers every captured-but-unacked event once per home per process, so
 // a crash anywhere before ack re-delivers and a crash after ack does not.
 //
-// Merged-PR retirement is the only instance: the watcher cycle recovers,
-// evaluates and consumes these records for its merged polls.
+// Review verdicts are the only instance: the watcher cycle recovers, evaluates
+// and consumes these records for them.
 
 // ProcessEventSchema is the schema version for ProcessEventRecord.
 const ProcessEventSchema = 1

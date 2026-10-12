@@ -1704,7 +1704,7 @@ func cleanupResidualArtifactPaths(homeDir, id, kind string, meta map[string]stri
 		paths = append(paths, reviewHomeDir(homeDir, id))
 	}
 	stateDir := home.StateDir(homeDir)
-	for _, suffix := range []string{"check", "turnend", "report-cursor"} {
+	for _, suffix := range []string{"turnend", "report-cursor"} {
 		p, err := home.DurableFilePath(stateDir, id, "."+suffix)
 		if err != nil {
 			return nil, err

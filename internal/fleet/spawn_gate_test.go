@@ -65,7 +65,7 @@ func requireGateBlocker(t *testing.T, err error, category GateBlockerCategory, d
 func TestProjectGate(t *testing.T) {
 	t.Run("primary without a no-mistakes remote", func(t *testing.T) {
 		f := newGateFixture(t)
-		_, _, err := projectGate(f.primary)
+		_, err := projectGate(f.primary)
 		requireGateBlocker(t, err, GateBlockerNotInitialized, "the primary has no no-mistakes remote")
 		var blocker *GateBlockerError
 		errors.As(err, &blocker)
@@ -77,7 +77,7 @@ func TestProjectGate(t *testing.T) {
 	t.Run("repos directory missing", func(t *testing.T) {
 		f := newGateFixture(t)
 		f.remote(t, filepath.Join(f.nmHome, "repos", "p.git"))
-		_, _, err := projectGate(f.primary)
+		_, err := projectGate(f.primary)
 		requireGateBlocker(t, err, GateBlockerNotInitialized, "the no-mistakes repos directory is unreadable")
 	})
 
@@ -86,7 +86,7 @@ func TestProjectGate(t *testing.T) {
 		f.repos(t)
 		elsewhere := t.TempDir()
 		f.remote(t, elsewhere)
-		_, _, err := projectGate(f.primary)
+		_, err := projectGate(f.primary)
 		requireGateBlocker(t, err, GateBlockerNotInitialized, "is not a gate repo under")
 	})
 
@@ -94,7 +94,7 @@ func TestProjectGate(t *testing.T) {
 		f := newGateFixture(t)
 		repos := f.repos(t)
 		f.remote(t, filepath.Join(repos, "missing.git"))
-		_, _, err := projectGate(f.primary)
+		_, err := projectGate(f.primary)
 		requireGateBlocker(t, err, GateBlockerNotInitialized, "is not a gate repo under")
 	})
 
@@ -105,7 +105,7 @@ func TestProjectGate(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.remote(t, nested)
-		_, _, err := projectGate(f.primary)
+		_, err := projectGate(f.primary)
 		requireGateBlocker(t, err, GateBlockerNotInitialized, "is not a gate repo under")
 	})
 
@@ -117,15 +117,12 @@ func TestProjectGate(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.remote(t, gate)
-		repo, state, err := projectGate(f.primary)
+		repo, err := projectGate(f.primary)
 		if err != nil {
 			t.Fatalf("projectGate: %v", err)
 		}
 		if repo != gate {
 			t.Fatalf("gate repo = %q, want %q", repo, gate)
-		}
-		if want := filepath.Join(filepath.Dir(repos), "state.sqlite"); state != want {
-			t.Fatalf("gate state = %q, want the database beside the repos directory %q", state, want)
 		}
 	})
 }

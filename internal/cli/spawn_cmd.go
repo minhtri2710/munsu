@@ -346,12 +346,6 @@ func newPromoteCmd() *cobra.Command {
 				return err
 			}
 
-			// .meta is a post-commit projection: a failure is a typed partial
-			// error and never rolls back the committed promotion.
-			if perr := touchTaskMeta(ctx.Home, id); perr != nil {
-				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: perr}
-			}
-
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "promote",

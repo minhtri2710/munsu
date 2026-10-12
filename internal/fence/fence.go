@@ -56,14 +56,10 @@ type Launch struct {
 	// home root and never overlapping the primary checkout, worktree, git dir or
 	// common dir.
 	HarnessStateDir string
-	// GateRepo and GateState are the no-mistakes write set of a soldier that
-	// drives a gate run: this project's gate repository (writable subtree, except
-	// its programs, its configuration, the files that redirect git elsewhere
-	// and the removal of its root; New lists them) and
-	// the gate's state database (writable with its -wal, -shm and -journal
-	// files). Both or neither; a reviewer has none.
-	GateRepo  string
-	GateState string
+	// GateRepo is the no-mistakes write set of a soldier that drives a gate
+	// run: this project's gate repository, of which only objects/, refs/ and
+	// logs/ are writable. A reviewer has none.
+	GateRepo string
 	// WritableRoots are a soldier's extra writable directories from the project's
 	// config (fence-writable-roots), checked by ValidateWritableRoots. Checkouts
 	// are the other registered projects' checkout and git common dirs they must

@@ -124,10 +124,11 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	l := newSplitLayout(t, out)
 	verdict := filepath.Join(out, "verdict.json")
 	gateRepo := filepath.Join(out, "gate", "repo.git")
-	gateState := filepath.Join(out, "gate", "state.db")
+	// The gate's state database sits beside the gate as under NM_HOME, outside
+	// every temp root.
+	gateState := filepath.Join(out, "gate", "state.sqlite")
 	mkdirs(t, filepath.Join(gateRepo, "objects", "info"), filepath.Join(gateRepo, "refs", "heads", "mu"), filepath.Join(gateRepo, "logs", "refs", "heads", "mu"),
-		filepath.Join(gateRepo, "hooks"), filepath.Join(gateRepo, "info"), filepath.Join(gateRepo, "worktrees", "x"),
-		filepath.Join(gateRepo, "remotes"), filepath.Join(gateRepo, "branches"), filepath.Join(l.common, "objects"), filepath.Join(l.common, "hooks"),
+		filepath.Join(gateRepo, "hooks"), filepath.Join(l.common, "objects"), filepath.Join(l.common, "hooks"),
 		filepath.Join(l.common, "refs", "remotes"), filepath.Join(l.common, "refs", "heads"),
 		filepath.Join(l.common, "logs", "refs", "remotes"), filepath.Join(l.common, "logs", "refs", "heads"), filepath.Join(out, "wt2"))
 	launch := l.soldier()
@@ -142,8 +143,27 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch.Files = []string{verdict}
-	launch.GateRepo, launch.GateState = gateRepo, gateState
+	launch.GateRepo = gateRepo
 	f := mustNew(t, launch)
+	// The same gate under the layout's temp root, where the temp-root allow
+	// covers it and only the profile's whole-gate deny refuses.
+	tempGate := filepath.Join(l.root, "gate", "repo.git")
+	mkdirs(t, filepath.Join(tempGate, "objects", "info"), filepath.Join(tempGate, "refs", "heads", "mu"),
+		filepath.Join(tempGate, "logs", "refs", "heads", "mu"), filepath.Join(tempGate, "hooks"))
+	tempLaunch := launch
+	tempLaunch.GateRepo = tempGate
+	for _, gt := range []struct {
+		f    *Fence
+		repo string
+	}{{f, gateRepo}, {mustNew(t, tempLaunch), tempGate}} {
+		// What a push writes in the gate.
+		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"),
+			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-1"))
+		// Outside objects/, refs/ and logs/ (G1151): a program, configuration
+		// and data; and objects/info, the alternates (G1085).
+		mustRefuse(t, gt.f, filepath.Join(gt.repo, "hooks", "pre-receive"), filepath.Join(gt.repo, "config"),
+			filepath.Join(gt.repo, "HEAD"), filepath.Join(gt.repo, "objects", "info", "alternates"))
+	}
 
 	mustWrite(t, f,
 		filepath.Join(l.worktree, "f"),
@@ -153,9 +173,6 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
-		// The gate's data: what a push writes, and its HEAD.
-		filepath.Join(gateRepo, "objects", "f"), filepath.Join(gateRepo, "refs", "heads", "mu", "T-1"),
-		filepath.Join(gateRepo, "logs", "refs", "heads", "mu", "T-1"), filepath.Join(gateRepo, "HEAD"), gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
 		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
 		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 		filepath.Join(l.root, "temp-elsewhere-f"),
@@ -171,30 +188,35 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(uhome, ".claude.json.tmp.123.abc1"),
 		filepath.Join(out, "wt2", "f"), filepath.Join(out, "f"),
 		verdict+"2", verdict+".tmp.abc", verdict+".tmp.1.xyz",
+		// The gate's state database (G1154).
+		gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
 		gateState+"-x", filepath.Join(out, "gate", "f"),
-		// The gate's programs and configuration, which unfenced pushes and the
-		// no-mistakes daemon run (G1085).
-		filepath.Join(gateRepo, "hooks", "pre-receive"), filepath.Join(gateRepo, "config"), filepath.Join(gateRepo, "config.worktree"),
-		filepath.Join(gateRepo, "info", "attributes"), filepath.Join(gateRepo, "no-mistakes-gate-config"),
-		filepath.Join(gateRepo, "worktrees", "x", "config.worktree"), filepath.Join(gateRepo, "objects", "info", "alternates"),
-		filepath.Join(gateRepo, "remotes", "origin"), filepath.Join(gateRepo, "branches", "x"),
-		// Files that redirect git to another repository's hooks and config.
-		filepath.Join(gateRepo, "commondir"), filepath.Join(gateRepo, ".git"), filepath.Join(gateRepo, "gitdir"),
-		filepath.Join(gateRepo, "modules"),
 	)
-	// The gate root cannot be renamed away (into a writable temp root) and
-	// replaced; a rename inside the gate, as git makes for its objects and
+	// Neither the gate root nor objects/, refs/ or logs/ can be renamed away
+	// (into a writable temp root) and replaced, and an absent logs/ cannot be
+	// planted; a rename inside the gate, as git makes for its objects and
 	// refs, still works.
 	dest, err := os.MkdirTemp("/tmp", "fence-gate-dest-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dest) })
-	if o, err := fenced(t, f, "/bin/mv", gateRepo, filepath.Join(dest, "moved.git")); err == nil || !strings.Contains(o, "Operation not permitted") {
-		t.Errorf("renaming the gate root away was not refused by the fence: %v %s", err, o)
+	bareGate := filepath.Join(out, "gate2", "repo.git")
+	mkdirs(t, filepath.Join(bareGate, "objects"), filepath.Join(bareGate, "refs"))
+	launch.GateRepo = bareGate
+	if o, err := fenced(t, mustNew(t, launch), "/bin/ln", "-s", dest, filepath.Join(bareGate, "logs")); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("planting an absent gate logs/ was not refused by the fence: %v %s", err, o)
 	}
-	if fi, err := os.Lstat(gateRepo); err != nil || !fi.IsDir() {
-		t.Fatalf("the gate root is gone after a rename the fence must refuse: %v", err)
+	if _, err := os.Lstat(filepath.Join(bareGate, "logs")); err == nil {
+		t.Errorf("the gate's logs/ exists after a plant the fence must refuse")
+	}
+	for _, d := range []string{gateRepo, filepath.Join(gateRepo, "objects"), filepath.Join(gateRepo, "refs"), filepath.Join(gateRepo, "logs")} {
+		if o, err := fenced(t, f, "/bin/mv", d, filepath.Join(dest, "moved")); err == nil || !strings.Contains(o, "Operation not permitted") {
+			t.Errorf("renaming %s away was not refused by the fence: %v %s", d, err, o)
+		}
+		if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+			t.Fatalf("%s is gone after a rename the fence must refuse: %v", d, err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(gateRepo, "objects", "tmp"), nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -271,7 +293,7 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	}
 	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, Primary: primary, Worktree: wt,
 		GitDir: filepath.Join(primary, ".git", "worktrees", "wt"), CommonDir: filepath.Join(primary, ".git"), Branch: "mu/T-1",
-		GateRepo: gate, GateState: filepath.Join(out, "nm", "state.sqlite")})
+		GateRepo: gate})
 
 	wrapped, err := f.Wrap([]string{"/usr/bin/git", "-C", wt, "push", "no-mistakes", "HEAD:refs/heads/mu/T-1"})
 	if err != nil {
@@ -931,7 +953,7 @@ func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 	gate := filepath.Join(l.root, "gate", "repo.git")
 	mkdirs(t, filepath.Join(gate, "hooks"))
 	gated := l.soldier()
-	gated.GateRepo, gated.GateState = gate, filepath.Join(l.root, "gate", "state.db")
+	gated.GateRepo = gate
 	tests := []struct {
 		name    string
 		launch  Launch

@@ -574,31 +574,6 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			if f.aggregate().Phase != taskauthority.PhaseWorking {
 				t.Fatalf("phase = %q, want working", f.aggregate().Phase)
 			}
-			// .meta mtime is the .check staleness witness: Run advances it after
-			// ConfirmSpawn commits the task document, not only before it.
-			h, err := home.Open(f.homeDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			docPath, err := h.Path(home.RootState, "task-authority/tasks/"+taskID+"/current.json")
-			if err != nil {
-				t.Fatal(err)
-			}
-			metaPath, err := home.MetaFilePath(f.homeDir, taskID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			doc, err := os.Stat(docPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			meta, err := os.Stat(metaPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if meta.ModTime().Before(doc.ModTime()) {
-				t.Fatalf(".meta mtime %v is older than the confirmed task document %v; Run must advance it after ConfirmSpawn", meta.ModTime(), doc.ModTime())
-			}
 		})
 	}
 }

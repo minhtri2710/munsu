@@ -29,7 +29,7 @@ var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
 // launchPaths is a Launch with every path resolved and validated.
 type launchPaths struct {
 	home, primary, worktree, gitDir, commonDir string
-	stateDir, gateRepo, gateState              string
+	stateDir, gateRepo                         string
 	files                                      []string
 	roots                                      []string
 }
@@ -99,30 +99,42 @@ func New(l Launch) (*Fence, error) {
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
-		allowRoots(p.gateRepo)
-		allowFiles(&b, p.gateState, p.gateState+"-wal", p.gateState+"-shm", p.gateState+"-journal")
-		// The gate's programs, its git and no-mistakes configuration and the
-		// files that redirect git to another repository (commondir, .git,
-		// gitdir, submodule repos in modules/) are refused after the allow: the
-		// next unfenced push to the gate and the no-mistakes daemon run them.
-		// The gate root's own name is refused for unlink, so it cannot be
-		// renamed away and replaced. A push writes only objects/, refs/ and
-		// logs/. This denylist may still miss a name git reads; it is the bound
-		// within G1085 until the Human's words on the allowlist form (objects,
-		// refs and logs only, the rest of the gate being data), which then
-		// replaces it. A temp-root NM_HOME keeps its other files writable
-		// through the temp-root allow; no lane runs that, and the temp-root
-		// allow covers it. Human words (domain.Words): grantor the Human,
+		// Only what a push writes is writable in the gate: objects/, refs/ and
+		// logs/. The whole gate is refused first, after the temp-root allow, so
+		// this holds wherever the gate lives, and its root cannot be renamed
+		// away. Human words (domain.Words): grantor the Human, channel
+		// supervisor-relay:dialog, words=selected, G1151: "Allowlist
+		// (Recommended): only objects/, refs/, logs/ writable in the
+		// no-mistakes gate repo". objects/info (alternates) is refused, and so
+		// are the names objects, refs and logs themselves (rename, removal,
+		// chmod, creating one that is absent), so none can be swapped for a
+		// tree of the seat's own whose info/alternates the next unfenced push
+		// and the daemon read. Human words (domain.Words): grantor the Human,
 		// channel supervisor-relay:dialog, words=selected, G1085: "Quy tắc
 		// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay
 		// cấu hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
-		// session ngoài session của nó."
+		// session ngoài session của nó." Bound: a gate with no logs/ and
+		// core.logAllRefUpdates true or always takes no push; no-mistakes
+		// never sets it. Residual: a seat can plant a symlink under logs/ that
+		// an unfenced push then appends through; tracked as
+		// fence-reflog-symlink-deputy. The gate's state database is not
+		// allowed: state.sqlite and its -wal, -shm and -journal files stay
+		// under the profile's first deny, so with the daemon stopped the
+		// seat's no-mistakes reads fail to open the database. Human words
+		// (domain.Words): grantor the Human, channel supervisor-relay:dialog,
+		// words=selected, G1154: "Chặn, chấp nhận lỗi khi daemon dừng
+		// (Recommended): deny fenced soldier writes to
+		// state.sqlite(+wal/shm/journal); database-open error when the daemon
+		// is stopped accepted". A temp-root NM_HOME keeps its other files and
+		// state.sqlite writable through the temp-root allow (the fence does
+		// not know the state path); no lane runs that, and the temp-root
+		// allow covers it.
 		g := p.gateRepo
-		deny(&b, "subpath", filepath.Join(g, "hooks"), filepath.Join(g, "info"), filepath.Join(g, "worktrees"),
-			filepath.Join(g, "objects", "info"), filepath.Join(g, "remotes"), filepath.Join(g, "branches"), filepath.Join(g, "modules"))
-		deny(&b, "literal", filepath.Join(g, "config"), filepath.Join(g, "config.worktree"), filepath.Join(g, "no-mistakes-gate-config"),
-			filepath.Join(g, "commondir"), filepath.Join(g, ".git"), filepath.Join(g, "gitdir"))
-		denyUnlink(&b, g)
+		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
+		deny(&b, "subpath", g)
+		allowRoots(obj, refs, logs)
+		deny(&b, "subpath", filepath.Join(obj, "info"))
+		deny(&b, "literal", obj, refs, logs)
 	}
 	if l.Role == RoleSoldier {
 		branch, err := soldierBranch(l.Branch)
@@ -324,7 +336,7 @@ func resolveWritableRoots(l Launch, p *launchPaths) error {
 	if l.Role != RoleSoldier {
 		return fmt.Errorf("fence: a reviewer launch has no extra writable roots")
 	}
-	checkouts := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir, p.gateRepo, p.gateState}, l.Checkouts...)
+	checkouts := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir, p.gateRepo}, l.Checkouts...)
 	roots, err := ValidateWritableRoots(l.WritableRoots, RootFacts{Home: p.home, Checkouts: checkouts})
 	if err != nil {
 		return err
@@ -402,17 +414,14 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 	return nil
 }
 
-// resolveGate validates a soldier's no-mistakes write set: both roots or
-// neither, clear of every checkout, git path and home root.
+// resolveGate validates a soldier's no-mistakes gate repo: clear of every
+// checkout, git path and home root.
 func resolveGate(l Launch, p *launchPaths) error {
-	if l.GateRepo == "" && l.GateState == "" {
+	if l.GateRepo == "" {
 		return nil
 	}
 	if l.Role != RoleSoldier {
 		return fmt.Errorf("fence: a reviewer launch has no gate write set")
-	}
-	if l.GateRepo == "" || l.GateState == "" {
-		return fmt.Errorf("fence: the gate repo and gate state are set together")
 	}
 	repo, err := resolvePath(l.GateRepo, true)
 	if err != nil {
@@ -421,19 +430,12 @@ func resolveGate(l Launch, p *launchPaths) error {
 	if fi, err := os.Stat(repo); err != nil || !fi.IsDir() {
 		return fmt.Errorf("fence: gate repo %s is not a directory", repo)
 	}
-	state, err := resolvePath(l.GateState, false)
-	if err != nil {
-		return fmt.Errorf("fence: gate state: %w", err)
-	}
-	roots := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir}, homeRoots(p.home)...)
-	for _, g := range []string{repo, state} {
-		for _, o := range roots {
-			if overlaps(g, o) {
-				return fmt.Errorf("fence: gate path %s overlaps %s", g, o)
-			}
+	for _, o := range append([]string{p.primary, p.worktree, p.gitDir, p.commonDir}, homeRoots(p.home)...) {
+		if overlaps(repo, o) {
+			return fmt.Errorf("fence: gate path %s overlaps %s", repo, o)
 		}
 	}
-	p.gateRepo, p.gateState = repo, state
+	p.gateRepo = repo
 	return nil
 }
 

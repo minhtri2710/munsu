@@ -10,7 +10,7 @@ import (
 // digest neither classifies it nor removes it from the queue.
 func TestOneCycleLeavesProcessEventWakesQueued(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := home.EnqueueWake(homeDir, home.ProcessEventWakeKind, "merged-poll:task-1", `{"eventId":"merged-poll:task-1","generation":1,"payload":"task-1"}`); err != nil {
+	if err := home.EnqueueWake(homeDir, home.ProcessEventWakeKind, "review-verdict:task-1:1", `{"eventId":"review-verdict:task-1:1","generation":1,"payload":"task-1"}`); err != nil {
 		t.Fatal(err)
 	}
 	if err := home.EnqueueWake(homeDir, "signal", "task-2", "PR merged"); err != nil {
@@ -33,7 +33,7 @@ func TestOneCycleLeavesProcessEventWakesQueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(left) != 1 || left[0].Key != "merged-poll:task-1" {
+	if len(left) != 1 || left[0].Key != "review-verdict:task-1:1" {
 		t.Fatalf("queue after digest = %#v, want the process-event wake still queued", left)
 	}
 

@@ -187,7 +187,7 @@ func defaultNoMistakesPreflight(repoPath string, step taskauthority.DeliveryStep
 	if gateProbe.Blocker != nil {
 		return gateProbe.Blocker
 	}
-	if _, _, err := projectGate(repoPath); err != nil {
+	if _, err := projectGate(repoPath); err != nil {
 		return err
 	}
 	return nil
@@ -195,10 +195,10 @@ func defaultNoMistakesPreflight(repoPath string, step taskauthority.DeliveryStep
 
 // projectGate is the one owner of "the project's gate repo": the repository the
 // primary's no-mistakes remote names, which must sit directly under
-// NMHome()/repos, and the gate state database beside it. A fenced soldier
-// cannot run `no-mistakes init` (it writes the common dir's .git/config), so a
-// primary with no such gate is a blocker, not something the soldier repairs.
-func projectGate(primary string) (repo, state string, err error) {
+// NMHome()/repos. A fenced soldier cannot run `no-mistakes init` (it writes the
+// common dir's .git/config), so a primary with no such gate is a blocker, not
+// something the soldier repairs.
+func projectGate(primary string) (string, error) {
 	notInit := func(detail string) error {
 		return &GateBlockerError{
 			Category: GateBlockerNotInitialized,
@@ -208,17 +208,17 @@ func projectGate(primary string) (repo, state string, err error) {
 	}
 	out, cmdErr := exec.Command("git", "-C", primary, "config", "--get", "remote.no-mistakes.url").Output()
 	if cmdErr != nil {
-		return "", "", notInit("the primary has no no-mistakes remote")
+		return "", notInit("the primary has no no-mistakes remote")
 	}
 	repos, err := canonicalPath(filepath.Join(NMHome(), "repos"))
 	if err != nil {
-		return "", "", notInit(fmt.Sprintf("the no-mistakes repos directory is unreadable: %v", err))
+		return "", notInit(fmt.Sprintf("the no-mistakes repos directory is unreadable: %v", err))
 	}
-	repo, err = canonicalPath(strings.TrimSpace(string(out)))
+	repo, err := canonicalPath(strings.TrimSpace(string(out)))
 	if err != nil || filepath.Dir(repo) != repos {
-		return "", "", notInit(fmt.Sprintf("the no-mistakes remote %q is not a gate repo under %s", strings.TrimSpace(string(out)), repos))
+		return "", notInit(fmt.Sprintf("the no-mistakes remote %q is not a gate repo under %s", strings.TrimSpace(string(out)), repos))
 	}
-	return repo, filepath.Join(filepath.Dir(repos), "state.sqlite"), nil
+	return repo, nil
 }
 
 func codexNeutralizationPreserved(args []string) bool {
