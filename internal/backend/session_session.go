@@ -3,6 +3,7 @@
 // The Backend interface abstracts session management operations. Resolution
 // consumes ONE explicitly requested backend identity; an absent or unhealthy
 // requested adapter fails closed with a typed error. No auto-detection.
+
 package backend
 
 import (

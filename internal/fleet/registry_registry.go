@@ -16,6 +16,7 @@
 // deletion markers). There is no Store
 // interface, in-memory fake, projection, legacy adapter, or fleet-wide lock
 // behind this surface.
+
 package fleet
 
 import (

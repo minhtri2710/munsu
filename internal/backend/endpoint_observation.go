@@ -17,6 +17,7 @@
 // after matching the observation against the exact canonical binding/generation/
 // revision/fence (see fleet.authorizeAbsence / authorizeLive). An adapter probe
 // therefore never yields an Absent()/Live() reading on its own.
+
 package backend
 
 import (

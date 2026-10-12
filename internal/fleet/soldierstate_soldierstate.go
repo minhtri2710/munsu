@@ -6,6 +6,7 @@
 // PR, no-mistakes and endpoint evidence are diagnostic/evidence only and can
 // never change lifecycle state without a canonical record. A missing or
 // corrupt canonical record is an operation error, never a projection fallback.
+
 package fleet
 
 import (

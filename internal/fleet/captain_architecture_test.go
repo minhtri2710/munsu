@@ -10,6 +10,7 @@
 // Firstmate parity: every invariant documented below was enforced by
 // firstmate's secondmate layer. The captain module now enforces the same
 // contract via different mechanisms (Go functions instead of shell scripts).
+
 package fleet
 
 import (

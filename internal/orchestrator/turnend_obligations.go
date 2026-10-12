@@ -4,6 +4,7 @@
 // and are persisted under the munsu home so they survive process restarts.
 // Obligations differ by role: general, captain, and soldier each have a
 // distinct set of obligations.
+
 package orchestrator
 
 import (

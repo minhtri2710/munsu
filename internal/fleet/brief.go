@@ -1,4 +1,5 @@
 // Package brief scaffolds task brief templates for soldier agents.
+
 package fleet
 
 import (

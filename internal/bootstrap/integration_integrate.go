@@ -5,6 +5,7 @@
 // project-local). Ownership markers ensure we never overwrite unrelated user
 // content. All writes are atomic (write-to-temp, then rename with fsync).
 // Existing user hook files that cannot be parsed are refused, never replaced.
+
 package bootstrap
 
 import (

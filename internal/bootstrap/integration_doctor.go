@@ -1,4 +1,5 @@
 // Package integrate manages opt-in harness integration.
+
 package bootstrap
 
 import (

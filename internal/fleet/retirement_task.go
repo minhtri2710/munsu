@@ -1,4 +1,5 @@
 // Package teardown implements soldier teardown safety checks and lifecycle.
+
 package fleet
 
 import (

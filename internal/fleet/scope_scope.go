@@ -1,5 +1,6 @@
 // Package scope classifies repository checkout identity and refuses no-mistakes
 // gate agents at fleet lifecycle entry points.
+
 package fleet
 
 import (

@@ -1,6 +1,7 @@
 // Package classify implements status classification logic for soldier status files.
 // It is a pure-logic package (stdlib only) that replaces fm-classify-lib.sh in Go.
 // Functions are side-effect-free reads of status files or pure string predicates.
+
 package domain
 
 import (

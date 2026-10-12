@@ -15,6 +15,7 @@
 // The git worktree fallback uses stable hashed paths under <homeDir>/.worktrees.
 // homeDir must be non-empty when treehouse is absent; it is passed by callers
 // that have already resolved the munsu home (e.g. via home.Resolve).
+
 package backend
 
 import (

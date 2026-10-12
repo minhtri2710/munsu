@@ -1,4 +1,5 @@
 // Package afk provides away-mode supervision (sub-supervisor daemon).
+
 package orchestrator
 
 import (
