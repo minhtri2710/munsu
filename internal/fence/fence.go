@@ -56,7 +56,9 @@ type Launch struct {
 	// common dir.
 	HarnessStateDir string
 	// GateRepo and GateState are the no-mistakes write set of a soldier that
-	// drives a gate run: this project's gate repository (writable subtree) and
+	// drives a gate run: this project's gate repository (writable subtree, except
+	// its programs, its configuration, the files that redirect git elsewhere
+	// and the removal of its root; New lists them) and
 	// the gate's state database (writable with its -wal, -shm and -journal
 	// files). Both or neither; a reviewer has none.
 	GateRepo  string
