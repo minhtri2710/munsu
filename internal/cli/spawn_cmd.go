@@ -96,7 +96,7 @@ do not run 'munsu task start' for a task you will spawn.`,
 	}
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass captain task authority checks")
-	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
+	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (herdr|tmux; tmux has no prompt support yet)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model for the soldier harness")
 	cmd.Flags().StringVar(&effortFlag, "effort", "", "Override effort/thinking level (harness-specific)")

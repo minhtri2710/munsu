@@ -47,7 +47,11 @@ func TestSessionBoundCaptureRefusals(t *testing.T) {
 		{"no home", "", map[string]string{"backend": "tmux", "window": "p"}, "tmux", "bound capture identity is incomplete"},
 		{"no window", "/home", map[string]string{"backend": "tmux"}, "tmux", "bound capture identity is incomplete"},
 		{"backend outside the supported set", "/home", map[string]string{"backend": "unknown", "window": "p"}, "unknown", `unsupported bound backend "unknown"`},
-		{"supported backend", "/home", map[string]string{"backend": "orca", "window": "p"}, "orca", ""},
+		{"zellij blocks", "/home", map[string]string{"backend": "zellij", "window": "p"}, "zellij", `unsupported bound backend "zellij"`},
+		{"cmux blocks", "/home", map[string]string{"backend": "cmux", "window": "p"}, "cmux", `unsupported bound backend "cmux"`},
+		{"orca blocks", "/home", map[string]string{"backend": "orca", "window": "p"}, "orca", `unsupported bound backend "orca"`},
+		{"herdr allows", "/home", map[string]string{"backend": "herdr", "window": "p"}, "herdr", ""},
+		{"tmux allows", "/home", map[string]string{"backend": "tmux", "window": "p"}, "tmux", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {

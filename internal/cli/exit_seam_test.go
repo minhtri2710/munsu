@@ -107,13 +107,9 @@ func TestDoctorSessionBackendUsesHerdrWhenTmuxIsMissing(t *testing.T) {
 
 	binDir := t.TempDir()
 	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nexit 0\n")
-	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "zellij"), "#!/bin/sh\nexit 0\n")
 	testutil.SetPath(t, binDir)
 	if _, err := exec.LookPath("tmux"); err == nil {
 		t.Fatal("test PATH unexpectedly contains tmux")
-	}
-	if _, err := exec.LookPath("zellij"); err != nil {
-		t.Fatalf("test PATH should contain zellij: %v", err)
 	}
 
 	t.Run("herdr satisfies session backend", func(t *testing.T) {

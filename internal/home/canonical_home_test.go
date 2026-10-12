@@ -323,13 +323,13 @@ func TestReadAndPathAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Commit(lk, "txn-read", 0, []ChangeItem{{Root: RootData, Key: "k/v", Data: []byte("hello")}}); err != nil {
+	if _, err := h.Commit(lk, "txn-read", 0, []ChangeItem{{Root: RootState, Key: "k/v", Data: []byte("hello")}}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if err := lk.Release(); err != nil {
 		t.Fatal(err)
 	}
-	data, err := h.Read(RootData, "k/v")
+	data, err := h.Read(RootState, "k/v")
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -386,11 +386,11 @@ func TestCommitConflictFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Commit(lk, "txn-1", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("a")}}); err != nil {
+	if _, err := h.Commit(lk, "txn-1", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("a")}}); err != nil {
 		t.Fatalf("first commit: %v", err)
 	}
 	// Expected revision now 1; a stale expected 0 must conflict.
-	if _, err := h.Commit(lk, "txn-2", 0, []ChangeItem{{Root: RootData, Key: "k2", Data: []byte("b")}}); !errors.Is(err, ErrConflict) {
+	if _, err := h.Commit(lk, "txn-2", 0, []ChangeItem{{Root: RootState, Key: "k2", Data: []byte("b")}}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale commit: got %v, want ErrConflict", err)
 	}
 	if err := lk.Release(); err != nil {
@@ -407,7 +407,7 @@ func TestCommitFenceRequired(t *testing.T) {
 	if err := lk.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}}); !errors.Is(err, ErrFenced) {
+	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("x")}}); !errors.Is(err, ErrFenced) {
 		t.Fatalf("commit after release: got %v, want ErrFenced", err)
 	}
 }
@@ -420,7 +420,7 @@ func TestCommitRejectsStaleFence(t *testing.T) {
 	}
 	defer lk.Release()
 
-	if rev, err := h.Commit(lk, "happy", 0, []ChangeItem{{Root: RootData, Key: "happy", Data: []byte("ok")}}); err != nil {
+	if rev, err := h.Commit(lk, "happy", 0, []ChangeItem{{Root: RootState, Key: "happy", Data: []byte("ok")}}); err != nil {
 		t.Fatalf("happy-path commit: %v", err)
 	} else if rev != 1 {
 		t.Fatalf("happy-path revision = %d, want 1", rev)
@@ -428,7 +428,7 @@ func TestCommitRejectsStaleFence(t *testing.T) {
 	if err := canonicalAtomicWrite(h.fencePath("scope"), []byte("999\n")); err != nil {
 		t.Fatalf("write newer fence: %v", err)
 	}
-	if _, err := h.Commit(lk, "stale", 1, []ChangeItem{{Root: RootData, Key: "stale", Data: []byte("no")}}); !errors.Is(err, ErrFenced) {
+	if _, err := h.Commit(lk, "stale", 1, []ChangeItem{{Root: RootState, Key: "stale", Data: []byte("no")}}); !errors.Is(err, ErrFenced) {
 		t.Fatalf("stale-fence commit: got %v, want ErrFenced", err)
 	}
 }
@@ -444,7 +444,7 @@ func TestCommitRejectsMalformedFence(t *testing.T) {
 	if err := canonicalAtomicWrite(h.fencePath("scope"), []byte("not-a-fence\n")); err != nil {
 		t.Fatalf("write malformed fence: %v", err)
 	}
-	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}}); err == nil || !strings.Contains(err.Error(), "home: parse lock fence") {
+	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("x")}}); err == nil || !strings.Contains(err.Error(), "home: parse lock fence") {
 		t.Fatalf("malformed-fence commit: got %v, want a parse lock fence error", err)
 	}
 }
@@ -470,7 +470,7 @@ func TestCommitInvalidTxnFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk.Release()
-	if _, err := h.Commit(lk, "../evil", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("x")}}); !errors.Is(err, ErrInvalidTxnID) {
+	if _, err := h.Commit(lk, "../evil", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("x")}}); !errors.Is(err, ErrInvalidTxnID) {
 		t.Fatalf("invalid txn: got %v, want ErrInvalidTxnID", err)
 	}
 }
@@ -482,7 +482,7 @@ func TestCommitEscapingItemFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lk.Release()
-	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootData, Key: "../../etc/passwd", Data: []byte("x")}}); !errors.Is(err, ErrKeyEscapes) {
+	if _, err := h.Commit(lk, "txn", 0, []ChangeItem{{Root: RootState, Key: "../../etc/passwd", Data: []byte("x")}}); !errors.Is(err, ErrKeyEscapes) {
 		t.Fatalf("escaping item: got %v, want ErrKeyEscapes", err)
 	}
 }
@@ -493,14 +493,14 @@ func TestCommitAtomicReadAndRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev, err := h.Commit(lk, "txn-1", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("v1")}})
+	rev, err := h.Commit(lk, "txn-1", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("v1")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rev != 1 {
 		t.Errorf("rev = %d, want 1", rev)
 	}
-	rev, err = h.Commit(lk, "txn-2", rev, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("v2")}})
+	rev, err = h.Commit(lk, "txn-2", rev, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("v2")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestCommitAtomicReadAndRevision(t *testing.T) {
 	if err := lk.Release(); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := h.Read(RootData, "k")
+	data, _ := h.Read(RootState, "k")
 	if string(data) != "v2" {
 		t.Errorf("Read = %q, want v2", data)
 	}
@@ -535,8 +535,8 @@ func TestJournalRecoveryReplaysInterruptedCommit(t *testing.T) {
 		ExpectedRevision: 0,
 		NewRevision:      1,
 		Items: []ChangeItem{
-			{Root: RootData, Key: "a", Data: []byte("A")},
-			{Root: RootData, Key: "b", Data: []byte("B")},
+			{Root: RootState, Key: "a", Data: []byte("A")},
+			{Root: RootState, Key: "b", Data: []byte("B")},
 		},
 	}
 	if err := h.writeJournalRecord(rec); err != nil {
@@ -551,10 +551,10 @@ func TestJournalRecoveryReplaysInterruptedCommit(t *testing.T) {
 		t.Fatalf("Open after interrupted commit: %v", err)
 	}
 	// Items were replayed.
-	if data, err := h2.Read(RootData, "a"); err != nil || string(data) != "A" {
+	if data, err := h2.Read(RootState, "a"); err != nil || string(data) != "A" {
 		t.Errorf("recovered a = %q, err=%v", data, err)
 	}
-	if data, err := h2.Read(RootData, "b"); err != nil || string(data) != "B" {
+	if data, err := h2.Read(RootState, "b"); err != nil || string(data) != "B" {
 		t.Errorf("recovered b = %q, err=%v", data, err)
 	}
 	// Revision advanced to the journal's new revision.
@@ -562,7 +562,7 @@ func TestJournalRecoveryReplaysInterruptedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h2.Commit(lk2, "txn-next", 1, []ChangeItem{{Root: RootData, Key: "c", Data: []byte("C")}}); err != nil {
+	if _, err := h2.Commit(lk2, "txn-next", 1, []ChangeItem{{Root: RootState, Key: "c", Data: []byte("C")}}); err != nil {
 		t.Fatalf("commit after recovery: %v", err)
 	}
 	if err := lk2.Release(); err != nil {
@@ -591,10 +591,10 @@ func TestJournalRecoverySkipsSupersededRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Advance the scope to revision 2 with the current value.
-	if _, err := h.Commit(lk, "t1", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("V1")}}); err != nil {
+	if _, err := h.Commit(lk, "t1", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("V1")}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Commit(lk, "t2", 1, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("NEW")}}); err != nil {
+	if _, err := h.Commit(lk, "t2", 1, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("NEW")}}); err != nil {
 		t.Fatal(err)
 	}
 	// Leave a superseded record on disk: a well-formed record for revision 1
@@ -605,7 +605,7 @@ func TestJournalRecoverySkipsSupersededRecord(t *testing.T) {
 		FenceToken:       uint64(lk.token),
 		ExpectedRevision: 0,
 		NewRevision:      1,
-		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("OLD")}},
+		Items:            []ChangeItem{{Root: RootState, Key: "k", Data: []byte("OLD")}},
 	}
 	if err := h.writeJournalRecord(stale); err != nil {
 		t.Fatal(err)
@@ -618,7 +618,7 @@ func TestJournalRecoverySkipsSupersededRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open with superseded record: %v", err)
 	}
-	if data, err := h2.Read(RootData, "k"); err != nil || string(data) != "NEW" {
+	if data, err := h2.Read(RootState, "k"); err != nil || string(data) != "NEW" {
 		t.Errorf("k = %q err=%v, want NEW (superseded record must not clobber)", data, err)
 	}
 	entries, err := os.ReadDir(filepath.Join(root, JournalDirName))
@@ -649,7 +649,7 @@ func TestJournalRecoveryRejectsRevisionGap(t *testing.T) {
 		FenceToken:       uint64(lk.token),
 		ExpectedRevision: 0,
 		NewRevision:      5,
-		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+		Items:            []ChangeItem{{Root: RootState, Key: "k", Data: []byte("X")}},
 	}
 	if err := h.writeJournalRecord(rec); err != nil {
 		t.Fatal(err)
@@ -680,7 +680,7 @@ func TestJournalRecoveryRejectsRegressedRevision(t *testing.T) {
 		FenceToken:       uint64(lk.token),
 		ExpectedRevision: 3,
 		NewRevision:      4,
-		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+		Items:            []ChangeItem{{Root: RootState, Key: "k", Data: []byte("X")}},
 	}
 	if err := h.writeJournalRecord(rec); err != nil {
 		t.Fatal(err)
@@ -709,7 +709,7 @@ func TestJournalRecoveryRejectsEmptyScope(t *testing.T) {
 		FenceToken:       uint64(lk.token),
 		ExpectedRevision: 0,
 		NewRevision:      1,
-		Items:            []ChangeItem{{Root: RootData, Key: "k", Data: []byte("X")}},
+		Items:            []ChangeItem{{Root: RootState, Key: "k", Data: []byte("X")}},
 	}
 	if err := h.writeJournalRecord(rec); err != nil {
 		t.Fatal(err)
@@ -729,7 +729,7 @@ func TestCommitOverwritesAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 5; i++ {
-		rev, err := h.Commit(lk, "txn", uint64(i-1), []ChangeItem{{Root: RootData, Key: "k", Data: []byte(strings.Repeat("x", i))}})
+		rev, err := h.Commit(lk, "txn", uint64(i-1), []ChangeItem{{Root: RootState, Key: "k", Data: []byte(strings.Repeat("x", i))}})
 		if err != nil {
 			t.Fatalf("commit %d: %v", i, err)
 		}
@@ -741,7 +741,7 @@ func TestCommitOverwritesAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Data file perms are private.
-	path, _ := h.Path(RootData, "k")
+	path, _ := h.Path(RootState, "k")
 	testutil.AssertOwnerPrivate(t, path)
 }
 
@@ -759,13 +759,13 @@ func TestCommitBetweenTwoHomesOnSameRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h1.Commit(lk1, "txn-1", 0, []ChangeItem{{Root: RootData, Key: "k", Data: []byte("one")}}); err != nil {
+	if _, err := h1.Commit(lk1, "txn-1", 0, []ChangeItem{{Root: RootState, Key: "k", Data: []byte("one")}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := lk1.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := h2.Read(RootData, "k"); err != nil || string(data) != "one" {
+	if data, err := h2.Read(RootState, "k"); err != nil || string(data) != "one" {
 		t.Errorf("h2 read = %q, err=%v", data, err)
 	}
 }

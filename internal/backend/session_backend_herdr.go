@@ -81,13 +81,12 @@ func (h *HerdrBackend) workspaceIDToClose() string {
 	return h.TeardownWorkspaceID
 }
 
-// effectiveSession returns the session for a given window handle.
-// For handles with 2+ colons (e.g. "default:w6E:p3"), the session prefix is extracted.
-// For handles with 0-1 colons (e.g. "w6E:p3"), the backend's configured session is used.
+// effectiveSession returns the session for a given window handle: the
+// HandleSession prefix when the handle names one, else the backend's
+// configured session.
 func (h *HerdrBackend) effectiveSession(windowID string) string {
-	idx := strings.Index(windowID, ":")
-	if idx >= 0 && strings.Contains(windowID[idx+1:], ":") {
-		return windowID[:idx]
+	if session := HandleSession(windowID); session != "" {
+		return session
 	}
 	return h.Session
 }
