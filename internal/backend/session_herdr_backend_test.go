@@ -416,6 +416,11 @@ func TestHerdrBackend_PaneIDAndEffectiveSession(t *testing.T) {
 	if p := herdrPaneID("foreign-session:wTest:p1"); p != "wTest:p1" {
 		t.Errorf("herdrPaneID(foreign-session:wTest:p1) = %q, want wTest:p1", p)
 	}
+
+	// Empty session prefix names no session, as SessionOwnerMismatch reads it.
+	if sess := h.effectiveSession(":w6E:p3"); sess != "default" {
+		t.Errorf("effectiveSession(:w6E:p3) = %q, want default", sess)
+	}
 }
 
 func TestHerdrBackend_CheckAlive_PaneNotFound(t *testing.T) {

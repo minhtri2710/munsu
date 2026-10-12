@@ -34,53 +34,6 @@ func TestGuardBurnDownHerdrEventWaitRejectsEmptyEndpoint(t *testing.T) {
 	}
 }
 
-func TestGuardBurnDownCmuxEmptyWorkspaceIdentity(t *testing.T) {
-	c := newCmuxBackend()
-	_, err := c.checkWorkspaceAlive("")
-	if err == nil || !strings.Contains(err.Error(), "empty workspace identity") {
-		t.Fatalf("checkWorkspaceAlive error = %v, want empty-workspace refusal", err)
-	}
-}
-
-func TestGuardBurnDownCmuxNewWindowRefusals(t *testing.T) {
-	tests := []struct {
-		name       string
-		scriptJSON string
-		existing   bool
-		want       string
-	}{
-		{
-			name:       "split surface",
-			scriptJSON: `{"result":{"surface_id":""}}`,
-			existing:   true,
-			want:       "empty surface_id",
-		},
-		{
-			name:       "new workspace id",
-			scriptJSON: `{"result":{"workspace_id":"","surface_id":"surface"}}`,
-			want:       "empty workspace_id",
-		},
-		{
-			name:       "new workspace surface",
-			scriptJSON: `{"result":{"workspace_id":"workspace","surface_id":""}}`,
-			want:       "empty surface_id",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			writeGuardExecutable(t, "cmux", "#!/bin/sh\ncase \"$1\" in\nselect-workspace|new-split|new-workspace) exit 0 ;;\nidentify) printf '%s\\n' '"+tt.scriptJSON+"' ;;\nesac\n")
-			c := newCmuxBackend()
-			if tt.existing {
-				c.sessions["session"] = "workspace"
-			}
-			_, err := c.NewWindow("session", "task")
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("NewWindow error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
 func TestGuardBurnDownHerdrFindOrCreateRefusesPaneWithoutIdentity(t *testing.T) {
 	writeGuardExecutable(t, "herdr", `#!/bin/sh
 if [ "$1" = "--session" ]; then shift 2; fi
@@ -119,26 +72,6 @@ func TestGuardBurnDownHerdrProtocolVersionCachedFailure(t *testing.T) {
 	_, err := h.protocolVersion()
 	if err == nil || !strings.Contains(err.Error(), "probe failed previously") {
 		t.Fatalf("protocolVersion error = %v, want cached-failure refusal", err)
-	}
-}
-
-func TestGuardBurnDownOrcaNewWindowRefusals(t *testing.T) {
-	tests := []struct {
-		name string
-		json string
-		want string
-	}{
-		{"container", `{"container_id":"","terminal_id":"terminal"}`, "empty container_id"},
-		{"terminal", `{"container_id":"container","terminal_id":""}`, "empty terminal_id"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			writeGuardExecutable(t, "orca", "#!/bin/sh\nprintf '%s\\n' '"+tt.json+"'\n")
-			_, err := NewOrcaBackend().NewWindow("session", "task")
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("NewWindow error = %v, want %q", err, tt.want)
-			}
-		})
 	}
 }
 

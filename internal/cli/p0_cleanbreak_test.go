@@ -129,20 +129,24 @@ func TestWakeClaimResolveAckActualSyntax(t *testing.T) {
 // discovery exposes only tmux and herdr; all other runtime backends are not
 // part of this contract surface.
 func TestBackendCapabilitiesOnlyTmuxHerdr(t *testing.T) {
-	if out, err := runContract(t, []string{"backend", "capabilities", "--backend", "tmux"}); err != nil {
-		t.Errorf("backend capabilities --backend tmux: %v\n%s", err, out)
-	}
-	if out, err := runContract(t, []string{"backend", "capabilities", "--backend", "herdr"}); err != nil {
-		t.Errorf("backend capabilities --backend herdr: %v\n%s", err, out)
-	}
-	if out, err := runContract(t, []string{"backend", "capabilities", "--backend", "zellij"}); err == nil {
-		t.Errorf("backend capabilities --backend zellij must be rejected (not exposed), got:\n%s", out)
-	}
-	if out, err := runContract(t, []string{"backend", "capabilities", "--backend", "cmux"}); err == nil {
-		t.Errorf("backend capabilities --backend cmux must be rejected (not exposed), got:\n%s", out)
-	}
-	if out, err := runContract(t, []string{"backend", "capabilities", "--backend", "orca"}); err == nil {
-		t.Errorf("backend capabilities --backend orca must be rejected (not exposed), got:\n%s", out)
+	for _, tc := range []struct {
+		backend string
+		want    string // "" allows
+	}{
+		{"tmux", ""},
+		{"herdr", ""},
+		{"zellij", `Unsupported backend "zellij"`},
+	} {
+		out, err := runContract(t, []string{"backend", "capabilities", "--backend", tc.backend})
+		if tc.want == "" {
+			if err != nil {
+				t.Errorf("backend capabilities --backend %s: %v\n%s", tc.backend, err, out)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error()+out, tc.want) {
+			t.Errorf("backend capabilities --backend %s = %v\n%s, want %q", tc.backend, err, out, tc.want)
+		}
 	}
 }
 

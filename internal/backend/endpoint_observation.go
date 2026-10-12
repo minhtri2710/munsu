@@ -1,6 +1,5 @@
 // Package backend provides terminal/session resolution, session adapters
-// (tmux, herdr, zellij, cmux, orca), worktree pool management, and home tag
-// helpers.
+// (tmux, herdr), worktree pool management, and home tag helpers.
 //
 // Endpoint observation is the typed, orthogonal runtime diagnostic of one
 // exact bound endpoint. It is NOT Task lifecycle truth: the
