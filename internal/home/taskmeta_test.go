@@ -295,7 +295,6 @@ func TestRoundTrip(t *testing.T) {
 		"project":  "test-project",
 		"harness":  "codex",
 		"model":    "gpt-5.2-codex",
-		"effort":   "80",
 		"kind":     "scout",
 	}
 

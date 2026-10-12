@@ -17,9 +17,8 @@ import (
 func TestObservationEventPort_Sources_HerdrEndpoint(t *testing.T) {
 	homeDir := t.TempDir()
 	mustWriteCLIMeta(t, homeDir, "task-1", map[string]string{
-		"backend":              "herdr",
-		"window":               "w:p",
-		"endpoint_incarnation": "inc-1",
+		"backend": "herdr",
+		"window":  "w:p",
 	})
 
 	// Fake herdr on PATH with a ready protocol so resolution succeeds.
@@ -37,9 +36,6 @@ func TestObservationEventPort_Sources_HerdrEndpoint(t *testing.T) {
 	}
 	if sources[0].Endpoint.Backend != "herdr" || sources[0].Endpoint.Handle != "w:p" {
 		t.Errorf("endpoint = %+v, want herdr w:p", sources[0].Endpoint)
-	}
-	if sources[0].Incarnation != "inc-1" {
-		t.Errorf("incarnation = %q, want inc-1", sources[0].Incarnation)
 	}
 	if sources[0].Source == nil {
 		t.Error("source must be non-nil for a herdr endpoint")

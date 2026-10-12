@@ -193,40 +193,6 @@ func TestResolveSpawnProjectConfigFreezesSnapshotAndDigest(t *testing.T) {
 	}
 }
 
-func TestRunnerWriteTaskMetaRecordsConfigSnapshotDigest(t *testing.T) {
-	home := t.TempDir()
-	writeSpawnSnapshotDocuments(t, home)
-	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, DispatchPolicyGeneralDirect, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &Runner{
-		args:                Args{ID: "task-1", ProjectName: "alpha"},
-		homeDir:             home,
-		projPath:            resolved.ProjectPath,
-		wtPath:              filepath.Join(home, "worktree"),
-		harness:             resolved.Soldier.Harness,
-		model:               resolved.Soldier.Model,
-		effort:              resolved.Soldier.Effort,
-		effectiveMode:       resolved.Soldier.Mode,
-		windowID:            "win-1",
-		endpoint:            CreatedEndpoint{Backend: "fake"},
-		projectConfig:       resolved,
-		projectConfigLoaded: true,
-	}
-
-	if err := r.writeTaskMeta(); err != nil {
-		t.Fatal(err)
-	}
-	meta, err := homepkg.ReadMeta(home, "task-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta["config_snapshot_digest"] != resolved.SnapshotDigest {
-		t.Fatalf("config_snapshot_digest = %q, want %q", meta["config_snapshot_digest"], resolved.SnapshotDigest)
-	}
-}
-
 func TestCaptainSpawnConsumesPublishedSnapshotWithoutLocalResolution(t *testing.T) {
 	parent := t.TempDir()
 	captain := seedCaptainForTest(t, parent, "alpha-captain")

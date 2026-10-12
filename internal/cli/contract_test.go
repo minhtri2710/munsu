@@ -782,13 +782,12 @@ func TestFleetSnapshotParentReconciliation(t *testing.T) {
 	if err := fleet.Register(home, "domain-alpha", captainHome, "", "sample"); err != nil {
 		t.Fatal(err)
 	}
-	// Launched captain meta makes the supervisor visible in the raw task snapshot.
+	// Captain meta makes the supervisor visible in the raw task snapshot. It
+	// records no endpoint, so the snapshot probes no backend binary.
 	if err := mhome.WriteMeta(home, "captain:domain-alpha", map[string]string{
-		"kind":    "captain",
-		"sm_id":   "domain-alpha",
-		"home":    captainHome,
-		"backend": "herdr",
-		"window":  "session-1:pane-1",
+		"kind":  "captain",
+		"sm_id": "domain-alpha",
+		"home":  captainHome,
 	}); err != nil {
 		t.Fatal(err)
 	}
