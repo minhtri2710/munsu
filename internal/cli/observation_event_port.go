@@ -6,7 +6,7 @@
 // a native event surface. Endpoints whose backend has no event surface are
 // omitted, so the orchestrator keeps pure polling for them. Wire/protocol
 // detail stays in the backend adapter; this port only resolves which endpoint
-// has a source and which opaque incarnation the orchestrator must match.
+// has a source.
 package cli
 
 import (
@@ -58,8 +58,7 @@ func (p observationEventPort) Sources(homeDir string) ([]orchestrator.EndpointSo
 				Backend: ep.backend,
 				Handle:  ep.handle,
 			},
-			Incarnation: ep.meta["endpoint_incarnation"],
-			Source:      src,
+			Source: src,
 		})
 	}
 	return out, nil

@@ -264,16 +264,16 @@ func ReconcileSoldierPending(senderHome, senderIdentity string) error {
 // After writing the marker, the caller should inject a lightweight
 // notification to the captain's pane so the captain knows to scan for
 // ready events. The notification should be a simple text line:
-// "ready-event: <taskID> key=<eventKey>"
-func EmitReadyEvent(homeDir, taskID, eventKey, metaGeneration string) (*ReadyEvent, error) {
+// "ready-event: <taskID> event=<eventID>"
+func EmitReadyEvent(homeDir, taskID, eventID, metaGeneration string) (*ReadyEvent, error) {
 	if homeDir == "" {
 		return nil, fmt.Errorf("emit ready: empty home")
 	}
 	if taskID == "" {
 		return nil, fmt.Errorf("emit ready: empty task ID")
 	}
-	if eventKey == "" {
-		eventKey = fmt.Sprintf("%d", time.Now().UnixNano())
+	if eventID == "" {
+		eventID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 
 	// Parse meta generation for endpoint generation validation.
@@ -285,15 +285,14 @@ func EmitReadyEvent(homeDir, taskID, eventKey, metaGeneration string) (*ReadyEve
 	}
 
 	event := &ReadyEvent{
-		EventID:            eventKey,
+		EventID:            eventID,
 		TaskID:             taskID,
-		Key:                eventKey,
 		EndpointGeneration: endpointGen,
 		Timestamp:          time.Now().UnixNano(),
 	}
 
 	// Write marker file atomically (temp-file + rename).
-	p := readyEventPath(homeDir, taskID, eventKey)
+	p := readyEventPath(homeDir, taskID, eventID)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return nil, fmt.Errorf("emit ready: creating dir: %w", err)
 	}
@@ -308,7 +307,7 @@ func EmitReadyEvent(homeDir, taskID, eventKey, metaGeneration string) (*ReadyEve
 		// Parse the existing event to preserve original timestamp.
 		var existingEvent ReadyEvent
 		if jsonErr := json.Unmarshal(existing, &existingEvent); jsonErr == nil {
-			// Same eventKey means the same turn boundary — idempotent.
+			// Same eventID means the same turn boundary — idempotent.
 			return &existingEvent, nil
 		}
 		// Corrupt file: overwrite.
@@ -402,10 +401,6 @@ func matchesSoldierTask(env *home.Envelope, taskID string) bool {
 // This is the captain-side entry point for consuming ready events.
 // Idempotent: calling with no ready events or no pending is a no-op.
 // Stale events (by timestamp) are rejected and cleaned up.
-//
-// Key validation: the ready event's Key field is validated against the
-// durable task key from meta, not against itself. Callers must provide the
-// correct key context.
 func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGeneration string, endpoint SoldierEndpointCapabilities) (int, error) {
 	events, err := ScanReadyEvents(senderHome, soldierTaskID)
 	if err != nil {
@@ -415,22 +410,17 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 		return 0, nil
 	}
 
-	// Read task meta for durable key validation.
-	meta, metaErr := home.ReadMeta(senderHome, soldierTaskID)
-	if metaErr != nil {
+	if _, metaErr := home.ReadMeta(senderHome, soldierTaskID); metaErr != nil {
 		// If meta doesn't exist (task never spawned), there's nothing to flush.
 		// Clean up any stale ready events and return.
 		_ = CleanAllReadyEvents(senderHome, soldierTaskID)
 		return 0, nil
 	}
-	metaKey := meta["key"]
 
 	var flushed int
 	for _, ev := range events {
-		// Validate the ready event against durable task ID, meta key (if set),
-		// and generation. The meta key is the authoritative key for dispatch
-		// lifecycle. If meta key is empty, only task ID and generation are checked.
-		if err := ValidateReadyEvent(ev, soldierTaskID, metaKey, metaGeneration); err != nil {
+		// Validate the ready event against the durable task ID and generation.
+		if err := ValidateReadyEvent(ev, soldierTaskID, metaGeneration); err != nil {
 			// Stale or invalid: clean up and continue.
 			_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
 			continue
@@ -540,15 +530,14 @@ func cleanDispatched(senderHome, taskID, messageID string) error {
 type ReadyEvent struct {
 	EventID            string `json:"event_id"`
 	TaskID             string `json:"task_id"`
-	Key                string `json:"key"`
 	EndpointGeneration int64  `json:"endpoint_generation"`
 	Timestamp          int64  `json:"timestamp"`
 }
 
 // ValidateReadyEvent verifies that a ready event is not stale, matches the
-// expected task/key, and has a valid endpoint generation against the current
+// expected task, and has a valid endpoint generation against the current
 // window metadata. Returns an error on any mismatch (fail closed).
-func ValidateReadyEvent(event *ReadyEvent, curTaskID, curKey, metaGeneration string) error {
+func ValidateReadyEvent(event *ReadyEvent, curTaskID, metaGeneration string) error {
 	if event == nil {
 		return fmt.Errorf("ready event: nil")
 	}
@@ -558,12 +547,6 @@ func ValidateReadyEvent(event *ReadyEvent, curTaskID, curKey, metaGeneration str
 	if event.TaskID != curTaskID {
 		return fmt.Errorf("ready event: task ID mismatch %q != %q", event.TaskID, curTaskID)
 	}
-	// Only validate key when the durable key is set. When empty, the key
-	// check is a no-op (e.g., tasks without an explicit lifecycle key).
-	if curKey != "" && event.Key != curKey {
-		return fmt.Errorf("ready event: key mismatch %q != %q", event.Key, curKey)
-	}
-
 	// Validate endpoint generation (fail closed on mismatch).
 	if metaGeneration != "" {
 		var gen int64

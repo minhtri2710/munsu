@@ -340,16 +340,12 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	if err := r.attachEndpoint(); err != nil {
 		return "", err
 	}
-	spawned, err := r.launchAndConfirm(reviewing)
-	if err != nil {
+	if _, err := r.launchAndConfirm(reviewing); err != nil {
 		return "", err
 	}
-	// The accepted capability attestation becomes authoritative evidence
-	// after ConfirmSpawn: the authoritative Generation comes from the
-	// ConfirmSpawn receipt. A failure keeps the observation runtime-only and
-	// is reported as a warning — the task is already working and the window
-	// is live, so the spawn itself never rolls back.
-	if err := r.attachAttestation(spawned.Generation); err != nil {
+	// A failure is reported as a warning: the task is already working and the
+	// window is live, so the spawn itself never rolls back.
+	if err := r.touchMetaAfterConfirm(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	r.appendSpawnedStatus()
@@ -2594,7 +2590,7 @@ func newEndpointToken() string {
 // pre-transition runtime observation projection (Task 4.2, Task 7.8
 // adjudication): it carries the runtime-only fields that describe the live
 // soldier session (window, worktree, harness, backend, mode, yolo, model,
-// effort, config digest, endpoint metadata) and never
+// endpoint metadata) and never
 // acts as a writer of record for authoritative Task Aggregate fields (kind,
 // project, description, owner, generation, state). Existing projection
 // fields are preserved; runtime fields are overlaid. Nothing reconciles
@@ -2612,7 +2608,6 @@ func (r *Runner) writeTaskMeta() error {
 		}
 		put("window", r.windowID)
 		put("worktree", r.wtPath)
-		put("projpath", r.projPath)
 		put("harness", r.harness)
 		put("backend", r.endpoint.Backend)
 		put("mode", r.effectiveMode)
@@ -2620,22 +2615,9 @@ func (r *Runner) writeTaskMeta() error {
 		if r.model != "" {
 			put("model", r.model)
 		}
-		if r.effort != "" {
-			put("effort", r.effort)
-		}
-		if r.projectConfigLoaded {
-			put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
-		}
 		put(backend.MetaSessionOwner, r.endpoint.SessionOwner)
 		put(backend.MetaWorkspaceID, r.endpoint.WorkspaceID)
 		put(backend.MetaTabID, r.endpoint.TabID)
-
-		// The attestation acceptance is NOT recorded here: this pre-transition
-		// side file is runtime observations only (Task 4.2). The accepted
-		// attestation becomes authoritative evidence through the Task Authority
-		// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
-		// runtime projection of that authoritative acceptance written by
-		// projectAttestationEvidence, never a writer of record.
 		return nil
 	})
 	if err != nil {
@@ -2644,78 +2626,16 @@ func (r *Runner) writeTaskMeta() error {
 	return nil
 }
 
-// attachAttestation commits the accepted capability attestation as
-// authoritative evidence through the composed Task Authority after
-// ConfirmSpawn, then projects the acceptance into .meta. The expected
-// generation comes from the ConfirmSpawn receipt, so the evidence binds the
-// exact generation the spawn committed. The task is already working when
-// this runs: a failure keeps the observation runtime-only and is surfaced by
-// the caller as a warning, never rolling back the authoritative spawn.
-func (r *Runner) attachAttestation(generation taskauthority.Generation) error {
-	if r.attestation == nil {
-		return nil
-	}
-	if r.args.Authority == nil {
-		return fmt.Errorf("attaching attestation evidence: task authority is not composed for spawn")
-	}
-	// The accepted capability attestation is a runtime observation projected
-	// into .meta on the exact confirmed generation; the canonical surface owns
-	// no attestation primitive (the legacy delivery-plan/attestation aggregate
-	// evidence did not survive the canonical cutover). A malformed reference
-	// fails closed before the projection.
-	if err := validateAttestationReference(r.attestation); err != nil {
-		return fmt.Errorf("attaching attestation evidence: %w", err)
-	}
-	if err := projectAttestationEvidence(r.homeDir, r.args.ID, generation); err != nil {
-		return err
-	}
-	return nil
-}
-
-// validateAttestationReference checks the acceptance shape of the capability
-// attestation: the project and home bindings must be present so the projected
-// observation is never a malformed reference.
-func validateAttestationReference(att *CapabilityAttestation) error {
-	if att == nil {
-		return fmt.Errorf("attestation acceptance requires a capability attestation")
-	}
-	if strings.TrimSpace(att.Project) == "" {
-		return fmt.Errorf("attestation acceptance requires a project binding")
-	}
-	if strings.TrimSpace(att.Home) == "" {
-		return fmt.Errorf("attestation acceptance requires a home binding")
-	}
-	return nil
-}
-
-// AttestationProjectionError is the typed partial outcome of an attestation
-// acceptance whose .meta projection could not be applied, whether the existing
-// meta could not be read or the write itself failed. The authoritative state is
-// never rolled back; the projection can be retried independently and replays
-// idempotently.
-type AttestationProjectionError struct {
-	TaskID        string
-	ProjectionErr error
-}
-
-func (e *AttestationProjectionError) Error() string {
-	return fmt.Sprintf("attestation evidence committed for %s but projection failed: %v", e.TaskID, e.ProjectionErr)
-}
-
-func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
-
-// projectAttestationEvidence stamps .meta with the exact generation the
-// accepted capability attestation was confirmed on. The projection is
-// one-directional: it mirrors the accepted observation and never writes into
-// the Authority. A projection failure returns a typed partial error and never
-// rolls back the authoritative spawn; the projection is retryable without
-// replaying any canonical operation.
-func projectAttestationEvidence(homeDir, taskID string, generation taskauthority.Generation) error {
-	if err := home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
-		meta["attestation_generation"] = generation.String()
-		return nil
-	}); err != nil {
-		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
+// touchMetaAfterConfirm rewrites the task .meta without changing any key once
+// ConfirmSpawn committed, bumping its mtime.
+//
+// Constraint: .meta mtime is the staleness witness for AcceptOrRefuseStale
+// (orchestrator/supervision_check.go), and the spawn has always advanced it
+// after ConfirmSpawn; removal condition: task check-staleness-canonical-witness
+// moves the staleness rule to a canonical witness.
+func (r *Runner) touchMetaAfterConfirm() error {
+	if err := home.UpdateMeta(r.homeDir, r.args.ID, func(map[string]string) error { return nil }); err != nil {
+		return fmt.Errorf("touching task meta after confirm: %w", err)
 	}
 	return nil
 }
