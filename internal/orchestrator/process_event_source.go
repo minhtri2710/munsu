@@ -26,7 +26,7 @@ import (
 //
 // Durable order per resolution (must not be reordered):
 //  1. capture the resolver's result into the event's own record
-//     (temp + fsync + rename, the WriteRetirementRecord pattern);
+//     (temp + fsync + rename);
 //  2. enqueue exactly one wake through home.EnqueueWake, the sole delivery
 //     substrate -- announceProcessEvent refuses to enqueue for
 //     a record whose durable copy does not carry a captured result;

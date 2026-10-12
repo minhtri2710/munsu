@@ -151,6 +151,24 @@ func TestRunCycleRecordsAReviewVerdictFileAndReportsItOnce(t *testing.T) {
 	if len(port.recorded) != 1 || len(reportWakes(t, homeDir)) != 1 {
 		t.Fatalf("second cycle recorded %v and reported %d times, want no retry after the ack", port.recorded, len(reportWakes(t, homeDir)))
 	}
+
+	// A re-delivered announcement of the acked generation is a no-op.
+	before, err := home.ReadStatus(homeDir, "rev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID := reviewVerdictEventID("rev-1", 1)
+	if err := home.EnqueueWake(homeDir, ProcessEventWakeKind, eventID, announcedWake(t, eventID, 1, `{"taskId":"rev-1","generation":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	runReviewCycle(t, homeDir, port)
+	after, err := home.ReadStatus(homeDir, "rev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(port.recorded) != 1 || strings.Join(after, "\n") != strings.Join(before, "\n") {
+		t.Fatalf("re-delivered acked announcement recorded %v and changed status %q to %q, want a no-op", port.recorded, before, after)
+	}
 }
 
 func TestRunCycleReportsARefusedReviewVerdictOnceAndAcksIt(t *testing.T) {
