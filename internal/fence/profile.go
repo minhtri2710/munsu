@@ -184,7 +184,7 @@ func New(l Launch) (*Fence, error) {
 		// under their logs/. The gitDir logs deny comes after the gitDir root
 		// allow so it wins. The gitDir is itself a writable root, so its own name
 		// is denied too: without it the seat could rename the gitDir away, swap
-		// logs/HEAD inside the moved copy, and rename it back. <common>/logs/
+		// logs/HEAD inside the moved copy, and rename it back. <common>/
 		// refs/remotes is a root; <common>/logs/refs/remotes is not. The seat
 		// appends only to the remote reflogs munsu pre-created at spawn
 		// (Launch.RemoteReflogs), so a link it plants there is never one an
