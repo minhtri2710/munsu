@@ -46,6 +46,12 @@ branches covered only by the `integration` lane read as untested. When
 it goes red, write a test that builds the state the guard refuses, or add a line
 with a reason. Its rules are pinned by fixtures (`uncovered-guards.sh selftest`).
 
+The `guards` job also prints a skip ledger, report only: the tests the four coverage
+lanes skipped, compared both ways with `.github/skips.allow` (`.github/scripts/skip-ledger.sh check`).
+Unlisted skips and stale rows print and never fail the job; the job fails only when a
+lane's `go test -json` stream is missing. Each row names a test a lane skips on purpose
+and why; the reason column is documentation, matching is on package and test.
+
 That job also checks documentation citations against the tree, compared both
 ways with `.github/citations.allow` (`.github/scripts/citations.sh check`).
 Classified file paths and Go identifiers in the covered set must resolve to an
