@@ -121,7 +121,9 @@ func New(l Launch) (*Fence, error) {
 		// daemon read and run: G1085 (quoted above). A soldier's worktree is
 		// allowed back below; a reviewer's Files and harness state dir are too.
 		// Human words (domain.Words): grantor the Human, channel direct chat
-		// with the Lead, 2026-10-13: "tự quyết đi" (decide the deferred items).
+		// with the Lead, 2026-10-13, words=selected, 1A:
+		// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự
+		// quyết đi" record: decide the deferred items).
 		deny(&b, "subpath", p.home)
 	}
 	allowFiles(&b, p.files...)
