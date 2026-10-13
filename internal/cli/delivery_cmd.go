@@ -174,9 +174,9 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 }
 
 // projectDeliveryIdentity overlays one captured delivery identity onto the
-// task .meta projection (pr_* keys). Teardown's merge proof, review-diff and
-// soldier state read it; the canonical delivery authorization/outcome remains
-// the delivery truth and is never derived from these keys.
+// task .meta projection (pr_* keys). Review-diff reads its base from it; the
+// canonical delivery authorization/outcome remains the delivery truth and is
+// never derived from these keys.
 func projectDeliveryIdentity(homeDir, taskID string, ident domain.DeliveryIdentity) error {
 	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
 		for k, v := range ident.ToMeta() {
@@ -255,11 +255,8 @@ resuming retirement only after a completed canonical delivery outcome.`,
 
 			// --teardown: MergeAndRetire delivers this same request (or resumes
 			// retirement when the outcome is already committed) and retires
-			// only after a completed outcome. The identity projection lands
-			// first because teardown's merge proof reads it from .meta.
-			if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
-				return fmt.Errorf("pr-merge %s: writing delivery identity projection: %w", id, perr)
-			}
+			// only after a completed outcome. Teardown's merge proof reads the
+			// identity of the delivery authorization, not .meta.
 			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
 			mars := fleet.MergeAndRetire(taskHome, id, req, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if mars.TeardownResult != nil {

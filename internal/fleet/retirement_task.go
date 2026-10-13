@@ -1280,7 +1280,16 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 	case taskauthority.KindReview:
 		return nil, nil
 	default:
-		return shipSafetyCheck(opts, meta, backend, authority, binding, partialLaunch)
+		// The identity is the current delivery authorization's, so a task
+		// authorized but not landed refuses even when its .meta carries no
+		// pr_* keys. Human words (domain.Words): grantor the Human, channel
+		// direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead
+		// decided teardown reads the canonical delivery identity).
+		ident, err := deliveryIdentity(authority, opts.ID)
+		if err != nil {
+			return nil, fmt.Errorf("reading delivery identity: %w", err)
+		}
+		return shipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
 	}
 }
 
@@ -1384,29 +1393,19 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 	return unresolved, nil
 }
 
-// shipSafetyCheck verifies work is landed before
-// It separates cleanliness checks (dirty worktree) from merge-proof checks
-// (topology-aware PR merge verification using delivery identity).
+// shipSafetyCheck verifies work is landed before teardown. It separates
+// cleanliness checks (dirty worktree) from merge-proof checks (topology-aware
+// PR merge verification of the delivery identity, deliveryIdentity's).
 // Returns proof strings emitted during merge-proof checks.
-// shipSafetyCheck verifies work is landed before
-// It separates cleanliness checks (dirty worktree) from merge-proof checks
-// (topology-aware PR merge verification using delivery identity).
-// Returns proof strings emitted during merge-proof checks.
-func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
 	if binding == nil || binding.Path == "" {
 		return nil, fmt.Errorf("no canonical worktree path for %s", opts.ID)
 	}
 	if binding.LaunchManifest == nil {
 		return nil, fmt.Errorf("no canonical launch manifest evidence for %s", opts.ID)
 	}
-	if partialLaunch {
-		ident, err := identityFromMeta(meta)
-		if err != nil {
-			return nil, fmt.Errorf("reading delivery identity: %w", err)
-		}
-		if ident != nil {
-			return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
-		}
+	if partialLaunch && ident != nil {
+		return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
 	}
 	wtPath := binding.Path
 	expectedManifestSHA := binding.LaunchManifest.ManifestSHA256
@@ -1487,20 +1486,8 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 
 	// If the task has a delivery identity, use provider-confirmed PR status
 	// to determine whether the work is safely landed.
-	ident, err := identityFromMeta(meta)
-	if err != nil {
-		return nil, fmt.Errorf("reading delivery identity: %w", err)
-	}
-
 	if ident != nil {
-		// Validate identity before any provider query or fallback.
-		// Partial/corrupt identity must fail closed and never silently
-		// degrade to the legacy branch check.
-		if err := domain.ValidateIdentity(ident); err != nil {
-			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
-		}
-
-		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident, backend, authority)
+		proof, err := topologyAwareMergeCheck(opts, wtPath, ident, backend, authority)
 		if err != nil {
 			return nil, err
 		}
@@ -1521,15 +1508,6 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 	return nil, nil
 }
 
-// identityFromMeta reconstructs a delivery identity from task meta using the
-// authoritative IdentityFromMeta, which correctly distinguishes:
-//   - nil, nil     (truly no identity metadata — legacy fallback allowed)
-//   - nil, error   (partial identity with missing pr_url — fail closed)
-//   - identity, nil (valid identity — proceed to topology-aware check)
-func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) {
-	return domain.IdentityFromMeta(meta)
-}
-
 // topologyAwareMergeCheck verifies the work is landed using the provider's
 // confirmed PR/MR merge status. It supports three merge topologies:
 //   - Squash/rebase merge with deleted head: accepts provider-confirmed merged PR identity
@@ -1537,7 +1515,7 @@ func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) 
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical) (string, error) {
+func topologyAwareMergeCheck(opts Options, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical) (string, error) {
 	// The merged prerequisite is derived from the canonical committed
 	// delivery outcome when one exists: a non-completed canonical outcome
 	// fails the safety check before any provider query. The .meta projection never authorizes or blocks merged truth.

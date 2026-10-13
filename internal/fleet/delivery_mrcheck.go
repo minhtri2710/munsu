@@ -64,16 +64,31 @@ func deliveryTarget(homeDir, id string) (*domain.DeliveryIdentity, taskauthority
 	if err != nil {
 		return nil, taskauthority.DeliveryStep{}, err
 	}
-	tid, err := domain.NewTaskID(id)
+	ident, err := deliveryIdentity(c, id)
 	if err != nil {
 		return nil, taskauthority.DeliveryStep{}, err
+	}
+	if ident == nil {
+		return nil, taskauthority.DeliveryStep{}, fmt.Errorf("task %s has no delivery authorization; run `munsu delivery pr-merge <task-id> <pr-url>` to deliver it", id)
+	}
+	return ident, forge, nil
+}
+
+// deliveryIdentity is the one owner of a task's delivery identity: the
+// identity of its current generation's delivery authorization, nil when it has
+// none. An authorization a reopened task's earlier generation issued is not
+// this generation's delivery.
+func deliveryIdentity(c *taskauthority.Canonical, id string) (*domain.DeliveryIdentity, error) {
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		return nil, err
 	}
 	cur, err := c.DeliveryCurrency(tid)
 	if err != nil {
-		return nil, taskauthority.DeliveryStep{}, err
+		return nil, err
 	}
-	if cur.Identity == nil {
-		return nil, taskauthority.DeliveryStep{}, fmt.Errorf("task %s has no delivery authorization; run `munsu delivery pr-merge <task-id> <pr-url>` to deliver it", id)
+	if cur.Authorization == nil || cur.Authorization.Generation != cur.Generation {
+		return nil, nil
 	}
-	return cur.Identity, forge, nil
+	return cur.Identity, nil
 }
