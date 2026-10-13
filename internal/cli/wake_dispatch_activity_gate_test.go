@@ -95,6 +95,7 @@ case "$1 $2" in
     cat "$CAPTURE_FILE"
     exit 0 ;;
   "agent prompt")
+    printf '%%s' "$3" > "$PROMPT_FILE.target"
     shift 3
     printf '%%s' "$*" > "$PROMPT_FILE"
     echo '{"result":{"type":"prompt_submitted","agent":{"agent_status":"working"}}}'
@@ -249,6 +250,39 @@ func TestDispatchHerdrWake_DeliversWakeWhenActivityReadsIdle(t *testing.T) {
 	}
 	if got := countQueuedWakes(f.home); got != 0 {
 		t.Fatalf("queued wakes after delivery = %d, want 0 (the wake was claimed and delivered)", got)
+	}
+}
+
+// The prompt goes to the General's own pane, the one the dispatch probed.
+func TestDispatchHerdrWake_PromptsTheGeneralsPane(t *testing.T) {
+	f := newHerdrDispatchFixture(t, " Idle ", "soldier task-1 reported done", false)
+	if err := dispatchHerdrWake(f.home); err != nil {
+		t.Fatalf("dispatchHerdrWake: %v", err)
+	}
+	target, err := os.ReadFile(f.promptPath + ".target")
+	if err != nil {
+		t.Fatalf("no prompt was submitted: %v", err)
+	}
+	if !strings.Contains(string(target), "general") {
+		t.Fatalf("prompt target = %q, want the General's pane %%general", target)
+	}
+}
+
+// A home whose wake delivery mode is not herdr gets no prompt; the wake stays
+// queued for a claim.
+func TestDispatchHerdrWake_FollowsTheConfiguredDeliveryMode(t *testing.T) {
+	f := newHerdrDispatchFixture(t, " Idle ", "soldier task-1 reported done", false)
+	if err := config.Set(f.home, "wake-delivery-mode", "native"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatchHerdrWake(f.home); err != nil {
+		t.Fatalf("dispatchHerdrWake: %v", err)
+	}
+	if prompt := f.deliveredPrompt(t); prompt != "" {
+		t.Fatalf("native delivery mode still prompted the pane:\n%s", prompt)
+	}
+	if got := countQueuedWakes(f.home); got != 1 {
+		t.Fatalf("queued wakes = %d, want the wake left queued", got)
 	}
 }
 
