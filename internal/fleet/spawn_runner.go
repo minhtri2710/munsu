@@ -890,15 +890,19 @@ func (r *Runner) checkScopeGate() error {
 }
 
 func (r *Runner) preflightNoMistakes() error {
-	if r.effectiveMode != "no-mistakes" {
-		return nil
-	}
 	preflight := r.args.NoMistakesPreflight
 	if preflight == nil {
 		preflight = defaultNoMistakesPreflight
 	}
-	if err := preflight(r.projPath, r.reviewStep); err != nil {
-		return fmt.Errorf("review adapter %s probe/preflight failed: %w", r.reviewStep.Adapter, err)
+	return reviewPreflight(r.effectiveMode, r.projPath, r.reviewStep, preflight)
+}
+
+func reviewPreflight(mode, projPath string, review taskauthority.DeliveryStep, preflight func(string, taskauthority.DeliveryStep) error) error {
+	if mode != "no-mistakes" {
+		return nil
+	}
+	if err := preflight(projPath, review); err != nil {
+		return fmt.Errorf("review adapter %s probe/preflight failed: %w", review.Adapter, err)
 	}
 	return nil
 }

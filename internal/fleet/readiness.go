@@ -69,23 +69,13 @@ func ProbeProjectReadiness(homeDir, project string) (ProjectReadiness, error) {
 		return ProjectReadiness{}, err
 	}
 	out := ProjectReadiness{Project: project, Mode: cfg.Soldier.Mode, Harness: cfg.Soldier.Harness}
-	if out.Mode == "no-mistakes" {
-		if err := defaultNoMistakesPreflight(cfg.ProjectPath, cfg.ReviewStep); err != nil {
-			out.Err = fmt.Errorf("review adapter %s probe/preflight failed: %w", cfg.ReviewStep.Adapter, err)
-			return out, nil
-		}
-	}
-	delivery, err := Preflight(out.Mode, cfg.ProjectPath, cfg.ForgeStep)
-	if err != nil {
-		out.Err = fmt.Errorf("delivery preflight: %w", err)
+	if out.Err = reviewPreflight(out.Mode, cfg.ProjectPath, cfg.ReviewStep, defaultNoMistakesPreflight); out.Err != nil {
 		return out, nil
 	}
-	if !delivery.Feasible {
-		out.Err = fmt.Errorf("delivery preflight for %q blocked: %s", out.Mode, formatPreflightFailures(delivery.Checks))
+	if out.Err = deliveryPreflight(out.Mode, cfg.ProjectPath, cfg.ForgeStep); out.Err != nil {
 		return out, nil
 	}
-	if err := SoldierHarnessPreflight(homeDir, out.Harness); err != nil {
-		out.Err = err
+	if out.Err = SoldierHarnessPreflight(homeDir, out.Harness); out.Err != nil {
 		return out, nil
 	}
 	out.Err = soldierLaunchContract(out.Harness)
