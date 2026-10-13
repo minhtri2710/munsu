@@ -117,6 +117,9 @@ func restrictDir(path string) error {
 // verifyRestrictedProtection confirms that path's DACL is protected (SE_DACL_PROTECTED)
 // and contains only ACEs belonging to sid (or is empty, denying all access),
 // with no inherited ACEs, ensuring no other principals have access.
+//
+// No lane runs this Windows check; TestLayoutAndPermissionsPrivate
+// (canonical_home_test.go) covers the owner-private contract on darwin and linux.
 func verifyRestrictedProtection(path string, sid *windows.SID) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
@@ -213,6 +216,9 @@ func currentUserSID() (*windows.SID, error) {
 // requiring a protected DACL with exactly one ACCESS_ALLOWED ACE for the owner SID
 // granting full control, with no inherited ACE. It fails closed when the guarantee
 // is not established or cannot be verified.
+//
+// No lane runs this Windows check. The Unix mode-bit owner-private contract is
+// covered on darwin and linux by TestLayoutAndPermissionsPrivate (canonical_home_test.go).
 func verifyProtection(path string, isDir bool) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
