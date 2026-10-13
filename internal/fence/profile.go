@@ -416,7 +416,7 @@ func durableHomeRoots(home string) []string {
 }
 
 // realHomeRoots refuses a home root that is a symlink or not a directory. The
-// profile denies each root by its name, and the sandbox matches resolved
+// profile denies the home by its name, and the sandbox matches resolved
 // paths, so a root linked elsewhere (into a temp root, say) would escape the
 // deny while the seat's own files, resolved through the link, stay allowed. A
 // missing root is fine: the seat cannot create it. It runs for every seat

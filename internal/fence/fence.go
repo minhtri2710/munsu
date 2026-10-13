@@ -37,10 +37,10 @@ const (
 type Launch struct {
 	Role    Role
 	Harness string // harness kind; selects the harness state directories
-	// Home is the munsu home. No seat writes its state/, data/, .journal/,
-	// .lock/, config/ or projects/: a soldier writes only its own Files there
-	// (its status, ack log and current scout report) and its HarnessStateDir.
-	// A reviewer may leave it empty when it has no HarnessStateDir.
+	// Home is the munsu home. No seat writes anything in it but its own Files
+	// (a soldier's status, ack log and current scout report) and its
+	// HarnessStateDir. A reviewer may leave it empty when it has no
+	// HarnessStateDir.
 	Home    string
 	Primary string // primary checkout; never writable
 	// Worktree is the soldier's bound worktree (writable) or the reviewer's

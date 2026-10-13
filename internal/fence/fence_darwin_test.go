@@ -441,12 +441,11 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 
 // In its dispatcher's home a soldier writes only its own status file, ack log
 // and current scout report (Files) and its harness state dir; every other path
-// under state/, data/, .journal/, .lock/, config/ and projects/ is refused, and
-// so is renaming a root away to plant a tree of its own (G1058; G1085 for
-// config/ and projects/). Each refused row names its nearest allowed
-// neighbour. The table runs for a home outside the temp roots
+// in the home is refused, and so is renaming a root away to plant a tree of
+// its own (G1058; G1085 for config/ and projects/). Each refused row names its
+// nearest allowed neighbour. The table runs for a home outside the temp roots
 // and for one inside a temp root (shim set, as a launch sets it), where only the
-// profile's home-root deny refuses.
+// profile's home deny refuses.
 func TestSoldierFenceHomeWrites(t *testing.T) {
 	for _, placement := range []string{"outside the temp roots", "inside a temp root"} {
 		t.Run(placement, func(t *testing.T) {
