@@ -240,6 +240,9 @@ resuming retirement only after a completed canonical delivery outcome.`,
 					return err
 				}
 				fmt.Print(result.Render())
+				for _, note := range recoveredDeliveryNotes(result.Recovered) {
+					fmt.Println(note)
+				}
 				// Every non-completed outcome is a non-zero exit for script
 				// chaining; the rendered partial-state report is printed first so
 				// retryable/partial/remote-unknown detail stays visible.
@@ -267,7 +270,13 @@ resuming retirement only after a completed canonical delivery outcome.`,
 			}
 			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
 			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, words, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
+			for _, note := range recoveredDeliveryNotes(mars.Recovered) {
+				fmt.Println(note)
+			}
 			if mars.TeardownResult != nil {
+				for _, note := range recoveredDeliveryNotes(mars.TeardownResult.Recovered) {
+					fmt.Println(note)
+				}
 				for _, step := range mars.TeardownResult.Steps {
 					fmt.Println(step)
 				}
@@ -286,4 +295,14 @@ resuming retirement only after a completed canonical delivery outcome.`,
 	cmd.Flags().StringVar(&words.Quote, "quote", "", "the Human's verbatim words permitting this delivery (required)")
 	cmd.Flags().BoolVar(&doTeardown, "teardown", false, "after successful merge, teardown the soldier (pane+worktree+meta) in the task home")
 	return cmd
+}
+
+// recoveredDeliveryNotes renders each recovered non-completed delivery outcome
+// as one line, so every command that resumes journals reports them the same way.
+func recoveredDeliveryNotes(outcomes []fleet.DeliverResult) []string {
+	notes := make([]string, 0, len(outcomes))
+	for _, o := range outcomes {
+		notes = append(notes, fmt.Sprintf("delivery recovery: task %s committed outcome %s: %s", o.TaskID, o.Status, o.Detail))
+	}
+	return notes
 }

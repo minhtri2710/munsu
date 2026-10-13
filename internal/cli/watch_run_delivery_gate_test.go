@@ -18,7 +18,7 @@ import (
 // locking a scope nobody wants and passing for the wrong reason.
 func deliveryLockScopeName(t *testing.T, homeDir string) string {
 	t.Helper()
-	if err := fleet.RecoverDeliveryJournals(homeDir); err != nil {
+	if _, err := fleet.RecoverDeliveryOutcomes(homeDir); err != nil {
 		t.Fatalf("priming the delivery recovery gate: %v", err)
 	}
 	entries, err := os.ReadDir(filepath.Join(homeDir, mhome.LockDirName))

@@ -233,8 +233,8 @@ func newWatchRunCmd() *cobra.Command {
 				}
 				fmt.Fprintln(cmd.ErrOrStderr(), "delivery recovery gate skipped: another process holds the delivery scope and converges its own journals")
 			}
-			for _, o := range outcomes {
-				fmt.Fprintf(cmd.ErrOrStderr(), "delivery recovery: task %s committed outcome %s: %s\n", o.TaskID, o.Status, o.Detail)
+			for _, note := range recoveredDeliveryNotes(outcomes) {
+				fmt.Fprintln(cmd.ErrOrStderr(), note)
 			}
 
 			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetReviewVerdictPort{}, runtimeTaskStatePort{})

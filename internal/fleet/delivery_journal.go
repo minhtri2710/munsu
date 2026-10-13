@@ -248,19 +248,11 @@ func readActiveDeliveryJournal(h *home.Home, id string) (*deliveryJournal, error
 	return journal, nil
 }
 
-// RecoverDeliveryJournals resumes every pending Fleet-owned delivery journal
-// of a home, continuing the SAME operation identities recorded in each
-// journal. It is the delivery recovery gate; Deliver invokes it before
-// creating any new journal so an interrupted delivery completes first and a
-// new delivery observes truthful state.
-func RecoverDeliveryJournals(homeDir string) error {
-	_, err := RecoverDeliveryOutcomes(homeDir)
-	return err
-}
-
-// RecoverDeliveryOutcomes is RecoverDeliveryJournals that also returns each
+// RecoverDeliveryOutcomes resumes every pending Fleet-owned delivery journal of
+// a home, continuing the SAME operation identities recorded in each journal. It
+// is the delivery recovery gate that watch run invokes, and it returns each
 // resumed journal whose committed outcome is not completed (partial,
-// remote-unknown, retryable), so an operator-run resume can report it.
+// remote-unknown, retryable) so the operator sees it instead of a nil error.
 func RecoverDeliveryOutcomes(homeDir string) ([]DeliverResult, error) {
 	h, err := home.Open(homeDir)
 	if err != nil {
