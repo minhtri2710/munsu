@@ -1,7 +1,3 @@
-// Package hometag derives a short, stable tag from a munsu home path.
-// The tag is used to namespace session window names so multiple
-// fleet instances on the same machine never collide.
-
 package backend
 
 import (

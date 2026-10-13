@@ -1,9 +1,3 @@
-// Package lifecycle owns timing and lock invariants for the watcher,
-// wake queue, and session lock — defined once, tested once.
-// Consumers (supervision, waker, session) import lifecycle and never
-// spell state/.wake-queue, state/.last-watcher-beat, or state/.lock
-// themselves.
-
 package orchestrator
 
 import (

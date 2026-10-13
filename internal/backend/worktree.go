@@ -1,5 +1,3 @@
-// Package worktree manages pooled (treehouse) and fallback (git worktree) worktree acquisition.
-//
 // When treehouse is on PATH, all operations delegate to the treehouse CLI for pooled
 // worktree management. When treehouse is absent, a bare git worktree fallback is used
 // with a one-time stderr note.

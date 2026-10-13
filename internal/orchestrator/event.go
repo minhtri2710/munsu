@@ -1,7 +1,3 @@
-// Package event provides a durable, append-only typed event log.
-// Events carry a monotonic ID, timestamp, type, producer, optional
-// correlation/idempotency key, and a JSON payload.
-
 package orchestrator
 
 import (

@@ -1,5 +1,3 @@
-// Package fleet manages project clone synchronization.
-
 package fleet
 
 import (

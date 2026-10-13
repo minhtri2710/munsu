@@ -1,6 +1,3 @@
-// Package ghurl provides GitHub PR URL parsing and formatting.
-// It handles the invariants of https://github.com/<owner>/<repo>/pull/<n> URLs.
-
 package domain
 
 import (

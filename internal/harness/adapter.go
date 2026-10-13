@@ -1,6 +1,3 @@
-// Package harness detects the running agent harness, resolves soldier/captain
-// harness assignments, and provides the adapter registry for all verified harnesses.
-
 package harness
 
 import (

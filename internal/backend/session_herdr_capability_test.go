@@ -1,7 +1,5 @@
 //go:build integration
 
-// Package session tests
-
 package backend
 
 import (

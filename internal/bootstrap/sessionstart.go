@@ -1,5 +1,3 @@
-// Package session provides the session management commands.
-
 package bootstrap
 
 import (

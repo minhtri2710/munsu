@@ -1,5 +1,3 @@
-// Package integrate manages opt-in harness integration.
-//
 // OpenCode adapter: generates .opencode/plugins/*.js plugin files anchored to
 // the munsu binary path, mirroring the munsu OpenCode plugin contract.
 //

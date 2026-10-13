@@ -1,7 +1,3 @@
-// Package fleet implements the Soldier launch manifest — a versioned digest
-// manifest binding relative paths, SHA-256 digests, and disposal policies
-// for all runtime-owned launch artifacts.
-
 package fleet
 
 import (
