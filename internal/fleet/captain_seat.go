@@ -67,9 +67,6 @@ func prepareCaptainSeat(captainHome, parentHome, captainID, harnessName string) 
 		fmt.Fprintf(os.Stderr, "warning: captain %s launches UNFENCED: %v\n", captainID, err)
 		return captainSeat{reason: err.Error()}, nil
 	}
-	if harnessName != harness.Pi {
-		return captainSeat{}, fmt.Errorf("captain fence: no seat dir for harness %q", harnessName)
-	}
 	stateDir := home.StateDir(captainHome)
 	agentDir, err := piAgentDirPath(captainHome, taskIDForCaptain(captainID))
 	if err != nil {
