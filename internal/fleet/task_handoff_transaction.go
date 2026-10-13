@@ -209,7 +209,12 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 			return fmt.Errorf("handoff: reading source task %s: %w", taskID, err)
 		}
 		// Task Authority owns the queued-only and hold rules; ReserveTransfer
-		// re-checks them under the dispatch lock.
+		// re-checks them under the dispatch lock. The destination hold is
+		// checked here only: no transfer abort exists, so a ReceiveTransfer
+		// refusal after the reserve would keep the journal active and fail
+		// RecoverTaskHandoffs (brief, spawn and task reads) in the source home
+		// and its captains until the hold cleared. A hold added after this
+		// check is not enforced.
 		if err := sourceAuth.CheckTransferable(agg); err != nil {
 			return err
 		}
