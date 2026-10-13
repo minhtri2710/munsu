@@ -1283,8 +1283,9 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 		// The identity is the current delivery authorization's, so a task
 		// authorized but not landed refuses even when its .meta carries no
 		// pr_* keys. Human words (domain.Words): grantor the Human, channel
-		// direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead
-		// decided teardown reads the canonical delivery identity).
+		// direct chat with the Lead, 2026-10-13, words=selected, 1A:
+		// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự
+		// quyết đi" record: teardown reads the canonical delivery identity).
 		ident, err := deliveryIdentity(authority, opts.ID)
 		if err != nil {
 			return nil, fmt.Errorf("reading delivery identity: %w", err)
