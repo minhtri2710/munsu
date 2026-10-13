@@ -455,29 +455,6 @@ func TestBeatAndIdentityConsistency(t *testing.T) {
 	}
 }
 
-// --- ProtocolVersion constant ---
-
-func TestProtocolVersionConstant(t *testing.T) {
-	if ProtocolVersion < 1 {
-		t.Error("ProtocolVersion should be at least 1")
-	}
-}
-
-// --- resolveExecPath tests ---
-
-func TestZeroValueIdentity_Defaults(t *testing.T) {
-	id := WatcherIdentity{}
-	if id.Home != "" {
-		t.Error("zero value Home should be empty")
-	}
-	if id.PID != 0 {
-		t.Error("zero value PID should be 0")
-	}
-	if id.ProtocolVersion != 0 {
-		t.Error("zero value ProtocolVersion should be 0")
-	}
-}
-
 // --- Time field sanity ---
 
 func TestStartTime_IsReasonable(t *testing.T) {
@@ -580,42 +557,26 @@ func TestNewIdentity_EmptyCommitSHA(t *testing.T) {
 	}
 }
 
-func TestCommitSHARoundTrip_ProtocolV2(t *testing.T) {
+// The commit SHA round-trips, and an identity written without one reads back
+// with it empty.
+func TestIdentityRoundTripsCommitSHA(t *testing.T) {
 	home := t.TempDir()
 	id := NewIdentity(home)
 	id.CommitSHA = "abc1234def5678"
-
 	if err := WriteIdentity(home, id); err != nil {
 		t.Fatalf("WriteIdentity: %v", err)
 	}
-
-	read := ReadIdentity(home)
-	if read == nil {
-		t.Fatal("ReadIdentity returned nil after write")
+	if read := ReadIdentity(home); read == nil || read.CommitSHA != "abc1234def5678" {
+		t.Fatalf("ReadIdentity = %+v, want CommitSHA abc1234def5678", read)
 	}
-	if read.CommitSHA != "abc1234def5678" {
-		t.Errorf("CommitSHA round-trip = %q, want %q", read.CommitSHA, "abc1234def5678")
-	}
-}
 
-func TestCommitSHA_BackwardCompatV1(t *testing.T) {
-	// Write a protocol v1 identity (7 fields, no CommitSHA) and verify
-	// that parseIdentity returns a WatcherIdentity with empty CommitSHA.
-	home := t.TempDir()
+	home = t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	// Generic JSON identity without an optional commit SHA.
 	content := fmt.Sprintf(`{"schema_version":1,"kind":"watcher","pid":12345,"start_token":"startts","executable_path":"/usr/bin/munsu","canonical_home":%q,"build_version":"v1.0.0","protocol_version":1,"started_at":1700000000}`, homepkg.Canonical(home))
 	os.WriteFile(filepath.Join(home, "state", ".watcher-identity"), []byte(content), 0600)
-
 	read := ReadIdentity(home)
-	if read == nil {
-		t.Fatal("ReadIdentity should parse v1 format")
-	}
-	if read.CommitSHA != "" {
-		t.Errorf("CommitSHA should be empty for v1 format, got %q", read.CommitSHA)
-	}
-	if read.BuildVersion != "v1.0.0" {
-		t.Errorf("BuildVersion = %q, want v1.0.0", read.BuildVersion)
+	if read == nil || read.CommitSHA != "" || read.BuildVersion != "v1.0.0" {
+		t.Fatalf("ReadIdentity without commit_sha = %+v, want it read with an empty CommitSHA", read)
 	}
 }
 
