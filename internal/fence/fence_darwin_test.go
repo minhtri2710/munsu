@@ -665,9 +665,17 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
 		filepath.Join(l.home, "config", "f"), filepath.Join(l.home, "projects", "f"),
 		filepath.Join(l.home, "identity.json"), filepath.Join(l.home, "AGENTS.md"),
-		filepath.Join(l.home, ".worktrees", "abc123", "f"),
+		filepath.Join(l.home, ".worktrees", "abc123", "f"), filepath.Join(l.home, "newtop"),
 		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, ".pi", "agent", "f"), verdict+"2",
 	)
+	// A reviewer's own Files stay writable where they sit under the home it
+	// denies; its siblings, the atomic-write temp files, too.
+	hl := l.reviewer()
+	hl.Harness, hl.HarnessStateDir = harness.Pi, l.stateDir()
+	hl.Files = []string{filepath.Join(l.home, "verdict.json")}
+	hf := mustNew(t, hl)
+	mustWrite(t, hf, hl.Files[0], hl.Files[0]+".tmp.9.ff")
+	mustRefuse(t, hf, filepath.Join(l.home, "newtop"), filepath.Join(l.home, "verdict-other.json"))
 
 	// A claude reviewer writes its own config dir, carved out of the refused
 	// home roots, and never the Human's claude config or the seat build dir.
@@ -1156,7 +1164,7 @@ func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 	}{
 		{"soldier", l.soldier(), append([]string{l.primary, l.common}, homeRoots(l.home)...)},
 		{"no-mistakes soldier", gated, append(append([]string{l.primary, l.common}, homeRoots(l.home)...), filepath.Join(gate, "hooks"))},
-		{"reviewer", l.reviewer(), []string{l.primary, l.common, l.worktree, l.gitDir, filepath.Join(l.home, "state")}},
+		{"reviewer", l.reviewer(), []string{l.primary, l.common, l.worktree, l.gitDir, l.home}},
 		{"home-less reviewer", func() Launch { x := l.reviewer(); x.Home = ""; return x }(), []string{l.primary, l.common, l.worktree, l.gitDir}},
 	}
 	for _, tt := range tests {

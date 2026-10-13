@@ -114,18 +114,15 @@ func New(l Launch) (*Fence, error) {
 		// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence
 		// không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence
 		// sẽ chạy, và không gửi input vào session ngoài session của nó."
-		deny(&b, "subpath", homeRoots(p.home)...)
-		if l.Role == RoleSoldier {
-			// G1058 (quoted above): a soldier writes nothing else in its
-			// home either; its worktree is allowed back below.
-			deny(&b, "subpath", p.home)
-		} else {
-			// identity.json, AGENTS.md and the tasks' worktrees are
-			// configuration and programs that unfenced munsu, the General
-			// and the daemon read and run: G1085 (quoted above).
-			deny(&b, "literal", filepath.Join(p.home, "identity.json"), filepath.Join(p.home, "AGENTS.md"))
-			deny(&b, "subpath", filepath.Join(p.home, ".worktrees"))
-		}
+		// G1058 (quoted above) for a soldier, and the same for a reviewer: a seat
+		// writes nothing else in its home, so a new top-level name there is
+		// refused. identity.json, AGENTS.md and the tasks' worktrees are
+		// configuration and programs that unfenced munsu, the General and the
+		// daemon read and run: G1085 (quoted above). A soldier's worktree is
+		// allowed back below; a reviewer's Files and harness state dir are too.
+		// Human words (domain.Words): grantor the Human, channel direct chat
+		// with the Lead, 2026-10-13: "tự quyết đi" (decide the deferred items).
+		deny(&b, "subpath", p.home)
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
@@ -249,14 +246,15 @@ func New(l Launch) (*Fence, error) {
 	denyUnlink(&b, removable...)
 	denySocketRemoval(&b, keptSocketDirs())
 
-	// The probe proves the home roots refused: every soldier root (G1058,
-	// quoted above), and a reviewer's state/. For a no-mistakes soldier it also
+	// The probe proves the home refused: a soldier's every home root (G1058,
+	// quoted above), and a reviewer's whole home, which no reviewer writes but
+	// its Files and harness state dir. For a no-mistakes soldier it also
 	// proves the gate's hooks refused (G1085, quoted at the gate denies).
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
 		refuse = append(refuse, p.worktree, p.gitDir)
 		if p.home != "" {
-			refuse = append(refuse, filepath.Join(p.home, "state"))
+			refuse = append(refuse, p.home)
 		}
 	} else {
 		refuse = append(refuse, homeRoots(p.home)...)
