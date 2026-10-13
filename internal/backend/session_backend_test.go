@@ -25,7 +25,7 @@ func TestBackendIdentity(t *testing.T) {
 	bound := func(meta map[string]string) func() (Backend, string, error) {
 		return func() (Backend, string, error) { return BackendForTask(home, meta) }
 	}
-	const supported = "(supported: herdr, tmux (tmux has no prompt support yet))"
+	const supported = "(supported: herdr, tmux)"
 	const setHint = "; set one with: munsu config set backend herdr|tmux"
 	const unbound = "; munsu cannot operate this endpoint: close it in its own multiplexer"
 	tests := []struct {
