@@ -1,19 +1,19 @@
-munsu dashboard REFRESHED 0s ago  /h
+munsu dashboard REFRESHED 0s ago  watcher absent  captains 0  working 30  unacked 0  /h
 unresolved 30  Human-needed 0  failed sources 0
 Tasks - Showing 13 of 30 (page 1 of 3)
->   t-00                   working          ship    primary          implementing
-    t-01                   working          ship    primary          implementing
-    t-02                   working          ship    primary          implementing
-    t-03                   working          ship    primary          implementing
-    t-04                   working          ship    primary          implementing
-    t-05                   working          ship    primary          implementing
-    t-06                   working          ship    primary          implementing
-    t-07                   working          ship    primary          implementing
-    t-08                   working          ship    primary          implementing
-    t-09                   working          ship    primary          implementing
-    t-10                   working          ship    primary          implementing
-    t-11                   working          ship    primary          implementing
-    t-12                   working          ship    primary          implementing
+>   general      t-00                 working          ship   -       -              implementing
+                 t-01                 working          ship   -       -              implementing
+                 t-02                 working          ship   -       -              implementing
+                 t-03                 working          ship   -       -              implementing
+                 t-04                 working          ship   -       -              implementing
+                 t-05                 working          ship   -       -              implementing
+                 t-06                 working          ship   -       -              implementing
+                 t-07                 working          ship   -       -              implementing
+                 t-08                 working          ship   -       -              implementing
+                 t-09                 working          ship   -       -              implementing
+                 t-10                 working          ship   -       -              implementing
+                 t-11                 working          ship   -       -              implementing
+                 t-12                 working          ship   -       -              implementing
 Events - Showing 5 of the last 40 read
 12:00:36 task.status t k working: step 36
 12:00:37 task.status t k working: step 37

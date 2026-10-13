@@ -37,7 +37,7 @@ for the complete registered set.
 | `munsu fleet snapshot` | Compact fleet state snapshot with aggregate counts. |
 | `munsu fleet sync [<project>]` | Clone or pull project repos. |
 | `munsu fleet view` | See the full fleet. |
-| `munsu dashboard` | Full-screen fleet dashboard: Human-needed rows first, failed homes named, event feed, and confirmed actions that run the existing munsu commands. Needs a terminal; use `munsu fleet view` otherwise. |
+| `munsu dashboard` | Full-screen fleet dashboard: header chips (watcher beat, captains, working, unacked wakes), failed homes named, a seat table grouped by home (general, then each captain; Human-needed rows first in a group), event feed, and confirmed actions that run the existing munsu commands. Needs a terminal; use `munsu fleet view` otherwise. |
 | `munsu fleet bearings` | Compact resume report (snapshot + captain table). |
 | `munsu home [--mkdir]` | Print or create the munsu home directory. |
 | `munsu inbox` | Show queued and claimed wakes and last captain status lines (General convenience view). |
