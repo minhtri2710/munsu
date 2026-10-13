@@ -236,15 +236,12 @@ type LaunchIntent struct {
 	// it, so a resumed launch rebuilds the same bytes whatever PATH the
 	// resuming process has.
 	SeatPathDirs []string `json:"seat_path_dirs"`
-	// SeatEnv is the launch environment the script and fence profile are built
-	// from, fixed with the intent: a resumed launch adopts it, never the
-	// resuming process's TMPDIR or home.
-	SeatEnv   SeatEnv `json:"seat_env"`
-	PlannedAt int64   `json:"planned_at"`
+	SeatEnv      SeatEnv  `json:"seat_env"`
+	PlannedAt    int64    `json:"planned_at"`
 }
 
-// SeatEnv holds the temp dir (the run's TMPDIR) and the Human's home a launch
-// reads from its environment; the committed values rebuild the same bytes.
+// SeatEnv is the TMPDIR and Human home a launch was first built from; a
+// resumed launch adopts it so the script and fence bytes do not change.
 type SeatEnv struct {
 	TempDir  string `json:"temp_dir"`
 	UserHome string `json:"user_home"`

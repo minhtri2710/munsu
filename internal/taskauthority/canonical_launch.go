@@ -62,10 +62,8 @@ type CanonicalBeginSpawnRequest struct {
 	// SeatPathDirs is the seat's launch PATH, read once by Fleet and committed
 	// with the intent; a resumed launch adopts it instead of reading PATH again.
 	SeatPathDirs []string
-	// SeatEnv is the launch environment the script and fence profile are built
-	// from, read once by Fleet and committed with the intent.
-	SeatEnv SeatEnv
-	Reason  string
+	SeatEnv      SeatEnv
+	Reason       string
 }
 
 func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {

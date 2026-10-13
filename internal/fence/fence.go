@@ -42,9 +42,7 @@ type Launch struct {
 	// (its status, ack log and current scout report) and its HarnessStateDir.
 	// A reviewer may leave it empty when it has no HarnessStateDir.
 	Home string
-	// UserHome is the Human's home, read once by the caller and committed with
-	// the launch, so the profile never depends on the resuming process's HOME.
-	// It must be absolute.
+	// UserHome is the Human's home as the launch intent recorded it; absolute.
 	UserHome string
 	Primary  string // primary checkout; never writable
 	// Worktree is the soldier's bound worktree (writable) or the reviewer's
