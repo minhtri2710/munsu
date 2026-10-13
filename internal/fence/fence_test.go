@@ -64,6 +64,74 @@ func (l layout) reviewer() Launch {
 
 func (l layout) stateDir() string { return filepath.Join(l.home, "state", "T-1.pi-agent") }
 
+// captain is a captain launch from l.home under a General home beside it, as
+// Launch makes it: its docs dir made, its seat socket and pi agent dir named.
+func (l layout) captain(t *testing.T) Launch {
+	t.Helper()
+	parent := filepath.Join(l.root, "general")
+	for _, d := range []string{filepath.Join(parent, "state"), filepath.Join(l.home, "state", CaptainDocsDir)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Launch{Role: RoleCaptain, Harness: harness.Pi, Home: l.home, ParentHome: parent,
+		Socket: filepath.Join(l.home, "state", ".captain-seat.sock"), HarnessStateDir: filepath.Join(l.home, "state", "captain.pi-agent"),
+		GitDir: l.gitDir, CommonDir: l.common}
+}
+
+// Each captain refusal has its blocked row; the allowed row is the launch as
+// Launch makes it, and as it makes it for a home that is no git checkout.
+func TestResolveCaptainRefusals(t *testing.T) {
+	l := newLayout(t)
+	file := filepath.Join(l.root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs := filepath.Join(l.home, "state", CaptainDocsDir)
+	for _, tt := range []struct {
+		name string
+		mut  func(*Launch)
+		want string
+	}{
+		{"as Launch makes it", func(*Launch) {}, ""},
+		{"a home that is no git checkout", func(x *Launch) { x.GitDir, x.CommonDir = "", "" }, ""},
+		{"a soldier's worktree", func(x *Launch) { x.Worktree = l.worktree }, "a captain launch has no worktree"},
+		{"a soldier's branch", func(x *Launch) { x.Branch = "mu/T-1" }, "a captain launch has no worktree"},
+		{"a home that is a file", func(x *Launch) { x.Home = file }, "home " + file + " is not a directory"},
+		{"a General home that is a file", func(x *Launch) { x.ParentHome = file }, "General home " + file + " is not a directory"},
+		{"the General home as its own home", func(x *Launch) { x.ParentHome = x.Home }, "is its General home"},
+		{"a git common dir that is a file", func(x *Launch) { x.CommonDir = file }, "git common dir " + file + " is not a directory"},
+		{"a harness state dir outside state/", func(x *Launch) { x.HarnessStateDir = filepath.Join(l.home, "pi") }, "is not a proper subdirectory"},
+		{"a relative seat socket", func(x *Launch) { x.Socket = ".captain-seat.sock" }, "fence: seat socket: path"},
+		{"a seat socket outside state/", func(x *Launch) { x.Socket = filepath.Join(l.home, ".captain-seat.sock") }, "is not directly under"},
+		{"a seat socket deeper in state/", func(x *Launch) { x.Socket = filepath.Join(docs, "s.sock") }, "is not directly under"},
+		{"no docs dir", func(x *Launch) { os.Remove(docs) }, "captain docs dir " + docs + " is missing"},
+		{"a docs dir that is a link", func(x *Launch) { os.Remove(docs); os.Symlink(l.root, docs) }, "captain docs dir " + docs + " is missing, a symlink"},
+		// Last: the General home keeps the link.
+		{"a General home whose state/ is a link", func(x *Launch) {
+			moved := filepath.Join(l.root, "moved-state")
+			os.Rename(filepath.Join(x.ParentHome, "state"), moved)
+			os.Symlink(moved, filepath.Join(x.ParentHome, "state"))
+		}, "is a symlink or not a directory"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Remove(docs)
+			launch := l.captain(t)
+			tt.mut(&launch)
+			c, err := resolveCaptain(launch)
+			if tt.want == "" {
+				if err != nil || c.socket != launch.Socket || c.docs != docs {
+					t.Fatalf("resolveCaptain = %+v, %v; want it accepted", c, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("resolveCaptain err = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestUnsupportedErrorNamesTheGOOS(t *testing.T) {
 	got := (&UnsupportedError{GOOS: "plan9"}).Error()
 	if want := "fence: no write fence implemented for GOOS plan9"; got != want {
@@ -683,7 +751,7 @@ func TestGoCaches(t *testing.T) {
 
 func TestNewRefusesAnUnknownRole(t *testing.T) {
 	l := newLayout(t)
-	for _, role := range []Role{"", "captain"} {
+	for _, role := range []Role{"", "general"} {
 		launch := l.soldier()
 		launch.Role = role
 		f, err := New(launch)

@@ -1,7 +1,8 @@
 // Package fence confines a launched seat's whole process tree to a set of
 // writable roots with an OS sandbox (macOS sandbox-exec), refuses every
-// unix-socket connect but DNS's and a gate soldier's no-mistakes daemon's, and
-// refuses the removal or replacement of a claude or tmux socket. It is defense
+// unix-socket connect but DNS's and the one socket its launch names (a gate
+// soldier's no-mistakes daemon, a captain's seat), and refuses the removal or
+// replacement of a claude or tmux socket. It is defense
 // in depth beside the shell lexer and the git shim: those refuse by reading
 // argv; the fence refuses at the syscall, so a wrapped program, an
 // absolute-path git, or a reset PATH cannot write outside the roots.
@@ -29,6 +30,11 @@ const (
 	// review, including every .git path; it keeps only seat state, temp roots
 	// and its own files.
 	RoleReviewer Role = "reviewer"
+	// RoleCaptain may write only its own harness state, temp roots and the
+	// briefs and docs it authors in its home; every munsu command that writes
+	// a record or drives a pane runs outside the fence through its seat
+	// socket.
+	RoleCaptain Role = "captain"
 )
 
 // Launch carries the facts one fenced launch needs. Every path must be absolute
@@ -74,6 +80,12 @@ type Launch struct {
 	// like a PATH dir, and every directory above it is locked against chmod,
 	// rename and removal whatever else the seat may write.
 	ShimDir string
+	// ParentHome is a captain's General home, never writable. Socket is the
+	// captain's seat socket, directly under Home's state/: the one socket it
+	// may connect to, which it can neither create, remove nor rename. Both are
+	// captain only.
+	ParentHome string
+	Socket     string
 }
 
 // UnsupportedError is returned by New on a GOOS with no fence implementation.

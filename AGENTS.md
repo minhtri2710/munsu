@@ -94,7 +94,11 @@ Where the host has none, a soldier or reviewer launch refuses unless the project
 sets fence-unsupported to allow, and the seat is then recorded and reported as
 unfenced. A project's fence-writable-roots lists extra directories only its
 soldiers may write; `ValidateWritableRoots` is the one validator, run at config
-set and at launch. The shell write-target grammar
+set and at launch. A captain runs under its own fence (`RoleCaptain`) as the
+child of `munsu captain seat`, which stays outside the fence and runs the
+commands the captain sends over its seat socket (`CaptainSeatRuns`), so its
+spawns, probes and pane commands never nest in its sandbox; on a host with
+no fence the captain launches unfenced and its meta records why. The shell write-target grammar
 (`shellWriteTargets`, `internal/cli/shell_write_safety.go`) is frozen: fixing a
 defect in a construct it already models is allowed, adding a shell construct is
 not. Reopening it needs evidence of a write path the OS fence cannot cover, plus

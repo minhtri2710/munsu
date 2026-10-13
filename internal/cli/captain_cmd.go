@@ -270,6 +270,21 @@ The sweep lock is parent state/.captain-converge.lock.`,
 	}
 	cmd.AddCommand(recoverCmd)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:    "seat -- <fenced captain argv...>",
+		Short:  "Run a fenced captain and, outside its fence, the munsu commands it sends",
+		Hidden: true,
+		Args:   MinimumNArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			code, err := fleet.ServeCaptainSeat(ctx.Home, args)
+			if err != nil {
+				return err
+			}
+			exitWithCode(code)
+			return nil
+		}),
+	})
+
 	return cmd
 }
 

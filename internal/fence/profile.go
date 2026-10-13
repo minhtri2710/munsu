@@ -38,11 +38,14 @@ type launchPaths struct {
 // missing, or that would widen the writable set over the primary checkout or the
 // git common dir is refused; New never falls back to a looser profile.
 func New(l Launch) (*Fence, error) {
-	if l.Role != RoleSoldier && l.Role != RoleReviewer {
+	if l.Role != RoleSoldier && l.Role != RoleReviewer && l.Role != RoleCaptain {
 		return nil, fmt.Errorf("fence: unknown role %q", l.Role)
 	}
 	if err := Supported(); err != nil {
 		return nil, err
+	}
+	if l.Role == RoleCaptain {
+		return newCaptain(l)
 	}
 	p, err := resolveLaunch(l)
 	if err != nil {
@@ -466,7 +469,7 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 		return fmt.Errorf("fence: harness state dir %s is not a proper subdirectory of %s", r, state)
 	}
 	for _, o := range []string{p.primary, p.worktree, p.gitDir, p.commonDir} {
-		if overlaps(r, o) {
+		if o != "" && overlaps(r, o) {
 			return fmt.Errorf("fence: harness state dir %s overlaps %s", r, o)
 		}
 	}
@@ -601,10 +604,12 @@ func keptSocketDirs() []string {
 }
 
 // denySocketConnects refuses connecting to every unix socket but DNS's
-// (mDNSResponder) and gateSocket, the no-mistakes daemon's socket of a soldier
+// (mDNSResponder) and seatSocket: the no-mistakes daemon's socket of a soldier
 // with a gate, which its gate push's pre-receive hook and its no-mistakes
-// commands dial. So a seat cannot inject messages into another claude session,
-// type into a tmux pane, drive any herdr pane (its own included), or reach any
+// commands dial, or a captain's seat socket, through which munsu runs the
+// captain's record and pane commands outside its fence. So a seat cannot
+// inject messages into another claude session, type into a tmux pane, drive
+// any herdr pane (its own included), or reach any
 // other daemon or listener, its own included. The allows are exact paths, and
 // a symlink at one is matched at its target. The daemon serves every lane, so
 // through it a seat can still answer another lane's run; G1153's row accepts
@@ -616,10 +621,12 @@ func keptSocketDirs() []string {
 // a soldier with a gate". G1148: "Chặn hẳn (Recommended): deny the herdr
 // socket entirely for fenced seats". G1085: "Quy tắc chung (Recommended): Seat
 // có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
-// fence sẽ chạy, và không gửi input vào session ngoài session của nó."
-func denySocketConnects(b *strings.Builder, gateSocket string) {
+// fence sẽ chạy, và không gửi input vào session ngoài session của nó." The
+// captain's seat socket: grantor the Human, channel direct chat with the Lead,
+// 2026-10-13, scope: choose the captain-fence design: "tự quyết đi".
+func denySocketConnects(b *strings.Builder, seatSocket string) {
 	b.WriteString("(deny network-outbound (remote unix-socket))\n")
-	for _, s := range []string{"/private/var/run/mDNSResponder", gateSocket} {
+	for _, s := range []string{"/private/var/run/mDNSResponder", seatSocket} {
 		if s != "" {
 			b.WriteString("(allow network-outbound (remote unix-socket (path-literal " + quote(s) + ")))\n")
 		}

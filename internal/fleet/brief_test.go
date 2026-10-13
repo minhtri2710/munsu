@@ -136,6 +136,39 @@ func TestScaffoldRefreshesDirectoryMtime(t *testing.T) {
 	}
 }
 
+// A fenced captain writes its briefs, so it can replace one with a link; the
+// unfenced scaffold replaces the link and never writes through it. The
+// nearest valid case, a regular brief, is rewritten in place.
+func TestScaffoldReplacesALinkedBrief(t *testing.T) {
+	for _, linked := range []bool{true, false} {
+		tmp := t.TempDir()
+		dir := filepath.Join(tmp, "data", "t1")
+		target := filepath.Join(tmp, "settings.json")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		brief := filepath.Join(dir, "brief.md")
+		if linked {
+			if err := os.Symlink(target, brief); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(brief, []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "t1", Repo: "munsu", Mode: "direct-PR"}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(target)
+		fi, err := os.Lstat(brief)
+		if string(got) != "{}" || err != nil || !fi.Mode().IsRegular() || !strings.Contains(readFile(t, brief), "Task brief: t1") {
+			t.Fatalf("linked=%v: target %q, brief %v %v; want the brief rewritten as a regular file and the target untouched", linked, got, fi, err)
+		}
+	}
+}
+
 func TestScaffoldShip(t *testing.T) {
 	tmp := t.TempDir()
 
