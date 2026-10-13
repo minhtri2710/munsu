@@ -321,17 +321,12 @@ func TestClaimWakes(t *testing.T) {
 		t.Error("expires_at is 0")
 	}
 
-	if HasQueuedWakes(home) {
-		records, err := DrainWakes(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(records) != 1 {
-			t.Errorf("remaining queue has %d records, want 1", len(records))
-		}
-		if records[0].Seq != "3" {
-			t.Errorf("remaining seq = %q, want 3", records[0].Seq)
-		}
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Seq != "3" {
+		t.Fatalf("remaining queue = %+v, want only seq 3", records)
 	}
 }
 
