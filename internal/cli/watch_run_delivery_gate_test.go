@@ -11,7 +11,7 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-// deliveryLockScopeName derives the scope `fleet.RecoverDeliveryJournals` locks
+// deliveryLockScopeName derives the scope `fleet.RecoverDeliveryOutcomes` locks
 // from the lock file it creates, rather than hard-coding the unexported
 // fleet constant. A rename there renames the file, and this test keeps
 // contending with the scope the gate actually takes instead of silently
