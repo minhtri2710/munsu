@@ -405,7 +405,7 @@ func TestLaunchScriptRedirectsToolCachesIntoTheSeatTemp(t *testing.T) {
 	want := map[string]string{
 		"npm_config_cache": "npm-cache", "npm_config_store_dir": "npm-store",
 		"PIP_CACHE_DIR": "pip-cache", "UV_CACHE_DIR": "uv-cache", "XDG_CACHE_HOME": "xdg-cache",
-		"GOCACHE": "go-build", "GOMODCACHE": "go-mod", "GOTELEMETRYDIR": "go-telemetry",
+		"GOCACHE": "go-build", "GOMODCACHE": "go-mod", "GOPATH": "go-path", "GOTELEMETRYDIR": "go-telemetry",
 	}
 	for k, sub := range want {
 		if got := env[k]; got != filepath.Join(seat, sub) {
