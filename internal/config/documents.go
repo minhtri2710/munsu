@@ -40,7 +40,6 @@ type DispatchProfile struct {
 	Harness        string              `json:"harness,omitempty"`
 	Model          string              `json:"model,omitempty"`
 	Effort         string              `json:"effort,omitempty"`
-	MaxConcurrent  int                 `json:"maxConcurrent,omitempty"`
 	SelectStrategy string              `json:"select,omitempty"`
 	Why            string              `json:"why,omitempty"`
 	Use            []DispatchCandidate `json:"use,omitempty"`
