@@ -58,8 +58,10 @@ const (
 
 // ValidateScaffold is the one scaffold validator, run when a profile is written
 // and again at spawn. Human words (domain.Words): grantor the Human, channel
-// direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead decided that a
-// dispatch profile scaffold other than lean or guided is refused).
+// direct chat with the Lead, 2026-10-13, words=selected, 1A:
+// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự quyết
+// đi" record: a dispatch profile scaffold other than lean or guided is
+// refused).
 func ValidateScaffold(scaffold string) error {
 	switch scaffold {
 	case "", ScaffoldLean, ScaffoldGuided:
