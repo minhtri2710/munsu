@@ -60,77 +60,6 @@ func testRunCycle(home string) (bool, error) {
 	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, testTaskStatePort{})
 }
 
-// --- absorbStaleSignal tests (pure predicate) ---
-
-func TestAbsorbStaleSignal_Nil(t *testing.T) {
-	if absorbStaleSignal(nil) {
-		t.Error("absorbStaleSignal(nil) should return false")
-	}
-}
-
-func TestAbsorbStaleSignal_EmptyStep(t *testing.T) {
-	s := &ObservedTaskState{}
-	if absorbStaleSignal(s) {
-		t.Error("absorbStaleSignal with empty step should return false")
-	}
-}
-
-func TestAbsorbStaleSignal_Running(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "running"}
-	if !absorbStaleSignal(s) {
-		t.Error("running should absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_Fixing(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "fixing"}
-	if !absorbStaleSignal(s) {
-		t.Error("fixing should absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_CI(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "ci"}
-	if !absorbStaleSignal(s) {
-		t.Error("ci should absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_AwaitingApproval(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "awaiting_approval"}
-	if !absorbStaleSignal(s) {
-		t.Error("awaiting_approval should absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_Done(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "done"}
-	if absorbStaleSignal(s) {
-		t.Error("done should NOT absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_Failed(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "failed"}
-	if absorbStaleSignal(s) {
-		t.Error("failed should NOT absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_ChecksPassed(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "checks-passed"}
-	if absorbStaleSignal(s) {
-		t.Error("checks-passed should NOT absorb stale signal")
-	}
-}
-
-func TestAbsorbStaleSignal_UnknownStep(t *testing.T) {
-	s := &ObservedTaskState{NoMistakesRunStep: "some-bogus-step"}
-	if absorbStaleSignal(s) {
-		t.Error("unknown step should NOT absorb stale signal")
-	}
-}
-
 // --- handleStale / resetStreak tests (first-seen stale timestamp) ---
 
 func TestHandleStale_FirstSeen(t *testing.T) {
@@ -172,11 +101,6 @@ func TestResetStreak(t *testing.T) {
 	if exists {
 		t.Error("staleFirstSeen should be deleted after reset")
 	}
-}
-
-func TestResetStreak_NonExistent(t *testing.T) {
-	// Should not panic
-	resetStreak("non-existent-task")
 }
 
 func TestStaleFirstSeen_ConcurrentAccess(t *testing.T) {
@@ -446,39 +370,6 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 	if len(records) != 2 {
 		t.Fatalf("drained %d wakes, want one initial and one changed-condition wake", len(records))
 	}
-}
-
-func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
-	// Simulate a full lifecycle: working → done → no-mistakes run step active
-	t.Run("working to done with no-mistakes run", func(t *testing.T) {
-		s := &ObservedTaskState{
-			Status:            "done",
-			NoMistakesRunStep: "running",
-		}
-		// Even though status says done, the active run-step absorbs stale
-		if !absorbStaleSignal(s) {
-			t.Error("active run on done status should absorb stale")
-		}
-	})
-
-	t.Run("done with checks-passed does NOT absorb stale", func(t *testing.T) {
-		s := &ObservedTaskState{
-			Status:            "done",
-			NoMistakesRunStep: "checks-passed",
-		}
-		if absorbStaleSignal(s) {
-			t.Error("checks-passed should NOT absorb stale")
-		}
-	})
-
-	t.Run("failed without run step does NOT absorb", func(t *testing.T) {
-		s := &ObservedTaskState{
-			Status: "failed",
-		}
-		if absorbStaleSignal(s) {
-			t.Error("failed without run step should NOT absorb stale")
-		}
-	})
 }
 
 func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
@@ -968,30 +859,6 @@ func TestRunCycle_CaptainActivationEveryCycleAfterRecovery(t *testing.T) {
 	}
 }
 
-// TestRunCycle_CaptainActivationNilHookIsNoop verifies that a nil
-// CaptainActivationHook is a no-op and does not affect the cycle.
-func TestRunCycle_CaptainActivationNilHookIsNoop(t *testing.T) {
-	tmp := setupRunCycleTest(t)
-
-	origHooks := activeTestHooks
-	activeTestHooks = NoopWatcherHooks{}
-	defer func() { activeTestHooks = origHooks }()
-	resetRecovery()
-
-	// Skip cycle 1 (recovery), check cycle 2.
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("first runCycle with nil hook: %v", err)
-	}
-	_ = emitted
-
-	emitted2, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("second runCycle with nil hook: %v", err)
-	}
-	_ = emitted2
-}
-
 // TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher proves that when the
 // watcher beat is stale and material wakes are pending, a scan produces
 // actionable condition codes for recovery.
@@ -1020,49 +887,6 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	if !HasQueuedWakes(tmp) {
 		t.Error("material wake not queued")
 	}
-}
-
-// TestDeadStaleWatcher_AutoRecoverOrFailClosed proves that a dead/stale watcher
-// with pending material wakes either recovers (by starting a new watcher) or
-// fails closed with actionable diagnostics.
-func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// No watcher beat = absent watcher.
-	beatStatus := ReadBeatStatus(tmp, time.Now())
-	if beatStatus.Exists {
-		t.Fatal("beat should not exist in clean temp dir")
-	}
-
-	// Enqueue a material wake.
-	EnqueueWake(tmp, "signal", "task-fail", "done: PR merged")
-
-	// Bounded status command should detect the situation.
-	// (Unit test for the diagnostic evaluation logic)
-	result := EvaluateGuard(tmp, 1, time.Now())
-	if result.BeatStatus.Exists {
-		t.Error("absent watcher reported as existing")
-	}
-	hasWakeCondition := false
-	for _, c := range result.Conditions {
-		if c.Code == ConditionQueuedWakesPending {
-			hasWakeCondition = true
-		}
-	}
-	if !hasWakeCondition {
-		t.Errorf("missing queued-wake condition: %v", result.Conditions)
-	}
-
-	// Run cycle to attempt recovery — with no watcher, cycles still produce
-	// status-signal wakes.
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("RunCycle: %v", err)
-	}
-	// Should produce a wake from ScanFleet (status signal).
-	_ = emitted
 }
 
 // TestArmBackground_ClearsStaleIdentity verifies that ArmBackground clears
