@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -73,6 +74,9 @@ func ServeCaptainSeat(captainHome string, argv []string) (int, error) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGTERM)
 	defer signal.Stop(signals)
+	if err := markInheritedCloseOnExec(); err != nil {
+		return 0, fmt.Errorf("captain seat: %w", err)
+	}
 	if err := captain.Start(); err != nil {
 		return 0, fmt.Errorf("captain seat: starting the captain: %w", err)
 	}
@@ -84,6 +88,28 @@ func ServeCaptainSeat(captainHome string, argv []string) (int, error) {
 		}
 	}()
 	return exitCode(captain.Wait())
+}
+
+// markInheritedCloseOnExec sets close-on-exec on every descriptor above stdio
+// that this process inherited without it. os/exec passes only stdio and the
+// descriptors it is given, so an inherited descriptor without the flag would
+// reach the fenced captain.
+func markInheritedCloseOnExec() error {
+	dir, err := os.Open("/dev/fd")
+	if err != nil {
+		return err
+	}
+	names, err := dir.Readdirnames(-1)
+	dir.Close()
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if fd, err := strconv.Atoi(name); err == nil && fd > 2 {
+			syscall.CloseOnExec(fd)
+		}
+	}
+	return nil
 }
 
 // listenCaptainSeat binds the seat socket by its name inside its directory:
@@ -171,6 +197,7 @@ func readCaptainSeatRequest(c *net.UnixConn) ([]string, []*os.File, error) {
 	if msgs, err := syscall.ParseSocketControlMessage(oob[:oobn]); err == nil && len(msgs) == 1 {
 		if fds, err := syscall.ParseUnixRights(&msgs[0]); err == nil {
 			for i, fd := range fds {
+				syscall.CloseOnExec(fd)
 				stdio = append(stdio, os.NewFile(uintptr(fd), fmt.Sprintf("seat-stdio-%d", i)))
 			}
 		}

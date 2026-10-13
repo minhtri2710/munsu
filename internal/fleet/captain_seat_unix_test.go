@@ -241,3 +241,42 @@ func TestServeCaptainSeatRunsTheCaptain(t *testing.T) {
 		t.Fatalf("err = %v, want the no-command refusal", err)
 	}
 }
+
+// The captain's open descriptors are its stdio alone: a descriptor the seat's
+// parent holds without close-on-exec does not reach it, nor does the seat's
+// own socket.
+func TestServeCaptainSeatCaptainHoldsOnlyStdio(t *testing.T) {
+	captainHome, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(captainHome, "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	held, err := os.Create(filepath.Join(t.TempDir(), "held"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	leak, err := syscall.Dup(int(held.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { syscall.Close(leak) })
+	out, err := os.Create(filepath.Join(t.TempDir(), "fds"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	orig := os.Stdout
+	os.Stdout = out
+	code, err := ServeCaptainSeat(captainHome, []string{"/bin/sh", "-c", openFDsScript})
+	os.Stdout = orig
+	if err != nil || code != 0 {
+		t.Fatalf("ServeCaptainSeat = %d, %v", code, err)
+	}
+	got, _ := os.ReadFile(out.Name())
+	if string(got) != "" {
+		t.Fatalf("captain holds descriptors %q above stdio; the parent's leaked one is %d", got, leak)
+	}
+}
