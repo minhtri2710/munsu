@@ -960,38 +960,33 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	return nil
 }
 
-// inFlightSoldierIDs returns task ids in captainHome/state with kind ship|scout.
+// inFlightSoldierIDs returns the captain home's soldier tasks that are not
+// retired: a queued task counts, whether added here, received in a handoff or
+// reopened, and so does a done task not torn down yet. A home with no
+// canonical store has none. Human words (domain.Words): grantor the Human,
+// channel direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead
+// decided to count every non-retired soldier task, widening the retire
+// refusal from tasks with a .meta).
 func inFlightSoldierIDs(captainHome string) ([]string, error) {
-	stateDir := filepath.Join(captainHome, "state")
-	entries, err := os.ReadDir(stateDir)
+	h, err := home.Open(captainHome)
+	if errors.Is(err, home.ErrNotInitialized) {
+		return nil, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+		return nil, err
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		return nil, err
+	}
+	aggs, err := auth.List()
+	if err != nil {
 		return nil, err
 	}
 	var ids []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".meta") || strings.HasPrefix(name, ".") {
-			continue
-		}
-		id, err := home.ReverseDurableKey(strings.TrimSuffix(name, ".meta"))
-		if err != nil {
-			continue
-		}
-		if _, err := home.ReadMeta(captainHome, id); err != nil {
-			continue
-		}
-		agg, ok, err := currentCanonicalAggregate(captainHome, id)
-		if err != nil {
-			return nil, fmt.Errorf("reading task %s: %w", id, err)
-		}
-		if !ok {
-			continue
-		}
-		if taskauthority.SoldierKind(agg.Definition.Kind) {
-			ids = append(ids, id)
+	for _, agg := range aggs {
+		if taskauthority.SoldierKind(agg.Definition.Kind) && agg.Phase != taskauthority.PhaseRetired {
+			ids = append(ids, agg.TaskID)
 		}
 	}
 	return ids, nil
@@ -1004,7 +999,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 // then signals the endpoint via the session backend. Errors from backend
 // operations (SendKeys, Teardown) are returned — never silently swallowed.
 // Without force, refuse when the captain home still has in-flight soldiers
-// (state/*.meta with kind ship|scout). force skips that gate.
+// (inFlightSoldierIDs: a soldier task that is not retired). force skips that gate.
 // removeHome=true removes the captain home directory after teardown.
 // On success, the captain is unregistered from the parent Captain registry (state/fleet-registry/captains.json).
 func Retire(captainHome, parentHome string, removeHome, force bool, endpoint RetireEndpoint) error {

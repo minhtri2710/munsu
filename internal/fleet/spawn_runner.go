@@ -607,8 +607,7 @@ func (r *Runner) resolveDispatchPolicy() error {
 // It refuses a task with a live soldier session (liveSession), so a duplicate live
 // execution never starts; --force skips the whole check and is an emergency
 // bypass only. This check passes a queued or a working task; whether spawn may
-// proceed is decided later by beginLaunchIntent, which requires queued and
-// accepts working only to resume a launch that already holds its endpoint.
+// proceed is decided later by beginLaunchIntent, which requires queued.
 // Spawn performs the queued-to-working transition, so do not run
 // `munsu task start` for a task that will be spawned.
 func (r *Runner) checkCaptainBacklogAuthority() error {
@@ -622,32 +621,29 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if err != nil {
 		return err
 	}
-	if window := liveSession(r.homeDir, r.args.ID, agg); window != "" {
+	if window, live := liveSession(agg); live {
 		return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
 	}
 	return r.checkCaptainBacklogAuthorityForPhase(r.args.ID, agg.Phase)
 }
 
-// liveSession returns the window of a task's live soldier session: its
-// canonical endpoint is bound and its .meta still names the window, else "".
-// Constraint: the .meta half only narrows the canonical one, so a bound task
-// whose .meta lost its window passes, as it did when .meta alone decided;
-// removal condition: Human words on refusing that task.
-func liveSession(homeDir, taskID string, agg taskauthority.Aggregate) string {
+// liveSession reports a task's live soldier session and its window: the
+// canonical endpoint is bound. A launch intent or an acquired endpoint without
+// the final bind is not live, so that launch re-enters; a bound task is refused
+// whatever its .meta records. Human words (domain.Words): grantor the Human,
+// channel direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead
+// decided to refuse a bound task whose .meta lost its window).
+func liveSession(agg taskauthority.Aggregate) (string, bool) {
 	if agg.Endpoint == nil {
-		return ""
+		return "", false
 	}
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return ""
-	}
-	return meta["window"]
+	return agg.Endpoint.Handle, true
 }
 
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
 	switch phase {
 	case taskauthority.PhaseWorking:
-		// Passes this check only; beginLaunchIntent refuses a working task unless it resumes a completed launch.
+		// Passes this check only; beginLaunchIntent refuses a working task.
 		return nil
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", taskID)
@@ -832,7 +828,7 @@ func (r *Runner) checkBacklogAuthority() error {
 
 	// State-based checks. Running `munsu task start` first is refused: spawn
 	// needs a queued task. A working task with no live session passes this
-	// check and beginLaunchIntent decides it. A queued task that holds only a
+	// check and beginLaunchIntent refuses it. A queued task that holds only a
 	// pre-bind acquired endpoint passes too: beginLaunchIntent re-enters the
 	// launch and re-adopts the pane.
 	switch agg.Phase {
@@ -841,7 +837,7 @@ func (r *Runner) checkBacklogAuthority() error {
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("lifecycle guard: task %q is done; reopen it with 'munsu task reopen %s' before spawning", r.args.ID, r.args.ID)
 	}
-	if window := liveSession(r.homeDir, r.args.ID, agg); window != "" {
+	if window, live := liveSession(agg); live {
 		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
 	}
 	return nil
@@ -1159,12 +1155,6 @@ func (r *Runner) beginLaunchIntent() error {
 			return fmt.Errorf("launch intent: task %s generation %s already holds a different launch intent; refuse to re-launch", r.args.ID, agg.Generation)
 		}
 		if agg.Phase != taskauthority.PhaseQueued {
-			if agg.Phase == taskauthority.PhaseWorking && agg.Endpoint != nil && agg.AcquiredEndpoint != nil && agg.LaunchEvidence != nil {
-				// Recovery after the final bind: the launch is complete under
-				// this exact identity; the remaining phases replay idempotently.
-				r.adoptLaunch(*agg.Launch)
-				return nil
-			}
 			return fmt.Errorf("launch intent: task %s generation %s is %s, spawn requires queued; duplicate or stale live spawn refused", r.args.ID, agg.Generation, agg.Phase)
 		}
 		r.launchReentry = true
@@ -2516,8 +2506,8 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 // queued → working. Only this operation transitions the phase; it requires the
 // bound worktree, the recorded acquired endpoint (AttachEndpoint), the
 // recorded launch evidence (RecordLaunch), and the exact intent fence when a
-// launch intent exists. Recovery after the final bind (task already working
-// under the identical launch) replays idempotently. The returned Outcome is
+// launch intent exists. A task another run of the identical launch bound in
+// the meantime replays idempotently. The returned Outcome is
 // the authoritative spawn receipt: its Generation is the exact generation the
 // attestation evidence binds to.
 func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {

@@ -24,22 +24,23 @@ import (
 // continues the same launch without duplicate worktree, endpoint, launch
 // submission, or working records: exactly one Worktree/Endpoint/
 // AcquiredEndpoint/Launch/LaunchEvidence record, one endpoint creation, one
-// submission, and one queued → working transition.
+// submission, and one queued → working transition. After the final bind the
+// launch is complete and live, so a re-run is refused and changes nothing.
 func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 	boundaries := []struct {
 		crashAfter string
-		wantErr    bool // re-acquisition at the pre-bind boundary re-calls the deterministic git-fallback provider
+		refused    string // the re-run's refusal; empty means it recovers
 	}{
-		{"begin", false},           // before acquisition
-		{"contract", false},        // after the durable delivery contract record
-		{"acquire", false},         // after worktree acquisition, before bind
-		{"bind-worktree", false},   // after worktree bind
-		{"manifest", false},        // after canonical anchor and artifact publication
-		{"create-session", false},  /* after endpoint create */
-		{"attach-endpoint", false}, // after durable attach
-		{"submit", false},          // after launch submit
-		{"meta", false},            // after metadata, before final bind
-		{"confirm", false},         // after final bind
+		{crashAfter: "begin"},           // before acquisition
+		{crashAfter: "contract"},        // after the durable delivery contract record
+		{crashAfter: "acquire"},         // after worktree acquisition, before bind
+		{crashAfter: "bind-worktree"},   // after worktree bind
+		{crashAfter: "manifest"},        // after canonical anchor and artifact publication
+		{crashAfter: "create-session"},  // after endpoint create
+		{crashAfter: "attach-endpoint"}, // after durable attach
+		{crashAfter: "submit"},          // after launch submit
+		{crashAfter: "meta"},            // after metadata, before final bind
+		{crashAfter: "confirm", refused: "spawn requires queued; duplicate or stale live spawn refused"}, // after final bind
 	}
 	for _, b := range boundaries {
 		t.Run(b.crashAfter, func(t *testing.T) {
@@ -64,7 +65,17 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 			}
 
 			// Recovery: re-run the full launch sequence.
-			if err := runLaunchPhases(f, ""); err != nil {
+			err = runLaunchPhases(f, "")
+			if b.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), b.refused) {
+					t.Fatalf("re-run after %q = %v, want %q", b.crashAfter, err, b.refused)
+				}
+				if agg := f.aggregate(); agg.Revision != first.Revision || f.endpoints.createCount() != 1 || f.endpoints.submitCount() != 1 {
+					t.Fatalf("refused re-run changed the launch: revision %d -> %d, creates=%d submits=%d", first.Revision, agg.Revision, f.endpoints.createCount(), f.endpoints.submitCount())
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("recovery run failed: %v", err)
 			}
 			agg := f.aggregate()
@@ -745,34 +756,6 @@ func holdWorktreePool(t *testing.T, f *launchFixture) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { lk.Release() })
-}
-
-// TestLaunchRecoveryAfterFinalBindReplaysIdempotently proves recovery after
-// the final bind does not duplicate any record: the launch is complete under
-// the identical identity and re-entry replays idempotently (task working, one
-// of every record, revision unchanged).
-func TestLaunchRecoveryAfterFinalBindReplaysIdempotently(t *testing.T) {
-	f := newLaunchFixture(t, "recover-final")
-	if err := runLaunchPhases(f, ""); err != nil {
-		t.Fatalf("first full run: %v", err)
-	}
-	first := f.aggregate()
-	if first.Phase != taskauthority.PhaseWorking {
-		t.Fatalf("phase = %q, want working", first.Phase)
-	}
-	if err := runLaunchPhases(f, ""); err != nil {
-		t.Fatalf("idempotent re-entry failed: %v", err)
-	}
-	second := f.aggregate()
-	if second.Revision != first.Revision || second.Phase != first.Phase {
-		t.Fatalf("re-entry mutated the aggregate: %+v vs %+v", second, first)
-	}
-	if second.Endpoint.Handle != first.Endpoint.Handle || second.AcquiredEndpoint.Handle != first.AcquiredEndpoint.Handle {
-		t.Fatalf("records replaced on idempotent re-entry")
-	}
-	if f.endpoints.createCount() != 1 || f.endpoints.submitCount() != 1 {
-		t.Fatalf("duplicate create/submit on idempotent re-entry: creates=%d submits=%d", f.endpoints.createCount(), f.endpoints.submitCount())
-	}
 }
 
 // TestLaunchRecoveryEndpointIdentitySubstitutionFailsClosed proves a recorded
