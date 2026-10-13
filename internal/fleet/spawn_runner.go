@@ -631,8 +631,10 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 // canonical endpoint is bound. A launch intent or an acquired endpoint without
 // the final bind is not live, so that launch re-enters; a bound task is refused
 // whatever its .meta records. Human words (domain.Words): grantor the Human,
-// channel direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead
-// decided to refuse a bound task whose .meta lost its window).
+// channel direct chat with the Lead, 2026-10-13, words=selected, 1A:
+// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự quyết
+// đi" record: the Lead decided to refuse a bound task whose .meta lost its
+// window).
 func liveSession(agg taskauthority.Aggregate) (string, bool) {
 	if agg.Endpoint == nil {
 		return "", false

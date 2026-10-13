@@ -964,9 +964,10 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 // retired: a queued task counts, whether added here, received in a handoff or
 // reopened, and so does a done task not torn down yet. A home with no
 // canonical store has none. Human words (domain.Words): grantor the Human,
-// channel direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead
-// decided to count every non-retired soldier task, widening the retire
-// refusal from tasks with a .meta).
+// channel direct chat with the Lead, 2026-10-13, words=selected, 1A:
+// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự quyết
+// đi" record: the Lead decided to count every non-retired soldier task,
+// widening the retire refusal from tasks with a .meta).
 func inFlightSoldierIDs(captainHome string) ([]string, error) {
 	h, err := home.Open(captainHome)
 	if errors.Is(err, home.ErrNotInitialized) {
