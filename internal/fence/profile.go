@@ -80,6 +80,11 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	// Observe only: the report modifier logs every outbound connect to the
+	// Sandbox log (log show --predicate 'sender == "Sandbox"') and refuses
+	// nothing. It sits before the socket denies, which are last-match-wins,
+	// so those denies still decide.
+	b.WriteString("(allow network-outbound (with report))\n")
 	var gateSocket string
 	if p.gateRepo != "" {
 		// The no-mistakes daemon's socket is NM_HOME/socket, and fleet's
