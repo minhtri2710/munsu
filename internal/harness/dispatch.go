@@ -28,15 +28,18 @@ type DispatchConfig struct {
 	Rules []DispatchProfile `json:"rules,omitempty"`
 }
 
-// DispatchSelection is the concrete harness/model/effort chosen for a spawn.
+// DispatchSelection is the concrete harness/model/effort chosen for a spawn,
+// with the matched profile's charter scaffold.
 type DispatchSelection struct {
-	Harness string
-	Model   string
-	Effort  string
+	Harness  string
+	Model    string
+	Effort   string
+	Scaffold string
 }
 
 // ResolveDispatchSelection returns harness + model + effort for a task description.
 // Precedence for model/effort: matched profile → config defaults → empty.
+// Scaffold comes only from a matched profile.
 func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSelection {
 	if cfg == nil {
 		return DispatchSelection{}
@@ -62,6 +65,7 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 		if !matchesProfile(matchRules, taskLower, taskWords) {
 			continue
 		}
+		sel.Scaffold = p.Scaffold
 		if p.SelectStrategy == "quota-balanced" {
 			// Prefer candidates from this profile's Use list; else all profiles.
 			if len(p.Use) > 0 {

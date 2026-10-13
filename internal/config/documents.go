@@ -44,6 +44,28 @@ type DispatchProfile struct {
 	SelectStrategy string              `json:"select,omitempty"`
 	Why            string              `json:"why,omitempty"`
 	Use            []DispatchCandidate `json:"use,omitempty"`
+	Scaffold       string              `json:"scaffold,omitempty"`
+}
+
+// A dispatch profile's Scaffold picks the Soldier charter for its runtime.
+// Lean, also the empty value, is the charter a strong seat gets: CI and the
+// independent reviewer cover what it would re-verify. Guided adds an explicit
+// plan scaffold for a weaker or cheaper runtime.
+const (
+	ScaffoldLean   = "lean"
+	ScaffoldGuided = "guided"
+)
+
+// ValidateScaffold is the one scaffold validator, run when a profile is written
+// and again at spawn. Human words (domain.Words): grantor the Human, channel
+// direct chat with the Lead, 2026-10-13: "tự quyết đi" (the Lead decided that a
+// dispatch profile scaffold other than lean or guided is refused).
+func ValidateScaffold(scaffold string) error {
+	switch scaffold {
+	case "", ScaffoldLean, ScaffoldGuided:
+		return nil
+	}
+	return fmt.Errorf("unknown dispatch profile scaffold %q (want %s or %s)", scaffold, ScaffoldLean, ScaffoldGuided)
 }
 
 type CaptainProfile struct {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -42,12 +43,26 @@ const keptTestRules = `- Assert through the public seam production uses; never r
 - A contract has one owning test; a missing case is a row or case added to that owner, not a sibling test.
 - Assert on prose or wording only when that wording is itself the contract, such as a by-value clause.`
 
+// guidedPlanScaffold is the section a guided dispatch profile adds after
+// Validation Scope; a lean or empty scaffold adds nothing.
+const guidedPlanScaffold = "## Plan Scaffold\n\n" +
+	"Before your first edit, write a numbered plan of small steps in one progress\n" +
+	"line: `munsu report working \"<numbered plan>\" --key plan`. Work one step at a\n" +
+	"time. After each step run the per-edit check above and `go test` of each edited\n" +
+	"package, and paste the ran and skipped counts it printed. Report done only after\n" +
+	"the tests of every package you touched have passed.\n\n"
+
 // DefaultCharter returns the canonical, versioned Soldier charter.
 // Soldier authority only — no Captain or General authority.
 // The charter is embedded in the launch prompt and written to .soldier-charter.md.
-func DefaultCharter(taskID, taskKind, deliveryMode string) string {
+// scaffold is the matched dispatch profile's config scaffold.
+func DefaultCharter(taskID, taskKind, deliveryMode, scaffold string) string {
 	if taskKind == taskauthority.KindReview {
 		return reviewerCharter(taskID)
+	}
+	planScaffold := ""
+	if scaffold == config.ScaffoldGuided {
+		planScaffold = guidedPlanScaffold
 	}
 	bt := "`"
 	doneMessage := "PR {url}"
@@ -124,7 +139,7 @@ check that did not run is a failed row.
 
 Per edit, run the fast read-only check of the edited Go package: gofmt -l and go vet on that package. Full suites run on CI.
 
-## Tests
+%[9]s## Tests
 
 A test you add or change follows these rules:
 
@@ -190,7 +205,7 @@ The task is complete only when:
 
 Do not merge the PR.
 
-`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules)
+`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules, planScaffold)
 }
 
 // reviewerCharter returns the charter of the read-only reviewer seat. The

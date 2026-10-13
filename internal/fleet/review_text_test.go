@@ -31,7 +31,7 @@ func TestVerdictFileShapeNamesExactlyTheFieldsTheRecordStepDecodes(t *testing.T)
 }
 
 func TestReviewerCharterStatesTheReadOnlyContractAndTheVerdictFile(t *testing.T) {
-	charter := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR")
+	charter := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR", "")
 	for _, want := range []string{
 		"# Reviewer Charter",
 		"**Task: rev-1**",
@@ -56,7 +56,7 @@ func TestReviewerCharterStatesTheReadOnlyContractAndTheVerdictFile(t *testing.T)
 			t.Errorf("reviewer charter carries ship delivery text %q", unwanted)
 		}
 	}
-	if ship := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR"); strings.Contains(ship, "# Reviewer Charter") {
+	if ship := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR", ""); strings.Contains(ship, "# Reviewer Charter") {
 		t.Fatal("a ship charter is the reviewer charter")
 	}
 }
@@ -111,7 +111,7 @@ func TestReviewBriefNamesTheContractTheHeadCheckAndTheVerdictFile(t *testing.T) 
 }
 
 func TestShipCharterStatesTheTestRulesAndTheHeavyProofs(t *testing.T) {
-	charter := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR")
+	charter := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR", "")
 	for _, want := range []string{
 		"## Validation Scope\n\nLocal runs are light and scoped to the change. Heavy and full suites (race,\nintegration, e2e, lifecycle_integration, guards, deadcode, citations) run on\nGitHub CI at the PR. This overrides any \"full suite by default\" instruction in\nyour own context. A heavy proof outside these, such as a mutant run, a generated\nor exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance\nonly when the Human selects it for the task, and never gates a docs-, tests- or\nfixtures-only change.\n\nEach check row pastes the ran and skipped counts its command printed, and a\ncheck that did not run is a failed row.\n",
 		"## Tests\n\nA test you add or change follows these rules:\n\n" +
@@ -125,8 +125,36 @@ func TestShipCharterStatesTheTestRulesAndTheHeavyProofs(t *testing.T) {
 			t.Errorf("ship charter lacks %q", want)
 		}
 	}
-	if reviewer := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR"); strings.Contains(reviewer, "public seam") {
+	if reviewer := DefaultCharter("rev-1", taskauthority.KindReview, "direct-PR", ""); strings.Contains(reviewer, "public seam") {
 		t.Error("the reviewer charter carries the kept-test rules; they live in the review brief")
+	}
+}
+
+func TestShipCharterPlanScaffoldFollowsTheDispatchProfileScaffold(t *testing.T) {
+	const plan = "Full suites run on CI.\n\n## Plan Scaffold\n\n" +
+		"Before your first edit, write a numbered plan of small steps in one progress\n" +
+		"line: `munsu report working \"<numbered plan>\" --key plan`. Work one step at a\n" +
+		"time. After each step run the per-edit check above and `go test` of each edited\n" +
+		"package, and paste the ran and skipped counts it printed. Report done only after\n" +
+		"the tests of every package you touched have passed.\n\n## Tests\n"
+	const lean = "Full suites run on CI.\n\n## Tests\n"
+	for _, tc := range []struct {
+		scaffold string
+		want     string
+	}{
+		{scaffold: "guided", want: plan},
+		{scaffold: "lean", want: lean},
+		{scaffold: "", want: lean},
+	} {
+		t.Run("scaffold="+tc.scaffold, func(t *testing.T) {
+			charter := DefaultCharter("ship-1", taskauthority.KindShip, "direct-PR", tc.scaffold)
+			if !strings.Contains(charter, tc.want) {
+				t.Errorf("charter lacks %q", tc.want)
+			}
+			if tc.want == lean && strings.Contains(charter, "## Plan Scaffold") {
+				t.Error("a lean charter carries the plan scaffold")
+			}
+		})
 	}
 }
 
