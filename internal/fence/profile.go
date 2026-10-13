@@ -144,8 +144,8 @@ func New(l Launch) (*Fence, error) {
 		// state.sqlite(+wal/shm/journal); database-open error when the daemon
 		// is stopped accepted". A temp-root NM_HOME keeps its other files and
 		// state.sqlite writable through the temp-root allow (the fence does
-		// not know the state path); no lane runs that, and the temp-root
-		// allow covers it. Even there the daemon's socket name is refused, and
+		// not know the state path); no lane runs this; TestSoldierFenceWritableSet
+		// covers it. Even there the daemon's socket name is refused, and
 		// every directory above it is locked against unlink and rename, so a
 		// seat can neither move another session's socket onto that name nor
 		// swap NM_HOME for a dir holding one: G1085 (quoted above) keeps
