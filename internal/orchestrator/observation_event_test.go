@@ -619,13 +619,25 @@ func TestEventWaiter_WaitForSignal_Timeout(t *testing.T) {
 	}
 }
 
-func TestEventWaiter_WaitForSignal_Unsupported(t *testing.T) {
-	src := &fakeEventSource{closed: true}
-	port := staticEventPort(EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Source: src})
-	w := NewEventWaiter(port)
-	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
-	if outcome != EventWaitUnsupported {
-		t.Fatalf("outcome = %v, want unsupported", outcome)
+// A source that cannot deliver events maps to its typed outcome.
+func TestEventWaiter_WaitForSignal_SourceFailureOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  *fakeEventSource
+		want EventWaitOutcome
+	}{
+		{"unsupported", &fakeEventSource{closed: true}, EventWaitUnsupported},
+		{"unavailable", &fakeEventSource{errors: []error{backend.ErrEventUnavailable}}, EventWaitUnavailable},
+		{"protocol mismatch", &fakeEventSource{errors: []error{backend.ErrEventProtocolMismatch}}, EventWaitProtocolMismatch},
+		{"reader failure", &fakeEventSource{errors: []error{errors.New("socket broke")}}, EventWaitReaderFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			port := staticEventPort(EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Source: tc.src})
+			_, outcome := NewEventWaiter(port).WaitForSignal(context.Background(), t.TempDir(), time.Second)
+			if outcome != tc.want {
+				t.Fatalf("outcome = %v, want %v", outcome, tc.want)
+			}
+		})
 	}
 }
 
@@ -634,36 +646,6 @@ func TestEventWaiter_WaitForSignal_NoSources(t *testing.T) {
 	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
 	if outcome != EventWaitNoSources {
 		t.Fatalf("outcome = %v, want no-sources retry", outcome)
-	}
-}
-
-func TestEventWaiter_WaitForSignal_Unavailable(t *testing.T) {
-	src := &fakeEventSource{errors: []error{backend.ErrEventUnavailable}}
-	port := staticEventPort(EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Source: src})
-	w := NewEventWaiter(port)
-	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
-	if outcome != EventWaitUnavailable {
-		t.Fatalf("outcome = %v, want unavailable", outcome)
-	}
-}
-
-func TestEventWaiter_WaitForSignal_ProtocolMismatch(t *testing.T) {
-	src := &fakeEventSource{errors: []error{backend.ErrEventProtocolMismatch}}
-	port := staticEventPort(EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Source: src})
-	w := NewEventWaiter(port)
-	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
-	if outcome != EventWaitProtocolMismatch {
-		t.Fatalf("outcome = %v, want protocol-mismatch", outcome)
-	}
-}
-
-func TestEventWaiter_WaitForSignal_ReaderFailure(t *testing.T) {
-	src := &fakeEventSource{errors: []error{errors.New("socket broke")}}
-	port := staticEventPort(EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Source: src})
-	w := NewEventWaiter(port)
-	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
-	if outcome != EventWaitReaderFailure {
-		t.Fatalf("outcome = %v, want reader-failure", outcome)
 	}
 }
 
