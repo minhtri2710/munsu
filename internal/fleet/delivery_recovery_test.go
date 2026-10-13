@@ -42,7 +42,7 @@ func TestDeliverCrashBeforeMutationRetriesSafely(t *testing.T) {
 	// Recovery retries safely: the mutation executes exactly once.
 	provider := installScriptedProviderFor(t, "open-then-merged")
 	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 1 {
 		t.Fatalf("merges on retry = %d, want exactly 1", provider.merges)
@@ -128,7 +128,7 @@ func TestDeliverCrashAfterMutationNeverRepeatsMutation(t *testing.T) {
 	// Recovery replays the committed outcome and NEVER re-mutates.
 	provider := installScriptedProviderFor(t, "merged")
 	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery repeated the mutation: merges = %d, want 0", provider.merges)
@@ -155,7 +155,7 @@ func TestDeliverCrashAtMutatingMergedIdentityMismatchIsRemoteUnknown(t *testing.
 	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"})
 	installDeliveryProviderFor(t, provider)
 	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	out, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID))
 	if err != nil || out.Status != taskauthority.DeliveryOutcomeRemoteUnknown {
@@ -181,7 +181,7 @@ func TestDeliverCrashAtMutatingReconcilesObservationAndNeverMutates(t *testing.T
 	// Recovery observes remote truth (merged) and NEVER mutates.
 	provider := installScriptedProviderFor(t, "merged")
 	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery mutated: merges = %d, want 0", provider.merges)
@@ -229,7 +229,7 @@ func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
 
 	provider := installScriptedProviderFor(t, "merged")
 	if _, err := RecoverDeliveryOutcomes(homeDir); err == nil {
-		t.Fatal("RecoverDeliveryJournals accepted invalid pinned merge SHA")
+		t.Fatal("RecoverDeliveryOutcomes accepted invalid pinned merge SHA")
 	}
 	if _, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); err == nil {
 		t.Fatal("recovery committed an outcome with invalid pinned merge SHA")
@@ -324,7 +324,7 @@ func TestDeliverOutcomeCommitConflictYieldsCommittedNeverCompleted(t *testing.T)
 	// never fabricated.
 	provider := installScriptedProviderFor(t, "merged")
 	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery mutated: merges = %d, want 0", provider.merges)
@@ -358,7 +358,7 @@ func TestDeliverRecoveryIdempotentReplay(t *testing.T) {
 	provider := installScriptedProviderFor(t, "merged")
 	for i := 0; i < 3; i++ {
 		if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
-			t.Fatalf("RecoverDeliveryJournals cycle %d: %v", i, err)
+			t.Fatalf("RecoverDeliveryOutcomes cycle %d: %v", i, err)
 		}
 	}
 	if provider.merges != 0 {
@@ -438,7 +438,7 @@ func TestDeliverRecoveryFailClosedBeforeMutation(t *testing.T) {
 	_, err := RecoverDeliveryOutcomes(homeDir)
 	var failClosed *DeliveryFailClosedError
 	if !errors.As(err, &failClosed) {
-		t.Fatalf("RecoverDeliveryJournals err = %T %v, want *DeliveryFailClosedError", err, err)
+		t.Fatalf("RecoverDeliveryOutcomes err = %T %v, want *DeliveryFailClosedError", err, err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery mutated after fail-closed currency: merges = %d, want 0", provider.merges)
