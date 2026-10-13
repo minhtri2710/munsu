@@ -16,7 +16,9 @@ import (
 )
 
 // forgeCallTimeout bounds each gh, gh-axi and glab run, so a hung forge call
-// fails instead of holding the command that made it.
+// fails instead of holding the command that made it. Human words
+// (domain.Words): Grantor "the Human"; Channel "direct chat with the Lead";
+// Quote "tự quyết đi" (2026-10-13), delegating the deferred decisions.
 var forgeCallTimeout = 2 * time.Minute
 
 // runForgeCommand runs one forge CLI invocation for at most forgeCallTimeout

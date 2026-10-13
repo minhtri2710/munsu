@@ -142,8 +142,7 @@ func checkSessionBackend() StatusEntry {
 }
 
 func checkGitHubAuth() StatusEntry {
-	cmd := exec.Command("gh", "auth", "status")
-	if err := cmd.Run(); err == nil {
+	if _, err := runCapabilityCommand("gh", []string{"auth", "status"}, "", capabilityProbeTimeout); err == nil {
 		return StatusEntry{
 			Subsystem: "gh_auth",
 			Status:    StatusCurrent,
