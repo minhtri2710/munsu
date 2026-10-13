@@ -188,6 +188,12 @@ func TestBuildLaunchArtifactRefusesWithoutPromptArgCommand(t *testing.T) {
 			repair:  func(in *LaunchArtifactInput) { in.PathDirs = seatPathDirs(in.HomeDir) },
 			wantSub: "the seat PATH is required",
 		},
+		{
+			name:    "no seat temp dir",
+			break_:  func(in *LaunchArtifactInput) { in.SeatEnv.TempDir = "" },
+			repair:  func(in *LaunchArtifactInput) { in.SeatEnv = testSeatEnv() },
+			wantSub: "the seat temp dir is required",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

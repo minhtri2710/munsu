@@ -222,6 +222,8 @@ func TestValidateLaunchIdentityRefusesUnsafeOrAbsentIdentities(t *testing.T) {
 		{"no seat PATH", func(l *LaunchIntent) { l.SeatPathDirs = nil }, "launch requires the seat PATH directories"},
 		{"relative seat PATH entry", func(l *LaunchIntent) { l.SeatPathDirs = []string{"/usr/bin", "bin"} }, `seat PATH directory "bin" is not an absolute clean path`},
 		{"unclean seat PATH entry", func(l *LaunchIntent) { l.SeatPathDirs = []string{"/usr/bin/"} }, `seat PATH directory "/usr/bin/" is not an absolute clean path`},
+		{"relative seat temp dir", func(l *LaunchIntent) { l.SeatEnv.TempDir = "tmp" }, "launch seat env must hold absolute temp and user home dirs"},
+		{"no seat user home", func(l *LaunchIntent) { l.SeatEnv.UserHome = "" }, "launch seat env must hold absolute temp and user home dirs"},
 	})
 }
 
