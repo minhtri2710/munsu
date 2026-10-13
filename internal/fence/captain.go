@@ -27,7 +27,12 @@ const CaptainDocsDir = "captain-docs"
 // bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và
 // không gửi input vào session ngoài session của nó." The captain-fence design
 // was delegated: grantor the Human, channel direct chat with the Lead,
-// 2026-10-13, scope: choose the captain-fence design: "tự quyết đi".
+// 2026-10-13, words=selected, 1A: "Xác nhận cả 7 refusal đã ghi theo tự quyết
+// đi" (ratifies the "tự quyết đi" record, scope: the captain-fence design).
+// Seat socket: grantor the Human, channel direct chat with the Lead,
+// 2026-10-13, words=selected, 2A: "Captain được gửi input vào session của
+// chính soldier của nó qua munsu" (the seat relays send, spawn and teardown
+// into its own soldiers' sessions, under G1085).
 func newCaptain(l Launch) (*Fence, error) {
 	c, err := resolveCaptain(l)
 	if err != nil {

@@ -623,7 +623,10 @@ func keptSocketDirs() []string {
 // có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
 // fence sẽ chạy, và không gửi input vào session ngoài session của nó." The
 // captain's seat socket: grantor the Human, channel direct chat with the Lead,
-// 2026-10-13, scope: choose the captain-fence design: "tự quyết đi".
+// 2026-10-13, words=selected, 1A: "Xác nhận cả 7 refusal đã ghi theo tự quyết
+// đi" (ratifies the "tự quyết đi" record, scope: the captain-fence design);
+// 2A, words=selected: "Captain được gửi input vào session của chính soldier
+// của nó qua munsu".
 func denySocketConnects(b *strings.Builder, seatSocket string) {
 	b.WriteString("(deny network-outbound (remote unix-socket))\n")
 	for _, s := range []string{"/private/var/run/mDNSResponder", seatSocket} {

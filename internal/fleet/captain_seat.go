@@ -25,7 +25,11 @@ func captainSeatSocket(captainHome string) string {
 // drive its soldiers' panes. Inside the fence they run through the seat,
 // outside it; every other command runs in the fence, where a write to a
 // record, configuration or program fails. git-guard stays in the fence: an
-// unfenced git with captain-chosen options runs anything.
+// unfenced git with captain-chosen options runs anything. Human words
+// (domain.Words): grantor the Human, channel direct chat with the Lead,
+// 2026-10-13, words=selected, 2A: "Captain được gửi input vào session của
+// chính soldier của nó qua munsu" (the seat relays send, spawn and teardown
+// into its own soldiers' sessions, under G1085).
 var captainSeatVerbs = map[string]bool{
 	"brief": true, "delivery": true, "guard": true, "inbox": true, "peek": true,
 	"promote": true, "report": true, "send": true, "session-start": true,
@@ -61,7 +65,8 @@ type captainSeat struct {
 // (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu hình mà
 // tiến trình ngoài fence sẽ chạy, và không gửi input vào session ngoài session
 // của nó."; the design: grantor the Human, channel direct chat with the Lead,
-// 2026-10-13, scope: choose the captain-fence design: "tự quyết đi".
+// 2026-10-13, words=selected, 1A: "Xác nhận cả 7 refusal đã ghi theo tự quyết
+// đi" (ratifies the "tự quyết đi" record, scope: the captain-fence design).
 func prepareCaptainSeat(captainHome, parentHome, captainID, harnessName string) (captainSeat, error) {
 	if err := fence.Supported(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: captain %s launches UNFENCED: %v\n", captainID, err)
