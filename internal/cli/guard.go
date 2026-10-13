@@ -143,7 +143,7 @@ func guardWarnWatcher() error {
 		return nil
 	}
 
-	_, inFlight, err := guardTaskCounts(homeDir) // the warning counts only working soldiers; queued ones are not yet in flight
+	_, working, err := guardTaskCounts(homeDir)
 	if err != nil {
 		// Fail loud, never silent: surface the unreadable Task truth without
 		// blocking the invoking command.
@@ -151,7 +151,7 @@ func guardWarnWatcher() error {
 		return nil
 	}
 
-	result := orchestrator.EvaluateGuard(homeDir, inFlight, time.Now())
+	result := orchestrator.EvaluateGuard(homeDir, working, time.Now())
 	beat := result.BeatStatus
 
 	cdPath := guardCooldownPath(homeDir)
@@ -160,12 +160,12 @@ func guardWarnWatcher() error {
 		return nil
 	}
 
-	if inFlight == 0 {
+	if working == 0 {
 		guardClearCooldown(cdPath)
 		return nil
 	}
 
-	key := guardStateKey(beat, inFlight)
+	key := guardStateKey(beat, working)
 	if guardCheckCooldown(cdPath, key) {
 		return nil
 	}
@@ -181,7 +181,7 @@ func guardWarnWatcher() error {
 		status = "stale"
 	}
 	fmt.Fprintf(os.Stderr, "\nWARNING: %d task(s) working but watcher is %s (last beat: %s); stale means no beat within the watcher threshold, so wakes may go unhandled\n",
-		inFlight, status, ageStr)
+		working, status, ageStr)
 	fmt.Fprintf(os.Stderr, "  Repair with 'munsu watch ensure' or set MUNSU_GUARD_SKIP=1 to silence.\n\n")
 	return nil
 }

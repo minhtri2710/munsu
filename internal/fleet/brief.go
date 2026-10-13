@@ -133,6 +133,8 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 
 	return fmt.Sprintf(`# Task brief: %s
 
+{TASK}
+
 ## Setup
 You are in a disposable git worktree of %s, at a detached HEAD on a clean default branch.
 
@@ -160,9 +162,6 @@ If the top-level path is the primary checkout or not the worktree you were launc
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
 Record only project knowledge useful to almost every future session.
-
-## Task
-{TASK}
 
 ## Test-impact map
 The dispatcher fills this before spawn: for each path the task will change, the existing tests that exercise it, found by code search. Start from them.
