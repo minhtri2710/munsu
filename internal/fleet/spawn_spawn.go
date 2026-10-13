@@ -239,7 +239,9 @@ func projectGate(primary string) (string, error) {
 // symlinked component, which would move the O_EXCL create into the link's
 // target); the reflog itself must be absent or already a regular file; and it
 // is created with O_EXCL so a link a racing writer planted is never followed or
-// truncated. A regular file left by a prior run is kept (git appends to it).
+// truncated. A regular file left by a prior run is kept (git appends to it),
+// and an EEXIST from a concurrent spawn winning the create is accepted the
+// same way after re-classifying the winner's entry.
 //
 // Human words (domain.Words): grantor the Human, channel supervisor-relay:dialog,
 // words=selected, G1168: "B1 (Recommended): B on the seat branch reflog,
@@ -258,31 +260,51 @@ func ensureReflog(gitDir, ref string) error {
 		dirs = append(dirs, parent)
 	}
 	for _, d := range dirs {
-		switch fi, err := os.Lstat(d); {
-		case os.IsNotExist(err):
+		fi, err := os.Lstat(d)
+		if os.IsNotExist(err) {
 			if err := os.Mkdir(d, 0o755); err != nil {
-				return fmt.Errorf("reflog dir %s: %w", d, err)
+				if !errors.Is(err, os.ErrExist) {
+					return fmt.Errorf("reflog dir %s: %w", d, err)
+				}
+				// A concurrent spawn created it first; classify the winner's
+				// entry by the same rules instead of refusing the race loser.
+				if fi, err = os.Lstat(d); err != nil {
+					return fmt.Errorf("reflog dir %s: %w", d, err)
+				}
+			} else {
+				continue
 			}
-		case err != nil:
+		} else if err != nil {
 			return fmt.Errorf("reflog dir %s: %w", d, err)
-		case !fi.IsDir():
+		}
+		if !fi.IsDir() {
 			return fmt.Errorf("reflog dir %s is a symlink or not a directory; refusing to launch", d)
 		}
 	}
 	reflog := filepath.Join(logs, filepath.FromSlash(ref))
-	switch fi, err := os.Lstat(reflog); {
-	case err == nil && fi.Mode().IsRegular():
-		return nil
-	case err == nil:
+	fi, err := os.Lstat(reflog)
+	if os.IsNotExist(err) {
+		f, cerr := os.OpenFile(reflog, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if cerr != nil {
+			if !errors.Is(cerr, os.ErrExist) {
+				return fmt.Errorf("reflog %s: %w", reflog, cerr)
+			}
+			// A concurrent spawn created it first; classify the winner's
+			// entry by the same rules, still refusing a link planted in the
+			// Lstat-to-create window.
+			if fi, err = os.Lstat(reflog); err != nil {
+				return fmt.Errorf("reflog %s: %w", reflog, err)
+			}
+		} else {
+			return f.Close()
+		}
+	} else if err != nil {
+		return fmt.Errorf("reflog %s: %w", reflog, err)
+	}
+	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("reflog %s is a symlink or not a regular file; refusing to launch", reflog)
-	case !os.IsNotExist(err):
-		return fmt.Errorf("reflog %s: %w", reflog, err)
 	}
-	f, err := os.OpenFile(reflog, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("reflog %s: %w", reflog, err)
-	}
-	return f.Close()
+	return nil
 }
 
 // ensureBranchReflog is ensureReflog for the branch's refs/heads reflog.
