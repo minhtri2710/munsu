@@ -23,19 +23,12 @@ import (
 
 func (l layout) claudeStateDir() string { return filepath.Join(l.home, "state", "T-1.claude-config") }
 
-// outsideDir returns a fresh directory outside every temp root the fence grants
-// (/private/tmp and /private/var/folders), so only a profile rule can make it
-// writable. /var/tmp keeps it out of the real home; the home is the fallback.
+// outsideDir returns a fresh directory under /var/tmp, outside every temp root
+// the fence grants (/private/tmp and /private/var/folders), so only a profile
+// rule can make it writable.
 func outsideDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/var/tmp", "fence-outside-")
-	if err != nil {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			t.Fatal(herr)
-		}
-		dir, err = os.MkdirTemp(home, ".fence-outside-")
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
