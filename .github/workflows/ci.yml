@@ -173,6 +173,7 @@ jobs:
           TestProbeFenceOnAHostWithoutAFence
           TestLaunchRecordsTheSeatOfTheLaunch
           TestProbeFenceRefusesTheSeatsPathDirs
+          TestProbeFencePreCreatesTheRemoteReflogs
           TestFencedSoldierWritesOnlyItsOwnFiles
           TestFencedSoldierReadsCommittedTaskDocuments
           TestFencedSoldierCannotTakeTheGitShimOffItsPath

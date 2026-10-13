@@ -217,7 +217,6 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.gitDir, "index.lock"),
 		filepath.Join(l.common, "objects", "f"),
 		filepath.Join(l.common, "refs", "remotes", "f"),
-		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
 		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
@@ -225,6 +224,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.root, "temp-elsewhere-f"),
 	)
 	mustRefuse(t, f,
+		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(l.primary, "f"),
 		filepath.Join(l.common, "HEAD"), filepath.Join(l.common, "config"), filepath.Join(l.common, "packed-refs"),
 		filepath.Join(l.common, "hooks", "f"), filepath.Join(l.common, "refs", "heads", "main"),
@@ -437,6 +437,57 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 			t.Errorf("reflog %s was not appended: %q, %v", r, b, err)
 		}
 	}
+}
+
+// Remote-tracking reflogs (fence-reflog-remotes-residual): munsu pre-creates
+// one per existing remote-tracking ref at spawn (ensureRemoteReflogs) and passes
+// the paths in Launch.RemoteReflogs. The seat appends to exactly those files;
+// under logs/refs/remotes it cannot create, link or rename any other file or
+// dir, so an unfenced fetch never appends through a link the seat planted.
+// Each refused row sits beside its nearest allowed row.
+func TestSoldierFenceRemoteReflogs(t *testing.T) {
+	out := outsideDir(t)
+	seatEnv(t, out)
+	l := newSplitLayout(t, out)
+	remotes := filepath.Join(l.common, "logs", "refs", "remotes")
+	reflog := filepath.Join(remotes, "origin", "main")
+	mkdirs(t, filepath.Dir(reflog), filepath.Join(l.common, "refs", "remotes", "origin"))
+	if err := os.WriteFile(reflog, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	launch := l.soldier()
+	launch.RemoteReflogs = []string{reflog}
+	f := mustNew(t, launch)
+	victim := filepath.Join(out, "victim")
+	if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		argv []string
+		path string
+	}{
+		{"a new reflog file is refused", []string{touchBin, filepath.Join(remotes, "origin", "new")}, filepath.Join(remotes, "origin", "new")},
+		{"a link planted as a reflog is refused", []string{"/bin/ln", "-s", victim, filepath.Join(remotes, "origin", "evil")}, filepath.Join(remotes, "origin", "evil")},
+		{"a new remote's reflog dir is refused", []string{"/bin/mkdir", filepath.Join(remotes, "upstream")}, filepath.Join(remotes, "upstream")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if o, err := fenced(t, f, tc.argv...); err == nil || !strings.Contains(o, "Operation not permitted") {
+				t.Fatalf("%v was not refused by the fence: %v %s", tc.argv, err, o)
+			}
+			if _, err := os.Lstat(tc.path); err == nil {
+				t.Errorf("%s exists after a write the fence must refuse", tc.path)
+			}
+		})
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "safe" {
+		t.Errorf("the victim was written: %q", b)
+	}
+	// Nearest allowed rows: the pre-created reflog takes an append and no swap,
+	// and the remote-tracking ref it names is still written (a fetch updates it).
+	mustAppend(t, f, reflog)
+	mustNotSwap(t, f, reflog)
+	mustWrite(t, f, filepath.Join(l.common, "refs", "remotes", "origin", "new"))
 }
 
 // In its dispatcher's home a soldier writes only its own status file, ack log
@@ -1288,6 +1339,7 @@ func TestNewRefusals(t *testing.T) {
 		{"a file inside the git common dir", func(x *Launch) { x.Files = []string{filepath.Join(l.common, "v.json")} }, "overlaps protected path"},
 		{"a file inside the git dir", func(x *Launch) { x.Files = []string{filepath.Join(l.gitDir, "v.json")} }, "overlaps protected path"},
 		{"a relative PATH directory", func(x *Launch) { x.PathDirs = []string{"/usr/bin", "bin"} }, `PATH directory "bin" is not absolute`},
+		{"a remote reflog outside the remote-tracking logs is refused", func(x *Launch) { x.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "heads", "main")} }, "fence: remote reflogs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1314,6 +1366,14 @@ func TestNewRefusals(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("a reviewer has no remote reflogs", func(t *testing.T) {
+		launch := l.reviewer()
+		launch.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "remotes", "origin", "main")}
+		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "fence: remote reflogs are a soldier's only") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
 	t.Run("absolute PATH directories are accepted", func(t *testing.T) {
 		launch := l.soldier()
 		launch.PathDirs = []string{filepath.Join(l.home, "git-shim", "bin"), "/usr/bin"}

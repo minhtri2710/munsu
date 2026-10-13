@@ -69,6 +69,44 @@ func TestProbeFenceRecordsTheProjectsWritableRoots(t *testing.T) {
 	})
 }
 
+// probeFence pre-creates the seat's remote reflogs (fence-reflog-remotes-residual),
+// and a link planted where one belongs refuses the launch.
+func TestProbeFencePreCreatesTheRemoteReflogs(t *testing.T) {
+	t.Run("each remote-tracking ref's reflog exists after the probe", func(t *testing.T) {
+		isolateHuman(t)
+		f := newFenceFixture(t)
+		gitInWorktree(t, f.primary, "-c", "core.logAllRefUpdates=false", "update-ref", "refs/remotes/origin/main", "HEAD")
+		r := f.runner("direct-PR")
+		if err := r.probeFence(BoundWorktree{path: f.worktree}); err != nil {
+			t.Fatal(err)
+		}
+		reflog := filepath.Join(f.primary, ".git", "logs", "refs", "remotes", "origin", "main")
+		if fi, err := os.Lstat(reflog); err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("reflog = %v, %v; want a regular file pre-created at spawn", fi, err)
+		}
+	})
+	t.Run("a link planted at a remote's reflog dir refuses the launch", func(t *testing.T) {
+		isolateHuman(t)
+		f := newFenceFixture(t)
+		gitInWorktree(t, f.primary, "-c", "core.logAllRefUpdates=false", "update-ref", "refs/remotes/origin/main", "HEAD")
+		victim := t.TempDir()
+		remotes := filepath.Join(f.primary, ".git", "logs", "refs", "remotes")
+		if err := os.MkdirAll(remotes, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(remotes, "origin")); err != nil {
+			t.Fatal(err)
+		}
+		r := f.runner("direct-PR")
+		if err := r.probeFence(BoundWorktree{path: f.worktree}); err == nil || !strings.Contains(err.Error(), "not a directory") {
+			t.Fatalf("err = %v, want the planted link refused", err)
+		}
+		if ents, _ := os.ReadDir(victim); len(ents) != 0 {
+			t.Errorf("a reflog was written through the planted link: %v", ents)
+		}
+	})
+}
+
 // The launch hands the fence the PATH its script builds: the shim dir and every
 // inherited directory are refused, and the seat's own worktree still is not.
 func TestProbeFenceRefusesTheSeatsPathDirs(t *testing.T) {

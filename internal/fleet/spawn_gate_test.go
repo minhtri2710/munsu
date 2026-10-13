@@ -126,6 +126,92 @@ func TestEnsureBranchReflog(t *testing.T) {
 	}
 }
 
+// ensureRemoteReflogs pre-creates the reflog of each existing remote-tracking
+// ref (fence-reflog-remotes-residual) under ensureBranchReflog's fail-closed
+// rules: a planted link leaf or parent is refused and its target is untouched.
+func TestEnsureRemoteReflogs(t *testing.T) {
+	newRepo := func(t *testing.T) string {
+		dir := t.TempDir()
+		gitInWorktree(t, dir, "init", "-q", ".")
+		gitInWorktree(t, dir, "-c", "user.name=munsu", "-c", "user.email=munsu@example.invalid",
+			"-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture")
+		// logAllRefUpdates=false: the refs exist with no reflog, as a fetch that wrote none leaves them.
+		for _, ref := range []string{"refs/remotes/origin/main", "refs/remotes/origin/feat/x"} {
+			gitInWorktree(t, dir, "-c", "core.logAllRefUpdates=false", "update-ref", ref, "HEAD")
+		}
+		return filepath.Join(dir, ".git")
+	}
+	reflogIn := func(gitDir, ref string) string {
+		return filepath.Join(gitDir, "logs", filepath.FromSlash(ref))
+	}
+	victimDir := t.TempDir()
+	victim := filepath.Join(victimDir, "victim")
+	if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, gitDir string) // state before the call
+		want    []string                          // remote-tracking refs whose reflog must be an empty regular file
+		wantErr string                            // substring; "" means it must succeed
+	}{
+		{name: "each remote-tracking ref gets an empty regular reflog", want: []string{"refs/remotes/origin/feat/x", "refs/remotes/origin/main"}},
+		{name: "no remote-tracking ref: nothing is created", seed: func(t *testing.T, gitDir string) {
+			if err := os.RemoveAll(filepath.Join(gitDir, "refs", "remotes")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlink leaf: refused, victim untouched", wantErr: "not a regular file", seed: func(t *testing.T, gitDir string) {
+			p := reflogIn(gitDir, "refs/remotes/origin/main")
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, p); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlinked parent: refused, nothing created in the target", wantErr: "not a directory", seed: func(t *testing.T, gitDir string) {
+			p := reflogIn(gitDir, "refs/remotes/origin")
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victimDir, p); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gitDir := newRepo(t)
+			if tc.seed != nil {
+				tc.seed(t, gitDir)
+			}
+			paths, err := ensureRemoteReflogs(gitDir)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr == "" && len(paths) != len(tc.want) {
+				t.Errorf("paths = %v, want %d reflogs", paths, len(tc.want))
+			}
+			for _, ref := range tc.want {
+				fi, err := os.Lstat(reflogIn(gitDir, ref))
+				if err != nil || !fi.Mode().IsRegular() || fi.Size() != 0 {
+					t.Errorf("reflog of %s = %v, %v; want an empty regular file", ref, fi, err)
+				}
+			}
+			if ents, _ := os.ReadDir(victimDir); len(ents) != 1 {
+				t.Errorf("entries in the link target = %v; a reflog was written through a link", ents)
+			}
+			if b, _ := os.ReadFile(victim); string(b) != "safe" {
+				t.Errorf("victim = %q, want untouched", b)
+			}
+		})
+	}
+}
+
 func (f gateFixture) repos(t *testing.T) string {
 	t.Helper()
 	repos := filepath.Join(f.nmHome, "repos")
