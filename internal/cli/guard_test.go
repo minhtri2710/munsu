@@ -61,7 +61,7 @@ func TestGuardWarningOnStaleBeat(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {
@@ -75,8 +75,8 @@ func TestGuardWarningOnStaleBeat(t *testing.T) {
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING on stderr for stale beat, got: %s", stderr)
 	}
-	if !strings.Contains(stderr, "1 task(s) in flight") {
-		t.Errorf("expected '1 task(s) in flight' in warning, got: %s", stderr)
+	if !strings.Contains(stderr, "1 task(s) working") {
+		t.Errorf("expected '1 task(s) working' in warning, got: %s", stderr)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestGuardWarningOnMissingBeat(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	writeTaskMeta(t, tmpDir, "test-task", "scout")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "scout")
 	// No beat file written
 
 	stderr := captureStderr(func() {
@@ -108,7 +108,7 @@ func TestGuardSilenceHealthyBeat(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {
@@ -130,7 +130,7 @@ func TestGuardSilenceSkipEnv(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
 
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {

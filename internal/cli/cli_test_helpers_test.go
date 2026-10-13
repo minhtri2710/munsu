@@ -19,6 +19,26 @@ func writeTaskMeta(t *testing.T, homeDir, id, kind string) {
 	cliSeedCanonicalTask(t, homeDir, id, kind)
 }
 
+// writeWorkingTaskMeta seeds a canonical task and starts it, so it counts as a
+// working soldier.
+func writeWorkingTaskMeta(t *testing.T, homeDir, id, kind string) {
+	t.Helper()
+	writeTaskMeta(t, homeDir, id, kind)
+	auth := cliCanonicalForHome(t, homeDir)
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalStartRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "test"}
+	if _, err := auth.Start(mustCanonicalOp(t, "op-start-"+id, req), req); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // cliSeedCanonicalTask creates one queued canonical task of the given kind.
 func cliSeedCanonicalTask(t *testing.T, homeDir, id, kind string) {
 	t.Helper()

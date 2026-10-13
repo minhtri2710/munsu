@@ -14,14 +14,14 @@ func TestGuardE2E_StaleBeatWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING on stderr for stale beat, got: %s", stderr)
 	}
-	if !strings.Contains(stderr, "1 task(s) in flight") {
-		t.Errorf("expected '1 task(s) in flight' in warning, got: %s", stderr)
+	if !strings.Contains(stderr, "1 task(s) working") {
+		t.Errorf("expected '1 task(s) working' in warning, got: %s", stderr)
 	}
 	if !strings.Contains(stderr, "stale") {
 		t.Errorf("expected 'stale' status in warning, got: %s", stderr)
@@ -43,7 +43,7 @@ func TestGuardE2E_MissingBeatWarns(t *testing.T) {
 			initCLITestHome(t, tmpDir)
 			t.Setenv("MUNSU_HOME", tmpDir)
 			t.Setenv("MUNSU_ROLE", tc.role)
-			writeTaskMeta(t, tmpDir, "test-task", "scout")
+			writeWorkingTaskMeta(t, tmpDir, "test-task", "scout")
 			stderr := captureStderr(func() { _ = guardWarnWatcher() })
 			if got := strings.Contains(stderr, "WARNING:") && strings.Contains(stderr, "missing"); got != tc.warn {
 				t.Errorf("missing-beat warning = %v, want %v; stderr: %s", got, tc.warn, stderr)
@@ -56,7 +56,7 @@ func TestGuardE2E_FreshBeatSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher() })
 	if strings.Contains(stderr, "WARNING:") {
@@ -69,7 +69,7 @@ func TestGuardE2E_SkipEnvSilent(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher() })
 	if strings.Contains(stderr, "WARNING:") {
@@ -104,15 +104,15 @@ func TestGuardE2E_MultipleInFlightWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "ship-task", "ship")
-	writeTaskMeta(t, tmpDir, "scout-task", "scout")
+	writeWorkingTaskMeta(t, tmpDir, "ship-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "scout-task", "scout")
 	writeStaleBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING for 2 in-flight tasks with stale beat, got: %s", stderr)
 	}
-	if !strings.Contains(stderr, "2 task(s) in flight") {
-		t.Errorf("expected '2 task(s) in flight' in warning, got: %s", stderr)
+	if !strings.Contains(stderr, "2 task(s) working") {
+		t.Errorf("expected '2 task(s) working' in warning, got: %s", stderr)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "ship-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "done-task", "done")
 	writeTaskMeta(t, tmpDir, "idle-task", "idle")
 	writeStaleBeat(t, tmpDir)
@@ -128,8 +128,8 @@ func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING for 1 in-flight + 2 non-in-flight tasks, got: %s", stderr)
 	}
-	if !strings.Contains(stderr, "1 task(s) in flight") {
-		t.Errorf("expected '1 task(s) in flight' in warning, got: %s", stderr)
+	if !strings.Contains(stderr, "1 task(s) working") {
+		t.Errorf("expected '1 task(s) working' in warning, got: %s", stderr)
 	}
 }
 
@@ -137,8 +137,8 @@ func TestGuardE2E_FreshBeatMultiTaskSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "ship-task", "ship")
-	writeTaskMeta(t, tmpDir, "scout-task", "scout")
+	writeWorkingTaskMeta(t, tmpDir, "ship-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "scout-task", "scout")
 	writeBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher() })
 	if strings.Contains(stderr, "WARNING:") {
@@ -153,7 +153,7 @@ func TestGuardE2E_CooldownSuppressesIdenticalState(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 	first := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(first, "WARNING:") {
@@ -172,7 +172,7 @@ func TestGuardE2E_CooldownExpiredReWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 	first := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(first, "WARNING:") {
@@ -194,19 +194,19 @@ func TestGuardE2E_CooldownStateChangeReWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "task-a", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "task-a", "ship")
 	writeStaleBeat(t, tmpDir)
 	first := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(first, "WARNING:") {
 		t.Errorf("first call expected WARNING, got: %s", first)
 	}
-	writeTaskMeta(t, tmpDir, "task-b", "scout")
+	writeWorkingTaskMeta(t, tmpDir, "task-b", "scout")
 	second := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(second, "WARNING:") {
 		t.Errorf("second call with state change expected WARNING, got: %s", second)
 	}
-	if !strings.Contains(second, "2 task(s) in flight") {
-		t.Errorf("expected '2 task(s) in flight' after state change, got: %s", second)
+	if !strings.Contains(second, "2 task(s) working") {
+		t.Errorf("expected '2 task(s) working' after state change, got: %s", second)
 	}
 }
 
@@ -217,7 +217,7 @@ func TestGuardE2E_HealthyTransitionClearsCooldown(t *testing.T) {
 	tmpDir := t.TempDir()
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 	first := captureStderr(func() { _ = guardWarnWatcher() })
 	if !strings.Contains(first, "WARNING:") {
