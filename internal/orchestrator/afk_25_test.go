@@ -286,6 +286,26 @@ func TestIsClean_BlockedItem(t *testing.T) {
 	}
 }
 
+// A routine-typed entry passes the type check, so only the blocked marker
+// keeps it from reading as clean.
+func TestIsClean_RoutineBlockedItem(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	be := &BatchedEscalation{Entries: []BatchedEntry{
+		{Kind: mhome.ReportWakeKind, Key: "t1", Payload: "t1: blocked: waiting on a dependency", Type: EscalationRoutine, At: time.Now()},
+	}}
+	data, _ := json.Marshal(be)
+	if err := os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if clean, err := IsClean(tmp); err != nil || clean {
+		t.Errorf("IsClean() = %v, %v with a routine blocked item, want false, nil", clean, err)
+	}
+}
+
 // An unparseable or unreadable digest may hold escalations, so it must fail
 // closed rather than read as clean.
 func TestIsClean_UnparseableDigestFailsClosed(t *testing.T) {
