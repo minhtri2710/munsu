@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"fmt"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,10 +135,11 @@ func TestARepeatedReportIsAReportOfItsOwn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("repeat: %v\n%s", err, out)
 			}
-			if noop := strings.Contains(out, "not appended"); noop != tc.wantNoop {
-				t.Fatalf("repeat output = %s, want not-appended=%v", out, tc.wantNoop)
+			var resp Response[MessageResult]
+			if err := json.Unmarshal([]byte(out), &resp); err != nil {
+				t.Fatalf("repeat output is not JSON: %v\n%s", err, out)
 			}
-			if !strings.Contains(out, fmt.Sprintf(`"noop": %t`, tc.wantNoop)) {
+			if resp.Data.Noop != tc.wantNoop {
 				t.Fatalf("repeat output = %s, want noop=%v", out, tc.wantNoop)
 			}
 			if lines, _ := home.ReadStatus(homeDir, "t-1"); len(lines) != tc.wantLines {
