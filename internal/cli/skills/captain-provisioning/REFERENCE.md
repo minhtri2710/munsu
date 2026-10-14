@@ -109,7 +109,8 @@ the Captain registry (`state/fleet-registry/captains.json`). Home directory is r
 
 1. Validates the captain home exists and has a valid provenance marker.
 2. Without `--force`, refuses while the captain home has in-flight soldiers
-   (`inFlightSoldierIDs`: `state/*.meta` whose canonical task has kind ship, scout or review).
+   (`inFlightSoldierIDs`: a canonical task of kind ship, scout or review that is not retired,
+   including a queued task that was never spawned).
 3. Reads the parent task meta for `captain:<id>` and refuses unless kind is
    `captain`, `sm_id` and `home` match the marker and canonical home, and a
    window is recorded; then tears the endpoint down through the session backend

@@ -122,13 +122,26 @@ func TestWorktreeGuards(t *testing.T) {
 		}
 	}
 
-	t.Run("treehouse/reservation recovery", func(t *testing.T) {
-		testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\nexit 1\n")
-		_, err := (&treehouseProvider{}).GetReserved("", false, "reservation", true)
-		if !errors.Is(err, ErrWorktreeReservationRecoveryUnsupported) {
-			t.Fatalf("GetReserved error = %v, want unsupported-recovery refusal", err)
-		}
-	})
+	for _, tc := range []struct {
+		name, holders, want string // want: the acquired path, or empty for the refusal
+	}{
+		{"treehouse/recovery of a held reservation", `[{"path":"/pool/wt","lease_holder":"reservation"}]`, ""},
+		{"treehouse/recovery of a reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, "/pool/wt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\nif [ \"$1\" = status ]; then printf '%s\\n' '"+tc.holders+"'; exit 0; fi\nprintf '%s\\n' /pool/wt\n")
+			got, err := (&treehouseProvider{}).GetReserved(t.TempDir(), false, "reservation", true)
+			if tc.want == "" {
+				if !errors.Is(err, ErrWorktreeReservationRecoveryUnsupported) || got != "" {
+					t.Fatalf("GetReserved = %q, %v; want unsupported-recovery refusal", got, err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("GetReserved = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
 	t.Run("treehouse/first acquisition", func(t *testing.T) {
 		testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\nprintf '%s\\n' /pool/wt\nexit 0\n")
 		got, err := (&treehouseProvider{}).GetReserved(t.TempDir(), false, "reservation", false)

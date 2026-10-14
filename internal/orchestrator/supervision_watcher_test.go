@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // testSeatLiveness is the starting thresholds ReadSeatLiveness returns for an
@@ -219,43 +220,40 @@ func TestScanFleet_EmptyStateDir(t *testing.T) {
 	}
 }
 
-func TestScanFleet_IgnoresDotfiles(t *testing.T) {
+// A .meta window names no seat: only a canonical bound endpoint is probed.
+func TestScanFleet_MetaWindowWithoutBindingNotProbed(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
 	os.WriteFile(filepath.Join(stateDir, ".hidden.meta"), []byte("window=@test\n"), 0644)
-
-	reason := testScanFleet(tmp)
-	if reason != nil {
-		t.Errorf("expected nil when only dotfiles present, got %v", reason)
-	}
-}
-
-func TestScanFleet_NoWindow(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	if err := mhome.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
+	if err := mhome.WriteMeta(tmp, "meta-only", map[string]string{"kind": "ship", "window": "@nonexistent99"}); err != nil {
 		t.Fatal(err)
 	}
 
 	reason := testScanFleet(tmp)
 	if reason != nil {
-		t.Errorf("expected nil for task with no window, got %v", reason)
+		t.Errorf("expected nil when no canonical endpoint is bound, got %v", reason)
 	}
 }
 
-func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
+func TestScanFleet_QueuedTaskNotProbed(t *testing.T) {
 	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
+	seedTask(t, tmp, "no-win")
 
-	// Task with no window
-	mhome.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"})
-	// Task with a window (but window doesn't exist, so pane is dead)
-	mhome.WriteMeta(tmp, "has-win", map[string]string{"window": "@nonexistent99"})
+	reason := testScanFleet(tmp)
+	if reason != nil {
+		t.Errorf("expected nil for a task with no bound endpoint, got %v", reason)
+	}
+}
+
+func TestScanFleet_MultipleTasks_OnlyOneBound(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Task with no bound endpoint
+	seedTask(t, tmp, "no-win")
+	// Task with a bound endpoint (but window doesn't exist, so pane is dead)
+	seedBoundSoldier(t, tmp, "has-win", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent99"})
 
 	reason := testScanFleet(tmp)
 	if reason == nil {
@@ -298,9 +296,8 @@ func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
 func TestScanFleet_StaleStatusFile(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
 
-	mhome.WriteMeta(tmp, "stale-task", map[string]string{"window": "@nonexistent99"})
+	seedBoundSoldier(t, tmp, "stale-task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent99"})
 
 	// Write a status file with old modification time
 	statusPath := filepath.Join(stateDir, "stale-task.status")
@@ -326,9 +323,8 @@ func TestScanFleet_StaleStatusFile(t *testing.T) {
 func TestScanFleet_RecentStatusNoStale(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
 
-	mhome.WriteMeta(tmp, "recent-task", map[string]string{"window": "@nonexistent99"})
+	seedBoundSoldier(t, tmp, "recent-task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent99"})
 
 	// Write a recent status file
 	statusPath := filepath.Join(stateDir, "recent-task.status")
@@ -368,38 +364,23 @@ func TestScanFleet_NoMetaFiles(t *testing.T) {
 	}
 }
 
-func TestScanFleet_IgnoresNonWindowMeta(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Meta without window key should be skipped
-	mhome.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship", "project": "munsu"})
-
-	reason := testScanFleet(tmp)
-	if reason != nil {
-		t.Errorf("expected nil for meta without window, got %v", reason)
-	}
-}
-
 func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
 
-	// Task 1: has window but pane is dead
-	mhome.WriteMeta(tmp, "dead-task", map[string]string{"window": "@nonexistent1"})
-	// Task 2: no window (should be skipped)
-	mhome.WriteMeta(tmp, "no-win-task", map[string]string{"kind": "scout"})
-	// Task 3: has dead window and old status file
-	mhome.WriteMeta(tmp, "old-status-task", map[string]string{"window": "@nonexistent2"})
+	// Task 1: bound but pane is dead
+	seedBoundSoldier(t, tmp, "dead-task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent1"})
+	// Task 2: no bound endpoint (should be skipped)
+	seedTask(t, tmp, "no-win-task")
+	// Task 3: bound to a dead window, with an old status file
+	seedBoundSoldier(t, tmp, "old-status-task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent2"})
 
 	statusPath := filepath.Join(stateDir, "old-status-task.status")
 	os.WriteFile(statusPath, []byte("working: started\n"), 0644)
 	past := time.Now().Add(-(StaleThreshold() + time.Second))
 	os.Chtimes(statusPath, past, past)
 
-	// scanFleet processes meta files in directory order — should find a stale task
+	// scanFleet probes the bound tasks in task-ID order — should find a stale task
 	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected a stale reason")
@@ -411,10 +392,8 @@ func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 
 func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
 
-	mhome.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
+	seedTask(t, tmp, "no-window-task")
 	if err := EnqueueWake(tmp, "status", "task-1", "done: ready"); err != nil {
 		t.Fatal(err)
 	}
@@ -438,9 +417,7 @@ func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 
 func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T) {
 	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	mhome.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-watch-cycle"})
+	seedBoundSoldier(t, tmp, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent-watch-cycle"})
 
 	emitted, err := testRunCycle(tmp)
 	if err != nil || !emitted {
@@ -871,8 +848,7 @@ func TestScanFleet_CaptainHomeOwnCaptainKindSignal(t *testing.T) {
 func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	mhome.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-stable"})
+	seedBoundSoldier(t, tmp, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@nonexistent-stable"})
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: started\n"), 0644)
 
 	emitted, err := testRunCycle(tmp)

@@ -221,16 +221,16 @@ func TestWorktreePoolArtifactHygieneRejectsAbsentWorktreeOnRetry(t *testing.T) {
 
 func TestWorktreePoolArtifactHygieneBoundReentryPreservesAnchoredArtifacts(t *testing.T) {
 	f := newLaunchFixture(t, "pool-artifact-bound-reentry")
-	if err := runLaunchPhases(f, ""); err != nil {
-		t.Fatalf("complete initial launch: %v", err)
+	if err := runLaunchPhases(f, "manifest"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("initial launch to the manifest anchor: %v", err)
 	}
 	before := f.aggregate()
 	if before.Worktree == nil || before.Worktree.LaunchManifest == nil {
-		t.Fatal("completed launch lacks canonical worktree manifest")
+		t.Fatal("bound launch lacks canonical worktree manifest")
 	}
 	worktreePath := f.runner.wtPath
 	manifestSHA := before.Worktree.LaunchManifest.ManifestSHA256
-	if err := VerifyLaunchArtifacts(worktreePath, manifestSHA); err != nil {
+	if err := VerifyPreparedLaunchArtifacts(worktreePath, manifestSHA); err != nil {
 		t.Fatalf("initial launch artifacts are not anchored: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestWorktreePoolArtifactHygieneBoundReentryPreservesAnchoredArtifacts(t *te
 	if f.runner.wtPath != worktreePath {
 		t.Fatalf("re-entry worktree=%q, want canonical bound path %q", f.runner.wtPath, worktreePath)
 	}
-	if err := VerifyLaunchArtifacts(f.runner.wtPath, manifestSHA); err != nil {
+	if err := VerifyPreparedLaunchArtifacts(f.runner.wtPath, manifestSHA); err != nil {
 		t.Fatalf("re-entry lost its own anchored artifacts: %v", err)
 	}
 	after := f.aggregate()
