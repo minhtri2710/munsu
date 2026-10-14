@@ -351,6 +351,39 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		t.Errorf("the worktree HEAD reflog is no longer a regular file: %v", err)
 	}
 	mustWrite(t, f, filepath.Join(l.gitDir, "ORIG_HEAD"), filepath.Join(l.gitDir, "index.new"))
+	// The worktree's own name and every directory above it cannot be renamed
+	// away (the first step of planting a link the next launch's fence grants
+	// the target of), and its .git file, whose gitdir: line picks the git dir
+	// the next launch grants and unfenced git reads, cannot be rewritten or
+	// swapped. The temp-root layout's worktree sits where the temp-root allow
+	// covers its parent. Nearest allow: a rename inside the worktree.
+	gitFile := filepath.Join(l.worktree, ".git")
+	if err := os.WriteFile(gitFile, []byte("gitdir: "+l.gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tl := newLayout(t)
+	tf := mustNew(t, tl.soldier())
+	for _, mv := range []struct {
+		f   *Fence
+		dir string
+	}{{f, l.worktree}, {tf, tl.worktree}, {tf, tl.root}} {
+		if o, err := fenced(t, mv.f, "/bin/mv", mv.dir, filepath.Join(dest, "wt-swap")); err == nil || !strings.Contains(o, "Operation not permitted") {
+			t.Errorf("renaming %s away was not refused by the fence: %v %s", mv.dir, err, o)
+		}
+		if fi, err := os.Lstat(mv.dir); err != nil || !fi.IsDir() {
+			t.Fatalf("%s is gone after a rename the fence must refuse: %v", mv.dir, err)
+		}
+	}
+	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", gitFile); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("rewriting the worktree's .git was not refused by the fence: %v %s", err, o)
+	}
+	mustNotSwap(t, f, gitFile)
+	if err := os.WriteFile(filepath.Join(l.worktree, "a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := fenced(t, f, "/bin/mv", filepath.Join(l.worktree, "a"), filepath.Join(l.worktree, "b")); err != nil {
+		t.Errorf("a rename inside the worktree was refused: %v %s", err, o)
+	}
 }
 
 // The production sequence under the fence: a detached `git worktree add`
