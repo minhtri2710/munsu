@@ -132,13 +132,14 @@ func newConfigDispatchSetDefaultCmd() *cobra.Command {
 
 func newConfigDispatchAddCmd() *cobra.Command {
 	var (
-		name    string
-		match   []string
-		when    string
-		hName   string
-		model   string
-		effort  string
-		replace bool
+		name     string
+		match    []string
+		when     string
+		hName    string
+		model    string
+		effort   string
+		scaffold string
+		replace  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add",
@@ -146,6 +147,9 @@ func newConfigDispatchAddCmd() *cobra.Command {
 		Long: `Add a named profile to the fleet base document.
 
 Requires --name, --harness, and at least one of --match or --when.
+--scaffold picks the Soldier charter for the profile's runtime: lean (the
+default) relies on CI and the independent reviewer; guided adds an explicit
+plan scaffold for a weaker or cheaper runtime.
 If a profile with the same name exists, pass --replace to overwrite it.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -160,6 +164,10 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 			}
 			if len(match) == 0 && when == "" {
 				return fmt.Errorf("add: at least one --match or --when is required")
+			}
+			// Human words: quoted at config.ValidateScaffold.
+			if err := config.ValidateScaffold(scaffold); err != nil {
+				return fmt.Errorf("add: %w", err)
 			}
 
 			base, err := loadOrEmptyBase(ctx.Home)
@@ -179,12 +187,13 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 			}
 
 			prof := config.DispatchProfile{
-				Name:    name,
-				Match:   append([]string(nil), match...),
-				When:    when,
-				Harness: hName,
-				Model:   model,
-				Effort:  effort,
+				Name:     name,
+				Match:    append([]string(nil), match...),
+				When:     when,
+				Harness:  hName,
+				Model:    model,
+				Effort:   effort,
+				Scaffold: scaffold,
 			}
 			if idx >= 0 {
 				base.Config.DispatchProfiles[idx] = prof
@@ -203,8 +212,8 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 				Kind:          "config.dispatch",
 				Status:        "success",
 				Data: MessageResult{Message: fmt.Sprintf(
-					"profile %s: %s (harness=%s model=%s effort=%s)\n  path: %s",
-					action, name, hName, emptyDash(model), emptyDash(effort), filepath.Join(ctx.Home, config.BaseDocumentPath),
+					"profile %s: %s (harness=%s model=%s effort=%s scaffold=%s)\n  path: %s",
+					action, name, hName, emptyDash(model), emptyDash(effort), emptyDash(scaffold), filepath.Join(ctx.Home, config.BaseDocumentPath),
 				)},
 			})
 		}),
@@ -215,6 +224,7 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 	cmd.Flags().StringVar(&hName, "harness", "", "Target harness (required)")
 	cmd.Flags().StringVar(&model, "model", "", "Model id for this profile")
 	cmd.Flags().StringVar(&effort, "effort", "", "Effort/thinking level for this profile")
+	cmd.Flags().StringVar(&scaffold, "scaffold", "", "Charter scaffold for this profile's runtime: lean (default) or guided")
 	cmd.Flags().BoolVar(&replace, "replace", false, "Replace an existing profile with the same name")
 	configureContractCommand(cmd)
 	return cmd
@@ -330,8 +340,8 @@ func formatDispatchFromBase(base config.FleetBaseDocument, path string) string {
 		if match == "" {
 			match = "-"
 		}
-		fmt.Fprintf(&b, "  - %s: harness=%s model=%s effort=%s match=%q\n",
-			label, emptyDash(p.Harness), emptyDash(p.Model), emptyDash(p.Effort), match)
+		fmt.Fprintf(&b, "  - %s: harness=%s model=%s effort=%s scaffold=%s match=%q\n",
+			label, emptyDash(p.Harness), emptyDash(p.Model), emptyDash(p.Effort), emptyDash(p.Scaffold), match)
 	}
 	return strings.TrimSpace(b.String())
 }

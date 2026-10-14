@@ -104,7 +104,7 @@ When delivery is complete, run munsu report done "PR {url}" and stop.
 	}
 
 	// Persist and verify all files.
-	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
+	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode, "")
 	if err := PersistLaunchFiles(worktree, charter, briefContent, env, prompt); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestE2E_HashRecovery(t *testing.T) {
 
 func TestE2E_VerifyAllDurableFilesOnDisk(t *testing.T) {
 	tmp := t.TempDir()
-	charter := DefaultCharter("disk-test", "ship", "direct-PR")
+	charter := DefaultCharter("disk-test", "ship", "direct-PR", "")
 	brief := []byte("# Task\n\nDisk consistency.\n")
 	prompt := "full prompt content\n"
 
@@ -387,7 +387,7 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 	}
 
 	// Step 2: Persist all files.
-	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
+	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode, "")
 	if err := PersistLaunchFiles(worktree, charter, briefContent, env, promptText); err != nil {
 		t.Fatal(err)
 	}
