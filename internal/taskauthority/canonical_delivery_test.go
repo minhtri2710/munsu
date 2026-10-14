@@ -351,7 +351,7 @@ func TestCanonicalDeliveryAuthorizationFailClosed(t *testing.T) {
 	t.Run("reserved", func(t *testing.T) {
 		c, _, _ := newTestCanonical(t)
 		mustDeliveryTask(t, c, "t1")
-		mustReserveTransfer(t, c, "t1", preconditionOf(1, 4), "dest-home")
+		seedReservationForTest(t, c, "t1", preconditionOf(1, 4), "dest-home")
 		req := authorizeRequest(c, "t1", preconditionOf(1, 5))
 		if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-reserved", req), req); !errors.Is(err, ErrConflict) {
 			t.Fatalf("authorize on reserved task = %v, want ErrConflict", err)
@@ -498,7 +498,7 @@ func TestDeliveryRefusals(t *testing.T) {
 		}},
 		{name: "blocker refuses a superseded generation", class: ErrConflict, want: "is not current; it is superseded and cannot be mutated", run: func(t *testing.T, c *Canonical) error {
 			mustDeliveryTask(t, c, "t1")
-			mustReserveTransfer(t, c, "t1", preconditionOf(1, deliveryReadyRev), "dest-home")
+			seedReservationForTest(t, c, "t1", preconditionOf(1, deliveryReadyRev), "dest-home")
 			commit := commitTransferRequest(t, c, "t1", preconditionOf(1, deliveryReadyRev+1), "res-t1", "dest-home")
 			_, err := c.CommitTransfer(mustOperation(t, "op-commit-t1", commit), commit)
 			mustStep(t, err)
@@ -846,7 +846,7 @@ func TestCanonicalDeliveryCurrencyInvalidation(t *testing.T) {
 	// Active transfer reservation invalidates currency.
 	t.Run("reservation", func(t *testing.T) {
 		c, taskID := setup(t)
-		mustReserveTransfer(t, c, taskID, preconditionOf(1, 5), "dest-home")
+		seedReservationForTest(t, c, taskID, preconditionOf(1, 5), "dest-home")
 		cur, err := c.DeliveryCurrency(mustTaskID(t, taskID))
 		if err != nil {
 			t.Fatal(err)
@@ -1717,7 +1717,7 @@ func TestCanonicalDeliveryOutcomeCommitRecordsTruthAcrossTaskDrift(t *testing.T)
 
 	t.Run("active reservation still refuses", func(t *testing.T) {
 		c := setup(t)
-		mustReserveTransfer(t, c, "t1", preconditionOf(1, 6), "dest-home")
+		seedReservationForTest(t, c, "t1", preconditionOf(1, 6), "dest-home")
 		agg, err := c.Get(mustTaskID(t, "t1"))
 		if err != nil {
 			t.Fatal(err)
