@@ -7,10 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -189,44 +187,58 @@ func checkGoToolchain() StatusEntry {
 	}
 }
 
-// checkProjectReadiness predicts, for each configured project, whether a
+// checkProjectReadiness predicts, for each registered project, whether a
 // General-direct soldier launch would pass spawn's delivery and harness
-// preflights. It probes and reports; it refuses nothing.
+// preflights, and whether each harness a dispatch profile can select would
+// pass. It probes and reports; it refuses nothing.
 func checkProjectReadiness(homeDir string) []StatusEntry {
-	overlays, err := config.LoadProjectOverlays(homeDir)
-	if err != nil {
-		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusStale, Detail: fmt.Sprintf("cannot read project overlays: %v", err)}}
-	}
-	if len(overlays) == 0 {
+	// Same guard as checkCaptainRegistry: opening the registry creates a home
+	// for a missing directory, and doctor must stay read-only.
+	if _, err := os.Stat(filepath.Join(homeDir, home.IdentityFileName)); err != nil {
 		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusCurrent, Detail: "no projects configured"}}
 	}
-	names := make([]string, 0, len(overlays))
-	for name := range overlays {
-		names = append(names, name)
+	projects, err := fleet.List(homeDir)
+	if err != nil {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusStale, Detail: fmt.Sprintf("cannot read project registry: %v", err)}}
 	}
-	sort.Strings(names)
+	if len(projects) == 0 {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusCurrent, Detail: "no projects configured"}}
+	}
 	var entries []StatusEntry
-	for _, name := range names {
-		subsystem := "project " + name
-		pr, err := fleet.ProbeProjectReadiness(homeDir, name)
+	for _, project := range projects {
+		subsystem := "project " + project.Name
+		pr, err := fleet.ProbeProjectReadiness(homeDir, project.Name)
 		if err != nil {
 			entries = append(entries, StatusEntry{Subsystem: subsystem, Status: StatusStale, Detail: fmt.Sprintf("cannot resolve project: %v", err)})
 			continue
 		}
-		if pr.Err == nil {
-			entries = append(entries, StatusEntry{Subsystem: subsystem, Status: StatusCurrent,
-				Detail: fmt.Sprintf("launch would pass: delivery %s, harness %s", pr.Mode, pr.Harness)})
-			continue
+		entries = append(entries, projectDefaultReadinessEntry(subsystem, pr))
+		for _, profile := range pr.Profiles {
+			profileSubsystem := subsystem + " harness " + profile.Harness
+			if profile.Err == nil {
+				entries = append(entries, StatusEntry{Subsystem: profileSubsystem, Status: StatusCurrent,
+					Detail: "profile harness would pass"})
+				continue
+			}
+			entries = append(entries, StatusEntry{Subsystem: profileSubsystem, Status: StatusAbsent,
+				Detail: fmt.Sprintf("profile harness would be refused: %v", profile.Err)})
 		}
-		entry := StatusEntry{Subsystem: subsystem, Status: StatusAbsent,
-			Detail: fmt.Sprintf("launch would be refused: %v", pr.Err)}
-		var gate *fleet.GateBlockerError
-		if errors.As(pr.Err, &gate) {
-			entry.RepairCmd = gate.Guidance
-		}
-		entries = append(entries, entry)
 	}
 	return entries
+}
+
+func projectDefaultReadinessEntry(subsystem string, pr fleet.ProjectReadiness) StatusEntry {
+	if pr.Err == nil {
+		return StatusEntry{Subsystem: subsystem, Status: StatusCurrent,
+			Detail: fmt.Sprintf("launch would pass: delivery %s, harness %s", pr.Mode, pr.Harness)}
+	}
+	entry := StatusEntry{Subsystem: subsystem, Status: StatusAbsent,
+		Detail: fmt.Sprintf("launch would be refused: %v", pr.Err)}
+	var gate *fleet.GateBlockerError
+	if errors.As(pr.Err, &gate) {
+		entry.RepairCmd = gate.Guidance
+	}
+	return entry
 }
 
 // ---------------------------------------------------------------------------
