@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestCheckPipelineReadiness verifies the doctor's pipeline_readiness entry
@@ -180,4 +182,24 @@ func TestCheckConvergeReadiness(t *testing.T) {
 			t.Errorf("a live converge must not get an rm -f repair, got %q", entry.RepairCmd)
 		}
 	})
+}
+
+// TestGitHubAuthTimesOut proves a hung gh auth status fails closed once the
+// probe timeout passes, for both the bootstrap check and the doctor entry.
+func TestGitHubAuthTimesOut(t *testing.T) {
+	gh := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "gh"), "#!/bin/sh\nexec sleep 5\n")
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prev := SetProbeTimeout(100 * time.Millisecond)
+	t.Cleanup(func() { SetProbeTimeout(prev) })
+
+	start := time.Now()
+	if ghAuth() {
+		t.Fatal("ghAuth = true for a hung gh, want fail closed")
+	}
+	if entry := checkGitHubAuth(); entry.Status != StatusAbsent {
+		t.Fatalf("checkGitHubAuth status = %v, want StatusAbsent", entry.Status)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("gh auth status checks returned after %s, want them bounded by the timeout", elapsed)
+	}
 }
