@@ -75,8 +75,10 @@ func (r CanonicalReserveTransferRequest) DigestBytes() ([]byte, error) {
 // a destination home. It is exact-generation and idempotent: the request
 // carries the expected Generation/Revision precondition, and reusing the same
 // Operation ID with the same digest replays the durable prior outcome. A
-// stale precondition, an already-reserved generation, or a same-home
-// destination fails closed with a typed conflict.
+// stale precondition, an already-reserved generation, a non-queued task, a
+// matching handoff hold, or a same-home destination fails closed with a typed
+// conflict. Phase and holds are checked under the dispatch lock, so a hold
+// added concurrently cannot slip past the reservation.
 func (c *Canonical) ReserveTransfer(op domain.Operation, req CanonicalReserveTransferRequest) (Outcome, error) {
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return Outcome{}, err
@@ -90,9 +92,16 @@ func (c *Canonical) ReserveTransfer(op domain.Operation, req CanonicalReserveTra
 	if err := validateFenceToken(req.FenceToken); err != nil {
 		return Outcome{}, err
 	}
-	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+	return c.mutateTaskWithDispatch(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Transfer != nil && !cur.Transfer.Transferred {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s is already reserved for transfer", cur.TaskID, cur.Generation)
+		}
+		holds, err := c.listHolds()
+		if err != nil {
+			return Aggregate{}, err
+		}
+		if err := transferBlocker(cur, holds); err != nil {
+			return Aggregate{}, err
 		}
 		next := cur.clone()
 		next.Transfer = &TransferState{
@@ -104,6 +113,46 @@ func (c *Canonical) ReserveTransfer(op domain.Operation, req CanonicalReserveTra
 		next.Revision++
 		return next, nil
 	})
+}
+
+// transferBlocker is the source-side transfer rule: only a queued task may be
+// transferred, and no handoff hold may match the task or its parent.
+func transferBlocker(cur Aggregate, holds []DispatchHold) error {
+	if cur.Phase != PhaseQueued {
+		return conflictError(ErrConflict, "handoff: task %s has state %q — only queued tasks may be transferred", cur.TaskID, cur.Phase)
+	}
+	return handoffHoldBlocker(cur, holds, true)
+}
+
+func handoffHoldBlocker(agg Aggregate, holds []DispatchHold, withParent bool) error {
+	project, parent := agg.Definition.Project, agg.Definition.ParentTaskID
+	for _, hold := range holds {
+		if hold.Matches(DispatchActionHandoff, agg.TaskID, project, agg.Generation.String(), parent) ||
+			(withParent && parent != "" && hold.Matches(DispatchActionHandoff, parent, project, "", parent)) {
+			return conflictError(ErrDispatchHeld, "dispatch is held: %s (%s)", hold.ID, hold.Reason)
+		}
+	}
+	return nil
+}
+
+// CheckTransferable is the pre-intent read of the rule ReserveTransfer
+// enforces under the dispatch lock, so a refused handoff writes no journal.
+func (c *Canonical) CheckTransferable(agg Aggregate) error {
+	holds, err := c.listHolds()
+	if err != nil {
+		return err
+	}
+	return transferBlocker(agg, holds)
+}
+
+// CheckReceivable reports a handoff hold in this destination home that
+// matches the task about to be received.
+func (c *Canonical) CheckReceivable(agg Aggregate) error {
+	holds, err := c.listHolds()
+	if err != nil {
+		return err
+	}
+	return handoffHoldBlocker(agg, holds, false)
 }
 
 // CanonicalCommitTransferRequest confirms the source-side supersession of a
