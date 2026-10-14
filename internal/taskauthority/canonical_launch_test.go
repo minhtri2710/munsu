@@ -36,7 +36,8 @@ func launchRequest(c *Canonical, taskID string, prec domain.Precondition) Canoni
 		EndpointReservationID: "ep-res-" + taskID,
 		EndpointFenceToken:    "ep-fence-" + taskID,
 		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID,
-		Reason: "spawn",
+		SeatEnv: SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"},
+		Reason:  "spawn",
 	}
 }
 
@@ -1258,6 +1259,7 @@ func TestLaunchIntentSameComparesTheSeatPath(t *testing.T) {
 		WorktreeReservationID: req.WorktreeReservationID, WorktreeFenceToken: req.WorktreeFenceToken,
 		EndpointReservationID: req.EndpointReservationID, EndpointFenceToken: req.EndpointFenceToken,
 		EndpointIncarnation: req.EndpointIncarnation, SeatPathDirs: []string{"/usr/bin"},
+		SeatEnv: req.SeatEnv,
 	}
 	tests := []struct {
 		name string

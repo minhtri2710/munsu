@@ -383,6 +383,7 @@ func TestLaunchScriptRedirectsToolCachesIntoTheSeatTemp(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "env")
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath: wt, LaunchDir: wt, HomeDir: human, PathDirs: seatPathDirs(human), TaskID: "ship-cache", SnapshotDigest: "digest",
+		SeatEnv:   testSeatEnv(),
 		LaunchBin: "/bin/sh", LaunchArgs: []string{"-c", "env > " + out}, LaunchID: "lid", Generation: "1", EndpointFence: "fence",
 	})
 	if err != nil {
