@@ -28,7 +28,7 @@ func deliveryChanges(worktreePath string, ident domain.DeliveryIdentity) domain.
 	if err != nil || base == "" {
 		return domain.DeliveryDiff{}
 	}
-	names, err := gitOutput(worktreePath, "diff", "--no-renames", "--name-status", "-z", base, ident.HeadSHA)
+	raw, err := gitOutput(worktreePath, "diff", "--no-renames", "--raw", "-z", base, ident.HeadSHA)
 	if err != nil {
 		return domain.DeliveryDiff{}
 	}
@@ -43,16 +43,27 @@ func deliveryChanges(worktreePath string, ident domain.DeliveryIdentity) domain.
 			binary[fields[2]] = true
 		}
 	}
-	tokens := strings.Split(names, "\x00")
+	tokens := strings.Split(raw, "\x00")
 	diff := domain.DeliveryDiff{Listed: true}
 	for i := 0; i+1 < len(tokens); i += 2 {
+		meta := strings.Fields(strings.TrimPrefix(tokens[i], ":"))
+		if len(meta) != 5 {
+			return domain.DeliveryDiff{}
+		}
 		p := tokens[i+1]
-		diff.Changes = append(diff.Changes, domain.DeliveryChange{Path: p, Status: tokens[i], Binary: binary[p]})
+		typed := !regularMode(meta[0]) || !regularMode(meta[1])
+		diff.Changes = append(diff.Changes, domain.DeliveryChange{Path: p, Status: meta[4], Binary: binary[p], Typed: typed})
 	}
 	if len(diff.Changes) == 0 {
 		return domain.DeliveryDiff{}
 	}
 	return diff
+}
+
+// regularMode is a plain file mode, or 000000 for the absent side of an add or
+// delete. Anything else (symlink 120000, submodule 160000) is typed.
+func regularMode(mode string) bool {
+	return mode == "100644" || mode == "100755" || mode == "000000"
 }
 
 func gitOutput(worktreePath string, args ...string) (string, error) {

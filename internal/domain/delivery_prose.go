@@ -7,11 +7,12 @@ import (
 
 // DeliveryChange is one path a delivery changes between its base and head,
 // listed with renames off. Status is git's letter: A, M, D, or anything else
-// that is not prose.
+// that is not prose. Typed marks a non-regular file mode (symlink, submodule).
 type DeliveryChange struct {
 	Path   string `json:"path"`
 	Status string `json:"status"`
 	Binary bool   `json:"binary"`
+	Typed  bool   `json:"typed"`
 }
 
 // DeliveryDiff is the change set of one delivery's base..head range. Listed is
@@ -35,7 +36,7 @@ func (d DeliveryDiff) ProseOnly() bool {
 		return false
 	}
 	for _, c := range d.Changes {
-		if c.Binary || !proseStatus(c.Status) || !isProsePath(c.Path) {
+		if c.Binary || c.Typed || !proseStatus(c.Status) || !isProsePath(c.Path) {
 			return false
 		}
 	}
@@ -46,10 +47,11 @@ func proseStatus(status string) bool {
 	return status == "A" || status == "M" || status == "D"
 }
 
-// isProsePath is the closed prose class: *.md, *.txt, or anything under docs/,
+// isProsePath is the closed prose class: *.md or *.txt, anywhere in the tree,
 // minus doctrine and gating text. Dot-segments (.agents, .github), testdata,
 // AGENTS.md and CLAUDE.md, and the Go-embedded skill and manual files are
-// never prose.
+// never prose. A docs/ path is prose only by its extension, so docs/build.sh
+// and docs/Makefile need a verdict.
 func isProsePath(p string) bool {
 	if p == "" || path.IsAbs(p) || path.Clean(p) != p {
 		return false
@@ -65,9 +67,6 @@ func isProsePath(p string) bool {
 	}
 	if strings.HasPrefix(p, "internal/cli/skills/") || p == "internal/cli/seed_orchestrator_manual.md" {
 		return false
-	}
-	if strings.HasPrefix(p, "docs/") {
-		return true
 	}
 	switch path.Ext(p) {
 	case ".md", ".txt":

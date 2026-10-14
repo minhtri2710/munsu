@@ -95,6 +95,11 @@ func TestDeliveryChangesClassifiesTheBaseToHeadRange(t *testing.T) {
 			writeRepoFile(t, dir, "docs/a.md", "bin\x00\x01\x02")
 		}, false},
 		{"embedded skill edit is not prose", func(dir string) { writeRepoFile(t, dir, "internal/cli/skills/s/SKILL.md", "edited\n") }, false},
+		{"symlink under docs is not prose", func(dir string) {
+			if err := os.Symlink("a.md", filepath.Join(dir, "docs/link.md")); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
 		{"empty change is not prose", func(dir string) {}, false},
 	}
 	for _, tc := range cases {
