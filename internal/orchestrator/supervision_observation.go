@@ -11,6 +11,7 @@
 // any fingerprint input, so wake fingerprints stay stable and duplicate
 // suppression is preserved: a task that is still stale keeps the same
 // fingerprint until it stops being stale (see wakeFingerprint).
+
 package orchestrator
 
 import (
