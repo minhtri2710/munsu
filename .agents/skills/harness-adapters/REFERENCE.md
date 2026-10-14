@@ -11,7 +11,7 @@
 | grok | `--model` | `--reasoning-effort` | none |
 | agy | `--model` | none | `--dangerously-skip-permissions` |
 
-Harness detection checks environment markers, then process ancestry. Dispatch precedence is CLI override, matched dispatch profile, then the project's Soldier harness and model. Manage profiles with `munsu config dispatch`.
+Harness detection checks environment markers, then process ancestry. Dispatch precedence is CLI override, matched dispatch profile, then the project's Soldier harness and model. Manage profiles with `munsu config dispatch`. A profile's `--scaffold` sets the Soldier charter for its runtime: `lean` (the default) relies on CI and the independent reviewer; `guided`, for a weaker or cheaper runtime, adds a plan scaffold (a numbered `plan` report before the first edit, then each step's package tests with counts).
 
 ## Soldier launch
 
