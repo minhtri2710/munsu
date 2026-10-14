@@ -1873,6 +1873,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 		OptionalSkills:  optionalSkills,
 		HarnessName:     r.harness,
 		ScoutScope:      r.taskScoutScope,
+		Scaffold:        r.projectConfig.Soldier.Scaffold,
 	}
 
 	// Modes that do not hard-gate on skill presence still report what is absent,
@@ -1908,7 +1909,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	// Review launch files live under the home and are not covered by the
 	// reviewed worktree's soldier manifest. Soldier files are prepared later,
 	// after the exact manifest digest is committed canonically.
-	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode)
+	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode, r.projectConfig.Soldier.Scaffold)
 	if r.review != nil {
 		if err := PersistLaunchFiles(r.launchDir, charter, briefData, env, promptText); err != nil {
 			return fmt.Errorf("persisting reviewer launch files: %w", err)
@@ -2302,7 +2303,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode, r.projectConfig.Soldier.Scaffold), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}

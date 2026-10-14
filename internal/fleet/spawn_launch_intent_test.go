@@ -317,7 +317,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode, r.projectConfig.Soldier.Scaffold), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		t.Fatalf("prepareLaunchFiles: %v", err)
 	}
