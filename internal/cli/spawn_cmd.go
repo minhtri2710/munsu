@@ -429,6 +429,9 @@ generation must pass its explicit generation here.
 
 			var b strings.Builder
 			b.WriteString(fmt.Sprintf("Teardown %s completed:\n", id))
+			for _, note := range recoveredDeliveryNotes(result.Recovered) {
+				b.WriteString(fmt.Sprintf("  - %s\n", note))
+			}
 			for _, step := range result.Steps {
 				b.WriteString(fmt.Sprintf("  - %s\n", step))
 			}
