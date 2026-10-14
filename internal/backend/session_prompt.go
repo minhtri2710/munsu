@@ -1,4 +1,3 @@
-// Package session provides typed prompt submission distinct from raw SendKeys.
 package backend
 
 import (

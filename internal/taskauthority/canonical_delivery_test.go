@@ -101,6 +101,16 @@ func authorizeRequest(c *Canonical, taskID string, prec domain.Precondition) Can
 	}
 }
 
+// mixedDeliveryDiff changes prose and code: it needs a verdict.
+func mixedDeliveryDiff() domain.DeliveryDiff {
+	return domain.DeliveryDiff{Listed: true, Changes: []domain.DeliveryChange{{Path: "docs/guide.md", Status: "M"}, {Path: "internal/x.go", Status: "M"}}}
+}
+
+// proseDeliveryDiff changes only prose paths: it needs no verdict.
+func proseDeliveryDiff() domain.DeliveryDiff {
+	return domain.DeliveryDiff{Listed: true, Changes: []domain.DeliveryChange{{Path: "docs/guide.md", Status: "M"}, {Path: "README.md", Status: "A"}}}
+}
+
 func mustAuthorize(t *testing.T, c *Canonical, taskID string, rev uint64, opID string) DeliveryAuthorization {
 	t.Helper()
 	req := authorizeRequest(c, taskID, preconditionOf(1, rev))
