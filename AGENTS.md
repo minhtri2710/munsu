@@ -100,7 +100,11 @@ Where the host has none, a soldier or reviewer launch refuses unless the project
 sets fence-unsupported to allow, and the seat is then recorded and reported as
 unfenced. A project's fence-writable-roots lists extra directories only its
 soldiers may write; `ValidateWritableRoots` is the one validator, run at config
-set and at launch. The shell write-target grammar
+set and at launch. A captain runs under its own fence (`RoleCaptain`) as the
+child of `munsu captain seat`, which stays outside the fence and runs the
+commands the captain sends over its seat socket (`CaptainSeatRuns`), so its
+spawns, probes and pane commands never nest in its sandbox; on a host with
+no fence the captain launches unfenced and its meta records why. The shell write-target grammar
 (`shellWriteTargets`, `internal/cli/shell_write_safety.go`) is frozen: fixing a
 defect in a construct it already models is allowed, adding a shell construct is
 not. Reopening it needs evidence of a write path the OS fence cannot cover, plus
@@ -155,7 +159,7 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - Delivery acceptance has one owner in `internal/domain`. Provider orchestration and CLI-compatible delivery operations live in `internal/fleet/delivery_*.go`.
 - There are no Task Authority Store adapters or migration commands, and schemas stay at `v1`.
 - AFK supervision lives in `internal/orchestrator/afk_*.go`; focused tests stay beside those files.
-- Wake delivery to the General's pane is `DispatchWake` in `internal/orchestrator/wake_dispatch.go`; report wakes derive from status lines in `internal/home/report_wakes.go` and settle in `internal/orchestrator/lifecycle_lease.go`, with turn-end and lifecycle mechanics in adjacent `turnend_*.go`, `lifecycle_*.go`, and wake files.
+- Wake delivery to the General's pane (in a captain home, its Captain's own pane; `ResolveTargetWithSource`) is `DispatchWake` in `internal/orchestrator/wake_dispatch.go`; report wakes derive from status lines in `internal/home/report_wakes.go` and settle in `internal/orchestrator/lifecycle_lease.go`, with turn-end and lifecycle mechanics in adjacent `turnend_*.go`, `lifecycle_*.go`, and wake files.
 
 Rank hierarchy: General (fleet orchestrator) → Captain (`internal/fleet`, CLI `munsu captain`) → Soldier (task worker). Runtime: `MUNSU_ROLE=general|captain|soldier`. Labels: `captain-<id>-<hometag>`, windows `mu-captain-<id>`, marker `.munsu-captain-home`.
 

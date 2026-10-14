@@ -154,7 +154,7 @@ func TestSoldierLaunchScriptExportsExactlyTheSeatPathDirs(t *testing.T) {
 
 func TestCaptainLaunchScriptPrependsGitShim(t *testing.T) {
 	cwd := t.TempDir()
-	cmd, err := buildLaunchScript("/usr/local/bin/pi", []string{"# charter"}, cwd, cwd, filepath.Base(cwd))
+	cmd, err := buildLaunchScript("/usr/local/bin/pi", []string{"# charter"}, cwd, cwd, filepath.Base(cwd), captainSeat{})
 	if err != nil {
 		t.Fatalf("buildLaunchScript: %v", err)
 	}
