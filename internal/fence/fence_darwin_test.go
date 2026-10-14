@@ -1505,3 +1505,130 @@ func TestWritableRootsAreWritableAndTheProbeStillRefuses(t *testing.T) {
 		t.Fatalf("probe = %+v, %v; want the roots in the evidence and every refusal proven", ev, err)
 	}
 }
+
+// captainFence is l's captain launch on the PATH a launch gives it, with the
+// dirs its rows write in made.
+func captainFence(t *testing.T, l layout) (*Fence, Launch) {
+	t.Helper()
+	launch := l.captain(t)
+	launch.ShimDir = filepath.Join(l.home, "git-shim", "bin")
+	launch.PathDirs = []string{launch.ShimDir, filepath.Join(l.root, "bin")}
+	mkdirs(t, append(launch.PathDirs, launch.HarnessStateDir, filepath.Join(l.home, "data", "T-1"),
+		filepath.Join(l.home, "state", "T-9.pi-agent"), harness.SeatBuildDir(l.home), filepath.Join(l.common, "hooks"),
+		filepath.Join(launch.ParentHome, "config"))...)
+	return mustNew(t, launch), launch
+}
+
+// A captain writes its own pi agent dir, the temp roots, the briefs munsu
+// scaffolds in its home and its docs; nothing else of its home or its General's
+// home, no git dir of its home's repository, no other seat's dir, no PATH dir
+// and not the Human's harness config (G1085). The home sits outside the temp
+// roots, as a real one does, and inside one, where only the profile's denies
+// refuse.
+func TestCaptainFenceWritesOnlyItsSeatStateBriefsAndDocs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		out  func(*testing.T) string
+	}{
+		{"a home outside the temp roots", outsideDir},
+		{"a home inside a temp root", func(*testing.T) string { return "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			uhome := seatEnv(t, outsideDir(t))
+			l := newSplitLayout(t, tc.out(t))
+			f, launch := captainFence(t, l)
+			data, state := filepath.Join(l.home, "data"), filepath.Join(l.home, "state")
+			mustWrite(t, f,
+				filepath.Join(launch.HarnessStateDir, "sessions.jsonl"),
+				filepath.Join(data, "T-1", "brief.md"), filepath.Join(data, "T-1", "brief.md.tmp.42.1f"),
+				filepath.Join(state, CaptainDocsDir, "result.md"),
+				filepath.Join(t.TempDir(), "scratch"),
+			)
+			mustRefuse(t, f,
+				filepath.Join(data, "T-1", "report-g1.md"), filepath.Join(data, "result.md"),
+				filepath.Join(state, "T-1.meta"), filepath.Join(state, "T-9.pi-agent", "settings.json"),
+				filepath.Join(harness.SeatBuildDir(l.home), "f"),
+				filepath.Join(l.home, "config", "f"), filepath.Join(l.home, "projects", "f"),
+				filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
+				filepath.Join(l.home, ".captain-launch.sh"), filepath.Join(launch.ShimDir, "git"),
+				filepath.Join(launch.ParentHome, "state", "captain:c.status"), filepath.Join(launch.ParentHome, "config", "f"),
+				filepath.Join(l.common, "hooks", "pre-commit"), filepath.Join(l.gitDir, "HEAD"),
+				launch.PathDirs[1]+"/f", filepath.Join(uhome, ".pi", "agent", "f"), filepath.Join(uhome, ".claude", "f"),
+			)
+			mustRefuseMkdir(t, f, filepath.Join(data, "T-2"), filepath.Join(state, CaptainDocsDir, "sub"))
+			for _, argv := range [][]string{
+				{"/bin/mv", filepath.Join(data, "T-1"), filepath.Join(data, "T-1x")},
+				{"/bin/ln", "-s", l.root, filepath.Join(data, "T-3")},
+				{"/bin/mv", filepath.Join(state, CaptainDocsDir), filepath.Join(t.TempDir(), "docs")},
+			} {
+				if out, err := fenced(t, f, argv...); err == nil || !strings.Contains(out, "Operation not permitted") {
+					t.Errorf("%v was not refused by the fence: %v %s", argv, err, out)
+				}
+			}
+		})
+	}
+}
+
+// A captain connects to its seat socket and DNS, and to no tmux server, herdr
+// or claude session, nor another socket beside its seat's (G1148, G1085, the
+// delegated captain-fence design). It cannot remove its seat socket or rename
+// a directory above it to plant its own.
+func TestCaptainConnectsOnlyToDNSAndItsSeatSocket(t *testing.T) {
+	tmp, uhome := socketScratch(t)
+	uid := strconv.Itoa(os.Getuid())
+	l := newSplitLayout(t, tmp)
+	f, launch := captainFence(t, l)
+	for _, tt := range []struct {
+		name    string
+		addr    string
+		reaches bool
+	}{
+		{"its seat socket", launch.Socket, true},
+		{"another socket beside its seat's", filepath.Join(l.home, "state", "other.sock"), false},
+		{"a tmux server", filepath.Join(tmp, "tmux-"+uid, "default"), false},
+		{"the herdr server", filepath.Join(uhome, ".config", "herdr", "herdr.sock"), false},
+		{"another claude session's message socket", filepath.Join(tmp, "cc-socks", "1.sock"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, err := connects(t, f, "unix", tt.addr, nil)
+			if tt.reaches && (!ok || err != nil) {
+				t.Errorf("connect to %s was refused: connected=%v nc=%v", tt.addr, ok, err)
+			}
+			if !tt.reaches && (ok || err == nil) {
+				t.Errorf("connect to %s was not refused by the fence: connected=%v nc=%v", tt.addr, ok, err)
+			}
+		})
+	}
+	t.Run("a DNS lookup", func(t *testing.T) {
+		if out, err := fenced(t, f, "/usr/bin/perl", "-MSocket", "-e", `my ($e) = Socket::getaddrinfo("github.com", "443"); die "getaddrinfo: $e\n" if $e`); err != nil {
+			t.Errorf("a DNS lookup was refused: %v %s", err, out)
+		}
+	})
+	plantSocket(t, launch.Socket)
+	for _, argv := range [][]string{
+		{"/bin/rm", launch.Socket},
+		{"/bin/mv", l.home, l.home + ".moved"},
+		{"/bin/mv", tmp, tmp + ".moved"},
+	} {
+		if out, err := fenced(t, f, argv...); err == nil || !strings.Contains(out, "Operation not permitted") {
+			t.Errorf("%v was not refused by the fence: %v %s", argv, err, out)
+		}
+	}
+}
+
+// The probe proves the captain's home, its roots and the General home's
+// durable roots refused, and the captain's git common dir.
+func TestCaptainProbeProvesItsHomeAndTheGeneralHomeRefused(t *testing.T) {
+	seatEnv(t, t.TempDir())
+	l := newLayout(t)
+	f, launch := captainFence(t, l)
+	ev, err := f.Probe(context.Background())
+	if err != nil || ev.Role != RoleCaptain || len(ev.Steps) != 1+len(f.refuse) {
+		t.Fatalf("probe = %+v, %v; want the control and every refusal proven", ev, err)
+	}
+	for _, want := range []string{l.home, filepath.Join(l.home, "state"), filepath.Join(l.home, "projects"), launch.ParentHome, filepath.Join(launch.ParentHome, "state"), l.common} {
+		if !slices.Contains(f.refuse, want) {
+			t.Errorf("probe refuses %q, want %s among them", f.refuse, want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -52,7 +53,9 @@ func Scaffold(opts ScaffoldOptions) error {
 		return err
 	}
 	path := filepath.Join(dir, "brief.md")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	// A fenced captain writes its briefs, so it can leave a link here; the
+	// rename replaces the link and never writes through it.
+	if err := home.AtomicWrite(path, []byte(content), 0o644); err != nil {
 		return err
 	}
 	now := time.Now()
