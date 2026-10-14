@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -51,55 +50,33 @@ func resolveCommandPath(root *cobra.Command, words []string) (problem string, ok
 }
 
 // TestDeliveryIdentityErrorsNameRegisteredCommands is the standing guard for a
-// defect that shipped once already: RequireIdentity told operators to run
+// defect that shipped once already: the identity error told operators to run
 // `pr-check`, a command removed with the legacy delivery path (#414 B), so the
-// advice printed by the watcher merge-status seam resolved to nothing. Nothing
-// else in CI reads command names out of Go strings, so this drives the real
-// failure paths, reads the command out of the error the user would actually
-// see, and resolves it against the command tree the binary registers.
+// advice printed by merge-status resolved to nothing. Nothing else in CI reads
+// command names out of Go strings, so this drives the real failure path, reads
+// the command out of the error the user would actually see, and resolves it
+// against the command tree the binary registers.
 func TestDeliveryIdentityErrorsNameRegisteredCommands(t *testing.T) {
 	root := NewRootCommand()
+	const id = "identity-advice"
+	homeDir := deliveryGuardHome(t, id, deliveryGuardGitHub)
 
-	tests := []struct {
-		name string
-		meta map[string]string
-	}{
-		{
-			name: "no identity captured",
-			meta: map[string]string{"kind": "ship", "project": "munsu"},
-		},
-		{
-			name: "identity incomplete",
-			meta: map[string]string{"pr_url": "https://github.com/minhtri2710/munsu/pull/42"},
-		},
+	err := fleet.MergeStatus(homeDir, id)
+	if err == nil {
+		t.Fatal("expected merge-status to fail for a task with no delivery authorization")
 	}
+	msg := err.Error()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			homeDir := t.TempDir()
-			const id = "identity-advice"
-			if err := home.WriteMeta(homeDir, id, tt.meta); err != nil {
-				t.Fatalf("WriteMeta: %v", err)
-			}
-
-			_, err := fleet.RequireIdentity(homeDir, id)
-			if err == nil {
-				t.Fatal("expected RequireIdentity to fail")
-			}
-			msg := err.Error()
-
-			matches := backtickedCommand.FindAllStringSubmatch(msg, -1)
-			if len(matches) == 0 {
-				t.Fatalf("error gives the operator no runnable command: %s", msg)
-			}
-			for _, m := range matches {
-				words := strings.Fields(m[1])
-				if problem, ok := resolveCommandPath(root, words[1:]); !ok {
-					t.Errorf("error names %q, but resolver rejected it (%s): %s",
-						m[1], problem, msg)
-				}
-			}
-		})
+	matches := backtickedCommand.FindAllStringSubmatch(msg, -1)
+	if len(matches) == 0 {
+		t.Fatalf("error gives the operator no runnable command: %s", msg)
+	}
+	for _, m := range matches {
+		words := strings.Fields(m[1])
+		if problem, ok := resolveCommandPath(root, words[1:]); !ok {
+			t.Errorf("error names %q, but resolver rejected it (%s): %s",
+				m[1], problem, msg)
+		}
 	}
 }
 

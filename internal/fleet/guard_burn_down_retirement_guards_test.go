@@ -744,7 +744,7 @@ func TestTopologyAwareMergeCheck_EmptyMergedSHA(t *testing.T) {
 	opts := contractedMergeCheckOptions(t, "task-merge-check")
 	backend := emptyMergedSHATeardown{}
 
-	_, err := topologyAwareMergeCheck(opts, nil, "", ident, backend, nil)
+	_, err := topologyAwareMergeCheck(opts, "", ident, backend, nil)
 	if err == nil {
 		t.Fatal("expected empty merged SHA error, got nil")
 	}
