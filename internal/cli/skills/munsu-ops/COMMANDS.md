@@ -46,7 +46,7 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> [<project>] [--backend herdr\|tmux] [--yolo]` | Launch a soldier agent in a worktree+herdr/tmux window (tmux has no prompt support yet: wake, mailbox, nudge and captain prompts need herdr); delivery mode is derived from the project's configured review and forge steps. |
+| `munsu spawn <id> [<project>] [--backend herdr\|tmux] [--yolo]` | Launch a soldier agent in a worktree+herdr/tmux window; delivery mode is derived from the project's configured review and forge steps. |
 | `munsu send <id> "<line>"` | Send a mailbox command downlink to a Soldier or Captain endpoint; uplink to General is refused. |
 | `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy: one marked line in the parent's home, which becomes a `report` wake. |
 | `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |
@@ -139,7 +139,7 @@ for the complete registered set.
 | Command | Description |
 |---------|-------------|
 | `munsu capabilities` | Show agent-facing orchestration capabilities. |
-| `munsu backend capabilities [--backend herdr\|tmux]` | Show supported operations for one session backend. herdr is the only backend with prompt support. |
+| `munsu backend capabilities [--backend herdr\|tmux]` | Show supported operations for one session backend. |
 
 ## Orchestration contract
 
