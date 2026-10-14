@@ -198,8 +198,9 @@ canonical delivery authorization gates the exact identity against the verdict
 head and the head git reads at the bound worktree now, and the truthful closed-set outcome commits canonically.
 
 Delivery requires a PASS review verdict for the exact head (recorded from a review
-task by record-verdict) and
-the Human's words (--grantor, --channel, --quote); each external write is preceded
+task by record-verdict), unless every changed path is prose (.md, .txt, or under
+docs/, outside doctrine, skills and fixtures); then no verdict is needed. The
+Human's words (--grantor, --channel, --quote); each external write is preceded
 by a gate record carrying the head and those words.
 
 Default merge method is squash. Use -- --merge or -- --rebase to override.
