@@ -94,8 +94,8 @@ const (
 )
 
 // supportedBackends is the one statement of backend support that refusals
-// print. herdr is the only backend that can submit prompts.
-const supportedBackends = "herdr, tmux (tmux has no prompt support yet)"
+// print.
+const supportedBackends = "herdr, tmux"
 
 // setBackendHint names the command that sets a backend identity.
 const setBackendHint = "set one with: munsu config set backend herdr|tmux"

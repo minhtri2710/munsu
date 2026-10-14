@@ -85,3 +85,28 @@ func jsonEqual(left, right any) bool {
 	rightJSON, _ := json.Marshal(right)
 	return string(leftJSON) == string(rightJSON)
 }
+
+func TestToonStringFollowsSpecEscapes(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+	}{
+		{"plain ascii stays bare", "task-1", "task-1"},
+		{"non-ascii letters stay bare", "café", "café"},
+		{"cjk stays bare", "日本", "日本"},
+		{"quote is escaped", `a"b:`, `"a\"b:"`},
+		{"backslash is escaped", `a\b:`, `"a\\b:"`},
+		{"newline is escaped", "a\nb", `"a\nb"`},
+		{"carriage return is escaped", "a\rb", `"a\rb"`},
+		{"tab is escaped", "a\tb", `"a\tb"`},
+		{"nul uses uXXXX", "a\x00b", `"a\u0000b"`},
+		{"soh uses uXXXX", "a\x01b", `"a\u0001b"`},
+		{"unit separator uses uXXXX", "a\x1fb", `"a\u001fb"`},
+		{"non-ascii with a control is quoted, not escaped as hex", "é\x01", `"é\u0001"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toonString(tc.in); got != tc.want {
+				t.Fatalf("toonString(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

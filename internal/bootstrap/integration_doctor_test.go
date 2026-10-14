@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestCheckPipelineReadiness verifies the doctor's pipeline_readiness entry
@@ -31,31 +33,6 @@ func TestCheckPipelineReadiness(t *testing.T) {
 		entry := checkPipelineReadiness()
 		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "unused until a project sets a review tool entry") {
 			t.Fatalf("entry = %+v, want current with the unused-until-configured suggestion", entry)
-		}
-	})
-}
-
-// TestCheckSessionBackend pins that the doctor's session_backend entry states
-// tmux has no prompt support whenever it names tmux.
-func TestCheckSessionBackend(t *testing.T) {
-	t.Run("tmux on PATH", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PATH", dir)
-		entry := checkSessionBackend()
-		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "no prompt support yet") {
-			t.Fatalf("entry = %+v, want current with the tmux no-prompt note", entry)
-		}
-	})
-
-	t.Run("no session backend", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		t.Setenv("HERDR_ENV", "")
-		entry := checkSessionBackend()
-		if entry.Status != StatusAbsent || !strings.Contains(entry.Detail, "tmux without prompt support") || !strings.Contains(entry.RepairCmd, "tmux (no prompt support yet)") {
-			t.Fatalf("entry = %+v, want absent with the tmux no-prompt note in detail and repair", entry)
 		}
 	})
 }
@@ -180,4 +157,24 @@ func TestCheckConvergeReadiness(t *testing.T) {
 			t.Errorf("a live converge must not get an rm -f repair, got %q", entry.RepairCmd)
 		}
 	})
+}
+
+// TestGitHubAuthTimesOut proves a hung gh auth status fails closed once the
+// probe timeout passes, for both the bootstrap check and the doctor entry.
+func TestGitHubAuthTimesOut(t *testing.T) {
+	gh := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "gh"), "#!/bin/sh\nexec sleep 5\n")
+	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prev := SetProbeTimeout(100 * time.Millisecond)
+	t.Cleanup(func() { SetProbeTimeout(prev) })
+
+	start := time.Now()
+	if ghAuth() {
+		t.Fatal("ghAuth = true for a hung gh, want fail closed")
+	}
+	if entry := checkGitHubAuth(); entry.Status != StatusAbsent {
+		t.Fatalf("checkGitHubAuth status = %v, want StatusAbsent", entry.Status)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("gh auth status checks returned after %s, want them bounded by the timeout", elapsed)
+	}
 }

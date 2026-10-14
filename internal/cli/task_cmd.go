@@ -81,15 +81,8 @@ func newTaskCmd() *cobra.Command {
 			if _, err := auth.Create(op, req); err != nil {
 				return err
 			}
-			// .meta and .status are post-commit projections: a projection
-			// failure must not roll back the authoritative Task Generation.
-			// createQueuedTaskMeta creates the queued task's .meta so the
-			// captain in-flight scan (fleet.inFlightSoldierIDs) sees it;
-			// removal condition: canonical-live-binding moves that scan to
-			// the canonical phase.
-			if perr := createQueuedTaskMeta(ctx.Home, id); perr != nil {
-				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: perr}
-			}
+			// .status is a post-commit projection: a projection failure must
+			// not roll back the authoritative Task Generation.
 			if perr := home.AppendStatus(ctx.Home, id, "queued: cli task add"); perr != nil {
 				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: perr}
 			}
@@ -325,7 +318,7 @@ func newTaskDoneCmd() *cobra.Command {
 		Short: "Mark a task as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return runTaskLifecycleTransition(ctx, "done", "done", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+			if err := runTaskLifecycleTransition(ctx, "done", "done", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
 				req := taskauthority.CanonicalCompleteRequest{
 					HomeID:       auth.HomeID(),
 					TaskID:       tid,
@@ -339,7 +332,11 @@ func newTaskDoneCmd() *cobra.Command {
 				}
 				_, err = auth.Complete(op, req)
 				return err
-			})
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "task %s: %s\n", args[0], taskauthority.PhaseDone)
+			return nil
 		}),
 	}
 }
@@ -510,11 +507,4 @@ func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []st
 		return &LifecyclePartialError{TaskID: taskID, State: projectionState, Cause: perr}
 	}
 	return nil
-}
-
-// createQueuedTaskMeta writes the task .meta without setting any key, creating
-// it when absent. No task field is copied into .meta (the canonical Task is the
-// only owner of those).
-func createQueuedTaskMeta(homeDir, taskID string) error {
-	return home.UpdateMeta(homeDir, taskID, func(map[string]string) error { return nil })
 }

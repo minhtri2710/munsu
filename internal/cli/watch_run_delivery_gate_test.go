@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // deliveryLockScopeName derives the scope `fleet.RecoverDeliveryOutcomes` locks
@@ -18,20 +20,29 @@ import (
 // locking a scope nobody wants and passing for the wrong reason.
 func deliveryLockScopeName(t *testing.T, homeDir string) string {
 	t.Helper()
+	lockScopes := func() []string {
+		entries, err := os.ReadDir(filepath.Join(homeDir, mhome.LockDirName))
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		var scopes []string
+		for _, e := range entries {
+			// Scopes are the .lock files; the sibling .fence counter is not a scope.
+			if strings.HasSuffix(e.Name(), ".lock") {
+				scopes = append(scopes, strings.TrimSuffix(e.Name(), ".lock"))
+			}
+		}
+		return scopes
+	}
+	before := lockScopes()
 	if _, err := fleet.RecoverDeliveryOutcomes(homeDir); err != nil {
 		t.Fatalf("priming the delivery recovery gate: %v", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(homeDir, mhome.LockDirName))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var scopes []string
-	for _, e := range entries {
-		// Scopes are the .lock files; the sibling .fence counter is not a scope.
-		if !strings.HasSuffix(e.Name(), ".lock") {
-			continue
+	for _, s := range lockScopes() {
+		if !slices.Contains(before, s) {
+			scopes = append(scopes, s)
 		}
-		scopes = append(scopes, strings.TrimSuffix(e.Name(), ".lock"))
 	}
 	if len(scopes) != 1 {
 		t.Fatalf("delivery recovery gate on a fresh home locked %v, want exactly one scope to contend with", scopes)
@@ -52,7 +63,7 @@ func watchCycleHome(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	mhome.WriteMeta(homeDir, "task-1", map[string]string{"window": "@missing-watch-run"})
+	mustBindCLIEndpoint(t, homeDir, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@missing-watch-run"})
 	return homeDir
 }
 

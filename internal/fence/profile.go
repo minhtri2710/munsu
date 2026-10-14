@@ -41,6 +41,9 @@ func New(l Launch) (*Fence, error) {
 	if l.Role != RoleSoldier && l.Role != RoleReviewer {
 		return nil, fmt.Errorf("fence: unknown role %q", l.Role)
 	}
+	if !filepath.IsAbs(l.UserHome) {
+		return nil, fmt.Errorf("fence: user home must be absolute: %q", l.UserHome)
+	}
 	if err := Supported(); err != nil {
 		return nil, err
 	}
@@ -48,11 +51,7 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, err
 	}
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("fence: resolving user home: %w", err)
-	}
-	userHome, err = resolvePath(userHome, true)
+	userHome, err := resolvePath(l.UserHome, true)
 	if err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}
@@ -60,7 +59,6 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, err
 	}
-	dirs = append(dirs, goCaches(userHome)...)
 	dirs = append(dirs, p.roots...)
 
 	protected := []string{p.primary, p.commonDir, p.gitDir}
@@ -80,6 +78,11 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	// Observe only: the report modifier logs every outbound connect to the
+	// Sandbox log (log show --predicate 'sender == "Sandbox"') and refuses
+	// nothing. It sits before the socket denies, which are last-match-wins,
+	// so those denies still decide.
+	b.WriteString("(allow network-outbound (with report))\n")
 	var gateSocket string
 	if p.gateRepo != "" {
 		// The no-mistakes daemon's socket is NM_HOME/socket, and fleet's
@@ -144,8 +147,8 @@ func New(l Launch) (*Fence, error) {
 		// state.sqlite(+wal/shm/journal); database-open error when the daemon
 		// is stopped accepted". A temp-root NM_HOME keeps its other files and
 		// state.sqlite writable through the temp-root allow (the fence does
-		// not know the state path); no lane runs that, and the temp-root
-		// allow covers it. Even there the daemon's socket name is refused, and
+		// not know the state path); no lane runs this; TestSoldierFenceWritableSet
+		// covers it. Even there the daemon's socket name is refused, and
 		// every directory above it is locked against unlink and rename, so a
 		// seat can neither move another session's socket onto that name nor
 		// swap NM_HOME for a dir holding one: G1085 (quoted above) keeps
@@ -201,6 +204,22 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "literal", p.gitDir)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
+		// The worktree's own name and every directory above it cannot be
+		// unlinked or renamed, and its .git file cannot be written: a seat
+		// that moved its worktree away and planted a link at its name, or
+		// rewrote the gitdir: line, would have the next launch's fence grant
+		// another task's worktree and git dir, whose config and hooks unfenced
+		// git runs. Human words (domain.Words), each grantor the Human, channel
+		// supervisor-relay:dialog, words=selected: G1058: "A soldier's write
+		// fence lets it write only its own task's status, report and request
+		// files; it can never write another task's documents, any review
+		// verdict, delivery authorization or gate record, or the fleet
+		// registries (projects.json, captains.json)." G1085: "Quy tắc chung
+		// (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu
+		// hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
+		// session ngoài session của nó."
+		denyUnlink(&b, append(ancestors(p.worktree), p.worktree)...)
+		deny(&b, "literal", filepath.Join(p.worktree, ".git"))
 	}
 	if p.home != "" {
 		// After every allow, so they hold wherever the home lives, a temp root
@@ -648,39 +667,6 @@ func ancestors(paths ...string) []string {
 		}
 	}
 	return dedupe(out)
-}
-
-// goCaches returns the Go build cache, module cache (with the checksum db) and
-// telemetry directories, from the environment as go itself reads it.
-func goCaches(userHome string) []string {
-	cache, _ := os.UserCacheDir()
-	config, _ := os.UserConfigDir()
-	gopath := filepath.Join(userHome, "go")
-	if gp := filepath.SplitList(os.Getenv("GOPATH")); len(gp) > 0 && gp[0] != "" {
-		gopath = gp[0]
-	}
-	dirs := []string{
-		envOr("GOCACHE", filepath.Join(cache, "go-build")),
-		envOr("GOMODCACHE", filepath.Join(gopath, "pkg", "mod")),
-		filepath.Join(gopath, "pkg"),
-		envOr("GOTELEMETRYDIR", filepath.Join(config, "go", "telemetry")),
-	}
-	var out []string
-	for _, d := range dirs {
-		if filepath.IsAbs(d) {
-			if r, err := resolvePath(d, false); err == nil {
-				out = append(out, r)
-			}
-		}
-	}
-	return out
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" && v != "off" {
-		return v
-	}
-	return def
 }
 
 // resolvePath returns the symlink-resolved absolute path. A path that does not
