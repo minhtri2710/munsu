@@ -60,7 +60,6 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, err
 	}
-	dirs = append(dirs, goCaches(userHome)...)
 	dirs = append(dirs, p.roots...)
 
 	protected := []string{p.primary, p.commonDir, p.gitDir}
@@ -659,39 +658,6 @@ func ancestors(paths ...string) []string {
 		}
 	}
 	return dedupe(out)
-}
-
-// goCaches returns the Go build cache, module cache (with the checksum db) and
-// telemetry directories, from the environment as go itself reads it.
-func goCaches(userHome string) []string {
-	cache, _ := os.UserCacheDir()
-	config, _ := os.UserConfigDir()
-	gopath := filepath.Join(userHome, "go")
-	if gp := filepath.SplitList(os.Getenv("GOPATH")); len(gp) > 0 && gp[0] != "" {
-		gopath = gp[0]
-	}
-	dirs := []string{
-		envOr("GOCACHE", filepath.Join(cache, "go-build")),
-		envOr("GOMODCACHE", filepath.Join(gopath, "pkg", "mod")),
-		filepath.Join(gopath, "pkg"),
-		envOr("GOTELEMETRYDIR", filepath.Join(config, "go", "telemetry")),
-	}
-	var out []string
-	for _, d := range dirs {
-		if filepath.IsAbs(d) {
-			if r, err := resolvePath(d, false); err == nil {
-				out = append(out, r)
-			}
-		}
-	}
-	return out
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" && v != "off" {
-		return v
-	}
-	return def
 }
 
 // resolvePath returns the symlink-resolved absolute path. A path that does not
