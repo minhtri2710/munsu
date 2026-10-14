@@ -32,7 +32,7 @@ func contractedMergeCheckOptions(t *testing.T, taskID string) Options {
 func setupTopologyManifest(t *testing.T, wt string) string {
 	t.Helper()
 	taskID, launchID, endpointFence := "topology-test", "launch-topology-test", "endpoint-fence-test"
-	charter := DefaultCharter("topology-test", "ship", "direct-PR")
+	charter := DefaultCharter("topology-test", "ship", "direct-PR", "")
 	brief := []byte("# Topology test brief\n")
 	prompt := "prompt"
 	os.WriteFile(filepath.Join(wt, CharterName), []byte(charter), 0644)
