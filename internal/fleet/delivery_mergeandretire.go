@@ -27,6 +27,10 @@ type MergeAndRetireResult struct {
 
 	// TeardownError is non-nil when the retire/teardown phase failed.
 	TeardownError error
+
+	// Recovered holds non-completed outcomes of other tasks' journals the
+	// delivery phase resumed; they are reported, not failed on.
+	Recovered []DeliverResult
 }
 
 // IsError returns true when the composite operation has not fully succeeded.
@@ -123,6 +127,7 @@ func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardow
 	}
 
 	mergeOutcome := taskauthority.DeliveryOutcomeCompleted
+	var recovered []DeliverResult
 	if !alreadyMerged {
 		result, derr := Deliver(homeDir, id, req)
 		if derr != nil {
@@ -132,10 +137,12 @@ func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardow
 			}
 		}
 		mergeOutcome = result.Status
+		recovered = result.Recovered
 		if mergeOutcome != taskauthority.DeliveryOutcomeCompleted {
 			return &MergeAndRetireResult{
 				MergeOutcome: mergeOutcome,
 				MergeDetail:  result.Detail,
+				Recovered:    recovered,
 			}
 		}
 	}
@@ -156,5 +163,6 @@ func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardow
 		MergeDetail:    "provider confirms merged",
 		TeardownResult: teardownResult,
 		TeardownError:  retireErr,
+		Recovered:      recovered,
 	}
 }
