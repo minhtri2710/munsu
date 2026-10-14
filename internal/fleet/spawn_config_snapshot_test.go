@@ -143,11 +143,11 @@ func TestResolveSpawnProjectConfigMultiProjectProfilesAndOverridesIsolated(t *te
 		t.Fatal(err)
 	}
 
-	if alphaDocs.Soldier.Harness != "claude" || alphaDocs.Soldier.Model != "alpha-docs" || alphaDocs.Soldier.Effort != "low" {
-		t.Fatalf("alpha docs selection = %+v, want claude/alpha-docs/low", alphaDocs.Soldier)
+	if alphaDocs.Soldier.Harness != "claude" || alphaDocs.Soldier.Model != "alpha-docs" || alphaDocs.Soldier.Effort != "low" || alphaDocs.Soldier.Scaffold != "" {
+		t.Fatalf("alpha docs selection = %+v, want claude/alpha-docs/low with the lean scaffold", alphaDocs.Soldier)
 	}
-	if alphaUI.Soldier.Harness != "pi" || alphaUI.Soldier.Model != "spawn-model" || alphaUI.Soldier.Effort != "spawn-effort" {
-		t.Fatalf("alpha ui selection = %+v, want pi/spawn-model/spawn-effort", alphaUI.Soldier)
+	if alphaUI.Soldier.Harness != "pi" || alphaUI.Soldier.Model != "spawn-model" || alphaUI.Soldier.Effort != "spawn-effort" || alphaUI.Soldier.Scaffold != fleetconfig.ScaffoldGuided {
+		t.Fatalf("alpha ui selection = %+v, want pi/spawn-model/spawn-effort with the guided scaffold", alphaUI.Soldier)
 	}
 	if alphaDocs.SnapshotDigest != alphaUI.SnapshotDigest {
 		t.Fatalf("per-spawn overrides changed snapshot digest docs=%q ui=%q", alphaDocs.SnapshotDigest, alphaUI.SnapshotDigest)
@@ -253,6 +253,26 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 				t.Fatal(err)
 			}
 		}, want: fleetconfig.RemediateInvalidProfile},
+		{name: "unknown scaffold", project: "alpha", mutate: func(home string) {
+			overlay, err := fleetconfig.LoadProjectOverlay(home, "alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+			overlay.DispatchProfiles[0].Scaffold = "strict"
+			if err := fleetconfig.StoreProjectOverlay(home, "alpha", overlay); err != nil {
+				t.Fatal(err)
+			}
+		}, want: fleetconfig.RemediateInvalidProfile},
+		{name: "guided scaffold resolves", project: "alpha", mutate: func(home string) {
+			overlay, err := fleetconfig.LoadProjectOverlay(home, "alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+			overlay.DispatchProfiles[0].Scaffold = fleetconfig.ScaffoldGuided
+			if err := fleetconfig.StoreProjectOverlay(home, "alpha", overlay); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{name: "missing harness", project: "alpha", mutate: func(home string) {
 			base, err := fleetconfig.LoadFleetBase(home)
 			if err != nil {
@@ -296,6 +316,12 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 			}
 
 			_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: tc.project}, DispatchPolicyGeneralDirect, nil)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("ResolveSpawnProjectConfig() error = %v, want acceptance: the nearest valid case of a refusal above", err)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatal("ResolveSpawnProjectConfig() error = nil, want fail-closed remediation")
 			}
@@ -360,7 +386,7 @@ func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 				Model: "alpha-model",
 				DispatchProfiles: []fleetconfig.DispatchProfile{
 					{Name: "alpha-docs", Match: []string{"docs"}, Harness: "claude", Model: "alpha-docs", Effort: "low"},
-					{Name: "alpha-ui", Match: []string{"ui"}, Harness: "pi", Model: "alpha-ui", Effort: "high"},
+					{Name: "alpha-ui", Match: []string{"ui"}, Harness: "pi", Model: "alpha-ui", Effort: "high", Scaffold: fleetconfig.ScaffoldGuided},
 				},
 			},
 		},
