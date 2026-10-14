@@ -83,7 +83,7 @@ func newBackendCmd() *cobra.Command {
 		}),
 	}
 	configureContractCommand(capabilitiesCmd)
-	capabilitiesCmd.Flags().String("backend", "", "Backend name (herdr|tmux; tmux has no prompt support yet)")
+	capabilitiesCmd.Flags().String("backend", "", "Backend name (herdr|tmux)")
 	cmd.AddCommand(capabilitiesCmd)
 	return cmd
 }
