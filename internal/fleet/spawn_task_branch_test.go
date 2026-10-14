@@ -82,8 +82,8 @@ func TestRefuseStaleTaskBranch(t *testing.T) {
 
 	t.Run("same-generation recorded launch re-entry permits its branch", func(t *testing.T) {
 		f := newLaunchFixture(t, "same-generation-branch")
-		if err := runLaunchPhases(f, ""); err != nil {
-			t.Fatalf("initial launch: %v", err)
+		if err := runLaunchPhases(f, "submit"); !errors.Is(err, errCrashSimulated) {
+			t.Fatalf("initial launch to submit: %v", err)
 		}
 		first := f.aggregate()
 		if first.LaunchEvidence == nil || first.Worktree == nil {

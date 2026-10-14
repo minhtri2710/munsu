@@ -144,28 +144,36 @@ func TestBeginLaunchIntentRefusesWithoutSnapshotIdentity(t *testing.T) {
 	}
 }
 
-// A committed launch intent is re-entered only while the task is still queued
-// or when the launch is complete under that identity; a task past queued
-// without launch evidence is another live spawn's. BeginSpawn is not called on
-// this path, so this refusal is the only one guarding the re-entry.
+// A committed launch intent is re-entered only while the task is still queued;
+// a task past queued is another live spawn's, or a launch already bound. BeginSpawn
+// is not called on this path, so this refusal is the only one guarding the
+// re-entry.
 func TestBeginLaunchIntentReentryPhase(t *testing.T) {
 	cases := []struct {
 		name  string
+		bound bool // the first run completes through the final bind
 		phase taskauthority.Phase
 		want  string // refusal text; empty means the intent is re-entered
 	}{
 		{name: "working without launch evidence refused", phase: taskauthority.PhaseWorking, want: "spawn requires queued; duplicate or stale live spawn refused"},
+		{name: "working after the final bind refused", bound: true, want: "spawn requires queued; duplicate or stale live spawn refused"},
 		{name: "queued re-enters the committed intent", phase: taskauthority.PhaseQueued},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchFixture(t, "reentry")
-			if err := f.runner.beginLaunchIntent(); err != nil {
-				t.Fatalf("first beginLaunchIntent: %v", err)
+			if tc.bound {
+				if err := runLaunchPhases(f, ""); err != nil {
+					t.Fatalf("first full run: %v", err)
+				}
+			} else {
+				if err := f.runner.beginLaunchIntent(); err != nil {
+					t.Fatalf("first beginLaunchIntent: %v", err)
+				}
+				tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) {
+					agg.Phase = tc.phase
+				})
 			}
-			tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) {
-				agg.Phase = tc.phase
-			})
 			f.runner.launchReentry = false
 
 			err := f.runner.beginLaunchIntent()
@@ -185,21 +193,28 @@ func TestBeginLaunchIntentReentryPhase(t *testing.T) {
 	}
 }
 
-// A second live execution of a task is refused when its meta records a window
-// or a herdr pane id, on both the general and the captain path.
-func TestBacklogAuthorityRefusesRecordedLiveSession(t *testing.T) {
+// A second live execution of a task is refused when its canonical endpoint is
+// bound, whatever its .meta records, on both the general and the captain path.
+// A queued task that only acquired its endpoint before a failed bind is admitted
+// so the launch re-enters.
+func TestBacklogAuthorityRefusesBoundLiveSession(t *testing.T) {
+	bound := &taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1", LeaseID: "lease-1", FenceToken: "fence-1", Incarnation: "inc-1", BoundAtUnix: 1}
+	acquired := &taskauthority.AcquiredEndpoint{OperationID: "op-attach", Backend: "tmux", Handle: "@1", LeaseID: "lease-1", FenceToken: "fence-1", AcquiredAt: 1}
 	cases := []struct {
-		name    string
-		captain bool
-		phase   taskauthority.Phase
-		meta    map[string]string
-		want    string // refusal text; empty means allowed
+		name     string
+		captain  bool
+		phase    taskauthority.Phase
+		endpoint *taskauthority.EndpointBinding
+		acquired *taskauthority.AcquiredEndpoint
+		noWindow bool   // the .meta names no window
+		want     string // refusal text; empty means allowed
 	}{
-		{name: "general working task with a window", phase: taskauthority.PhaseWorking, meta: map[string]string{"window": "@1"}, want: "already in-flight with a live session"},
-		{name: "general queued task with a window", phase: taskauthority.PhaseQueued, meta: map[string]string{"window": "default:w1:p1"}, want: "already has a live soldier session"},
-		{name: "general queued task with kind-only meta", phase: taskauthority.PhaseQueued, meta: map[string]string{"kind": "ship"}},
-		{name: "captain task with a window", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"window": "default:w1:p1"}, want: "already has a live soldier session (window=default:w1:p1)"},
-		{name: "captain queued task with kind-only meta", captain: true, phase: taskauthority.PhaseQueued, meta: map[string]string{"kind": "ship"}},
+		{name: "general working task with a bound endpoint", phase: taskauthority.PhaseWorking, endpoint: bound, acquired: acquired, want: "already has a live soldier session (window=@1)"},
+		{name: "general working bound task whose meta lost its window", phase: taskauthority.PhaseWorking, endpoint: bound, acquired: acquired, noWindow: true, want: "already has a live soldier session (window=@1)"},
+		{name: "general queued task with only an acquired endpoint", phase: taskauthority.PhaseQueued, acquired: acquired},
+		{name: "captain task with a bound endpoint", captain: true, phase: taskauthority.PhaseQueued, endpoint: bound, acquired: acquired, want: "already has a live soldier session (window=@1)"},
+		{name: "captain bound task whose meta lost its window", captain: true, phase: taskauthority.PhaseWorking, endpoint: bound, acquired: acquired, noWindow: true, want: "already has a live soldier session (window=@1)"},
+		{name: "captain queued task with only an acquired endpoint", captain: true, phase: taskauthority.PhaseQueued, acquired: acquired},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,10 +224,14 @@ func TestBacklogAuthorityRefusesRecordedLiveSession(t *testing.T) {
 			}
 			auth := canonicalAtHome(t, homeDir)
 			canonicalCreateTask(t, auth, "live-task", "ship", "test-proj")
-			if tc.phase != taskauthority.PhaseQueued {
-				tamperTaskAggregate(t, homeDir, "live-task", func(agg *taskauthority.Aggregate) { agg.Phase = tc.phase })
+			tamperTaskAggregate(t, homeDir, "live-task", func(agg *taskauthority.Aggregate) {
+				agg.Phase, agg.Endpoint, agg.AcquiredEndpoint = tc.phase, tc.endpoint, tc.acquired
+			})
+			meta := map[string]string{"window": "@1"}
+			if tc.noWindow {
+				meta = map[string]string{"kind": "ship"}
 			}
-			if err := home.WriteMeta(homeDir, "live-task", tc.meta); err != nil {
+			if err := home.WriteMeta(homeDir, "live-task", meta); err != nil {
 				t.Fatal(err)
 			}
 			r := &Runner{args: Args{ID: "live-task", Authority: auth}, homeDir: homeDir}
@@ -225,7 +244,7 @@ func TestBacklogAuthorityRefusesRecordedLiveSession(t *testing.T) {
 			err := check()
 			if tc.want == "" {
 				if err != nil {
-					t.Fatalf("task without a recorded live session refused: %v", err)
+					t.Fatalf("task without a bound endpoint refused: %v", err)
 				}
 				return
 			}

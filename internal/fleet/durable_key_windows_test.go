@@ -34,34 +34,6 @@ func TestSnapshotCaptainMetaLogicalID(t *testing.T) {
 	}
 }
 
-func TestInFlightSoldierIDsRoundTrip(t *testing.T) {
-	captainHome := t.TempDir()
-	for _, tc := range []struct {
-		id   string
-		kind string
-	}{
-		{"ship:1", "ship"},
-		{"scout:2", "scout"},
-		{"chore:3", "other"},
-	} {
-		if err := home.WriteMeta(captainHome, tc.id, map[string]string{"kind": tc.kind}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ids, err := inFlightSoldierIDs(captainHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"ship:1", "scout:2"} {
-		if !durableContainsID(ids, want) {
-			t.Errorf("inFlightSoldierIDs missing logical id %q (got %v)", want, ids)
-		}
-	}
-	if durableContainsID(ids, "chore:3") {
-		t.Errorf("inFlightSoldierIDs included non-ship/scout logical id chore:3 (got %v)", ids)
-	}
-}
-
 func TestOtherWorkspaceRefsRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	if err := home.WriteMeta(tmp, "captain:cap", map[string]string{"workspace_id": "W1"}); err != nil {

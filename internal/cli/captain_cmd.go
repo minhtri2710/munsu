@@ -91,7 +91,7 @@ Flags for worktree provisioning:
 	retireCmd := &cobra.Command{
 		Use:   "retire <captain-home>",
 		Short: "Retire a captain (session-backed)",
-		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from the Captain registry (state/fleet-registry/captains.json). Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
+		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from the Captain registry (state/fleet-registry/captains.json). Refuses while the captain home has a soldier task (kind ship|scout|review) that is not retired unless --force.",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return fleet.Retire(args[0], ctx.Home, false, retireForce, newSessionRetireEndpoint())
