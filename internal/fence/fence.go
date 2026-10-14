@@ -44,8 +44,10 @@ type Launch struct {
 	// .lock/, config/ or projects/: a soldier writes only its own Files there
 	// (its status, ack log and current scout report) and its HarnessStateDir.
 	// A reviewer may leave it empty when it has no HarnessStateDir.
-	Home    string
-	Primary string // primary checkout; never writable
+	Home string
+	// UserHome is the Human's home as the launch intent recorded it; absolute.
+	UserHome string
+	Primary  string // primary checkout; never writable
 	// Worktree is the soldier's bound worktree (writable) or the reviewer's
 	// checkout under review (never writable).
 	Worktree  string
