@@ -1,7 +1,6 @@
-// Package integrate manages opt-in harness integration.
-//
 // Grok adapter: generates .grok/hooks/*.json hook files anchored to the munsu
 // binary path, mirroring the munsu Grok hook contract.
+
 package bootstrap
 
 import (
