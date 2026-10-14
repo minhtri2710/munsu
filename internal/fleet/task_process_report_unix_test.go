@@ -31,14 +31,24 @@ esac`
 		if want := (processDetail{cwd: "/private/tmp/dev", ports: "3000,8080"}); got[7] != want {
 			t.Fatalf("pid 7 = %+v, want %+v", got[7], want)
 		}
-		if want := (processDetail{cwd: unknownProcessField, ports: "none"}); got[8] != want {
+		if want := (processDetail{cwd: unknownProcessField, ports: unknownProcessField}); got[8] != want {
 			t.Fatalf("pid 8 = %+v, want %+v", got[8], want)
 		}
 	})
-	t.Run("lsof finding nothing for a pid means no listeners, cwd unknown", func(t *testing.T) {
+	t.Run("a pid lsof does not report has exited or is unreadable: ports unknown", func(t *testing.T) {
 		fakeTool(t, "lsof", "exit 1")
 		got := lsofProcessDetails([]int{7})
-		if want := (processDetail{cwd: unknownProcessField, ports: "none"}); got[7] != want {
+		if want := (processDetail{cwd: unknownProcessField, ports: unknownProcessField}); got[7] != want {
+			t.Fatalf("pid 7 = %+v, want %+v", got[7], want)
+		}
+	})
+	t.Run("a live pid with a cwd and no listeners: ports none", func(t *testing.T) {
+		fakeTool(t, "lsof", `case "$*" in
+*cwd*) printf 'p7\nn/tmp\n'; exit 0;;
+*) exit 1;;
+esac`)
+		got := lsofProcessDetails([]int{7})
+		if want := (processDetail{cwd: "/tmp", ports: "none"}); got[7] != want {
 			t.Fatalf("pid 7 = %+v, want %+v", got[7], want)
 		}
 	})
