@@ -89,35 +89,30 @@ func TestDigesterFlushRejectsCorruptExistingDigestAndRetainsEntries(t *testing.T
 	}
 }
 
-func TestDigesterFlushRetainsEntriesAfterPersistenceFailure(t *testing.T) {
+// The write itself fails here (the state dir exists but is read-only), so the
+// existing-digest read succeeds and only a reset after the write keeps the
+// entries for the next flush.
+func TestDigesterFlushKeepsEntriesWhenTheWriteFails(t *testing.T) {
 	home := t.TempDir()
-	statePath := filepath.Join(home, "state")
-	if err := os.WriteFile(statePath, []byte("not a directory"), 0600); err != nil {
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0o500); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.Chmod(stateDir, 0o755) })
 
 	d := NewDigester(home)
 	d.Feed(&Digest{Routines: []WakeDigest{{Kind: "status", Key: "retained", Payload: "keep me"}}})
 	if err := d.Flush(time.Now().Add(defaultWindow + time.Second)); err == nil {
-		t.Fatal("Flush with unusable state path succeeded")
+		t.Fatal("Flush into a read-only state dir succeeded")
 	}
-
-	if err := os.Remove(statePath); err != nil {
+	if err := os.Chmod(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Flush(time.Now().Add(2*defaultWindow + time.Second)); err != nil {
-		t.Fatalf("Flush after persistence failure: %v", err)
+		t.Fatalf("Flush after the write failure: %v", err)
 	}
-
-	data, err := os.ReadFile(filepath.Join(home, digestFile))
-	if err != nil {
-		t.Fatalf("read retained digest: %v", err)
-	}
-	var be BatchedEscalation
-	if err := json.Unmarshal(data, &be); err != nil {
-		t.Fatalf("unmarshal retained digest: %v", err)
-	}
-	if len(be.Entries) != 1 || be.Entries[0].Key != "retained" {
-		t.Fatalf("retained entries = %+v, want one entry with key retained", be.Entries)
+	be, err := drainDigest(home, func(*BatchedEscalation) {})
+	if err != nil || be == nil || len(be.Entries) != 1 || be.Entries[0].Key != "retained" {
+		t.Fatalf("drained %+v, %v; want the one retained entry", be, err)
 	}
 }

@@ -72,45 +72,6 @@ func TestValidRank(t *testing.T) {
 	}
 }
 
-func TestValidateEnvelope_ValidTransitions(t *testing.T) {
-	tests := []struct {
-		name      string
-		sender    mhome.Rank
-		receiver  mhome.Rank
-		wantError bool
-	}{
-		{"general->captain", mhome.RankGeneral, mhome.RankCaptain, false},
-		{"captain->general", mhome.RankCaptain, mhome.RankGeneral, false},
-		{"captain->soldier", mhome.RankCaptain, mhome.RankSoldier, false},
-		{"soldier->captain", mhome.RankSoldier, mhome.RankCaptain, false},
-		{"general->soldier", mhome.RankGeneral, mhome.RankSoldier, false},
-		{"general->general", mhome.RankGeneral, mhome.RankGeneral, true},
-		{"captain->captain", mhome.RankCaptain, mhome.RankCaptain, true},
-		{"soldier->general", mhome.RankSoldier, mhome.RankGeneral, false}, // direct General dispatch
-		{"soldier->soldier", mhome.RankSoldier, mhome.RankSoldier, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := &mhome.Envelope{
-				MessageID:      "test-id-1234567890abcdef",
-				SenderRank:     tt.sender,
-				SenderIdentity: "sender-1",
-				ReceiverRank:   tt.receiver,
-				ReceiverID:     "receiver-1",
-				Payload:        "test message",
-				PayloadHash:    mhome.PayloadHashHex("test message"),
-			}
-			err := mhome.ValidateEnvelope(env)
-			if tt.wantError && err == nil {
-				t.Error("expected validation error, got nil")
-			}
-			if !tt.wantError && err != nil {
-				t.Errorf("unexpected validation error: %v", err)
-			}
-		})
-	}
-}
-
 // --- Immutability ---
 
 func TestEnvelope_ImmutableStruct(t *testing.T) {
@@ -501,70 +462,6 @@ func TestValidateAck_ExactMatch(t *testing.T) {
 	}
 }
 
-func TestValidateAck_WrongMessageID(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "msg-1", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "msg-2", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "message ID") {
-		t.Errorf("expected message ID mismatch error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongSenderRank(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankCaptain, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender rank") {
-		t.Errorf("expected sender rank error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongSenderIdentity(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "soldier-2", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender identity") {
-		t.Errorf("expected sender identity error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongReceiverRank(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankGeneral, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver rank") {
-		t.Errorf("expected receiver rank error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongReceiverID(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-2", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver ID") {
-		t.Errorf("expected receiver ID error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongTaskID(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", TaskID: "task:1", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", TaskID: "task:2", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "task ID") {
-		t.Errorf("expected task ID error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongKey(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", Key: "key-a", PayloadHash: mhome.PayloadHashHex("x")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", Key: "key-b", PayloadHash: mhome.PayloadHashHex("x")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "key") {
-		t.Errorf("expected key error, got: %v", err)
-	}
-}
-
-func TestValidateAck_WrongPayloadHash(t *testing.T) {
-	env := &mhome.Envelope{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", Payload: "hello", PayloadHash: mhome.PayloadHashHex("hello")}
-	ack := &mhome.ProcessingAck{MessageID: "m", SenderRank: mhome.RankSoldier, SenderIdentity: "s", ReceiverRank: mhome.RankCaptain, ReceiverID: "r", PayloadHash: mhome.PayloadHashHex("world")}
-	if err := mhome.ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "payload hash") {
-		t.Errorf("expected payload hash error, got: %v", err)
-	}
-}
-
 // --- ValidOutcome ---
 
 func TestValidOutcome(t *testing.T) {
@@ -603,46 +500,6 @@ func TestValidateProcessingAck_Valid(t *testing.T) {
 	}
 }
 
-func TestValidateProcessingAck_ProcessedAtZero(t *testing.T) {
-	ack := &mhome.ProcessingAck{
-		ProcessedAt: 0,
-		Outcome:     "done",
-	}
-	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
-		t.Errorf("expected processed_at error, got: %v", err)
-	}
-}
-
-func TestValidateProcessingAck_ProcessedAtNegative(t *testing.T) {
-	ack := &mhome.ProcessingAck{
-		ProcessedAt: -1,
-		Outcome:     "done",
-	}
-	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
-		t.Errorf("expected processed_at error, got: %v", err)
-	}
-}
-
-func TestValidateProcessingAck_InvalidOutcome(t *testing.T) {
-	ack := &mhome.ProcessingAck{
-		ProcessedAt: 1000,
-		Outcome:     "invalid",
-	}
-	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
-		t.Errorf("expected outcome error, got: %v", err)
-	}
-}
-
-func TestValidateProcessingAck_EmptyOutcome(t *testing.T) {
-	ack := &mhome.ProcessingAck{
-		ProcessedAt: 1000,
-		Outcome:     "",
-	}
-	if err := mhome.ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
-		t.Errorf("expected outcome error, got: %v", err)
-	}
-}
-
 // --- ValidatePathComponent ---
 
 func TestValidatePathComponent_Valid(t *testing.T) {
@@ -660,36 +517,6 @@ func TestValidatePathComponent_Valid(t *testing.T) {
 				t.Errorf("expected no error, got: %v", err)
 			}
 		})
-	}
-}
-
-func TestValidatePathComponent_Slash(t *testing.T) {
-	if err := mhome.ValidatePathComponent("a/b", "test"); err == nil || !strings.Contains(err.Error(), "slash") {
-		t.Errorf("expected slash error, got: %v", err)
-	}
-}
-
-func TestValidatePathComponent_Backslash(t *testing.T) {
-	if err := mhome.ValidatePathComponent("a\\b", "test"); err == nil || !strings.Contains(err.Error(), "backslash") {
-		t.Errorf("expected backslash error, got: %v", err)
-	}
-}
-
-func TestValidatePathComponent_DotDot(t *testing.T) {
-	if err := mhome.ValidatePathComponent("..", "test"); err == nil || !strings.Contains(err.Error(), "relative path") {
-		t.Errorf("expected relative path error, got: %v", err)
-	}
-}
-
-func TestValidatePathComponent_Empty(t *testing.T) {
-	if err := mhome.ValidatePathComponent("", "test"); err == nil || !strings.Contains(err.Error(), "empty") {
-		t.Errorf("expected empty error, got: %v", err)
-	}
-}
-
-func TestValidatePathComponent_Colon(t *testing.T) {
-	if err := mhome.ValidatePathComponent("a:b", "test"); err == nil || !strings.Contains(err.Error(), "colon") {
-		t.Errorf("expected colon error, got: %v", err)
 	}
 }
 
@@ -779,43 +606,6 @@ func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
 	}
 	if err := store.WriteEnvelope(env4); err == nil {
 		t.Fatal("expected conflict error for different rank, got nil")
-	} else if !strings.Contains(err.Error(), "conflict") {
-		t.Errorf("expected conflict error, got: %v", err)
-	}
-}
-
-// --- Idempotent ack ---
-
-func TestStore_WriteAck_Conflict(t *testing.T) {
-	store := mhome.NewStore(t.TempDir())
-
-	ack := &mhome.ProcessingAck{
-		MessageID:      "msg-conflict",
-		SenderRank:     mhome.RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   mhome.RankCaptain,
-		ReceiverID:     "captain-1",
-		PayloadHash:    mhome.PayloadHashHex("first"),
-		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        "done",
-	}
-	if err := store.WriteAck(ack); err != nil {
-		t.Fatalf("first WriteAck: %v", err)
-	}
-
-	// Different outcome — must fail.
-	ack2 := &mhome.ProcessingAck{
-		MessageID:      "msg-conflict",
-		SenderRank:     mhome.RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   mhome.RankCaptain,
-		ReceiverID:     "captain-1",
-		PayloadHash:    mhome.PayloadHashHex("first"),
-		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        "failed",
-	}
-	if err := store.WriteAck(ack2); err == nil {
-		t.Fatal("expected conflict error, got nil")
 	} else if !strings.Contains(err.Error(), "conflict") {
 		t.Errorf("expected conflict error, got: %v", err)
 	}

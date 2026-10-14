@@ -183,8 +183,10 @@ jobs:
           TestFencedSoldierCannotTakeTheGitShimOffItsPath
           TestFencedClaudeLaunchRunsFromItsOwnConfigDir
           TestFencedClaudeReviewerWritesItsOwnConfigDir
-          TestFencedClaudePreflightAsksForTheSeatsLogin'
-          gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout'
+          TestFencedClaudePreflightAsksForTheSeatsLogin
+          TestFencedCaptainRunsItsSeatCommandsOutsideTheFence'
+          gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout
+          TestLaunchRunsTheCaptainUnderItsSeat'
 
   race:
     name: Race detector

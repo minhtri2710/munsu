@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 type WakeDeliveryMode string
@@ -22,7 +23,7 @@ func ResolveWakeDeliveryMode(homeDir string) (WakeDeliveryMode, error) {
 	value, err := config.Get(homeDir, "wake-delivery-mode")
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return WakeDeliveryNative, nil
+			return defaultWakeDeliveryMode(homeDir), nil
 		}
 		return "", err
 	}
@@ -33,6 +34,21 @@ func ResolveWakeDeliveryMode(homeDir string) (WakeDeliveryMode, error) {
 	default:
 		return "", fmt.Errorf("unsupported wake-delivery-mode %q", value)
 	}
+}
+
+// defaultWakeDeliveryMode is native, except in a captain home whose captain
+// runs claude in a herdr pane: there the watcher pushes the home's wakes into
+// the captain's pane, as it does for a General on herdr. Any other captain
+// claims its wakes at turn end.
+func defaultWakeDeliveryMode(homeDir string) WakeDeliveryMode {
+	if captain, err := home.IsCaptainHome(homeDir); err != nil || !captain {
+		return WakeDeliveryNative
+	}
+	meta, err := captainPane(homeDir)
+	if err != nil || meta["backend"] != "herdr" || meta["harness"] != wakeDispatchComposerAgent {
+		return WakeDeliveryNative
+	}
+	return WakeDeliveryHerdr
 }
 
 const wakeDispatchRefusedEvent = "wake.dispatch.refused"

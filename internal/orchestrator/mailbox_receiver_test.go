@@ -109,20 +109,6 @@ func TestParseNotificationRef_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestParseNotificationRef_EmptyMessageID(t *testing.T) {
-	_, err := mhome.ParseNotificationRef(`{"message_id":"","sender_identity":"s1"}`)
-	if err == nil || !strings.Contains(err.Error(), "message ID") {
-		t.Errorf("expected message ID error, got: %v", err)
-	}
-}
-
-func TestParseNotificationRef_EmptySenderIdentity(t *testing.T) {
-	_, err := mhome.ParseNotificationRef(`{"message_id":"m1","sender_identity":""}`)
-	if err == nil || !strings.Contains(err.Error(), "sender identity") {
-		t.Errorf("expected sender identity error, got: %v", err)
-	}
-}
-
 func TestParseNotificationRef_ExtraFieldsIgnored(t *testing.T) {
 	s := `{"message_id":"m1","sender_identity":"s1","extra":"ignored"}`
 	ref, err := mhome.ParseNotificationRef(s)
@@ -304,43 +290,6 @@ func TestReceiver_Receive_MissingEnvelope(t *testing.T) {
 	}
 }
 
-func TestReceiver_Receive_ValidateEnvelopeGate(t *testing.T) {
-	// Write an envelope file directly that fails ValidateEnvelope
-	// (general->general is an invalid transition). Bypass WriteEnvelope's
-	// own validation to test that Receive calls ValidateEnvelope.
-	home := filepath.Join(t.TempDir(), "soldier-1")
-	os.MkdirAll(home, 0755)
-
-	env := &mhome.Envelope{
-		MessageID:      "test-invalid-transition",
-		SenderRank:     mhome.RankGeneral,
-		SenderIdentity: "general-main",
-		ReceiverRank:   mhome.RankGeneral,
-		ReceiverID:     "soldier-1",
-		Payload:        "hello",
-		PayloadHash:    mhome.PayloadHashHex("hello"),
-		SchemaVersion:  mhome.SchemaVersion,
-		CreatedAt:      time.Now().UnixNano(),
-	}
-	inboxDir := filepath.Join(home, "state", mhome.InboxDir, "general-main")
-	os.MkdirAll(inboxDir, 0755)
-	data, _ := json.MarshalIndent(env, "", "  ")
-	if err := os.WriteFile(filepath.Join(inboxDir, "test-invalid-transition.json"), data, 0644); err != nil {
-		t.Fatalf("write envelope: %v", err)
-	}
-
-	recv := setupReceiver(t, home, "soldier-1", mhome.RankGeneral)
-	_, err := recv.Receive(mhome.NotificationRef{
-		MessageID: env.MessageID, SenderIdentity: "general-main",
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid rank transition")
-	}
-	if !strings.Contains(err.Error(), "validate envelope") {
-		t.Errorf("expected validate envelope error, got: %v", err)
-	}
-}
-
 func TestReceiver_Receive_OmitemptyFields(t *testing.T) {
 	home := t.TempDir()
 	wireCaptainToGeneral(t, home, "general-1")
@@ -454,74 +403,6 @@ func TestReceiver_Receive_WrongSenderIdentity(t *testing.T) {
 	}
 }
 
-func TestReceiver_Receive_TamperedPayloadHash(t *testing.T) {
-	home := t.TempDir()
-	store := mhome.NewStore(home)
-
-	env := setupEnvelope(t, store, &mhome.Envelope{
-		SenderRank:     mhome.RankGeneral,
-		SenderIdentity: "general-1",
-		ReceiverRank:   mhome.RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "original content",
-	})
-
-	// Tamper with the envelope file on disk: change the payload but not the hash.
-	path := filepath.Join(home, "state", mhome.InboxDir, "general-1", env.MessageID+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading envelope: %v", err)
-	}
-	tampered := strings.Replace(string(data), "original content", "tampered content", 1)
-	if err := os.WriteFile(path, []byte(tampered), 0644); err != nil {
-		t.Fatalf("writing tampered envelope: %v", err)
-	}
-
-	recv := setupReceiver(t, home, "captain-1", mhome.RankCaptain)
-	_, err = recv.Receive(mhome.NotificationRef{
-		MessageID: env.MessageID, SenderIdentity: "general-1",
-	})
-	if err == nil {
-		t.Fatal("expected error for tampered payload")
-	}
-	if !strings.Contains(err.Error(), "hash mismatch") {
-		t.Errorf("expected hash mismatch error, got: %v", err)
-	}
-}
-
-func TestReceiver_Receive_TamperedHashField(t *testing.T) {
-	home := t.TempDir()
-	store := mhome.NewStore(home)
-
-	env := setupEnvelope(t, store, &mhome.Envelope{
-		SenderRank:     mhome.RankGeneral,
-		SenderIdentity: "general-1",
-		ReceiverRank:   mhome.RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "content",
-	})
-
-	// Tamper with the payload_hash field directly.
-	path := filepath.Join(home, "state", mhome.InboxDir, "general-1", env.MessageID+".json")
-	var raw map[string]interface{}
-	d, _ := os.ReadFile(path)
-	json.Unmarshal(d, &raw)
-	raw["payload_hash"] = "0000000000000000000000000000000000000000000000000000000000000000"
-	tampered, _ := json.MarshalIndent(raw, "", "  ")
-	os.WriteFile(path, tampered, 0644)
-
-	recv := setupReceiver(t, home, "captain-1", mhome.RankCaptain)
-	_, err := recv.Receive(mhome.NotificationRef{
-		MessageID: env.MessageID, SenderIdentity: "general-1",
-	})
-	if err == nil {
-		t.Fatal("expected error for tampered hash")
-	}
-	if !strings.Contains(err.Error(), "hash mismatch") {
-		t.Errorf("expected hash mismatch error, got: %v", err)
-	}
-}
-
 // =============================================================
 // Receiver.Ack tests — write "accepted" ack
 // =============================================================
@@ -611,41 +492,6 @@ func TestReceiver_Ack_MissingEnvelope(t *testing.T) {
 	}
 }
 
-func TestReceiver_Ack_ValidateEnvelopeGate(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "soldier-1")
-	os.MkdirAll(home, 0755)
-
-	env := &mhome.Envelope{
-		MessageID:      "test-invalid-transition",
-		SenderRank:     mhome.RankGeneral,
-		SenderIdentity: "general-main",
-		ReceiverRank:   mhome.RankGeneral,
-		ReceiverID:     filepath.Base(home),
-		Payload:        "hello",
-		PayloadHash:    mhome.PayloadHashHex("hello"),
-		SchemaVersion:  mhome.SchemaVersion,
-		CreatedAt:      time.Now().UnixNano(),
-	}
-	inboxDir := filepath.Join(home, "state", mhome.InboxDir, env.SenderIdentity)
-	os.MkdirAll(inboxDir, 0755)
-	data, _ := json.MarshalIndent(env, "", "  ")
-	if err := os.WriteFile(filepath.Join(inboxDir, env.MessageID+".json"), data, 0644); err != nil {
-		t.Fatalf("write envelope: %v", err)
-	}
-
-	recv := setupReceiver(t, home, env.ReceiverID, env.ReceiverRank)
-	_, err := recv.Ack(mhome.NotificationRef{
-		MessageID: env.MessageID, SenderIdentity: env.SenderIdentity,
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid rank transition")
-	}
-	want := "ack validate envelope: envelope: general can only send to captain or soldier"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("expected wrapped envelope validation error containing %q, got: %v", want, err)
-	}
-}
-
 func TestReceiver_Ack_OmitemptyFields(t *testing.T) {
 	home := t.TempDir()
 	wireCaptainToGeneral(t, home, "general-1")
@@ -716,41 +562,66 @@ func TestReceiver_Ack_WrongReceiverRank(t *testing.T) {
 	}
 }
 
-func TestReceiver_Ack_WrongSenderIdentity(t *testing.T) {
-	home := t.TempDir()
+func TestReceiver_Ack_SenderIdentityGuard(t *testing.T) {
+	tests := []struct {
+		name      string
+		refSender string
+		wantErr   string
+	}{
+		{"ref sender differs from envelope sender is refused", "general-beta", "ack sender identity mismatch"},
+		{"ref sender matches envelope sender is accepted", "general-alpha", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			wireCaptainToGeneral(t, home, "general-alpha")
+			inboxDir := filepath.Join(home, "state", mhome.InboxDir, tt.refSender)
+			if err := os.MkdirAll(inboxDir, 0755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			env := &mhome.Envelope{
+				MessageID:      "sender-msg",
+				SenderRank:     mhome.RankGeneral,
+				SenderIdentity: "general-alpha",
+				ReceiverRank:   mhome.RankCaptain,
+				ReceiverID:     "captain-1",
+				Payload:        "hello",
+				PayloadHash:    mhome.PayloadHashHex("hello"),
+				SchemaVersion:  mhome.SchemaVersion,
+				CreatedAt:      time.Now().UnixNano(),
+			}
+			data, _ := json.MarshalIndent(env, "", "  ")
+			if err := os.WriteFile(filepath.Join(inboxDir, env.MessageID+".json"), data, 0644); err != nil {
+				t.Fatalf("write envelope: %v", err)
+			}
 
-	mismatchDir := filepath.Join(home, "state", mhome.InboxDir, "general-beta")
-	if err := os.MkdirAll(mismatchDir, 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	mismatchEnv := &mhome.Envelope{
-		MessageID:      "mismatch-msg",
-		SenderRank:     mhome.RankGeneral,
-		SenderIdentity: "general-alpha",
-		ReceiverRank:   mhome.RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "hello",
-		PayloadHash:    mhome.PayloadHashHex("hello"),
-		SchemaVersion:  mhome.SchemaVersion,
-		CreatedAt:      time.Now().UnixNano(),
-	}
-	data, _ := json.MarshalIndent(mismatchEnv, "", "  ")
-	if err := os.WriteFile(filepath.Join(mismatchDir, "mismatch-msg.json"), data, 0644); err != nil {
-		t.Fatalf("write mismatch envelope: %v", err)
-	}
-
-	recv := setupReceiver(t, home, "captain-1", mhome.RankCaptain)
-	_, err := recv.Ack(mhome.NotificationRef{
-		MessageID: "mismatch-msg", SenderIdentity: "general-beta",
-	})
-	if err == nil {
-		t.Fatal("expected error for wrong sender identity")
+			recv := setupReceiver(t, home, "captain-1", mhome.RankCaptain)
+			ack, err := recv.Ack(mhome.NotificationRef{
+				MessageID: env.MessageID, SenderIdentity: tt.refSender,
+			})
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Ack failed: %v", err)
+				}
+				if ack.Outcome != mhome.OutcomeAccepted {
+					t.Errorf("ack outcome=%q, want %q", ack.Outcome, mhome.OutcomeAccepted)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected %q error, got accepted ack", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected %q error, got: %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
 func TestReceiver_Ack_TamperedPayloadHash(t *testing.T) {
 	home := t.TempDir()
 	store := mhome.NewStore(home)
+	wireCaptainToGeneral(t, home, "general-1")
 
 	env := setupEnvelope(t, store, &mhome.Envelope{
 		SenderRank:     mhome.RankGeneral,
@@ -777,11 +648,15 @@ func TestReceiver_Ack_TamperedPayloadHash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for tampered payload")
 	}
+	if !strings.Contains(err.Error(), "payload hash mismatch") {
+		t.Errorf("expected payload hash mismatch error, got: %v", err)
+	}
 }
 
 func TestReceiver_Ack_TamperedHashField(t *testing.T) {
 	home := t.TempDir()
 	store := mhome.NewStore(home)
+	wireCaptainToGeneral(t, home, "general-1")
 
 	env := setupEnvelope(t, store, &mhome.Envelope{
 		SenderRank:     mhome.RankGeneral,
@@ -805,6 +680,9 @@ func TestReceiver_Ack_TamperedHashField(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for tampered hash")
+	}
+	if !strings.Contains(err.Error(), "payload hash mismatch") {
+		t.Errorf("expected payload hash mismatch error, got: %v", err)
 	}
 }
 

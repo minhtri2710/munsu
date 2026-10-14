@@ -16,11 +16,6 @@ import (
 // Bump this when the identity/lease contract changes in a backward-incompatible way.
 const ProtocolVersion = 1
 
-// CommitSHAFormat is the length of the canonical commit SHA stored in
-// the identity's CommitSHA field. Short SHAs (7+ chars) are stored as-is;
-// full 40-char SHAs are also valid. Comparison uses unambiguous prefix matching.
-const CommitSHAFormat = "short"
-
 // BuildIdentity is a comparable build identity backed by a verified commit SHA.
 // Two identities match if one's SHA is a prefix of the other (unambiguous
 // prefix match). Zero value never matches anything.

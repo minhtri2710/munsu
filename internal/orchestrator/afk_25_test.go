@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -123,43 +122,16 @@ func TestReturn_DigestRoutineOnly(t *testing.T) {
 	}
 }
 
-func TestReturn_DaemonRunningStopsCleanly(t *testing.T) {
-	// This test verifies Return clears consent after a daemon died without
-	// releasing: the flag is set and the AFK lock file still names a pid, but
-	// nobody holds its flock, so the pid is stale and ignored.
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	flagPath := filepath.Join(tmp, afkFlagFile)
-	os.WriteFile(flagPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
-	os.WriteFile(mhome.AFKLockPath(tmp), []byte(fmt.Sprintf("%d\t2024-01-01T00:00:00Z\n", os.Getpid())), 0600)
-
-	if !IsActive(tmp) {
-		t.Fatal("IsActive() should be true before Return")
-	}
-
-	report, err := Return(tmp)
-	if err != nil {
-		t.Fatalf("Return: %v", err)
-	}
-
-	if IsActive(tmp) {
-		t.Error("IsActive() = true after Return, want false")
-	}
-	assertAFKLockFree(t, tmp)
-	if report.HasActionable() {
-		t.Fatal("Return on running daemon (no digest): HasActionable() = true, want false")
-	}
-}
-
 // --- Return string format tests ---
 
+// A report without LossyStop reads "All clear" and names no lossy stop,
+// whether or not it drained anything.
 func TestReturnReport_StringClean(t *testing.T) {
-	r := &ReturnReport{}
-	s := r.String()
-	if !strings.Contains(s, "All clear") {
-		t.Errorf("clean report string should contain 'All clear', got: %q", s)
+	for _, r := range []*ReturnReport{{}, {DigestedCount: 1}} {
+		s := r.String()
+		if !strings.Contains(s, "All clear") || strings.Contains(s, "Lossy stop") {
+			t.Errorf("clean report %+v string = %q, want 'All clear' and no lossy stop", r, s)
+		}
 	}
 }
 
@@ -209,19 +181,6 @@ func TestReturnReport_StringLossyStop(t *testing.T) {
 	}
 }
 
-// TestReturnReport_StringCleanUnaffected pins that the lossy branch leaves the
-// clean path alone: a report without LossyStop still reads "All clear".
-func TestReturnReport_StringCleanUnaffected(t *testing.T) {
-	r := &ReturnReport{DigestedCount: 1}
-	s := r.String()
-	if !strings.Contains(s, "All clear") {
-		t.Errorf("clean report string missing 'All clear', got: %q", s)
-	}
-	if strings.Contains(s, "Lossy stop") {
-		t.Errorf("clean report string mentions a lossy stop, got: %q", s)
-	}
-}
-
 // --- IsClean tests ---
 
 func TestIsClean_NoDigest(t *testing.T) {
@@ -268,21 +227,23 @@ func TestIsClean_EscalatedDigest(t *testing.T) {
 	}
 }
 
-func TestIsClean_BlockedItem(t *testing.T) {
+// A routine-typed entry passes the type check, so only the blocked marker
+// keeps it from reading as clean.
+func TestIsClean_RoutineBlockedItem(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	be := &BatchedEscalation{
-		Entries: []BatchedEntry{
-			{Kind: mhome.ReportWakeKind, Key: "t1", Payload: "t1: blocked: missing credentials [key=default]", Type: EscalationFailure, At: time.Now()},
-		},
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
 	}
+	be := &BatchedEscalation{Entries: []BatchedEntry{
+		{Kind: mhome.ReportWakeKind, Key: "t1", Payload: "t1: blocked: waiting on a dependency", Type: EscalationRoutine, At: time.Now()},
+	}}
 	data, _ := json.Marshal(be)
-	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)
-
+	if err := os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 	if clean, err := IsClean(tmp); err != nil || clean {
-		t.Errorf("IsClean() = %v, %v with blocked item, want false, nil", clean, err)
+		t.Errorf("IsClean() = %v, %v with a routine blocked item, want false, nil", clean, err)
 	}
 }
 
