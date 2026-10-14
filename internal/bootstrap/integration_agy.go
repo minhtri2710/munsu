@@ -1,8 +1,7 @@
-// Package integrate manages opt-in harness integration.
-//
 // Agy adapter: generates .agents/hooks.json with munsu-owned hook entries
 // anchored to the munsu binary path, following the official Antigravity CLI
 // hook contract documented at https://antigravity.google/docs/hooks.
+
 package bootstrap
 
 import (
