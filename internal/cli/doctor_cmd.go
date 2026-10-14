@@ -26,7 +26,7 @@ Optional tools get warnings but do not fail the exit code:
   treehouse, no-mistakes, gh-axi, gh, and GitHub auth.
 
 Use --role for role-specific integration matrix:
-  --role general   Harness adapter, session backend, gh auth, go toolchain
+  --role general   Harness adapter, session backend, gh auth, go toolchain, per-project launch readiness
   --role captain   Watcher integration, config, captain homes, converge readiness
   --role soldier   Worktree state, pipeline readiness, soldier brief`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
