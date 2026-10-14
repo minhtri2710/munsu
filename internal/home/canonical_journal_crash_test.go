@@ -246,6 +246,7 @@ func mustWorkingReview(t *testing.T, c *ta.Canonical) {
 		Backend: "claude", Harness: "pi", Model: "opus", Effort: "high", Mode: "direct-PR", Kind: ta.KindReview,
 		Project: "proj", ParentTaskID: "parent", LaunchID: "launch-rev1", WindowLabel: "window-rev1",
 		EndpointReservationID: "ep-res-rev1", EndpointFenceToken: "ep-fence-rev1", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-rev1", Reason: "spawn",
+		SeatEnv: ta.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"},
 	}
 	commit("op-begin-rev1", intent, func(op domain.Operation) error { _, err := c.BeginSpawn(op, intent); return err })
 	attach := ta.CanonicalAttachEndpointRequest{
@@ -393,6 +394,7 @@ func TestCrashRecoveryBeginSpawn(t *testing.T) {
 			ParentTaskID: "parent", LaunchID: "launch-t1", WindowLabel: "window-t1",
 			WorktreeReservationID: "wt-res-t1", WorktreeFenceToken: "wt-fence-t1",
 			EndpointReservationID: "ep-res-t1", EndpointFenceToken: "ep-fence-t1", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-t1", Reason: "spawn",
+			SeatEnv: ta.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"},
 		}
 	}
 	runCrashAtEveryStep(t, "t1", crashCase{

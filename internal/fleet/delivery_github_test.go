@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -174,5 +175,24 @@ func TestProbeGitHubCapability_ReturnsDeterministicState(t *testing.T) {
 	state2 := ProbeGitHubCapability()
 	if state != state2 {
 		t.Error("ProbeGitHubCapability is not deterministic")
+	}
+}
+
+// TestForgeCallsTimeOut proves a hung forge call fails once forgeCallTimeout
+// passes instead of holding the command that made it.
+func TestForgeCallsTimeOut(t *testing.T) {
+	gh := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "gh"), "#!/bin/sh\nexec sleep 5\n")
+	oldLook, oldTimeout := ghCLILookPath, forgeCallTimeout
+	t.Cleanup(func() { ghCLILookPath, forgeCallTimeout = oldLook, oldTimeout })
+	ghCLILookPath = func() (string, error) { return gh, nil }
+	forgeCallTimeout = 100 * time.Millisecond
+
+	start := time.Now()
+	_, err := (&ghAxiClient{}).ViewPRJSON("owner", "repo", 1, "state")
+	if err == nil || !strings.Contains(err.Error(), "gh pr view: timed out after 100ms") {
+		t.Fatalf("ViewPRJSON err = %v, want a timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("ViewPRJSON returned after %s, want it bounded by the timeout", elapsed)
 	}
 }

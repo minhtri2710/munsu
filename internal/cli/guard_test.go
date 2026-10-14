@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // captureStderr runs f and returns everything written to os.Stderr during f.
@@ -61,7 +64,7 @@ func TestGuardWarningOnStaleBeat(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {
@@ -75,8 +78,8 @@ func TestGuardWarningOnStaleBeat(t *testing.T) {
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING on stderr for stale beat, got: %s", stderr)
 	}
-	if !strings.Contains(stderr, "1 task(s) in flight") {
-		t.Errorf("expected '1 task(s) in flight' in warning, got: %s", stderr)
+	if !strings.Contains(stderr, "1 task(s) working") {
+		t.Errorf("expected '1 task(s) working' in warning, got: %s", stderr)
 	}
 }
 
@@ -87,7 +90,7 @@ func TestGuardWarningOnMissingBeat(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	writeTaskMeta(t, tmpDir, "test-task", "scout")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "scout")
 	// No beat file written
 
 	stderr := captureStderr(func() {
@@ -108,7 +111,7 @@ func TestGuardSilenceHealthyBeat(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {
@@ -130,7 +133,7 @@ func TestGuardSilenceSkipEnv(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
 
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeWorkingTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {
@@ -283,4 +286,24 @@ func TestGuardContractOutput_StableCodes(t *testing.T) {
 			t.Errorf("expected human-readable message in output, got: %s", out)
 		}
 	})
+}
+
+// writeWorkingTaskMeta seeds a canonical task and starts it, so it counts as a
+// working soldier.
+func writeWorkingTaskMeta(t *testing.T, homeDir, id, kind string) {
+	t.Helper()
+	writeTaskMeta(t, homeDir, id, kind)
+	auth := cliCanonicalForHome(t, homeDir)
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalStartRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "test"}
+	if _, err := auth.Start(mustCanonicalOp(t, "op-start-"+id, req), req); err != nil {
+		t.Fatal(err)
+	}
 }

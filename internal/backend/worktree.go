@@ -1,5 +1,3 @@
-// Package worktree manages pooled (treehouse) and fallback (git worktree) worktree acquisition.
-//
 // When treehouse is on PATH, all operations delegate to the treehouse CLI for pooled
 // worktree management. When treehouse is absent, a bare git worktree fallback is used
 // with a one-time stderr note.
@@ -15,6 +13,7 @@
 // The git worktree fallback uses stable hashed paths under <homeDir>/.worktrees.
 // homeDir must be non-empty when treehouse is absent; it is passed by callers
 // that have already resolved the munsu home (e.g. via home.Resolve).
+
 package backend
 
 import (
