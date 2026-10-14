@@ -32,6 +32,7 @@ func launchFenceForTest(t *testing.T) *fence.Fence {
 	f, err := fence.New(fence.Launch{
 		Role: fence.RoleSoldier, Harness: "pi", Home: dirs["home"], Primary: dirs["primary"], Worktree: dirs["worktree"],
 		GitDir: dirs["gitdir"], CommonDir: dirs["common"], Branch: "mu/t",
+		UserHome: testSeatEnv().UserHome,
 	})
 	if err != nil {
 		t.Fatalf("fence.New: %v", err)
