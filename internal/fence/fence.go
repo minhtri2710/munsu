@@ -1,7 +1,10 @@
 // Package fence confines a launched seat's whole process tree to a set of
 // writable roots with an OS sandbox (macOS sandbox-exec), refuses every
 // unix-socket connect but DNS's and a gate soldier's no-mistakes daemon's, and
-// refuses the removal or replacement of a claude or tmux socket. It is defense
+// refuses the removal or replacement of a claude or tmux socket. It also
+// reports every outbound connect to the Sandbox log: an observe-only (allow
+// network-outbound (with report)) sits before the socket denies, which are
+// last-match-wins, so it logs seat egress and refuses nothing. It is defense
 // in depth beside the shell lexer and the git shim: those refuse by reading
 // argv; the fence refuses at the syscall, so a wrapped program, an
 // absolute-path git, or a reset PATH cannot write outside the roots.
