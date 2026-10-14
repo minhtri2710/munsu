@@ -35,6 +35,42 @@ var QueryDeliveryMergeStatus = func(forge taskauthority.DeliveryStep, ident *dom
 	return fetchGLMergeStatus(client.gitlab, ident)
 }
 
+// landing is the answer to "did this delivery land", one per provider read.
+type landing int
+
+const (
+	landingUnknown landing = iota
+	landingLanded
+	landingOpen
+	landingClosed
+)
+
+// classifyLanding owns "the delivery landed": Deliver's outcome, teardown's
+// merge proof and merge-status all decide through it. Landed needs the
+// provider to report merged with merge-commit evidence and the exact head the
+// delivery identity pins; merged evidence missing either is unknown, and the
+// error says why.
+func classifyLanding(status domain.PRMergeStatus, ident domain.DeliveryIdentity) (landing, error) {
+	switch {
+	case status.Merged:
+		if status.HeadSHA == "" {
+			return landingUnknown, fmt.Errorf("provider returned empty head SHA for merged PR #%d", ident.Number)
+		}
+		if !validGitObjectID(status.MergedSHA) {
+			return landingUnknown, fmt.Errorf("provider returned no merge-result evidence for merged PR #%d", ident.Number)
+		}
+		if status.HeadSHA != ident.HeadSHA {
+			return landingUnknown, fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved", ident.HeadSHA, status.HeadSHA)
+		}
+		return landingLanded, nil
+	case status.Closed:
+		return landingClosed, nil
+	case status.State == "OPEN":
+		return landingOpen, nil
+	}
+	return landingUnknown, fmt.Errorf("PR #%d is in an unexpected state %q: merged=%v closed=%v", ident.Number, status.State, status.Merged, status.Closed)
+}
+
 // fetchGLMergeStatus queries the GitLab MR status via the typed client.
 func fetchGLMergeStatus(client GitLabClient, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	// For GitLab MR JSON, we need host and project name separately.
