@@ -401,11 +401,6 @@ var (
 )
 
 func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness, obs *cycleObservation) []*WakeReason {
-	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
-	if err != nil {
-		return nil
-	}
-
 	var reasons []*WakeReason
 	// Status-signal path: Human-needed last lines (needs-decision, blocked,
 	// failed) wake General even when the pane is alive. Completion, readiness
@@ -432,14 +427,15 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		}
 		reasons = append(reasons, reason)
 	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
-			continue
-		}
+	// Endpoint path: the canonical live, bound soldier tasks are the ones
+	// probed; a task past working or with no bound endpoint has no seat to
+	// watch.
+	bound, err := LiveBoundEndpoints(homeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "watcher: listing bound soldier tasks: %v\n", err)
+	}
+	for _, ep := range bound {
+		id := ep.TaskID
 		if seenStatus[id] {
 			// Status signal already actionable for this id; skip stale scan.
 			continue
@@ -447,7 +443,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		if obs != nil {
 			obs.scannedTasks++
 		}
-		reason := scanTaskWithProbe(homeDir, id, probe, states, lv)
+		reason := scanTaskWithProbe(homeDir, id, ep.Meta, probe, states, lv)
 		if reason == nil {
 			if clearResolved {
 				clearWakeMarker(homeDir, id)
@@ -552,21 +548,8 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 	return out
 }
 
-func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness) *WakeReason {
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		return nil
-	}
-	// Captains are idle-by-default. Parent
-	// supervision uses captain-relevant status signals, not pane-idle stale.
-	if meta["kind"] == "captain" {
-		resetStreak(id)
-		return nil
-	}
-	windowID, hasWindow := meta["window"]
-	if !hasWindow {
-		return nil
-	}
+func scanTaskWithProbe(homeDir, id string, meta map[string]string, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness) *WakeReason {
+	windowID := meta["window"]
 
 	if probe == nil {
 		return &WakeReason{Kind: "check", TaskIDs: []string{id}, Message: "endpoint probe is not configured"}
