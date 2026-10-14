@@ -1,21 +1,30 @@
 package fleet
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // deliveryChanges lists what a delivery changes between the merge base of its
-// base branch and its head. The base is origin/<BaseRef> as the worktree knows
-// it, matching the provider merge target. Any git failure yields an unlisted
-// diff, which requires a verdict; the failure is never surfaced as prose.
+// base branch and its head. The base is origin's branch tip, fetched into a
+// private ref so a stale or forged refs/remotes/origin/* never decides it. Any
+// git failure yields an unlisted diff, which requires a verdict; the failure is
+// never surfaced as prose.
 func deliveryChanges(worktreePath string, ident domain.DeliveryIdentity) domain.DeliveryDiff {
 	if ident.BaseRef == "" || strings.HasPrefix(ident.BaseRef, "-") || ident.HeadSHA == "" || strings.HasPrefix(ident.HeadSHA, "-") {
 		return domain.DeliveryDiff{}
 	}
-	base, err := gitOutput(worktreePath, "merge-base", "origin/"+ident.BaseRef, ident.HeadSHA)
+	baseRef := fmt.Sprintf("refs/munsu/delivery-base/%d-%d", os.Getpid(), time.Now().UnixNano())
+	if _, err := gitOutput(worktreePath, "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", "+refs/heads/"+ident.BaseRef+":"+baseRef); err != nil {
+		return domain.DeliveryDiff{}
+	}
+	defer gitOutput(worktreePath, "update-ref", "-d", baseRef)
+	base, err := gitOutput(worktreePath, "merge-base", baseRef, ident.HeadSHA)
 	if err != nil || base == "" {
 		return domain.DeliveryDiff{}
 	}

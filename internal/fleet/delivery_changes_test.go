@@ -45,6 +45,10 @@ func deliveryChangesRepo(t *testing.T) (dir, base string) {
 	gitRepo(t, dir, "commit", "-q", "-m", "base")
 	base = gitRepo(t, dir, "rev-parse", "HEAD")
 	gitRepo(t, dir, "update-ref", "refs/remotes/origin/main", base)
+	origin := t.TempDir()
+	gitRepo(t, origin, "init", "-q", "--bare", "-b", "main")
+	gitRepo(t, dir, "remote", "add", "origin", origin)
+	gitRepo(t, dir, "push", "-q", "origin", "main")
 	return dir, base
 }
 
@@ -123,5 +127,16 @@ func TestDeliveryChangesFailsClosedWhenTheRangeIsUnlisted(t *testing.T) {
 				t.Fatalf("deliveryChanges(...) = %+v, want unlisted and not prose", got)
 			}
 		})
+	}
+}
+
+func TestDeliveryChangesIgnoresAForgedLocalTrackingRef(t *testing.T) {
+	dir, base := deliveryChangesRepo(t)
+	withCode := branchWith(t, dir, base, func(dir string) { writeRepoFile(t, dir, "main.go", "package main\n// forged\n") })
+	head := branchWith(t, dir, withCode, func(dir string) { writeRepoFile(t, dir, "docs/a.md", "changed\n") })
+	gitRepo(t, dir, "update-ref", "refs/remotes/origin/main", withCode)
+	ident := domain.DeliveryIdentity{BaseRef: "main", HeadSHA: head}
+	if got := deliveryChanges(dir, ident); got.ProseOnly() {
+		t.Fatalf("deliveryChanges(...) = %+v, want the code change from the remote base, not prose", got)
 	}
 }
