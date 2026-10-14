@@ -458,11 +458,12 @@ func TestResolveDispatchSelection_ModelEffort(t *testing.T) {
 		DefaultEffort:  "low",
 		Profiles: []DispatchProfile{
 			{
-				Name:    "review",
-				Match:   []string{"review"},
-				Harness: "codex",
-				Model:   "gpt-5.2-codex",
-				Effort:  "high",
+				Name:     "review",
+				Match:    []string{"review"},
+				Harness:  "codex",
+				Model:    "gpt-5.2-codex",
+				Effort:   "high",
+				Scaffold: "guided",
 			},
 			{
 				Name:    "all",
@@ -476,17 +477,17 @@ func TestResolveDispatchSelection_ModelEffort(t *testing.T) {
 	cfg.normalize()
 
 	got := ResolveDispatchSelection(cfg, "review this PR")
-	if got.Harness != "codex" || got.Model != "gpt-5.2-codex" || got.Effort != "high" {
+	if got.Harness != "codex" || got.Model != "gpt-5.2-codex" || got.Effort != "high" || got.Scaffold != "guided" {
 		t.Errorf("review selection = %+v", got)
 	}
 
 	got = ResolveDispatchSelection(cfg, "implement feature")
-	if got.Harness != "pi" || got.Model != "opencode-go/deepseek-v4-flash" || got.Effort != "medium" {
+	if got.Harness != "pi" || got.Model != "opencode-go/deepseek-v4-flash" || got.Effort != "medium" || got.Scaffold != "" {
 		t.Errorf("catchall selection = %+v", got)
 	}
 
 	got = ResolveDispatchSelection(cfg, "")
-	if got.Harness != "pi" || got.Model != "default-model" || got.Effort != "low" {
+	if got.Harness != "pi" || got.Model != "default-model" || got.Effort != "low" || got.Scaffold != "" {
 		t.Errorf("empty desc selection = %+v", got)
 	}
 }
