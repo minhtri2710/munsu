@@ -9,12 +9,12 @@ import (
 )
 
 // Encode serializes a contract response at the output boundary. TOON indents
-// with two spaces. A TOON string is quoted (strconv.Quote) when it is empty,
-// true, false or null, starts with -, has leading or trailing whitespace,
+// with two spaces. A TOON string is quoted with the TOON v3.3 escapes when it is
+// empty, true, false or null, starts with -, has leading or trailing whitespace,
 // parses as a float (strconv.ParseFloat), equals SchemaVersion, or contains one
-// of : [ ] { } " , \ or a line break or tab, so untrusted text cannot inject
-// structure. JSON carries the same field set apart from the TOON table-row
-// differences listed in contract_model.go.
+// of : [ ] { } " , \ or any U+0000-U+001F control character, so untrusted text
+// cannot inject structure. JSON carries the same field set apart from the TOON
+// table-row differences listed in contract_model.go.
 func Encode(value any, output string) (string, error) {
 	switch output {
 	case OutputJSON:
@@ -184,10 +184,44 @@ func scalar(value reflect.Value) string {
 }
 
 func toonString(value string) string {
-	if value == SchemaVersion || value == "" || value == "true" || value == "false" || value == "null" || strings.HasPrefix(value, "-") || strings.ContainsAny(value, ":[]{}\",\\\n\r\t") || strings.TrimSpace(value) != value || numericLike(value) {
-		return strconv.Quote(value)
+	if value == SchemaVersion || value == "" || value == "true" || value == "false" || value == "null" || strings.HasPrefix(value, "-") || strings.ContainsAny(value, ":[]{}\",\\") || hasControl(value) || strings.TrimSpace(value) != value || numericLike(value) {
+		return toonQuote(value)
 	}
 	return value
+}
+
+func hasControl(value string) bool {
+	for _, r := range value {
+		if r < 0x20 {
+			return true
+		}
+	}
+	return false
+}
+
+func toonQuote(value string) string {
+	var builder strings.Builder
+	builder.WriteByte('"')
+	for _, r := range value {
+		switch {
+		case r == '\\':
+			builder.WriteString(`\\`)
+		case r == '"':
+			builder.WriteString(`\"`)
+		case r == '\n':
+			builder.WriteString(`\n`)
+		case r == '\r':
+			builder.WriteString(`\r`)
+		case r == '\t':
+			builder.WriteString(`\t`)
+		case r < 0x20:
+			fmt.Fprintf(&builder, `\u%04x`, r)
+		default:
+			builder.WriteRune(r)
+		}
+	}
+	builder.WriteByte('"')
+	return builder.String()
 }
 
 func numericLike(value string) bool {
