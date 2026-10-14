@@ -32,7 +32,7 @@ func (f *Fence) Wrap(argv []string) ([]string, error) {
 // (the control) and then one write to each directory the profile must refuse:
 // the primary checkout, the git common dir, for a soldier its home roots and
 // its gate's hooks dir, and for a reviewer the checkout under review, its git
-// dir and the home's state/.
+// dir and its home.
 // A home root that does not exist yet (.journal, .lock) is probed by creating
 // it, which the profile must refuse too. It returns a nil error only when the control
 // succeeds and every refused write fails with "Operation not permitted". A
