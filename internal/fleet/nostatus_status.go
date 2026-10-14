@@ -1,4 +1,3 @@
-// Package nostatus reads and parses structured no-mistakes run status at the CLI boundary.
 package fleet
 
 import (
