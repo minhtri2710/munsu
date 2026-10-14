@@ -64,6 +64,9 @@ type DeliverResult struct {
 	AuthorizationOperationID string
 	OutcomeOperationID       string
 	Replayed                 bool
+	// Recovered holds the non-completed outcomes of other tasks' journals that
+	// this call resumed under the delivery lock; they are reported, not failed on.
+	Recovered []DeliverResult
 }
 
 // IsError reports whether the committed outcome is not completed (partial,
@@ -247,7 +250,8 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 	// Converge any pending delivery journals before creating a new one, so an
 	// interrupted delivery completes first and the new delivery observes
 	// truthful state (the accepted Task Transfer journal mechanics).
-	if err := recoverPendingDeliveryJournals(h, lk, ""); err != nil {
+	recovered, err := recoverPendingDeliveryJournals(h, lk, "")
+	if err != nil {
 		return nil, fmt.Errorf("deliver %s: recovering pending delivery journals: %w", taskID, err)
 	}
 
@@ -273,7 +277,11 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 	}
 	deliveryCrashHook("journal")
 
-	return resumeDeliveryJournal(h, lk, c, journal)
+	res, err := resumeDeliveryJournal(h, lk, c, journal)
+	if res != nil {
+		res.Recovered = recovered
+	}
+	return res, err
 }
 
 // validateDeliverRequest checks the typed delivery intent: a supported
