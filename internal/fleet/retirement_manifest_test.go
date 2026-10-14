@@ -40,7 +40,7 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	}
 
 	// Write canonical launch artifacts.
-	charter := DefaultCharter("manifest-test", "ship", "direct-PR")
+	charter := DefaultCharter("manifest-test", "ship", "direct-PR", "")
 	if briefContent == nil {
 		briefContent = []byte("# Task: manifest-test\n\nCanonical brief.\n")
 	}

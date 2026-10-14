@@ -223,6 +223,24 @@ func TestReviewTaskCountsAsInFlight(t *testing.T) {
 	}
 }
 
+// TestGuardTaskCountsWarnsOnlyForWorkingSoldiers: the in-flight warning counts
+// the working soldier, not a queued review waiting to be started.
+func TestGuardTaskCountsWarnsOnlyForWorkingSoldiers(t *testing.T) {
+	homeDir := deliveryGuardShip(t, "t-ship")
+	auth := cliCanonicalForHome(t, homeDir)
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskIDFor(t, "r1"), Owner: "owner", Description: "review",
+		Kind: taskauthority.KindReview, ReviewTaskID: "t-ship", ReviewHead: deliveryGuardHead, Reason: "test",
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "op-create-r1", req), req); err != nil {
+		t.Fatal(err)
+	}
+	inFlight, working, err := guardTaskCounts(homeDir)
+	if err != nil || inFlight != 2 || working != 1 {
+		t.Fatalf("guardTaskCounts = %d, %d, %v, want 2 in flight and 1 working", inFlight, working, err)
+	}
+}
+
 // TestBriefScaffoldsAReviewTaskFromItsDefinition: brief reads the reviewed
 // task and head from the review task's canonical definition and scaffolds the
 // review brief, reporting the review kind.
