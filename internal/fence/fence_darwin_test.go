@@ -459,7 +459,7 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, Primary: primary, Worktree: wt,
+	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, UserHome: testUserHome(), Primary: primary, Worktree: wt,
 		GitDir: filepath.Join(common, "worktrees", "wt"), CommonDir: common, Branch: "mu/T-1",
 		GateRepo: gate})
 	fencedGit := func(args ...string) {
@@ -1377,15 +1377,17 @@ func TestNewRefusals(t *testing.T) {
 		launch.Files = []string{filepath.Join(l.worktree, "v.json")}
 		mustNew(t, launch)
 	})
-	t.Run("no user home", func(t *testing.T) {
-		t.Setenv("HOME", "")
-		if _, err := New(l.soldier()); err == nil || !strings.Contains(err.Error(), "fence: resolving user home") {
+	t.Run("a relative user home", func(t *testing.T) {
+		launch := l.soldier()
+		launch.UserHome = "relative/home"
+		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "fence: user home must be absolute") {
 			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("a user home that does not exist", func(t *testing.T) {
-		t.Setenv("HOME", filepath.Join(l.root, "no-such-home"))
-		if _, err := New(l.soldier()); err == nil || !strings.Contains(err.Error(), "fence: user home:") {
+		launch := l.soldier()
+		launch.UserHome = filepath.Join(l.root, "no-such-home")
+		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "fence: user home:") {
 			t.Fatalf("err = %v", err)
 		}
 	})
