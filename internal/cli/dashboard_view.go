@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 var (
@@ -126,6 +127,15 @@ func (m *dashboardModel) resize() {
 	m.feed.GotoBottom()
 
 	m.list.SetSize(w, max(1, min(m.listH-1, len(m.list.Items()))))
+}
+
+// columnRows is 1 when the list section has a line to spare for the column
+// header: it never takes a row from the list.
+func (m dashboardModel) columnRows() int {
+	if m.listH-1 > len(m.list.Items()) {
+		return 1
+	}
+	return 0
 }
 
 // feedLines is one fitted line per event; the viewport owns which of them
@@ -330,13 +340,47 @@ func (m dashboardModel) header() []dashLine {
 	if m.state() == stateFailed {
 		rest = dashRed.Render(" " + dashText(fmt.Sprint(m.readErr)))
 	}
+	chips := ""
 	if !m.lastGood.IsZero() {
 		counts = keepCounts(m.unresolved(), m.humanNeeded(), len(m.failures))
+		chips = m.chips()
 	}
 	return []dashLine{
-		{keep: keepState(m.state(), m.now().Sub(m.lastGood), m.reading && m.state() != stateLoading), rest: rest + "  " + dashFaint.Render(dashText(m.home))},
+		{keep: keepState(m.state(), m.now().Sub(m.lastGood), m.reading && m.state() != stateLoading), rest: rest + chips + "  " + dashFaint.Render(dashText(m.home))},
 		{keep: counts},
 	}
+}
+
+// chips are the title line's fleet summary after the state: the watcher beat,
+// the captains with rows, the working tasks and the unacked wakes.
+func (m dashboardModel) chips() string {
+	watcher := dashGreen.Render("watcher " + m.beat.Age.Round(time.Second).String())
+	switch {
+	case !m.beat.Exists:
+		watcher = dashRed.Render("watcher absent")
+	case m.beat.Stale:
+		watcher = dashRed.Render("watcher stale " + m.beat.Age.Round(time.Second).String())
+	}
+	captains := map[string]bool{}
+	working := 0
+	for _, ts := range m.rows {
+		if id, ok := strings.CutPrefix(ts.Source, "captain:"); ok {
+			captains[id] = true
+		}
+		if taskauthority.Phase(ts.CurrentState) == taskauthority.PhaseWorking {
+			working++
+		}
+	}
+	for _, f := range m.failures {
+		if id, ok := strings.CutPrefix(f.Source, "captain:"); ok {
+			captains[id] = true
+		}
+	}
+	unacked := strconv.Itoa(m.unacked)
+	if m.unackedErr != nil {
+		unacked = "?"
+	}
+	return "  " + watcher + fmt.Sprintf("  captains %d  working %d  unacked %s", len(captains), working, unacked)
 }
 
 // notes are the lines between the header and the body.
@@ -375,7 +419,17 @@ func (m dashboardModel) body() []dashLine {
 		rows = strings.Split(l.View(), "\n")
 	}
 	title := keepListTitle(len(m.failures) > 0, drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)
+	if m.columnRows() == 1 {
+		rows = append([]string{dashFaint.Render(dashColumns)}, rows...)
+	}
 	return append([]dashLine{{keep: title}}, dashFree(rows...)...)
+}
+
+// dashColumns heads the seat table; dashSeatLine lays a row out the same way.
+var dashColumns = dashSeatLine("    ", "GROUP", "NAME", "STATE", "ROLE", "HARNESS", "MODEL", "STATUS")
+
+func dashSeatLine(lead, group, name, state, role, harness, model, status string) string {
+	return lead + pad(group, 12) + " " + pad(name, 20) + " " + pad(state, 16) + " " + pad(role, 6) + " " + pad(harness, 7) + " " + pad(model, 14) + " " + status
 }
 
 // dashRows draws a list item as one line: a failed source in red, a task row
@@ -414,16 +468,36 @@ func (d dashRows) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	if fleet.HumanNeeded(*ts) {
 		hn = "! "
 	}
-	src := dashText(ts.Source)
-	if src == "" {
-		src = "primary"
+	group := ""
+	if index == m.Paginator.Page*m.Paginator.PerPage || dashGroup(m.Items()[index-1].(dashItem)) != dashGroup(it) {
+		group = dashText(dashGroup(it))
 	}
+	harness, model := dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model))
 	id, kind := dashText(ts.ID), dashText(ts.Kind)
 	if index == m.Index() {
-		fmt.Fprint(w, dashSelect.Render(mark+hn+pad(id, 22)+" "+pad(phase, 16)+" "+pad(kind, 7)+" "+pad(src, 16)+" "+status))
+		fmt.Fprint(w, dashSelect.Render(ansi.Truncate(dashSeatLine(mark+hn, group, id, phase, kind, harness, model, status), m.Width(), "…")))
 		return
 	}
-	fmt.Fprint(w, mark+hn+pad(id, 22)+" "+phaseStyle(phase).Render(pad(phase, 16))+" "+pad(kind, 7)+" "+pad(src, 16)+" "+status)
+	fmt.Fprint(w, ansi.Truncate(mark+hn+pad(group, 12)+" "+pad(id, 20)+" "+phaseStyle(phase).Render(pad(phase, 16))+" "+pad(kind, 6)+" "+pad(harness, 7)+" "+pad(model, 14)+" "+status, m.Width(), "…"))
+}
+
+// dashGroup is the group a row is listed under: "general" for the primary
+// home, the captain id for a captain's home, "" for a failed source.
+func dashGroup(it dashItem) string {
+	if it.row == nil {
+		return ""
+	}
+	if id, ok := strings.CutPrefix(it.row.Source, "captain:"); ok {
+		return id
+	}
+	return "general"
+}
+
+func dashOr(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // feedPlaceholder is the line shown in place of events while there are none.
