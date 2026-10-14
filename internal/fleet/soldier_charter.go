@@ -48,9 +48,9 @@ const keptTestRules = `- Assert through the public seam production uses; never r
 const guidedPlanScaffold = "## Plan Scaffold\n\n" +
 	"Before your first edit, write a numbered plan of small steps in one progress\n" +
 	"line: `munsu report working \"<numbered plan>\" --key plan`. Work one step at a\n" +
-	"time. After each step run the per-edit check above and `go test` of each edited\n" +
-	"package, and paste the ran and skipped counts it printed. Report done only after\n" +
-	"the tests of every package you touched have passed.\n\n"
+	"time. After each step run the per-edit check above and the tests of each changed\n" +
+	"package or module, and paste the ran and skipped counts it printed. Report done\n" +
+	"only after the tests of every package or module you touched have passed.\n\n"
 
 // DefaultCharter returns the canonical, versioned Soldier charter.
 // Soldier authority only — no Captain or General authority.
@@ -137,7 +137,7 @@ fixtures-only change.
 Each check row pastes the ran and skipped counts its command printed, and a
 check that did not run is a failed row.
 
-Per edit, run the fast read-only check of the edited Go package: gofmt -l and go vet on that package. Full suites run on CI.
+Per edit, run the fastest read-only check the project offers for each changed file: a formatter in check mode, then static analysis. Full suites run on CI.
 
 %[9]s## Tests
 

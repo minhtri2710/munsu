@@ -134,9 +134,9 @@ func TestShipCharterPlanScaffoldFollowsTheDispatchProfileScaffold(t *testing.T) 
 	const plan = "Full suites run on CI.\n\n## Plan Scaffold\n\n" +
 		"Before your first edit, write a numbered plan of small steps in one progress\n" +
 		"line: `munsu report working \"<numbered plan>\" --key plan`. Work one step at a\n" +
-		"time. After each step run the per-edit check above and `go test` of each edited\n" +
-		"package, and paste the ran and skipped counts it printed. Report done only after\n" +
-		"the tests of every package you touched have passed.\n\n## Tests\n"
+		"time. After each step run the per-edit check above and the tests of each changed\n" +
+		"package or module, and paste the ran and skipped counts it printed. Report done\n" +
+		"only after the tests of every package or module you touched have passed.\n\n## Tests\n"
 	const lean = "Full suites run on CI.\n\n## Tests\n"
 	for _, tc := range []struct {
 		scaffold string
