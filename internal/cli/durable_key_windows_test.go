@@ -9,23 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-func TestScanBoundEndpointsRoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	if err := home.WriteMeta(tmp, "ship:1", map[string]string{"kind": "ship", "window": "@win", "backend": "herdr"}); err != nil {
-		t.Fatal(err)
-	}
-	endpoints, err := scanBoundEndpoints(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(endpoints) != 1 {
-		t.Fatalf("scanBoundEndpoints = %+v, want 1 bound endpoint", endpoints)
-	}
-	if endpoints[0].handle != "@win" || endpoints[0].backend != "herdr" {
-		t.Errorf("scanBoundEndpoints[0] = %+v, want handle @win backend herdr", endpoints[0])
-	}
-}
-
 func TestFormatCaptainStatusLinesRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	if err := home.AppendStatus(tmp, "captain:domain", "working: processing"); err != nil {

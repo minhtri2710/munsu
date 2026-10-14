@@ -113,6 +113,12 @@ func SoldierKind(kind string) bool {
 	return kind == KindShip || kind == KindScout || kind == KindReview
 }
 
+// LiveBound reports whether the task's soldier seat is live and bound: the
+// task is working and its endpoint is bound.
+func LiveBound(a Aggregate) bool {
+	return a.Phase == PhaseWorking && a.Endpoint != nil
+}
+
 // ownsWorktree reports whether a task of this kind binds a worktree and records
 // launch manifest evidence for it. A review task reads the reviewed task's
 // worktree and owns none.
