@@ -41,15 +41,15 @@ func New(l Launch) (*Fence, error) {
 	if l.Role != RoleSoldier && l.Role != RoleReviewer {
 		return nil, fmt.Errorf("fence: unknown role %q", l.Role)
 	}
+	if !filepath.IsAbs(l.UserHome) {
+		return nil, fmt.Errorf("fence: user home must be absolute: %q", l.UserHome)
+	}
 	if err := Supported(); err != nil {
 		return nil, err
 	}
 	p, err := resolveLaunch(l)
 	if err != nil {
 		return nil, err
-	}
-	if !filepath.IsAbs(l.UserHome) {
-		return nil, fmt.Errorf("fence: user home must be absolute: %q", l.UserHome)
 	}
 	userHome, err := resolvePath(l.UserHome, true)
 	if err != nil {

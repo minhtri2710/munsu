@@ -649,6 +649,29 @@ func TestNewRefusesAnUnknownRole(t *testing.T) {
 	}
 }
 
+// TestNewRefusesARelativeUserHome runs on every GOOS: the guard precedes the
+// platform check, so the refused row is refused here, not by Supported.
+func TestNewRefusesARelativeUserHome(t *testing.T) {
+	l := newLayout(t)
+	for _, tt := range []struct {
+		name, home string
+		refused    bool
+	}{
+		{"a relative user home is refused", "relative/home", true},
+		{"an absolute user home is not refused by this guard", filepath.Join(l.root, "uhome"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := l.soldier()
+			launch.UserHome = tt.home
+			_, err := New(launch)
+			refused := err != nil && strings.Contains(err.Error(), "fence: user home must be absolute")
+			if refused != tt.refused {
+				t.Fatalf("New(UserHome %q) err = %v; want refused=%v", tt.home, err, tt.refused)
+			}
+		})
+	}
+}
+
 func TestCheckSeatRootsRefusals(t *testing.T) {
 	protected := []string{"/p/primary", "/p/common"}
 	for _, tc := range []struct {
