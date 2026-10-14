@@ -1,6 +1,3 @@
-// Package glurl provides GitLab Merge Request URL parsing and formatting.
-// It handles the invariants of https://<host>/<namespace>/<project>/-/merge_requests/<iid> URLs,
-// including self-hosted GitLab instances and nested group namespaces.
 package domain
 
 import (
