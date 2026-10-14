@@ -62,6 +62,7 @@ type CanonicalBeginSpawnRequest struct {
 	// SeatPathDirs is the seat's launch PATH, read once by Fleet and committed
 	// with the intent; a resumed launch adopts it instead of reading PATH again.
 	SeatPathDirs []string
+	SeatEnv      SeatEnv
 	Reason       string
 }
 
@@ -88,12 +89,13 @@ func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {
 		EndpointFenceToken    string   `json:"endpoint_fence_token"`
 		EndpointIncarnation   string   `json:"endpoint_incarnation,omitempty"`
 		SeatPathDirs          []string `json:"seat_path_dirs"`
+		SeatEnv               SeatEnv  `json:"seat_env"`
 		Reason                string   `json:"reason,omitempty"`
 	}{
 		r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision,
 		r.SnapshotDigest, r.Backend, r.Harness, r.Model, r.Effort, r.Mode, r.Kind, r.Project,
 		r.ParentTaskID, r.LaunchID, r.WindowLabel, r.WorktreeReservationID, r.WorktreeFenceToken,
-		r.EndpointReservationID, r.EndpointFenceToken, r.EndpointIncarnation, r.SeatPathDirs, r.Reason,
+		r.EndpointReservationID, r.EndpointFenceToken, r.EndpointIncarnation, r.SeatPathDirs, r.SeatEnv, r.Reason,
 	})
 }
 
@@ -105,6 +107,9 @@ func validateBeginSpawnRequest(req CanonicalBeginSpawnRequest) error {
 		return err
 	}
 	if err := req.Precondition.Validate(); err != nil {
+		return err
+	}
+	if err := validateSeatEnv(req.SeatEnv); err != nil {
 		return err
 	}
 	return validateLaunchIdentity(req.SnapshotDigest, req.Backend, req.Harness, req.Model, req.Effort, req.Mode, req.Kind, req.Project, req.ParentTaskID, req.LaunchID, req.WindowLabel, req.WorktreeReservationID, req.WorktreeFenceToken, req.EndpointReservationID, req.EndpointFenceToken, req.EndpointIncarnation, req.SeatPathDirs)
@@ -170,6 +175,7 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 			EndpointFenceToken:    req.EndpointFenceToken,
 			EndpointIncarnation:   req.EndpointIncarnation,
 			SeatPathDirs:          append([]string(nil), req.SeatPathDirs...),
+			SeatEnv:               req.SeatEnv,
 			PlannedAt:             c.now().UnixNano(),
 		}
 		next.Revision++
@@ -189,7 +195,7 @@ func launchIntentSame(l LaunchIntent, req CanonicalBeginSpawnRequest) bool {
 		l.LaunchID == req.LaunchID && l.WindowLabel == req.WindowLabel &&
 		l.WorktreeReservationID == req.WorktreeReservationID && l.WorktreeFenceToken == req.WorktreeFenceToken &&
 		l.EndpointReservationID == req.EndpointReservationID && l.EndpointFenceToken == req.EndpointFenceToken &&
-		l.EndpointIncarnation == req.EndpointIncarnation && slices.Equal(l.SeatPathDirs, req.SeatPathDirs)
+		l.EndpointIncarnation == req.EndpointIncarnation && slices.Equal(l.SeatPathDirs, req.SeatPathDirs) && l.SeatEnv == req.SeatEnv
 }
 
 // CanonicalAttachEndpointRequest records the exact acquired endpoint identity
