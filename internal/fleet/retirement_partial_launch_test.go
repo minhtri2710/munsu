@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -102,43 +103,35 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	}
 }
 
+// A partial launch never carries a delivery identity; one that does is refused
+// before any landed proof, while a partial launch without one goes on to the
+// artifact checks.
+func TestShipSafetyCheckPartialLaunchRefusesDeliveryIdentity(t *testing.T) {
+	const refusal = "partial launch partial-identity cannot carry delivery identity"
+	for _, tc := range []struct {
+		name    string
+		ident   *domain.DeliveryIdentity
+		refused bool
+	}{
+		{name: "partial launch with a delivery identity refused", ident: &domain.DeliveryIdentity{URL: "https://github.com/minhtri2710/munsu/pull/42"}, refused: true},
+		{name: "partial launch without a delivery identity checked further"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binding := testWorktreeBinding(t.TempDir(), strings.Repeat("a", 64))
+			_, err := shipSafetyCheck(Options{ID: "partial-identity"}, tc.ident, fakeTeardown{}, nil, binding, true)
+			if tc.refused != (err != nil && strings.Contains(err.Error(), refusal)) {
+				t.Fatalf("shipSafetyCheck error = %v, want refused=%v", err, tc.refused)
+			}
+			if !tc.refused && (err == nil || !strings.Contains(err.Error(), "launch artifact verification failed")) {
+				t.Fatalf("shipSafetyCheck error = %v, want the artifact check", err)
+			}
+		})
+	}
+}
+
 // TestRetireCompletedLaunchStillRequiresLandedBranchProof pins the completed
 // launch safety gate: canonical bindings supply the path, but do not replace
 // the ordinary landed-branch proof.
-func TestRetirePartialLaunchRefusesDeliveryIdentityBeforeMutation(t *testing.T) {
-	f := newLaunchFixture(t, "partial-launch-with-identity")
-	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
-		t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
-	}
-	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"pr_url": "https://github.com/minhtri2710/munsu/pull/42",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	teardown := &recordingTeardown{alive: true}
-	_, err := RetireTask(Options{HomeDir: f.homeDir, ID: f.taskID}, teardown, fakeRetirementJournals{}, f.auth)
-	if err == nil || !strings.Contains(err.Error(), "partial launch partial-launch-with-identity cannot carry delivery identity") {
-		t.Fatalf("RetireTask error = %v, want partial-launch identity refusal", err)
-	}
-	if len(teardown.disposed) != 0 || len(teardown.returned) != 0 {
-		t.Fatalf("identity refusal released resources: disposed=%v returned=%v", teardown.disposed, teardown.returned)
-	}
-	after := f.aggregate()
-	if after.Phase != taskauthority.PhaseQueued || after.CleanupClaim != nil {
-		t.Fatalf("identity refusal mutated canonical state: phase=%q claim=%+v", after.Phase, after.CleanupClaim)
-	}
-}
-
-func TestShipSafetyCheckPartialLaunchRefusesDeliveryIdentity(t *testing.T) {
-	meta := map[string]string{"pr_url": "https://github.com/minhtri2710/munsu/pull/42"}
-	binding := testWorktreeBinding(t.TempDir(), strings.Repeat("a", 64))
-	_, err := shipSafetyCheck(Options{ID: "partial-identity"}, meta, fakeTeardown{}, nil, binding, true)
-	if err == nil || !strings.Contains(err.Error(), "partial launch partial-identity cannot carry delivery identity") {
-		t.Fatalf("shipSafetyCheck error = %v, want partial-launch identity refusal", err)
-	}
-}
-
 func TestRetireCompletedLaunchStillRequiresLandedBranchProof(t *testing.T) {
 	f := newLaunchFixture(t, "completed-launch-retirement")
 	if err := runLaunchPhases(f, ""); err != nil {

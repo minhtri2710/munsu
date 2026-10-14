@@ -62,9 +62,11 @@ replaces the earlier one.`,
 func newMergeStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "merge-status <id>",
-		Short: "Query delivery merge status via provider-neutral seam",
-		Long: `Query the current merge status of a delivery identity (PR or MR)
-via the provider-neutral QueryDeliveryMergeStatus seam.
+		Short: "Report whether a task's delivery landed",
+		Long: `Report whether the PR or MR named by the task's current delivery
+authorization landed, read through the task's captured forge step. The
+authorization commits before the merge, so this works while a delivery is
+in flight.
 Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -172,8 +174,7 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 }
 
 // projectDeliveryIdentity overlays one captured delivery identity onto the
-// task .meta projection (pr_* keys). It is a post-commit projection for the
-// read-only seams (merge-status, retirement poll, soldier state); the
+// task .meta projection (pr_* keys). Review-diff reads its base from it; the
 // canonical delivery authorization/outcome remains the delivery truth and is
 // never derived from these keys.
 func projectDeliveryIdentity(homeDir, taskID string, ident domain.DeliveryIdentity) error {
@@ -231,11 +232,11 @@ resuming retirement only after a completed canonical delivery outcome.`,
 				return fmt.Errorf("pr-merge %s: composing task authority: %w", id, err)
 			}
 
+			req, err := buildDeliverRequest(auth, id, prURL, extra, words)
+			if err != nil {
+				return fmt.Errorf("pr-merge %s: %w", id, err)
+			}
 			if !doTeardown {
-				req, err := buildDeliverRequest(auth, id, prURL, extra, words)
-				if err != nil {
-					return fmt.Errorf("pr-merge %s: %w", id, err)
-				}
 				result, err := fleet.Deliver(taskHome, id, req)
 				if err != nil {
 					return err
@@ -256,21 +257,12 @@ resuming retirement only after a completed canonical delivery outcome.`,
 				return nil
 			}
 
-			// --teardown: the delivery preparation projection pins the identity
-			// for the B thin MergeAndRetire continuation (mirroring the retired
-			// pr-check preparation); the canonical authorization remains the
-			// delivery truth. MergeAndRetire runs the journaled delivery (or
-			// resumes retirement when the outcome is already committed) and
-			// retires only after a completed outcome.
-			req, err := buildDeliverRequest(auth, id, prURL, extra, words)
-			if err != nil {
-				return fmt.Errorf("pr-merge %s: %w", id, err)
-			}
-			if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
-				return fmt.Errorf("pr-merge %s: writing delivery identity projection: %w", id, perr)
-			}
+			// --teardown: MergeAndRetire delivers this same request (or resumes
+			// retirement when the outcome is already committed) and retires
+			// only after a completed outcome. Teardown's merge proof reads the
+			// identity of the delivery authorization, not .meta.
 			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
-			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, words, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
+			mars := fleet.MergeAndRetire(taskHome, id, req, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			for _, note := range recoveredDeliveryNotes(mars.Recovered) {
 				fmt.Println(note)
 			}

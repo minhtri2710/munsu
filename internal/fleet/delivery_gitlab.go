@@ -42,15 +42,7 @@ func (r *glabRunnerImpl) Run(args ...string) ([]byte, error) {
 		return nil, err
 	}
 	argv := append(append([]string(nil), args...), r.args...)
-	cmd := exec.Command(path, argv...)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("glab %s: %s", strings.Join(argv, " "), strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("glab %s: %w", strings.Join(argv, " "), err)
-	}
-	return out, nil
+	return runForgeCommand("glab "+strings.Join(argv, " "), path, argv...)
 }
 
 // glabRunnerFor builds the glab runner for a configured gitlab tool entry. Tests
