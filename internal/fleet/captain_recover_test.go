@@ -41,8 +41,8 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(parent, Info{ID: "sm-bad", Home: smHome})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance must fail.
@@ -55,6 +55,9 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 		if res.Steps[i].State != StepSkipped {
 			t.Errorf("step %d (%s) expected skipped, got %s", i, res.Steps[i].Name, res.Steps[i].State)
 		}
+		if res.Steps[i].Name == "terminal-reconcile" {
+			t.Errorf("phantom terminal-reconcile step must not be emitted on provenance failure")
+		}
 	}
 }
 
@@ -62,8 +65,8 @@ func TestRecoverTransaction_EmptyHomeFailed(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(t.TempDir(), Info{ID: "empty", Home: ""})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	if res.Steps[0].Name != "provenance" || res.Steps[0].State != StepFailed {
