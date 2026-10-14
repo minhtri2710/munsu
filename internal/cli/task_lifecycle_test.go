@@ -99,8 +99,12 @@ func TestTaskDoneCallsAuthorityComplete(t *testing.T) {
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 
-	if out, err := runTaskCommand(t, []string{"task", "done", "task", "--home", homeDir}); err != nil {
+	out, err := runTaskCommand(t, []string{"task", "done", "task", "--home", homeDir})
+	if err != nil {
 		t.Fatalf("done: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "task task: done") {
+		t.Fatalf("done output = %q, want the new phase line", out)
 	}
 	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Phase != taskauthority.PhaseDone {
