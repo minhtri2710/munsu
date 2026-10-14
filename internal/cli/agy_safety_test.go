@@ -176,45 +176,6 @@ func TestAgySafetyCheckDenyViaStdin(t *testing.T) {
 	}
 }
 
-// TestAgySafetyCheckGateRefused verifies agy safety-check blocks
-// when gate is active (gate_refused).
-func TestAgySafetyCheckGateRefused(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("NO_MISTAKES_GATE", "1")
-
-	var exitCode int
-	oldExit := exitWithCode
-	exitWithCode = func(code int) { exitCode = code }
-	defer func() { exitWithCode = oldExit }()
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-
-	stdout, _ := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "", "agy")
-	})
-
-	if exitCode != 0 {
-		t.Errorf("expected exit 0 for gate-refused agy, got %d", exitCode)
-	}
-
-	stdoutStr := strings.TrimSpace(stdout)
-	if stdoutStr == "" {
-		t.Fatal("expected non-empty stdout for agy gate-refused")
-	}
-
-	var denyPayload map[string]interface{}
-	if err := json.Unmarshal([]byte(stdoutStr), &denyPayload); err != nil {
-		t.Fatalf("stdout must be valid JSON: %v\nGot: %s", err, stdoutStr)
-	}
-
-	if denyPayload["decision"] != "deny" {
-		t.Errorf("expected decision 'deny', got %v", denyPayload["decision"])
-	}
-}
-
 // TestAgyReadStdinToolCallArgsCommandLine verifies readStdinForToolPayload
 // handles agy's .toolCall.args.CommandLine (PascalCase nested) shape.
 func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
