@@ -529,13 +529,3 @@ func TestDeliverNoMetaSubstitutionAuthorizesDelivery(t *testing.T) {
 		t.Fatalf("merges = %d, want 1", provider.merges)
 	}
 }
-
-// mustFleetHomeID builds a validated home identity.
-func mustFleetHomeID(t *testing.T, value string) domain.HomeID {
-	t.Helper()
-	id, err := domain.NewHomeID(value)
-	if err != nil {
-		t.Fatalf("NewHomeID(%s): %v", value, err)
-	}
-	return id
-}
