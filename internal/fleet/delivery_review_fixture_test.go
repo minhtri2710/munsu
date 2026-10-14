@@ -91,6 +91,7 @@ func mustBindReviewTask(t *testing.T, c *taskauthority.Canonical, shipID, head s
 		LaunchID: "launch-" + reviewID, WindowLabel: "window-" + reviewID,
 		EndpointReservationID: "ep-res-" + reviewID, EndpointFenceToken: "ep-fence-" + reviewID,
 		SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + reviewID, Reason: "spawn",
+		SeatEnv: testSeatEnv(),
 	}
 	if _, err := c.BeginSpawn(mustFleetOperation(t, "op-begin-"+reviewID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn(%s): %v", reviewID, err)
