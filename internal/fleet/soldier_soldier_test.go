@@ -21,14 +21,14 @@ import (
 // =============================================================================
 
 func TestDefaultCharter_ContainsVersion(t *testing.T) {
-	charter := DefaultCharter("test-id", "ship", "direct-PR")
+	charter := DefaultCharter("test-id", "ship", "direct-PR", "")
 	if !strings.Contains(charter, CharterVersion) {
 		t.Errorf("DefaultCharter must contain version %q", CharterVersion)
 	}
 }
 
 func TestDefaultCharter_SoldierAuthorityOnly(t *testing.T) {
-	charter := DefaultCharter("auth-test", "ship", "direct-PR")
+	charter := DefaultCharter("auth-test", "ship", "direct-PR", "")
 	if !strings.Contains(charter, "Soldier authority only") {
 		t.Error("DefaultCharter must declare soldier-only authority")
 	}
@@ -38,7 +38,7 @@ func TestDefaultCharter_SoldierAuthorityOnly(t *testing.T) {
 }
 
 func TestDefaultCharter_ForbiddenActions(t *testing.T) {
-	charter := DefaultCharter("forbidden-test", "ship", "direct-PR")
+	charter := DefaultCharter("forbidden-test", "ship", "direct-PR", "")
 	checks := []string{
 		"Never push to the default branch",
 		"Never merge",
@@ -57,7 +57,7 @@ func TestDefaultCharter_ForbiddenActions(t *testing.T) {
 }
 
 func TestDefaultCharter_ReportCommand(t *testing.T) {
-	charter := DefaultCharter("report-test", "ship", "direct-PR")
+	charter := DefaultCharter("report-test", "ship", "direct-PR", "")
 	if !strings.Contains(charter, "munsu report") {
 		t.Error("DefaultCharter must document munsu report command")
 	}
@@ -67,7 +67,7 @@ func TestDefaultCharter_ReportCommand(t *testing.T) {
 }
 
 func TestDefaultCharter_DurableFiles(t *testing.T) {
-	charter := DefaultCharter("durable-test", "ship", "direct-PR")
+	charter := DefaultCharter("durable-test", "ship", "direct-PR", "")
 	if !strings.Contains(charter, ".soldier-charter.md") {
 		t.Error("DefaultCharter must mention .soldier-charter.md")
 	}
@@ -80,14 +80,14 @@ func TestDefaultCharter_DurableFiles(t *testing.T) {
 }
 
 func TestDefaultCharter_AllowedActions(t *testing.T) {
-	charter := DefaultCharter("allowed-test", "ship", "direct-PR")
+	charter := DefaultCharter("allowed-test", "ship", "direct-PR", "")
 	if !strings.Contains(charter, "AGENTS.md") {
 		t.Error("DefaultCharter must mention reading AGENTS.md before edits")
 	}
 }
 
 func TestDefaultCharter_DeliveryModeAdapts(t *testing.T) {
-	charter := DefaultCharter("mode-test", "ship", "direct-PR")
+	charter := DefaultCharter("mode-test", "ship", "direct-PR", "")
 	if !strings.Contains(charter, "direct-PR") {
 		t.Error("DefaultCharter must include the delivery mode")
 	}
@@ -517,7 +517,7 @@ func TestFailClosedDuringLaunch_NonApplicableSkillNotGated(t *testing.T) {
 
 func TestPersistLaunchFiles_WritesAllFiles(t *testing.T) {
 	tmp := t.TempDir()
-	charter := DefaultCharter("persist-test", "ship", "direct-PR")
+	charter := DefaultCharter("persist-test", "ship", "direct-PR", "")
 	brief := []byte("# Task brief\n\nContent.\n")
 	prompt := "complete prompt text"
 	env := &LaunchEnvelope{
