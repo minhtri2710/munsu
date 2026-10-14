@@ -225,7 +225,6 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "nudge-retry", State: StepSkipped, Detail: "skipped: provenance failed"},
 		)
 		return res
