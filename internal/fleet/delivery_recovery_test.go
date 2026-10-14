@@ -41,8 +41,8 @@ func TestDeliverCrashBeforeMutationRetriesSafely(t *testing.T) {
 
 	// Recovery retries safely: the mutation executes exactly once.
 	provider := installScriptedProviderFor(t, "open-then-merged")
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 1 {
 		t.Fatalf("merges on retry = %d, want exactly 1", provider.merges)
@@ -127,8 +127,8 @@ func TestDeliverCrashAfterMutationNeverRepeatsMutation(t *testing.T) {
 
 	// Recovery replays the committed outcome and NEVER re-mutates.
 	provider := installScriptedProviderFor(t, "merged")
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery repeated the mutation: merges = %d, want 0", provider.merges)
@@ -154,8 +154,8 @@ func TestDeliverCrashAtMutatingMergedIdentityMismatchIsRemoteUnknown(t *testing.
 	runDeliveryCrashHelper(t, homeDir, taskID, "mutating", "open-then-merged")
 	provider := newFakeDeliveryProvider().script(DeliveryProviderObservation{State: "MERGED", HeadSHA: "different", BaseRef: deliveryTestBase, MergedSHA: "0123456789abcdef0123456789abcdef01234567"})
 	installDeliveryProviderFor(t, provider)
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	out, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID))
 	if err != nil || out.Status != taskauthority.DeliveryOutcomeRemoteUnknown {
@@ -180,8 +180,8 @@ func TestDeliverCrashAtMutatingReconcilesObservationAndNeverMutates(t *testing.T
 
 	// Recovery observes remote truth (merged) and NEVER mutates.
 	provider := installScriptedProviderFor(t, "merged")
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery mutated: merges = %d, want 0", provider.merges)
@@ -228,8 +228,8 @@ func TestDeliverRecoveryRejectsInvalidPinnedMergedSHA(t *testing.T) {
 	lk.Release()
 
 	provider := installScriptedProviderFor(t, "merged")
-	if err := RecoverDeliveryJournals(homeDir); err == nil {
-		t.Fatal("RecoverDeliveryJournals accepted invalid pinned merge SHA")
+	if _, err := RecoverDeliveryOutcomes(homeDir); err == nil {
+		t.Fatal("RecoverDeliveryOutcomes accepted invalid pinned merge SHA")
 	}
 	if _, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); err == nil {
 		t.Fatal("recovery committed an outcome with invalid pinned merge SHA")
@@ -268,7 +268,7 @@ func TestDeliverOutcomeCommitConflictWithInvalidMergedSHAFailsClosed(t *testing.
 		t.Fatalf("committing invalid outcome: %v", err)
 	}
 	provider := installScriptedProviderFor(t, "merged")
-	if err := RecoverDeliveryJournals(homeDir); err == nil {
+	if _, err := RecoverDeliveryOutcomes(homeDir); err == nil {
 		t.Fatal("recovery accepted invalid committed merge SHA")
 	}
 	if provider.merges != 0 {
@@ -323,8 +323,8 @@ func TestDeliverOutcomeCommitConflictYieldsCommittedNeverCompleted(t *testing.T)
 	// conflict; the committed remote-unknown record stands and completed is
 	// never fabricated.
 	provider := installScriptedProviderFor(t, "merged")
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery mutated: merges = %d, want 0", provider.merges)
@@ -357,8 +357,8 @@ func TestDeliverRecoveryIdempotentReplay(t *testing.T) {
 
 	provider := installScriptedProviderFor(t, "merged")
 	for i := 0; i < 3; i++ {
-		if err := RecoverDeliveryJournals(homeDir); err != nil {
-			t.Fatalf("RecoverDeliveryJournals cycle %d: %v", i, err)
+		if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+			t.Fatalf("RecoverDeliveryOutcomes cycle %d: %v", i, err)
 		}
 	}
 	if provider.merges != 0 {
@@ -435,10 +435,10 @@ func TestDeliverRecoveryFailClosedBeforeMutation(t *testing.T) {
 	}
 
 	provider := installScriptedProviderFor(t, "open-then-merged")
-	err := RecoverDeliveryJournals(homeDir)
+	_, err := RecoverDeliveryOutcomes(homeDir)
 	var failClosed *DeliveryFailClosedError
 	if !errors.As(err, &failClosed) {
-		t.Fatalf("RecoverDeliveryJournals err = %T %v, want *DeliveryFailClosedError", err, err)
+		t.Fatalf("RecoverDeliveryOutcomes err = %T %v, want *DeliveryFailClosedError", err, err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("recovery mutated after fail-closed currency: merges = %d, want 0", provider.merges)
@@ -478,4 +478,40 @@ func readDeliveryIndexFile(t *testing.T, homeDir, taskID string) (struct {
 		return out, err
 	}
 	return out, nil
+}
+
+// TestRecoverDeliveryOutcomesReportsANonCompletedResume: a journal resumed by
+// recovery that commits a retryable outcome must be returned to the operator,
+// not dropped behind a nil error.
+func TestRecoverDeliveryOutcomesReportsANonCompletedResume(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	taskID := "t1"
+	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
+	installScriptedProviderFor(t, "open")
+	runDeliveryCrashHelper(t, homeDir, taskID, "authorized", "open")
+	outcomes, err := RecoverDeliveryOutcomes(homeDir)
+	if err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
+	}
+	if len(outcomes) != 1 || outcomes[0].TaskID != taskID || outcomes[0].Status != taskauthority.DeliveryOutcomeRetryable {
+		t.Fatalf("outcomes = %+v, want one retryable outcome for %s", outcomes, taskID)
+	}
+}
+
+// TestDeliverReportsRecoveredNonCompletedOutcome: a Deliver that first resumes
+// another task's pending journal must hand that non-completed outcome back on
+// its result, so the pr-merge caller can print it instead of dropping it.
+func TestDeliverReportsRecoveredNonCompletedOutcome(t *testing.T) {
+	c, homeDir := newFleetCanonical(t)
+	mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
+	installScriptedProviderFor(t, "open")
+	runDeliveryCrashHelper(t, homeDir, "t1", "authorized", "open")
+	mustWorkingDeliveryTask(t, c, "t2", deliveryTestGitHubForge)
+	result, err := Deliver(homeDir, "t2", deliverRequest())
+	if err != nil {
+		t.Fatalf("Deliver t2: %v", err)
+	}
+	if len(result.Recovered) != 1 || result.Recovered[0].TaskID != "t1" || result.Recovered[0].Status != taskauthority.DeliveryOutcomeRetryable {
+		t.Fatalf("Recovered = %+v, want one retryable outcome for t1", result.Recovered)
+	}
 }
