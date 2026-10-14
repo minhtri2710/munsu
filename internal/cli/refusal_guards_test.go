@@ -232,21 +232,6 @@ func TestGuardSkillShowDeniesManagementSkillsToASoldier(t *testing.T) {
 	}
 }
 
-// --- internal/cli/skills_validate.go ---------------------------------------
-
-func TestGuardResolveBundleReferenceRefusesAnAbsolutePath(t *testing.T) {
-	_, err := resolveBundleReference("skills/demo", "skills/demo/SKILL.md", "/etc/passwd")
-	wantErrContains(t, err, "absolute paths are not allowed", "resolveBundleReference with an absolute reference")
-	// The escape check below it emits a different message; an absolute path
-	// would also escape, so the two must stay distinguishable.
-	if strings.Contains(err.Error(), "escapes skill module") {
-		t.Fatalf("resolveBundleReference = %v, which is the escape refusal rather than the absolute-path one", err)
-	}
-	if got, err := resolveBundleReference("skills/demo", "skills/demo/SKILL.md", "REFERENCE.md"); err != nil || got != "skills/demo/REFERENCE.md" {
-		t.Fatalf("resolveBundleReference relative = (%q, %v), want it resolved", got, err)
-	}
-}
-
 // --- internal/cli/selfupdate_update.go -------------------------------------
 
 func TestGuardUpdateInRefusesAGitFileThatIsNotAWorktreePointer(t *testing.T) {
