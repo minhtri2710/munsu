@@ -349,6 +349,7 @@ func TestResolveLaunchRefusals(t *testing.T) {
 		{"worktree contains the primary", func(x *Launch) { x.Worktree = l.root }, "overlaps the primary checkout"},
 		{"worktree inside the common dir only", func(x *Launch) { setBare(x); x.Worktree = inBare }, "overlaps the primary checkout"},
 		{"worktree contains the common dir only", func(x *Launch) { setBare(x); x.Worktree = bare }, "overlaps the primary checkout"},
+		{"a remote reflog outside the remote-tracking logs", func(x *Launch) { x.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "heads", "main")} }, "is not under"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -367,6 +368,13 @@ func TestResolveLaunchRefusals(t *testing.T) {
 		launch := l.reviewer()
 		launch.Branch = "mu/T-1"
 		if _, err := resolveLaunch(launch); err == nil || !strings.Contains(err.Error(), "a reviewer launch has no task branch") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a reviewer has no remote reflogs", func(t *testing.T) {
+		launch := l.reviewer()
+		launch.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "remotes", "origin", "main")}
+		if _, err := resolveLaunch(launch); err == nil || !strings.Contains(err.Error(), "fence: remote reflogs are a soldier's only") {
 			t.Fatalf("err = %v", err)
 		}
 	})

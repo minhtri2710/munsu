@@ -218,10 +218,11 @@ func projectGate(primary string) (string, error) {
 	return repo, nil
 }
 
-// ensureBranchReflog pre-creates, unfenced before the soldier launches, the
-// branch reflog <gitDir>/logs/refs/heads/<branch> as an empty regular file. A
-// detached `git worktree add` (internal/backend/worktree.go) leaves it absent,
-// so the seat's first fenced `git checkout -b <branch>` (common dir) and its
+// ensureReflog pre-creates, unfenced before the soldier launches, the reflog
+// <gitDir>/logs/<ref> as an empty regular file, for a ref such as
+// refs/heads/<branch> or refs/remotes/<remote>/<name>. A detached `git worktree
+// add` (internal/backend/worktree.go) leaves the branch reflog absent, so the
+// seat's first fenced `git checkout -b <branch>` (common dir) and its
 // `git push no-mistakes HEAD:refs/heads/<branch>` (gate) would have to create
 // it; the fence refuses create, unlink and rename under logs/ and allows only
 // appending to this exact file (B1), so the seat cannot swap the reflog for a
@@ -235,7 +236,9 @@ func projectGate(primary string) (string, error) {
 // symlinked component, which would move the O_EXCL create into the link's
 // target); the reflog itself must be absent or already a regular file; and it
 // is created with O_EXCL so a link a racing writer planted is never followed or
-// truncated. A regular file left by a prior run is kept (git appends to it).
+// truncated. A regular file left by a prior run is kept (git appends to it),
+// and an EEXIST from a concurrent spawn winning the create is accepted the
+// same way after re-classifying the winner's entry.
 //
 // Human words (domain.Words): grantor the Human, channel supervisor-relay:dialog,
 // words=selected, G1168: "B1 (Recommended): B on the seat branch reflog,
@@ -244,41 +247,86 @@ func projectGate(primary string) (string, error) {
 // building on G1167: "B: dò trước rồi làm (Recommended): munsu pre-creates the
 // soldier's own branch reflog files; fence allows data writes to exactly those,
 // refuses create/unlink/rename elsewhere in logs/".
-func ensureBranchReflog(gitDir, branch string) error {
+func ensureReflog(gitDir, ref string) error {
 	logs := filepath.Join(gitDir, "logs")
-	dirs := []string{logs, filepath.Join(logs, "refs"), filepath.Join(logs, "refs", "heads")}
-	parts := strings.Split(branch, "/")
-	parent := filepath.Join(logs, "refs", "heads")
+	parts := strings.Split(ref, "/")
+	dirs := []string{logs}
+	parent := logs
 	for _, p := range parts[:len(parts)-1] {
 		parent = filepath.Join(parent, p)
 		dirs = append(dirs, parent)
 	}
 	for _, d := range dirs {
-		switch fi, err := os.Lstat(d); {
-		case os.IsNotExist(err):
+		fi, err := os.Lstat(d)
+		if os.IsNotExist(err) {
 			if err := os.Mkdir(d, 0o755); err != nil {
-				return fmt.Errorf("branch reflog dir %s: %w", d, err)
+				if !errors.Is(err, os.ErrExist) {
+					return fmt.Errorf("reflog dir %s: %w", d, err)
+				}
+				// A concurrent spawn created it first; classify the winner's
+				// entry by the same rules instead of refusing the race loser.
+				if fi, err = os.Lstat(d); err != nil {
+					return fmt.Errorf("reflog dir %s: %w", d, err)
+				}
+			} else {
+				continue
 			}
-		case err != nil:
-			return fmt.Errorf("branch reflog dir %s: %w", d, err)
-		case !fi.IsDir():
-			return fmt.Errorf("branch reflog dir %s is a symlink or not a directory; refusing to launch", d)
+		} else if err != nil {
+			return fmt.Errorf("reflog dir %s: %w", d, err)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("reflog dir %s is a symlink or not a directory; refusing to launch", d)
 		}
 	}
-	reflog := filepath.Join(parent, parts[len(parts)-1])
-	switch fi, err := os.Lstat(reflog); {
-	case err == nil && fi.Mode().IsRegular():
-		return nil
-	case err == nil:
-		return fmt.Errorf("branch reflog %s is a symlink or not a regular file; refusing to launch", reflog)
-	case !os.IsNotExist(err):
-		return fmt.Errorf("branch reflog %s: %w", reflog, err)
+	reflog := filepath.Join(logs, filepath.FromSlash(ref))
+	fi, err := os.Lstat(reflog)
+	if os.IsNotExist(err) {
+		f, cerr := os.OpenFile(reflog, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if cerr != nil {
+			if !errors.Is(cerr, os.ErrExist) {
+				return fmt.Errorf("reflog %s: %w", reflog, cerr)
+			}
+			// A concurrent spawn created it first; classify the winner's
+			// entry by the same rules, still refusing a link planted in the
+			// Lstat-to-create window.
+			if fi, err = os.Lstat(reflog); err != nil {
+				return fmt.Errorf("reflog %s: %w", reflog, err)
+			}
+		} else {
+			return f.Close()
+		}
+	} else if err != nil {
+		return fmt.Errorf("reflog %s: %w", reflog, err)
 	}
-	f, err := os.OpenFile(reflog, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("reflog %s is a symlink or not a regular file; refusing to launch", reflog)
+	}
+	return nil
+}
+
+// ensureBranchReflog is ensureReflog for the branch's refs/heads reflog.
+func ensureBranchReflog(gitDir, branch string) error {
+	return ensureReflog(gitDir, "refs/heads/"+branch)
+}
+
+// ensureRemoteReflogs pre-creates, as ensureReflog does, the reflog of every
+// remote-tracking ref in commonDir, and returns those reflog paths. The seat
+// may only append to them (fence-reflog-remotes-residual): fetch writes its
+// remote-tracking reflogs on the fly, so a launch fetch without a pre-created
+// reflog would leave the seat's fence no file to append to.
+func ensureRemoteReflogs(commonDir string) ([]string, error) {
+	out, err := exec.Command("git", "--git-dir="+commonDir, "for-each-ref", "--format=%(refname)", "refs/remotes").Output()
 	if err != nil {
-		return fmt.Errorf("branch reflog %s: %w", reflog, err)
+		return nil, fmt.Errorf("remote reflogs: %w", err)
 	}
-	return f.Close()
+	var paths []string
+	for _, ref := range strings.Fields(string(out)) {
+		if err := ensureReflog(commonDir, ref); err != nil {
+			return nil, err
+		}
+		paths = append(paths, filepath.Join(commonDir, "logs", filepath.FromSlash(ref)))
+	}
+	return paths, nil
 }
 
 func codexNeutralizationPreserved(args []string) bool {
