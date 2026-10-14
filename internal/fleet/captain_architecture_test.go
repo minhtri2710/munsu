@@ -1,7 +1,5 @@
 //go:build integration
 
-// Package captain — architecture contract test suite.
-//
 // These tests verify invariants that previously lived in the firstmate
 // secondmate test suite. Each test exercises public CLI commands (exported
 // captain functions) and proves one invariant through structured state
@@ -10,6 +8,7 @@
 // Firstmate parity: every invariant documented below was enforced by
 // firstmate's secondmate layer. The captain module now enforces the same
 // contract via different mechanisms (Go functions instead of shell scripts).
+
 package fleet
 
 import (

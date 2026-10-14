@@ -1,6 +1,3 @@
-// Package spawn implements the soldier spawn orchestration — the full
-// sequence of resolving home, validating inputs, acquiring a worktree,
-// launching the harness, and wiring the agent session.
 package fleet
 
 import (
