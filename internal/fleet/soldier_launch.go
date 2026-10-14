@@ -416,6 +416,21 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	// A fenced git cannot write the gc and maintenance state it would start in
 	// the background, so turn both off for every git the harness runs.
 	b.WriteString("export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")
+	// Tool caches and Go's build, module, checksum-db (GOPATH/pkg/sumdb) and
+	// telemetry dirs live under the seat's temp, never under the Human's. Human
+	// words (domain.Words): grantor the Human, channel supervisor-relay:dialog,
+	// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không bao
+	// giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và không
+	// gửi input vào session ngoài session của nó."
+	seatTemp := filepath.Join(os.TempDir(), "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
+	caches := []struct{ name, dir string }{
+		{"npm_config_cache", "npm-cache"}, {"npm_config_store_dir", "npm-store"},
+		{"PIP_CACHE_DIR", "pip-cache"}, {"UV_CACHE_DIR", "uv-cache"}, {"XDG_CACHE_HOME", "xdg-cache"},
+		{"GOCACHE", "go-build"}, {"GOMODCACHE", "go-mod"}, {"GOPATH", "go-path"}, {"GOTELEMETRYDIR", "go-telemetry"},
+	}
+	for _, c := range caches {
+		b.WriteString("export " + c.name + "=" + shQuote(filepath.Join(seatTemp, c.dir)) + "\n")
+	}
 	// Persistent re-entrant launch guard: created by the launched script
 	// BEFORE invoking the harness. The guard directory is created atomically
 	// (mkdir succeeds for exactly one submission), so even concurrent
