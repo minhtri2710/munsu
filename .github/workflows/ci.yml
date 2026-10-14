@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       - run: mkdir -p coverage
       - run: go build ./...
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       - run: go build ./...
       - run: go vet ./...
@@ -152,7 +152,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       - name: Fence tests
         run: |
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       # The default lane runs without -race, so crash/replay/fence concurrency
       # in home, taskauthority and backend was never race-checked in CI.
@@ -221,6 +221,20 @@ jobs:
       # still excluded here and always will be -- see .github/build-tags.manifest.
       - run: go test -race -count=1 -timeout 25m -tags integration ./...
 
+  vulncheck:
+    name: Vulnerability check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+          cache: true
+      # Reports only vulnerabilities whose vulnerable symbols this module can
+      # reach; a dependency advisory the code never calls does not fail the lane.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
@@ -229,7 +243,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       # `go test ./...` never builds integration-tagged files, so this suite
       # was invisible to CI. The package list used to be maintained by hand;
@@ -286,7 +300,7 @@ jobs:
       # written.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       - name: Symlinks must stay intact
         run: |
@@ -718,7 +732,7 @@ jobs:
       # agrees with the compiler that produced the profiles.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.9"
           cache: true
       - name: Collect the coverage profiles
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
