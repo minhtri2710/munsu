@@ -1,11 +1,10 @@
-// Package soldierstate reads and reports the current state of a soldier.
-//
 // The canonical Task Authority record is the only lifecycle authority (clean
 // break): `Status`/`Description` derive solely from the authoritative
 // `taskauthority.Aggregate.Phase`/`PhaseDetail`. `.meta`, `.status`, provider
 // PR, no-mistakes and endpoint evidence are diagnostic/evidence only and can
 // never change lifecycle state without a canonical record. A missing or
 // corrupt canonical record is an operation error, never a projection fallback.
+
 package fleet
 
 import (

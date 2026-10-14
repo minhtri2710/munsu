@@ -1,4 +1,3 @@
-// Package waker handles durable wake queue operations and guard checks.
 package orchestrator
 
 import (
