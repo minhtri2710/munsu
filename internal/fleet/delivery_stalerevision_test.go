@@ -322,23 +322,13 @@ func TestDeliverRecoveryContinuesPastFailedJournal(t *testing.T) {
 	mustWorkingDeliveryTask(t, c, "t2", deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, "t1", "authorized", "open-then-merged")
-	agg, err := c.Get(mustFleetTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reserve := taskauthority.CanonicalReserveTransferRequest{
-		HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, "t1"),
-		Precondition:  domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		ReservationID: "res-t1", Destination: mustFleetHomeID(t, "dest-home"), FenceToken: "fence-res", Reason: "transfer",
-	}
-	if _, err := c.ReserveTransfer(mustFleetOperation(t, "op-res-t1", reserve), reserve); err != nil {
-		t.Fatal(err)
-	}
+	// ReserveTransfer refuses a working task; seed the reservation on disk.
+	rewriteFleetTaskAggregate(t, homeDir, "t1", "transfer", `{"reservation_id":"res-t1","destination_home":"dest-home","fence_token":"fence-res"}`)
 	first := listActiveDeliveryJournals(t, homeDir)[0]
 	second := writeAuthorizeStageJournal(t, c, homeDir, "t2")
 
 	provider := installScriptedProviderFor(t, "open-then-merged")
-	_, err = RecoverDeliveryOutcomes(homeDir)
+	_, err := RecoverDeliveryOutcomes(homeDir)
 	var failClosed *DeliveryFailClosedError
 	if !errors.As(err, &failClosed) || failClosed.ReleaseErr == nil || !errors.Is(failClosed.ReleaseErr, taskauthority.ErrConflict) {
 		t.Fatalf("RecoverDeliveryOutcomes err = %v, want t1's release refused by the reservation", err)
