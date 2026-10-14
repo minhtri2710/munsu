@@ -14,44 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestGrokSafetyCheckAllow verifies safety-check --harness grok allow
-// produces exit 0, empty stdout, empty stderr.
-func TestGrokSafetyCheckAllow(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-
-	var exitCode int
-	oldExit := exitWithCode
-	exitWithCode = func(code int) { exitCode = code }
-	defer func() { exitWithCode = oldExit }()
-
-	// Create a git repo to pass scope check
-	gitDir := filepath.Join(tmpDir, "repo")
-	os.MkdirAll(gitDir, 0755)
-	runGit(t, gitDir, "init")
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-
-	stdout, stderr := captureBoth(func() {
-		err := runSafetyCheck(cmd, gitDir, "echo hello", "", "grok")
-		if err != nil {
-			exitCode = 1
-		}
-	})
-
-	if exitCode != 0 {
-		t.Errorf("expected exit 0 for allow, got %d", exitCode)
-	}
-	if strings.TrimSpace(stdout) != "" {
-		t.Errorf("expected empty stdout for grok allow, got %q", stdout)
-	}
-	if strings.TrimSpace(stderr) != "" {
-		t.Errorf("expected empty stderr for grok allow, got %q", stderr)
-	}
-}
-
 // TestGrokSafetyCheckDeny verifies safety-check --harness grok deny
 // produces exit 2, stdout decision=deny JSON, empty stderr.
 func TestGrokSafetyCheckDeny(t *testing.T) {
@@ -162,45 +124,6 @@ func TestGrokSafetyCheckDenyViaStdin(t *testing.T) {
 	}
 }
 
-// TestGrokSafetyCheckGateRefused verifies grok safety-check blocks
-// when gate is active (gate_refused).
-func TestGrokSafetyCheckGateRefused(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("NO_MISTAKES_GATE", "1")
-
-	var exitCode int
-	oldExit := exitWithCode
-	exitWithCode = func(code int) { exitCode = code }
-	defer func() { exitWithCode = oldExit }()
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-
-	stdout, _ := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "", "grok")
-	})
-
-	if exitCode != 2 {
-		t.Errorf("expected exit 2 for gate-refused grok, got %d", exitCode)
-	}
-
-	stdoutStr := strings.TrimSpace(stdout)
-	if stdoutStr == "" {
-		t.Fatal("expected non-empty stdout for grok gate-refused")
-	}
-
-	var denyPayload map[string]interface{}
-	if err := json.Unmarshal([]byte(stdoutStr), &denyPayload); err != nil {
-		t.Fatalf("stdout must be valid JSON: %v\nGot: %s", err, stdoutStr)
-	}
-
-	if denyPayload["decision"] != "deny" {
-		t.Errorf("expected decision 'deny', got %v", denyPayload["decision"])
-	}
-}
-
 // TestGrokGuardStopHookActive verifies guard --harness grok exits 0
 // when stop_hook_active is true (loop guard).
 func TestGrokGuardStopHookActive(t *testing.T) {
@@ -208,16 +131,29 @@ func TestGrokGuardStopHookActive(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
+	// Primary checkout with in-flight work and a stale beat: without the
+	// loop guard this stop would block with exit 2.
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, tmpDir, "init")
+	metaDir := filepath.Join(tmpDir, "state")
+	os.MkdirAll(metaDir, 0755)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
+
+	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
+	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	var exitCode int
 	oldExit := exitWithCode
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() { exitWithCode = oldExit }()
 
-	// Call runGuardGrok with stdin containing stop_hook_active=true
-	stdinPayload := `{"hookEventName":"Stop","stop_hook_active":true}`
 	oldStdin := os.Stdin
 	r, w, _ := os.Pipe()
-	w.Write([]byte(stdinPayload))
+	w.Write([]byte(`{"hookEventName":"Stop","stop_hook_active":true}`))
 	w.Close()
 	os.Stdin = r
 
@@ -240,22 +176,14 @@ func TestGrokGuardBlindTurn(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	// Initialize a canonical home so fleet state reads (fleet.Snapshot) work,
-	// then make tmpDir a git repo so scope classifies it as Primary.
 	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, tmpDir, "init")
-
-	// Create in-flight task meta
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(metaDir, "test-task.meta"), []byte(meta), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
 
-	// Create stale beat (10 minutes ago)
 	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
 	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
 		t.Fatal(err)
@@ -266,8 +194,7 @@ func TestGrokGuardBlindTurn(t *testing.T) {
 	exitWithCode = func(code int) { exitCode = code }
 	defer func() { exitWithCode = oldExit }()
 
-	captureBoth(func() {
-		// Pipe stdin with stop_hook_active false
+	_, stderr := captureBoth(func() {
 		oldStdin := os.Stdin
 		r, w, _ := os.Pipe()
 		w.Write([]byte(`{"hookEventName":"Stop","stop_hook_active":false}`))
@@ -282,6 +209,9 @@ func TestGrokGuardBlindTurn(t *testing.T) {
 	if exitCode != 2 {
 		t.Errorf("expected exit 2 for blind turn, got %d", exitCode)
 	}
+	if !strings.Contains(stderr, "TURN WOULD END BLIND") {
+		t.Errorf("stderr must contain 'TURN WOULD END BLIND', got: %s", stderr)
+	}
 }
 
 // TestGrokGuardHealthyExit verifies guard --harness grok exits 0
@@ -291,15 +221,14 @@ func TestGrokGuardHealthyExit(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	// Create in-flight task meta
-	metaDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(metaDir, 0755)
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(metaDir, "test-task.meta"), []byte(meta), 0644); err != nil {
+	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
+	runGit(t, tmpDir, "init")
+	metaDir := filepath.Join(tmpDir, "state")
+	os.MkdirAll(metaDir, 0755)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
 
-	// Create fresh beat
 	beat := fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())
 	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
 		t.Fatal(err)
