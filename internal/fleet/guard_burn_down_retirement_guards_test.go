@@ -283,7 +283,7 @@ func TestResolveRetiredCleanupEvidence_RetiredNoEvidence(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestRetireTaskAuthoritatively_NilAuthority(t *testing.T) {
-	_, err := retireTaskAuthoritatively(Options{ID: "t1"}, nil)
+	_, err := retireTaskAuthoritatively(Options{ID: "t1"}, nil, &TeardownResult{})
 	if err == nil {
 		t.Fatal("expected nil authority error, got nil")
 	}
@@ -298,7 +298,7 @@ const unansweredText = "has no outcome yet, so a merge may be in flight; check m
 
 func retireDeliveryTask(t *testing.T, c *taskauthority.Canonical, homeDir string, force bool) error {
 	t.Helper()
-	_, err := retireTaskAuthoritatively(Options{HomeDir: homeDir, ID: "t1", Force: force}, c)
+	_, err := retireTaskAuthoritatively(Options{HomeDir: homeDir, ID: "t1", Force: force}, c, &TeardownResult{})
 	return err
 }
 
@@ -460,7 +460,7 @@ func retireDuringLockWait(t *testing.T, c *taskauthority.Canonical, homeDir stri
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := retireTaskAuthoritatively(opts, c)
+		_, err := retireTaskAuthoritatively(opts, c, &TeardownResult{})
 		done <- err
 	}()
 	time.Sleep(700 * time.Millisecond)
