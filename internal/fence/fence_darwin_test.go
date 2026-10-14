@@ -208,10 +208,11 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(tempGate, "logs", "refs", "heads", "mu"), filepath.Join(tempGate, "hooks"))
 	tempLaunch := launch
 	tempLaunch.GateRepo = tempGate
+	tempFence := mustNew(t, tempLaunch)
 	for _, gt := range []struct {
 		f    *Fence
 		repo string
-	}{{f, gateRepo}, {mustNew(t, tempLaunch), tempGate}} {
+	}{{f, gateRepo}, {tempFence, tempGate}} {
 		// What a push creates in the gate: objects/ and refs/.
 		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"))
 		// The branch reflog (B1): munsu pre-creates it at spawn, the seat appends
@@ -230,6 +231,12 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 			filepath.Join(gt.repo, "HEAD"), filepath.Join(gt.repo, "objects", "info", "alternates"),
 			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-2"), filepath.Join(gt.repo, "logs", "refs", "heads", "evil"))
 	}
+
+	// Under a temp root the fence cannot tell the gate's state database from any
+	// other file, so the temp-root allow keeps it and its -wal, -shm and -journal
+	// writable. Outside a temp root the same paths are refused above (G1154).
+	tempState := filepath.Join(l.root, "gate", "state.sqlite")
+	mustWrite(t, tempFence, tempState, tempState+"-wal", tempState+"-shm", tempState+"-journal")
 
 	mustWrite(t, f,
 		filepath.Join(l.worktree, "f"),
