@@ -165,7 +165,8 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 		EndpointReservationID: "ep-reserved-unbound",
 		EndpointFenceToken:    "ep-fence-reserved-unbound",
 		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-reserved-unbound",
-		Reason: "reclaim test",
+		SeatEnv: taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"},
+		Reason:  "reclaim test",
 	}
 	var reservedPath, reservedGit string
 	statusWorktrees := func(homeDir string) ([]backend.WorktreeEntry, error) {
@@ -302,6 +303,7 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	}
 	const reservationID = "wt-retired-reservation"
 	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("b", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-retired", WindowLabel: "window-retired", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-retired", EndpointReservationID: "ep-retired", EndpointFenceToken: "ep-fence-retired", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-retired", Reason: "reclaim test"}
+	launch.SeatEnv = taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
@@ -414,6 +416,7 @@ func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.T
 		t.Fatal(err)
 	}
 	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("c", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-held", WindowLabel: "window-held", WorktreeReservationID: heldReservationID, WorktreeFenceToken: "fence-held", EndpointReservationID: "ep-held", EndpointFenceToken: "ep-fence-held", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-held", Reason: "reclaim test"}
+	launch.SeatEnv = taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "held-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
@@ -697,6 +700,7 @@ func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 	}
 	const reservationID = "wt-retired-reservation"
 	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: strings.Repeat("b", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", Project: projectName, LaunchID: "launch-retired", WindowLabel: "window-retired", WorktreeReservationID: reservationID, WorktreeFenceToken: "fence-retired", EndpointReservationID: "ep-retired", EndpointFenceToken: "ep-fence-retired", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-retired", Reason: "reclaim test"}
+	launch.SeatEnv = taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
