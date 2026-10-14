@@ -2051,6 +2051,15 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 		if err := ensureBranchReflog(commonDir, launch.Branch); err != nil {
 			return fmt.Errorf("launch fence: %w", err)
 		}
+		// The seat's fetches append to the remote-tracking reflogs, which the fence
+		// cannot create (fence-reflog-remotes-residual), so munsu pre-creates one
+		// per remote-tracking ref. Human words (domain.Words): grantor the Human,
+		// channel direct chat with the Lead, words=selected, 2026-10-13: "Vá ngay:
+		// munsu tạo sẵn reflog remote lúc spawn và khóa logs/refs/remotes; fetch
+		// remote mới fail cho tới khi reflog được tạo sẵn".
+		if launch.RemoteReflogs, err = ensureRemoteReflogs(commonDir); err != nil {
+			return fmt.Errorf("launch fence: %w", err)
+		}
 		if r.effectiveMode == "no-mistakes" {
 			if launch.GateRepo, err = projectGate(primary); err != nil {
 				return fmt.Errorf("launch fence: %w", err)
