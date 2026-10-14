@@ -471,7 +471,7 @@ func TestCanonicalLaunchOpsFencedByTransferInvariants(t *testing.T) {
 func TestCanonicalDeliveryOpsFencedByTransferReservation(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 4), "dest-home")
+	seedReservationForTest(t, c, "t1", preconditionOf(1, 4), "dest-home")
 
 	agg, err := c.Get(mustTaskID(t, "t1"))
 	if err != nil {
@@ -499,7 +499,7 @@ func TestCanonicalDeliveryOpsFencedByTransferReservation(t *testing.T) {
 func TestCanonicalDeliveryOpsFencedBySupersession(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustDeliveryTask(t, c, "t1")
-	mustReserveTransfer(t, c, "t1", preconditionOf(1, 4), "dest-home")
+	seedReservationForTest(t, c, "t1", preconditionOf(1, 4), "dest-home")
 
 	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 5), "res-t1", "dest-home")
 	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-sup-delivery", commit), commit); err != nil {
