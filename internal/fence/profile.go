@@ -30,7 +30,7 @@ var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
 type launchPaths struct {
 	home, primary, worktree, gitDir, commonDir string
 	stateDir, gateRepo                         string
-	files                                      []string
+	files, remoteReflogs                       []string
 	roots                                      []string
 }
 
@@ -186,7 +186,7 @@ func New(l Launch) (*Fence, error) {
 	}
 	if l.Role == RoleSoldier {
 		allowRoots(p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
-			filepath.Join(p.commonDir, "refs", "remotes"), filepath.Join(p.commonDir, "logs", "refs", "remotes"))
+			filepath.Join(p.commonDir, "refs", "remotes"))
 		allow(&b, "literal", gitBranchRefFiles(p.commonDir, branch)...)
 		// The seat appends to its own reflogs but cannot swap one for a symlink
 		// an unfenced push or fetch then writes through (fence-reflog-symlink-
@@ -197,10 +197,12 @@ func New(l Launch) (*Fence, error) {
 		// under their logs/. The gitDir logs deny comes after the gitDir root
 		// allow so it wins. The gitDir is itself a writable root, so its own name
 		// is denied too: without it the seat could rename the gitDir away, swap
-		// logs/HEAD inside the moved copy, and rename it back. <common>/logs/
-		// refs/remotes stays a root (fetch creates its remote-tracking reflogs
-		// on the fly); that residual is the separate task
-		// fence-reflog-remotes-residual. Human words (domain.Words): grantor the
+		// logs/HEAD inside the moved copy, and rename it back. <common>/
+		// refs/remotes is a root; <common>/logs/refs/remotes is not. The seat
+		// appends only to the remote reflogs munsu pre-created at spawn
+		// (Launch.RemoteReflogs), so a link it plants there is never one an
+		// unfenced fetch writes through (fence-reflog-remotes-residual).
+		// Human words (domain.Words): grantor the
 		// Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
 		// (Recommended): B on the seat branch reflog, worktree HEAD and gate
 		// reflog; munsu pre-creates the gate branch reflog at spawn (probe
@@ -211,6 +213,11 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "subpath", filepath.Join(p.gitDir, "logs"))
 		allowData(&b, filepath.Join(p.gitDir, "logs", "HEAD"),
 			filepath.Join(p.commonDir, "logs", "refs", "heads", filepath.FromSlash(branch)))
+		// Human words (domain.Words): grantor the Human, channel direct chat with
+		// the Lead, words=selected, 2026-10-13: "Vá ngay: munsu tạo sẵn reflog
+		// remote lúc spawn và khóa logs/refs/remotes; fetch remote mới fail cho tới
+		// khi reflog được tạo sẵn".
+		allowData(&b, p.remoteReflogs...)
 		deny(&b, "literal", p.gitDir)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
@@ -376,6 +383,24 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 			return p, fmt.Errorf("fence: file: %w", err)
 		}
 		p.files = append(p.files, filepath.Join(dir, filepath.Base(f)))
+	}
+	if len(l.RemoteReflogs) > 0 && l.Role != RoleSoldier {
+		return p, fmt.Errorf("fence: remote reflogs are a soldier's only")
+	}
+	remotes := filepath.Join(p.commonDir, "logs", "refs", "remotes")
+	for _, f := range l.RemoteReflogs {
+		if err := lexicalPath(f); err != nil {
+			return p, fmt.Errorf("fence: remote reflogs: %w", err)
+		}
+		dir, err := resolvePath(filepath.Dir(f), false)
+		if err != nil {
+			return p, fmt.Errorf("fence: remote reflogs: %w", err)
+		}
+		path := filepath.Join(dir, filepath.Base(f))
+		if path == remotes || !within(path, remotes) {
+			return p, fmt.Errorf("fence: remote reflogs: %s is not under %s", f, remotes)
+		}
+		p.remoteReflogs = append(p.remoteReflogs, path)
 	}
 	if p.home != "" {
 		if err := realHomeRoots(p.home, l.Role); err != nil {

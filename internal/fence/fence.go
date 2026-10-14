@@ -55,6 +55,11 @@ type Launch struct {
 	CommonDir string   // the repository's common git dir
 	Branch    string   // soldier only: the task-local branch, e.g. mu/<task>
 	Files     []string // exact files also writable, with their atomic .tmp.<pid>.<hex> siblings; a soldier's own home files
+	// RemoteReflogs are a soldier's remote-tracking reflog files that munsu
+	// pre-created at spawn, one per existing refs/remotes ref, under
+	// <CommonDir>/logs/refs/remotes. The seat may only append to them. A reviewer
+	// has none.
+	RemoteReflogs []string
 	// HarnessStateDir is the per-launch harness state directory (the task's
 	// PI_CODING_AGENT_DIR for pi, its CLAUDE_CONFIG_DIR for claude). It is
 	// writable under both roles: a proper subdirectory of Home's state/, never a
