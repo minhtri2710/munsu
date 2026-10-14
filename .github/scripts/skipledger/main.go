@@ -2,7 +2,6 @@
 // .github/skips.allow, in both directions.
 //
 //	skipledger check <allow> <lane.json>...   print unlisted skips and stale rows
-//	skipledger list <lane.json>...            print observed skips as allow rows
 //
 // Each lane file is `go test -json` output; the lane name is its file name
 // without .json. A skip is a test-level event with action "skip". The reason is
@@ -49,7 +48,7 @@ type event struct {
 
 var reasonLine = regexp.MustCompile(`^[^\s:]+_test\.go:\d+: (.+)$`)
 
-const usage = "usage: skipledger check <allow> <lane.json>... | skipledger list <lane.json>..."
+const usage = "usage: skipledger check <allow> <lane.json>..."
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -63,15 +62,6 @@ func run(args []string, out io.Writer) error {
 		return errors.New(usage)
 	}
 	switch args[0] {
-	case "list":
-		skips, err := readLanes(args[1:])
-		if err != nil {
-			return err
-		}
-		for _, s := range sortSkips(skips) {
-			fmt.Fprintf(out, "%s %s %s\n", s.pkg, s.test, s.reason)
-		}
-		return nil
 	case "check":
 		if len(args) < 3 {
 			return errors.New(usage)
@@ -201,15 +191,6 @@ func report(out io.Writer, allow string, rows map[key]row, skips map[key]*skip) 
 	for _, r := range stale {
 		fmt.Fprintf(out, "  %s %s %s\n", r.pkg, r.test, r.reason)
 	}
-}
-
-func sortSkips(skips map[key]*skip) []*skip {
-	list := make([]*skip, 0, len(skips))
-	for _, s := range skips {
-		list = append(list, s)
-	}
-	sort.Slice(list, func(i, j int) bool { return lessKey(list[i].key, list[j].key) })
-	return list
 }
 
 func lessKey(a, b key) bool {

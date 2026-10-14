@@ -15,13 +15,12 @@
 #
 # Usage:
 #   skip-ledger.sh check   lanes' skips against .github/skips.allow
-#   skip-ledger.sh list    every skip the lanes observed, as allow rows
 set -euo pipefail
 
-ROOT="${SKIP_LEDGER_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="$ROOT/.github/build-tags.manifest"
 ALLOW="$ROOT/.github/skips.allow"
-DIR="${SKIP_LEDGER_DIR:-$ROOT/.github/coverage}"
+DIR="$ROOT/.github/coverage"
 
 die() {
 	echo "::error::$*" >&2
@@ -45,18 +44,12 @@ lane_files() {
 	done < <(lanes)
 }
 
-mode="${1:-}"
-case "$mode" in
-check | list) ;;
-*) die "usage: skip-ledger.sh check | list" ;;
-esac
+if [ "${1:-}" != check ]; then
+	die "usage: skip-ledger.sh check"
+fi
 
 listed="$(lane_files)"
 files=()
 while IFS= read -r f; do files+=("$f"); done <<<"$listed"
 cd "$ROOT/.github/scripts/skipledger"
-if [ "$mode" = check ]; then
-	go run . check "$ALLOW" "${files[@]}"
-else
-	go run . list "${files[@]}"
-fi
+go run . check "$ALLOW" "${files[@]}"
