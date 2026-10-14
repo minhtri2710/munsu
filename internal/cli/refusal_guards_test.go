@@ -545,6 +545,37 @@ func TestGuardConfigDispatchAddRequiresItsIdentifyingFlags(t *testing.T) {
 	}
 }
 
+func TestGuardConfigDispatchAddRefusesAnUnknownScaffold(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	for _, tc := range []struct {
+		scaffold string
+		want     string
+	}{
+		{scaffold: "strict", want: `add: unknown dispatch profile scaffold "strict" (want lean or guided)`},
+		{scaffold: "guided"},
+	} {
+		t.Run(tc.scaffold, func(t *testing.T) {
+			_, err := runRoot(t, "config", "dispatch", "add", "--name", "p-"+tc.scaffold, "--harness", "claude", "--match", "*", "--scaffold", tc.scaffold, "--home", homeDir)
+			if tc.want != "" {
+				wantErrContains(t, err, tc.want, "config dispatch add --scaffold "+tc.scaffold)
+				return
+			}
+			if err != nil {
+				t.Fatalf("config dispatch add --scaffold %s = %v, want acceptance", tc.scaffold, err)
+			}
+			base, err := config.LoadFleetBase(homeDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profiles := base.Config.DispatchProfiles
+			if len(profiles) != 1 || profiles[0].Scaffold != tc.scaffold {
+				t.Fatalf("stored profiles = %+v, want one with scaffold %q", profiles, tc.scaffold)
+			}
+		})
+	}
+}
+
 func TestGuardConfigDispatchAddRefusesToOverwriteWithoutReplace(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
