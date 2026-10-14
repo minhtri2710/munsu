@@ -150,6 +150,7 @@ func TestDeliverAuthorizationPinsExactRequestDigests(t *testing.T) {
 		Kind:          journal.Kind,
 		Identity:      journal.Identity,
 		Preconditions: journal.Preconditions,
+		Diff:          journal.Diff,
 		Words:         journal.Words,
 	}
 	digest, err := domain.Digest(req)
