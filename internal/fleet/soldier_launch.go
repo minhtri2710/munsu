@@ -39,6 +39,7 @@ type LaunchPromptInput struct {
 	OptionalSkills  []SkillEntry
 	HarnessName     string
 	ScoutScope      string
+	Scaffold        string // matched dispatch profile's charter scaffold
 }
 
 // BuildLaunchPrompt constructs the complete, role-specific Soldier launch prompt.
@@ -76,7 +77,7 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	}
 
 	// 1. Build charter.
-	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
+	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode, input.Scaffold)
 
 	// 2. Build the skill manifest section.
 	skillSection := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills)
