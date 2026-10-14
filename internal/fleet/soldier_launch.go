@@ -466,6 +466,12 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 			return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: %w", err)
 		}
 	}
+	// The pane shell may leak descriptors above stdio, and a fenced write
+	// through one, opened before the sandbox applied, is not re-checked.
+	b.WriteString("for fd in /dev/fd/*; do\n")
+	b.WriteString("  n=${fd##*/}\n")
+	b.WriteString("  if [ \"$n\" -gt 2 ]; then eval \"exec $n>&-\" 2>/dev/null || true; fi\n")
+	b.WriteString("done\n")
 	b.WriteString("exec")
 	for _, arg := range argv {
 		b.WriteString(" ")

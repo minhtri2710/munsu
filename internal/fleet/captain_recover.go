@@ -208,25 +208,25 @@ func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(t
 	return false, nil
 }
 
-// Recover runs the full recovery transaction for a single captain.
+// Recover runs the full recovery transaction for a single captain under the
+// converge lock, so it never relaunches beside Converge or fleet.Recover.
 func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult {
 	res := &RecoverResult{}
+
+	release, err := convergeLockAcquire(parentHome)
+	if err != nil {
+		res.Steps = append(res.Steps, StepResult{Name: "converge-lock", State: StepFailed, Detail: fmt.Sprintf("acquiring converge lock: %v", err)})
+		res.Steps = append(res.Steps, skippedRecoverSteps("skipped: converge lock not acquired", "provenance")...)
+		return res
+	}
+	defer release()
 
 	// Step a: provenance check
 	res.Steps = append(res.Steps, tx.stepProvenance(sm))
 
 	// If provenance failed, all subsequent steps are skipped.
 	if res.Steps[0].State == StepFailed {
-		res.Steps = append(res.Steps,
-			StepResult{Name: "config-validation", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "charter-refresh", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "config-push", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "integration-status", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "nudge-retry", State: StepSkipped, Detail: "skipped: provenance failed"},
-		)
+		res.Steps = append(res.Steps, skippedRecoverSteps("skipped: provenance failed")...)
 		return res
 	}
 
@@ -433,7 +433,6 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("alive check failed: %v", stateErr)}
 	}
-	taskID := taskIDForCaptain(sm.ID)
 	switch state {
 	case CaptainAlive:
 		if err := clearRelaunchGuard(parentHome, sm, binding); err != nil {
@@ -449,34 +448,43 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 			Detail: "endpoint evidence is not authoritatively absent; strict-dead-only refuses relaunch"}
 	}
 
-	// CaptainDead: launched-but-dead (binding already validated by
-	// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
-	// armed, then relaunch and prove post-launch liveness.
-	refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, tx.nowTime())
-	if gErr != nil {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: gErr.Error()}
-	}
-	if refused {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))}
-	}
-
-	// Launched-but-dead: relaunch.
-	if lErr := Launch(sm.Home, parentHome, tx.Capabilities.Launch, tx.Capabilities.Integration); lErr != nil {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: fmt.Sprintf("relaunch failed: %v", lErr)}
-	}
-	proven, pErr := proveRelaunch(parentHome, sm, tx.Capabilities.Probe, tx.sleepFor, tx.nowTime)
-	if pErr != nil {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: pErr.Error()}
-	}
-	if !proven {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: "post-launch liveness could not be proven; duplicate relaunch guarded"}
+	if err := relaunchDeadCaptain(parentHome, sm, tx.Capabilities.Launch, tx.Capabilities.Integration, tx.Capabilities.Probe, tx.sleepFor, tx.nowTime); err != nil {
+		return StepResult{Name: "relaunch-pane", State: StepFailed, Detail: err.Error()}
 	}
 	return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "relaunched successfully and liveness proven"}
+}
+
+func skippedRecoverSteps(detail string, leading ...string) []StepResult {
+	names := append(leading, "config-validation", "charter-refresh", "config-push", "integration-status", "launch-readiness", "relaunch-pane", "watcher-ensure", "nudge-retry")
+	steps := make([]StepResult, 0, len(names))
+	for _, name := range names {
+		steps = append(steps, StepResult{Name: name, State: StepSkipped, Detail: detail})
+	}
+	return steps
+}
+
+// relaunchDeadCaptain is the one relaunch path for a launched-but-dead
+// captain. It refuses a duplicate relaunch while the guard is armed, then
+// relaunches and proves post-launch liveness. Callers hold the converge lock.
+func relaunchDeadCaptain(parentHome string, sm Info, launch LaunchEndpoint, integration IntegrationPort, probe ProbeEndpoint, sleep func(time.Duration), now func() time.Time) error {
+	refused, remaining, err := consultRelaunchGuard(parentHome, taskIDForCaptain(sm.ID), now())
+	if err != nil {
+		return err
+	}
+	if refused {
+		return fmt.Errorf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))
+	}
+	if err := Launch(sm.Home, parentHome, launch, integration); err != nil {
+		return fmt.Errorf("relaunch failed: %w", err)
+	}
+	proven, err := proveRelaunch(parentHome, sm, probe, sleep, now)
+	if err != nil {
+		return fmt.Errorf("relaunched but %w", err)
+	}
+	if !proven {
+		return fmt.Errorf("relaunched but post-launch liveness could not be proven; duplicate relaunch guarded")
+	}
+	return nil
 }
 
 func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResult {
