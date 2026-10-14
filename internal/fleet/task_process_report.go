@@ -172,10 +172,13 @@ func lsofProcessDetails(pids []int) map[int]processDetail {
 	details := make(map[int]processDetail, len(pids))
 	for _, pid := range pids {
 		detail := processDetail{cwd: unknownProcessField, ports: unknownProcessField}
-		if cwdErr == nil && len(cwds[pid]) > 0 {
+		// A live, readable pid always has a cwd row, so a pid with none has
+		// exited or cannot be read, and an empty listener list says nothing.
+		reported := cwdErr == nil && len(cwds[pid]) > 0
+		if reported {
 			detail.cwd = cwds[pid][0]
 		}
-		if portErr == nil {
+		if reported && portErr == nil {
 			detail.ports = "none"
 			var ports []string
 			seen := map[string]bool{}
