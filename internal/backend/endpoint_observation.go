@@ -1,6 +1,3 @@
-// Package backend provides terminal/session resolution, session adapters
-// (tmux, herdr), worktree pool management, and home tag helpers.
-//
 // Endpoint observation is the typed, orthogonal runtime diagnostic of one
 // exact bound endpoint. It is NOT Task lifecycle truth: the
 // canonical Task phase lives in taskauthority, and observation is only a
@@ -17,6 +14,7 @@
 // after matching the observation against the exact canonical binding/generation/
 // revision/fence (see fleet.authorizeAbsence / authorizeLive). An adapter probe
 // therefore never yields an Absent()/Live() reading on its own.
+
 package backend
 
 import (
