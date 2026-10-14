@@ -199,6 +199,22 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "literal", p.gitDir)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
+		// The worktree's own name and every directory above it cannot be
+		// unlinked or renamed, and its .git file cannot be written: a seat
+		// that moved its worktree away and planted a link at its name, or
+		// rewrote the gitdir: line, would have the next launch's fence grant
+		// another task's worktree and git dir, whose config and hooks unfenced
+		// git runs. Human words (domain.Words), each grantor the Human, channel
+		// supervisor-relay:dialog, words=selected: G1058: "A soldier's write
+		// fence lets it write only its own task's status, report and request
+		// files; it can never write another task's documents, any review
+		// verdict, delivery authorization or gate record, or the fleet
+		// registries (projects.json, captains.json)." G1085: "Quy tắc chung
+		// (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu
+		// hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
+		// session ngoài session của nó."
+		denyUnlink(&b, append(ancestors(p.worktree), p.worktree)...)
+		deny(&b, "literal", filepath.Join(p.worktree, ".git"))
 	}
 	if p.home != "" {
 		// After every allow, so they hold wherever the home lives, a temp root
