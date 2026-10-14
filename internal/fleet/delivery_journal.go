@@ -195,36 +195,42 @@ func abortDeliveryJournal(h *home.Home, lk *home.Lock, journal *deliveryJournal,
 // every resume failure is returned joined. A completed record's terminal
 // truth is never resumed. A non-empty taskID resumes only that task's journals
 // (every listed journal is still validated); an empty one resumes them all.
-func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock, taskID string) error {
+func recoverPendingDeliveryJournals(h *home.Home, lk *home.Lock, taskID string) ([]DeliverResult, error) {
 	idx, err := deliveryJournals.readIndex(h)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(idx.Active) == 0 {
-		return nil
+		return nil, nil
 	}
 	c, err := taskauthority.NewCanonical(h)
 	if err != nil {
-		return fmt.Errorf("delivery recovery: composing task authority: %w", err)
+		return nil, fmt.Errorf("delivery recovery: composing task authority: %w", err)
 	}
 	journals := make([]*deliveryJournal, 0, len(idx.Active))
 	for _, id := range idx.Active {
 		journal, err := readActiveDeliveryJournal(h, id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		journals = append(journals, journal)
 	}
 	var failures []error
+	var notCompleted []DeliverResult
 	for _, journal := range journals {
 		if taskID != "" && journal.TaskID != taskID {
 			continue
 		}
-		if _, err := resumeDeliveryJournal(h, lk, c, journal); err != nil {
+		res, err := resumeDeliveryJournal(h, lk, c, journal)
+		if err != nil {
 			failures = append(failures, fmt.Errorf("delivery journal %s: %w", journal.ID, err))
+			continue
+		}
+		if res != nil && res.IsError() {
+			notCompleted = append(notCompleted, *res)
 		}
 	}
-	return errors.Join(failures...)
+	return notCompleted, errors.Join(failures...)
 }
 
 // readActiveDeliveryJournal reads one journal listed as active and fails
@@ -243,19 +249,19 @@ func readActiveDeliveryJournal(h *home.Home, id string) (*deliveryJournal, error
 	return journal, nil
 }
 
-// RecoverDeliveryJournals resumes every pending Fleet-owned delivery journal
-// of a home, continuing the SAME operation identities recorded in each
-// journal. It is the delivery recovery gate; Deliver invokes it before
-// creating any new journal so an interrupted delivery completes first and a
-// new delivery observes truthful state.
-func RecoverDeliveryJournals(homeDir string) error {
+// RecoverDeliveryOutcomes resumes every pending Fleet-owned delivery journal of
+// a home, continuing the SAME operation identities recorded in each journal. It
+// is the delivery recovery gate that watch run invokes, and it returns each
+// resumed journal whose committed outcome is not completed (partial,
+// remote-unknown, retryable) so the operator sees it instead of a nil error.
+func RecoverDeliveryOutcomes(homeDir string) ([]DeliverResult, error) {
 	h, err := home.Open(homeDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	lk, err := h.Lock(deliveryLockScope)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer lk.Release()
 	return recoverPendingDeliveryJournals(h, lk, "")
