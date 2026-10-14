@@ -1,6 +1,7 @@
 module github.com/minhtri2710/munsu
 
 go 1.26.0
+toolchain go1.26.9
 
 require (
 	charm.land/bubbles/v2 v2.2.1
