@@ -362,6 +362,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Kind:          req.Kind,
 		Identity:      req.Identity,
 		Preconditions: req.Preconditions,
+		Diff:          deliveryChanges(agg.Worktree.Path, req.Identity),
 		Words:         req.Words,
 	}
 	authorizeDigest, err := domain.Digest(authorizeReq)
@@ -383,6 +384,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Method:          method,
 		Preconditions:   preconditions,
 		Words:           req.Words,
+		Diff:            authorizeReq.Diff,
 		AuthorizeOpID:   deliveryAuthorizeOpID(id, agg.TaskID),
 		GateOpID:        deliveryGateOpID(id, agg.TaskID),
 		RevokeOpID:      deliveryRevokeOpID(id, agg.TaskID),
@@ -526,6 +528,7 @@ func issueDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJou
 		Kind:          journal.Kind,
 		Identity:      journal.Identity,
 		Preconditions: journal.Preconditions,
+		Diff:          journal.Diff,
 		Words:         journal.Words,
 	}
 	digest, err := domain.Digest(req)
