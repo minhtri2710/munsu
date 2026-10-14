@@ -184,11 +184,7 @@ var Adapters = map[string]Adapter{
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
 		FailurePatterns: []string{"Invalid API key"},
-		LaunchTemplate: Template{
-			ModelFlag:  "--model",
-			EffortFlag: "--reasoning-effort",
-		},
-		StateArtifacts: []string{"grok-turnend-token"},
+		StateArtifacts:  []string{"grok-turnend-token"},
 	},
 	Agy: {
 		Name:       Agy,
@@ -200,10 +196,6 @@ var Adapters = map[string]Adapter{
 		ReadyPatterns:   []string{"esc to cancel", "Ready for your prompt", "What would you like"},
 		TrustPatterns:   []string{"Do you trust", "Yes, I trust this folder"},
 		FailurePatterns: []string{"Failed to authenticate"},
-		LaunchTemplate: Template{
-			ModelFlag: "--model",
-			ExtraArgs: []string{"--dangerously-skip-permissions"},
-		},
 	},
 }
 
