@@ -118,8 +118,9 @@ func restrictDir(path string) error {
 // and contains only ACEs belonging to sid (or is empty, denying all access),
 // with no inherited ACEs, ensuring no other principals have access.
 //
-// No lane runs this Windows check; TestLayoutAndPermissionsPrivate
-// (canonical_home_test.go) covers the owner-private contract on darwin and linux.
+// Only the manual windows-observation workflow runs this Windows check; no
+// required lane does. TestLayoutAndPermissionsPrivate (canonical_home_test.go)
+// covers the owner-private contract on darwin and linux.
 func verifyRestrictedProtection(path string, sid *windows.SID) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
@@ -217,8 +218,9 @@ func currentUserSID() (*windows.SID, error) {
 // granting full control, with no inherited ACE. It fails closed when the guarantee
 // is not established or cannot be verified.
 //
-// No lane runs this Windows check. The Unix mode-bit owner-private contract is
-// covered on darwin and linux by TestLayoutAndPermissionsPrivate (canonical_home_test.go).
+// Only the manual windows-observation workflow runs this Windows check; no
+// required lane does. The Unix mode-bit owner-private contract is covered on
+// darwin and linux by TestLayoutAndPermissionsPrivate (canonical_home_test.go).
 func verifyProtection(path string, isDir bool) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
