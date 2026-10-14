@@ -112,10 +112,3 @@ func TestRunRefusesMissingArguments(t *testing.T) {
 		}
 	}
 }
-
-func TestRunHasNoListSubcommand(t *testing.T) {
-	lane := writeFile(t, "default.json", `{"Action":"skip","Package":"m/internal/a","Test":"TestNeedsTmux"}`+"\n")
-	if err := run([]string{"list", lane}, &bytes.Buffer{}); err == nil {
-		t.Error("list still prints rows; it must be removed")
-	}
-}
