@@ -129,6 +129,9 @@ type Runner struct {
 
 // NewRunner creates a Runner for the given Args.
 func NewRunner(args Args) *Runner {
+	if args.HarnessFlag == "default" {
+		args.HarnessFlag = ""
+	}
 	return &Runner{args: args, endpoints: args.Endpoints}
 }
 
