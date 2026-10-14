@@ -411,3 +411,44 @@ func TestAppendRefusesWhenLogIDIsMaximum(t *testing.T) {
 		t.Fatalf("Append() below the maximum = %d, %v; want %d", id, err, uint64(math.MaxUint64))
 	}
 }
+
+func TestAppendAfterTornTailKeepsLogWellFormedAndIDsUnique(t *testing.T) {
+	home := t.TempDir()
+	writeEventLog(t, home, "1\t10\tt\tp\t\tx\n2\t11\tt\tp\t\ty")
+
+	id, err := Append(home, "t", "p", "", "z")
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if id != 2 {
+		t.Fatalf("Append() id = %d, want 2: the torn record was never acknowledged", id)
+	}
+	got := readEventLog(t, home)
+	if ids := recordIDs(got); len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("ids = %v, want [1 2]", ids)
+	}
+	if got[1].Payload != "z" {
+		t.Errorf("payload = %q, want %q", got[1].Payload, "z")
+	}
+}
+
+func TestAppendAfterTornTailDoesNotAdoptFragmentPayload(t *testing.T) {
+	home := t.TempDir()
+	writeEventLog(t, home, "1\t10\tt\tp\t\tx\n2\t11\tt\tp\t\tpart")
+
+	if _, err := Append(home, "t", "p", "", "z"); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	latest, skipped, err := LatestEvents(home, 5)
+	if err != nil || skipped != 0 {
+		t.Fatalf("LatestEvents() skipped=%d err=%v", skipped, err)
+	}
+	for _, r := range latest {
+		if r.Payload == "part" {
+			t.Fatalf("torn fragment surfaced as record %d", r.ID)
+		}
+	}
+	if len(latest) != 2 || latest[1].Payload != "z" {
+		t.Fatalf("LatestEvents() = %+v, want records 1 and 2 with payload z", latest)
+	}
+}
