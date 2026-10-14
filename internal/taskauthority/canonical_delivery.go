@@ -60,6 +60,27 @@ func (k DeliveryAuthorizationKind) Valid() bool {
 	return false
 }
 
+// DeliveryAuthorizationBasis is what authorized one delivery: a head-bound
+// PASS review verdict, or a change set that is prose only.
+type DeliveryAuthorizationBasis string
+
+const (
+	// DeliveryBasisReviewVerdict authorizes on the recorded PASS ReviewVerdict.
+	DeliveryBasisReviewVerdict DeliveryAuthorizationBasis = "review-verdict"
+	// DeliveryBasisProseOnly authorizes with no verdict because every changed
+	// path is prose (domain.DeliveryDiff.ProseOnly).
+	DeliveryBasisProseOnly DeliveryAuthorizationBasis = "prose-only"
+)
+
+// Valid reports whether the basis is a known delivery authorization basis.
+func (b DeliveryAuthorizationBasis) Valid() bool {
+	switch b {
+	case DeliveryBasisReviewVerdict, DeliveryBasisProseOnly:
+		return true
+	}
+	return false
+}
+
 // DeliveryPrecondition is a typed, closed-set precondition the Fleet delivery
 // journal asserts was verified before authorization. Task Authority binds the
 // asserted set durably; it never fabricates provider verification.
@@ -101,8 +122,9 @@ func (p DeliveryPrecondition) Valid() bool {
 //   - current ownership and the typed domain.DeliveryIdentity including the
 //     exact provider head;
 //   - the typed persisted operation kind discriminator (provider merge);
-//   - the PASS review verdict bound to the exact delivered head and
-//     the Human's words behind the authorization;
+//   - the basis: a PASS review verdict bound to the exact delivered head, or
+//     the prose-only change set (domain.DeliveryDiff) that needs no verdict;
+//   - the Human's words behind the authorization;
 //   - the exact Endpoint/Worktree binding digest (lease/fence and repository
 //     identity/path/head fields);
 //   - the relevant delivery-holds digest;
@@ -112,22 +134,24 @@ func (p DeliveryPrecondition) Valid() bool {
 // The document is immutable once committed; revocation evidence is a separate
 // immutable document bound to the authorization Operation identity.
 type DeliveryAuthorization struct {
-	SchemaVersion string                    `json:"schema_version"`
-	TaskID        string                    `json:"task_id"`
-	Generation    Generation                `json:"generation"`
-	Revision      Revision                  `json:"revision"`
-	Phase         Phase                     `json:"phase"`
-	Owner         string                    `json:"owner"`
-	Kind          DeliveryAuthorizationKind `json:"kind"`
-	Identity      domain.DeliveryIdentity   `json:"identity"`
-	Verdict       domain.ReviewVerdict      `json:"verdict"`
-	Words         domain.Words              `json:"words"`
-	BindingDigest string                    `json:"binding_digest"`
-	HoldsDigest   string                    `json:"holds_digest"`
-	Preconditions []DeliveryPrecondition    `json:"preconditions"`
-	OperationID   string                    `json:"operation_id"`
-	Digest        string                    `json:"digest"`
-	IssuedAt      int64                     `json:"issued_at"`
+	SchemaVersion string                     `json:"schema_version"`
+	TaskID        string                     `json:"task_id"`
+	Generation    Generation                 `json:"generation"`
+	Revision      Revision                   `json:"revision"`
+	Phase         Phase                      `json:"phase"`
+	Owner         string                     `json:"owner"`
+	Kind          DeliveryAuthorizationKind  `json:"kind"`
+	Identity      domain.DeliveryIdentity    `json:"identity"`
+	Basis         DeliveryAuthorizationBasis `json:"basis"`
+	Diff          domain.DeliveryDiff        `json:"diff"`
+	Verdict       domain.ReviewVerdict       `json:"verdict"`
+	Words         domain.Words               `json:"words"`
+	BindingDigest string                     `json:"binding_digest"`
+	HoldsDigest   string                     `json:"holds_digest"`
+	Preconditions []DeliveryPrecondition     `json:"preconditions"`
+	OperationID   string                     `json:"operation_id"`
+	Digest        string                     `json:"digest"`
+	IssuedAt      int64                      `json:"issued_at"`
 }
 
 // clone deep-copies the record so committed evidence is never aliased.
@@ -244,6 +268,7 @@ type CanonicalDeliveryAuthorizationRequest struct {
 	Kind          DeliveryAuthorizationKind
 	Identity      domain.DeliveryIdentity
 	Preconditions []DeliveryPrecondition
+	Diff          domain.DeliveryDiff
 	Words         domain.Words
 }
 
@@ -256,8 +281,9 @@ func (r CanonicalDeliveryAuthorizationRequest) DigestBytes() ([]byte, error) {
 		Kind          DeliveryAuthorizationKind `json:"kind"`
 		Identity      domain.DeliveryIdentity   `json:"identity"`
 		Preconditions []DeliveryPrecondition    `json:"preconditions"`
+		Diff          domain.DeliveryDiff       `json:"diff"`
 		Words         domain.Words              `json:"words"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Kind, r.Identity, uniqueDeliveryPreconditions(r.Preconditions), r.Words})
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Kind, r.Identity, uniqueDeliveryPreconditions(r.Preconditions), r.Diff, r.Words})
 }
 
 // DeliveryAuthorizationResult is the committed outcome of an authorization
@@ -471,8 +497,20 @@ func validateDeliveryAuthorization(a DeliveryAuthorization) error {
 	if !safeSHAValue(a.Identity.HeadSHA) {
 		return validationError("delivery authorization identity head SHA must be a safe non-empty value")
 	}
-	if err := a.Verdict.Approves(a.Identity.HeadSHA, a.Verdict.Author, a.TaskID); err != nil {
-		return validationError("delivery authorization verdict: %v", err)
+	switch a.Basis {
+	case DeliveryBasisProseOnly:
+		if !a.Diff.ProseOnly() {
+			return validationError("delivery authorization basis %q requires a prose-only diff", a.Basis)
+		}
+		if a.Verdict != (domain.ReviewVerdict{}) {
+			return validationError("delivery authorization basis %q carries a review verdict", a.Basis)
+		}
+	case DeliveryBasisReviewVerdict:
+		if err := a.Verdict.Approves(a.Identity.HeadSHA, a.Verdict.Author, a.TaskID); err != nil {
+			return validationError("delivery authorization verdict: %v", err)
+		}
+	default:
+		return validationError("delivery authorization has invalid basis %q", a.Basis)
 	}
 	if err := a.Words.Validate(); err != nil {
 		return validationError("delivery authorization: %v", err)
@@ -979,11 +1017,12 @@ func (c *Canonical) DeliveryAuthorizationBlocker(taskID domain.TaskID) error {
 // bounded index pointer. Issuance requires a current working task with the
 // exact endpoint/worktree bindings, no matching active delivery hold,
 // no active transfer reservation, no terminal committed outcome, no
-// already-active authorization, a valid typed identity, a PASS review verdict
-// bound to exactly the identity head (ReviewVerdict.Approves) from a review task
-// that is not the reviewed task and a reviewer instance that is not the bound
-// authoring soldier instance, the
-// Human's words, and valid preconditions; it fails closed otherwise.
+// already-active authorization, a valid typed identity,
+// the Human's words, and valid preconditions. A diff that is not prose only
+// (domain.DeliveryDiff.ProseOnly) also needs a PASS review verdict bound to
+// exactly the identity head (ReviewVerdict.Approves) from a review task that is
+// not the reviewed task and a reviewer instance that is not the bound authoring
+// soldier instance; it fails closed otherwise.
 // Repeating the same Operation ID with the same digest replays the durable
 // prior record; reusing the Operation ID with a different intent conflicts.
 func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDeliveryAuthorizationRequest) (DeliveryAuthorizationResult, error) {
@@ -998,11 +1037,22 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 		if err := deliveryStateBlocker(cur); err != nil {
 			return Aggregate{}, DeliveryIndex{}, nil, err
 		}
-		if cur.ReviewVerdict == nil {
-			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a review verdict for head %q of task %s", req.Identity.HeadSHA, cur.TaskID)
-		}
-		if err := cur.ReviewVerdict.Verdict.Approves(req.Identity.HeadSHA, cur.Endpoint.Incarnation, cur.TaskID); err != nil {
-			return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization refused: %v", err)
+		basis := DeliveryBasisProseOnly
+		var verdict domain.ReviewVerdict
+		if !req.Diff.ProseOnly() {
+			// Anything but prose needs the verdict: a PASS bound to this head.
+			// Prose-only grant, Words in domain.Words shape: {Grantor: "Human",
+			// Channel: "direct chat with the Lead, 2026-10-13", Quote: "Thay đổi
+			// chỉ docs/văn xuôi không cần Reviewer độc lập; mọi đường dẫn khác vẫn
+			// cần verdict."} (see domain.DeliveryDiff.ProseOnly).
+			basis = DeliveryBasisReviewVerdict
+			if cur.ReviewVerdict == nil {
+				return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization requires a review verdict for head %q of task %s", req.Identity.HeadSHA, cur.TaskID)
+			}
+			if err := cur.ReviewVerdict.Verdict.Approves(req.Identity.HeadSHA, cur.Endpoint.Incarnation, cur.TaskID); err != nil {
+				return Aggregate{}, DeliveryIndex{}, nil, preconditionError("delivery authorization refused: %v", err)
+			}
+			verdict = cur.ReviewVerdict.Verdict
 		}
 		holds, err := c.listHolds()
 		if err != nil {
@@ -1022,7 +1072,9 @@ func (c *Canonical) AuthorizeDelivery(op domain.Operation, req CanonicalDelivery
 			Owner:         cur.Definition.Owner,
 			Kind:          req.Kind,
 			Identity:      req.Identity,
-			Verdict:       cur.ReviewVerdict.Verdict,
+			Basis:         basis,
+			Diff:          req.Diff,
+			Verdict:       verdict,
 			Words:         req.Words,
 			BindingDigest: deliveryBindingDigest(*cur.Endpoint, *cur.Worktree),
 			HoldsDigest:   deliveryHoldsDigest(holds, cur),

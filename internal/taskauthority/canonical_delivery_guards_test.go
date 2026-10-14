@@ -24,6 +24,7 @@ func validAuthorization() DeliveryAuthorization {
 		Owner:         "captain-1",
 		Kind:          DeliveryAuthorizationProviderMerge,
 		Identity:      deliveryIdentity(),
+		Basis:         DeliveryBasisReviewVerdict,
 		Verdict:       reviewVerdict("rev1", deliveryHead),
 		Words:         testWords(),
 		BindingDigest: testSHA256Hex,
@@ -37,6 +38,31 @@ func validAuthorization() DeliveryAuthorization {
 
 // The issuance record binds a task generation at an exact revision and phase.
 // Every one of those identity fields is what a later revocation or outcome is
+// A prose-only record needs a prose-only diff and no verdict; a review-verdict
+// record needs its verdict. The basis is checked on both sides.
+func TestValidateDeliveryAuthorizationRefusesBasisMismatch(t *testing.T) {
+	runGuardCases(t, validAuthorization, validateDeliveryAuthorization, []guardCase[DeliveryAuthorization]{
+		{"review basis with no verdict", func(a *DeliveryAuthorization) { a.Verdict = domain.ReviewVerdict{} }, "delivery authorization verdict:"},
+		{"unknown basis", func(a *DeliveryAuthorization) { a.Basis = DeliveryAuthorizationBasis("trust-me") }, "has invalid basis"},
+		{"prose basis with a verdict", func(a *DeliveryAuthorization) {
+			a.Basis = DeliveryBasisProseOnly
+			a.Diff = proseDeliveryDiff()
+		}, "carries a review verdict"},
+		{"prose basis with a code diff", func(a *DeliveryAuthorization) {
+			a.Basis = DeliveryBasisProseOnly
+			a.Verdict = domain.ReviewVerdict{}
+			a.Diff = mixedDeliveryDiff()
+		}, "requires a prose-only diff"},
+	})
+	accepted := validAuthorization()
+	accepted.Basis = DeliveryBasisProseOnly
+	accepted.Verdict = domain.ReviewVerdict{}
+	accepted.Diff = proseDeliveryDiff()
+	if err := validateDeliveryAuthorization(accepted); err != nil {
+		t.Fatalf("prose-only record with a prose diff and no verdict refused: %v", err)
+	}
+}
+
 // matched against.
 func TestValidateDeliveryAuthorizationRefusesMalformedIdentity(t *testing.T) {
 	runGuardCases(t, validAuthorization, validateDeliveryAuthorization, []guardCase[DeliveryAuthorization]{

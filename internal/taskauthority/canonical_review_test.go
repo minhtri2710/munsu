@@ -306,6 +306,23 @@ func TestReviewRefusals(t *testing.T) {
 			return nil
 		}},
 
+		{name: "authorize delivery refuses a mixed prose and code delivery without a verdict", class: ErrPrecondition, want: "delivery authorization requires a review verdict for head", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			req := authorizeRequest(c, "ship1", preconditionOf(1, 3))
+			req.Diff = mixedDeliveryDiff()
+			_, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-mixed", req), req)
+			return err
+		}},
+		{name: "authorize delivery allows a prose-only delivery without a verdict", run: func(t *testing.T, c *Canonical) error {
+			workingShip(t, c, "ship1")
+			req := authorizeRequest(c, "ship1", preconditionOf(1, 3))
+			req.Diff = proseDeliveryDiff()
+			res, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-prose", req), req)
+			if err == nil && (res.Authorization.Basis != DeliveryBasisProseOnly || res.Authorization.Verdict != (domain.ReviewVerdict{})) {
+				t.Fatalf("prose-only authorization basis/verdict = %q / %+v", res.Authorization.Basis, res.Authorization.Verdict)
+			}
+			return err
+		}},
 		{name: "authorize delivery refuses a task with no recorded verdict", class: ErrPrecondition, want: "delivery authorization requires a review verdict for head", run: func(t *testing.T, c *Canonical) error {
 			workingShip(t, c, "ship1")
 			return authorize(t, c, 3)
