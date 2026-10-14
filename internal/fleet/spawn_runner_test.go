@@ -121,3 +121,42 @@ func TestResolveHarness_SnapshotOnlyFailClosed(t *testing.T) {
 		t.Fatalf("error = %v, want ErrNoSoldierHarnessInSnapshot", err)
 	}
 }
+
+// TestResolveEffectiveIdentity_DefaultHarnessIsUnset pins --harness default as
+// the unset flag: it falls through to the project's soldier harness, and with
+// neither flag nor project harness it fails closed like an absent flag.
+func TestResolveEffectiveIdentity_DefaultHarnessIsUnset(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		flag        string
+		projectHarn string
+		wantHarness string
+		wantErr     error
+	}{
+		{"default falls through to the project harness", "default", "pi", "pi", nil},
+		{"default with no project harness fails closed", "default", "", "", harness.ErrNoSoldierHarnessInSnapshot},
+		{"an explicit flag still wins over the project harness", "claude", "pi", "claude", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			r := NewRunner(Args{ID: "task-d", HomeDir: homeDir, HarnessFlag: tc.flag})
+			r.homeDir = homeDir
+			r.projectConfigLoaded = true
+			r.projectConfig.Soldier.Harness = tc.projectHarn
+
+			err := r.resolveEffectiveIdentity()
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveEffectiveIdentity: %v", err)
+			}
+			if r.harness != tc.wantHarness {
+				t.Fatalf("harness = %q, want %q", r.harness, tc.wantHarness)
+			}
+		})
+	}
+}
