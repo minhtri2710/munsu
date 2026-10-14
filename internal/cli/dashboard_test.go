@@ -146,23 +146,54 @@ func TestDashboardGoldenFailedHome(t *testing.T) {
 func TestDashboardItemsOrder(t *testing.T) {
 	m := testDashModel()
 	m.rows = []fleet.TaskSnapshot{
+		row("cap-b", "working", "", "captain:beta", ""),
 		row("ordinary", "working", "ordinary task", "primary", ""),
+		row("cap-a", "working", "", "captain:alpha", ""),
 		row("human", "blocked", "needs a decision", "primary", ""),
 	}
-	m.failures = []fleet.SourceFailure{{Source: "captain:beta", Err: errors.New("unreadable")}}
+	m.failures = []fleet.SourceFailure{{Source: "captain:gamma", Err: errors.New("unreadable")}}
 
 	items := m.items()
-	if len(items) != 3 {
-		t.Fatalf("items = %d, want 3", len(items))
+	var got []string
+	for _, it := range items {
+		if it := it.(dashItem); it.failure != nil {
+			got = append(got, it.failure.Source)
+		} else {
+			got = append(got, it.row.ID)
+		}
 	}
-	if got := items[0].(dashItem).row.ID; got != "human" {
-		t.Fatalf("first item = %q, want human-needed task", got)
+	want := []string{"captain:gamma", "human", "ordinary", "cap-a", "cap-b"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("items = %v, want %v (failures, then general with Human-needed first, then captains by id)", got, want)
 	}
-	if got := items[1].(dashItem).failure.Source; got != "captain:beta" {
-		t.Fatalf("second item = %q, want failed source", got)
-	}
-	if got := items[2].(dashItem).row.ID; got != "ordinary" {
-		t.Fatalf("third item = %q, want ordinary task", got)
+}
+
+func TestDashboardHeaderChips(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		read func(*dashRead)
+		want string
+	}{
+		{"live watcher", func(r *dashRead) {
+			r.beat = home.WatcherBeatStatus{Exists: true, Age: 12 * time.Second}
+			r.unacked = 2
+		}, "watcher 12s  captains 1  working 1  unacked 2"},
+		{"stale watcher, unreadable wakes", func(r *dashRead) {
+			r.beat = home.WatcherBeatStatus{Exists: true, Stale: true, Age: 400 * time.Second}
+			r.unackedErr = errors.New("boom")
+		}, "watcher stale 6m40s  captains 1  working 1  unacked ?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := goodRead(dashNow, []fleet.TaskSnapshot{
+				row("t-work", "working", "", "primary", ""),
+				row("t-cap", "queued", "", "captain:alpha", ""),
+			}, nil, nil)
+			tc.read(&r)
+			m := send(testDashModel(), r)
+			if got := ansiSeq.ReplaceAllString(m.header()[0].String(), ""); !strings.Contains(got, tc.want) {
+				t.Fatalf("title line = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -871,7 +902,7 @@ func assertShown(t *testing.T, name, frame string, wants ...string) {
 // never raw, never dropped.
 func TestDashboardHostileTextIsEscaped(t *testing.T) {
 	hostileRow := fleet.TaskSnapshot{
-		ID: "i\x00\u202e", Kind: "k\x00", Source: "s\x00\u202e", CurrentState: "p\x00",
+		ID: "i\x00\u202e", Kind: "k\x00", Source: "captain:s\x00\u202e", CurrentState: "p\x00",
 		CurrentDescription: "d\x00\u202e\x1b[8m",
 	}
 	t.Run("rows failures events", func(t *testing.T) {
@@ -899,9 +930,9 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		const shown = `c\u0085\u009b\u2028\xff`
 		r := goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t-1", Kind: "ship", CurrentState: "working", Source: "primary", CurrentDescription: in}}, nil,
 			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "t", Producer: "p", Key: "k", Payload: in}})
-		f := send(testDashModel(), r).frame()
+		f := send(resized(testDashModel(), 140, 24), r).frame()
 		assertNoRaw(t, "other classes", f)
-		assertShown(t, "other classes", f, "ship    primary          "+shown, "t p k "+shown)
+		assertShown(t, "other classes", f, "-              "+shown, "t p k "+shown)
 
 		// A captured row ID is outside text too: it reaches the confirm argv.
 		m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t" + in, Kind: "ship", CurrentState: "working", Source: "primary"}}, nil, nil))
@@ -1021,7 +1052,7 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 		}
 	}
 
-	// A task ID longer than its 22-cell field is cut inside the field, so the
+	// A task ID longer than its 20-cell field is cut inside the field, so the
 	// next column starts at the same cell as for a short ID.
 	cols := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("t-short", "working", "x", "primary", ""),
@@ -1031,7 +1062,7 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 	var longLine string
 	for _, l := range strings.Split(cols.frame(), "\n") {
 		l = ansi.Strip(l)
-		if i := strings.Index(l, "primary"); i >= 0 && strings.Contains(l, "t-") {
+		if i := strings.Index(l, "working"); i >= 0 && strings.Contains(l, "t-") {
 			starts = append(starts, ansi.StringWidth(l[:i]))
 			if strings.Contains(l, "long-id") {
 				longLine = l
@@ -1039,9 +1070,9 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 		}
 	}
 	if len(starts) != 2 || starts[0] != starts[1] {
-		t.Fatalf("the source column starts at cells %v, want the same cell for a short and a long ID", starts)
+		t.Fatalf("the state column starts at cells %v, want the same cell for a short and a long ID", starts)
 	}
-	if !strings.Contains(longLine[:strings.Index(longLine, "primary")], "…") {
+	if !strings.Contains(longLine[:strings.Index(longLine, "working")], "…") {
 		t.Fatalf("the cut ID field has no visible ellipsis: %q", longLine)
 	}
 }
@@ -1296,7 +1327,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
 	titleRe := regexp.MustCompile(`^(Tasks|Failed sources and tasks)( - Showing (\d+) of (\d+) \(page \d+ of \d+\))?$`)
 	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
-	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] t-\d\d)`)
+	itemRe := regexp.MustCompile(`^[> ] (x captain:c\d\d|[! ] [^ ]* *t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
 	// A narrower terminal wraps the key footer onto more lines (and a confirm's
 	// command onto more rows), so the list and feed titles change with the
