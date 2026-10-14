@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,6 +55,11 @@ type dashRead struct {
 	events   []orchestrator.Record
 	skipped  int
 	eventErr error
+	// The header chips: the watcher beat and the unacked wakes (queued plus
+	// claimed and not yet resolved).
+	beat       home.WatcherBeatStatus
+	unacked    int
+	unackedErr error
 }
 
 type dashTickMsg struct{}
@@ -96,13 +103,19 @@ type dashboardModel struct {
 	run func(exe string, args []string) tea.Cmd
 	// captains lists the registered captains of the primary home.
 	captains func() ([]fleet.Info, error)
+	// watcher and wakes feed the header chips.
+	watcher func(now time.Time) home.WatcherBeatStatus
+	wakes   func(now time.Time) (int, error)
 
-	reading  bool
-	readDone bool
-	lastGood time.Time
-	readErr  error
-	rows     []fleet.TaskSnapshot
-	failures []fleet.SourceFailure
+	reading    bool
+	readDone   bool
+	lastGood   time.Time
+	readErr    error
+	rows       []fleet.TaskSnapshot
+	failures   []fleet.SourceFailure
+	beat       home.WatcherBeatStatus
+	unacked    int
+	unackedErr error
 
 	events     []orchestrator.Record
 	cursor     uint64
@@ -186,6 +199,25 @@ func newDashboardModel(home, exe string) dashboardModel {
 		},
 		run:      dashboardExec,
 		captains: func() ([]fleet.Info, error) { return fleet.ListCaptains(home) },
+		watcher:  dashBeat(home),
+		wakes:    dashUnacked(home),
+	}
+}
+
+func dashBeat(h string) func(time.Time) home.WatcherBeatStatus {
+	return func(now time.Time) home.WatcherBeatStatus { return home.ReadWatcherBeatStatus(h, now) }
+}
+
+// dashUnacked counts the wakes the General has not resolved: queued ones and
+// claimed ones still held in a lease.
+func dashUnacked(h string) func(time.Time) (int, error) {
+	return func(now time.Time) (int, error) {
+		queued, err := home.PeekWakes(h)
+		if err != nil {
+			return 0, err
+		}
+		claimed, err := orchestrator.ListClaimedWakes(h, now)
+		return len(queued) + len(claimed), err
 	}
 }
 
@@ -207,6 +239,8 @@ func dashboardExec(exe string, args []string) tea.Cmd {
 func (m dashboardModel) read() dashRead {
 	r := dashRead{at: m.now(), latest: !m.feedLoaded}
 	r.snap, r.snapErr = m.readFleet()
+	r.beat = m.watcher(r.at)
+	r.unacked, r.unackedErr = m.wakes(r.at)
 	if r.latest {
 		r.events, r.skipped, r.eventErr = m.latest(dashboardFeedMax)
 	} else {
@@ -276,6 +310,7 @@ func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 
 func (m *dashboardModel) applyRead(r dashRead) {
 	m.readDone = true
+	m.beat, m.unacked, m.unackedErr = r.beat, r.unacked, r.unackedErr
 	if r.snapErr != nil {
 		m.readErr = r.snapErr
 	} else {
@@ -303,22 +338,46 @@ func (m *dashboardModel) applyRead(r dashRead) {
 	}
 }
 
+// items lists failed sources first, then the task rows grouped by home: the
+// primary home ("general") first, then each captain in id order. Within a
+// group Human-needed rows come first, otherwise snapshot order holds.
 func (m dashboardModel) items() []list.Item {
 	items := make([]list.Item, 0, len(m.failures)+len(m.rows))
-	for i := range m.rows {
-		if fleet.HumanNeeded(m.rows[i]) {
-			items = append(items, dashItem{row: &m.rows[i]})
-		}
-	}
 	for i := range m.failures {
 		items = append(items, dashItem{failure: &m.failures[i]})
 	}
+	rows := make([]dashItem, 0, len(m.rows))
 	for i := range m.rows {
-		if !fleet.HumanNeeded(m.rows[i]) {
-			items = append(items, dashItem{row: &m.rows[i]})
+		rows = append(rows, dashItem{row: &m.rows[i]})
+	}
+	rank := func(it dashItem) (int, string) {
+		if g := dashGroup(it); g != "general" {
+			return 1, g
 		}
+		return 0, ""
+	}
+	slices.SortStableFunc(rows, func(a, b dashItem) int {
+		ra, ga := rank(a)
+		rb, gb := rank(b)
+		if c := cmp.Compare(ra, rb); c != 0 {
+			return c
+		}
+		if c := strings.Compare(ga, gb); c != 0 {
+			return c
+		}
+		return cmp.Compare(dashHumanRank(a), dashHumanRank(b))
+	})
+	for _, it := range rows {
+		items = append(items, it)
 	}
 	return items
+}
+
+func dashHumanRank(it dashItem) int {
+	if fleet.HumanNeeded(*it.row) {
+		return 0
+	}
+	return 1
 }
 
 func (m dashboardModel) targetOf(it dashItem) dashTarget {
