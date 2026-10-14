@@ -3,10 +3,8 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -65,12 +63,13 @@ func (r *MergeAndRetireResult) IsError() bool {
 // sufficient proof. When delivery was performed by this call, Force=false so
 // the normal safety checks still run.
 //
-// words are the Human's words behind the delivery (DeliverRequest.Words).
+// req is the delivery intent pr-merge built, Human's words included; it is the
+// one source of the delivery identity, never the .meta projection.
 //
 // authority is the composed canonical Task Authority targeting the exact
 // resolved task home (cross-home delivery); it is threaded into RetireTask
 // and the canonical outcome reads (nil fails closed).
-func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, words domain.Words, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) *MergeAndRetireResult {
+func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) *MergeAndRetireResult {
 	if authority == nil {
 		return &MergeAndRetireResult{
 			MergeOutcome: taskauthority.DeliveryOutcomeRetryable,
@@ -130,14 +129,6 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, words domain.
 	mergeOutcome := taskauthority.DeliveryOutcomeCompleted
 	var recovered []DeliverResult
 	if !alreadyMerged {
-		req, rerr := mergeAndRetireDeliveryRequest(homeDir, id, prURL, extraArgs)
-		if rerr != nil {
-			return &MergeAndRetireResult{
-				MergeOutcome: taskauthority.DeliveryOutcomeRetryable,
-				MergeDetail:  rerr.Error(),
-			}
-		}
-		req.Words = words
 		result, derr := Deliver(homeDir, id, req)
 		if derr != nil {
 			return &MergeAndRetireResult{
@@ -174,45 +165,4 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, words domain.
 		TeardownError:  retireErr,
 		Recovered:      recovered,
 	}
-}
-
-// mergeAndRetireDeliveryRequest builds the typed journaled delivery intent
-// from the stored delivery identity and the merge method arguments. The
-// identity is read from the .meta projection as the delivery target; the
-// Fleet refuses delivery when git HEAD at the bound worktree differs from it.
-func mergeAndRetireDeliveryRequest(homeDir, id, prURL string, extraArgs []string) (DeliverRequest, error) {
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		return DeliverRequest{}, fmt.Errorf("merge-and-retire: reading task meta: %w", err)
-	}
-	ident, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		return DeliverRequest{}, fmt.Errorf("merge-and-retire: reading delivery identity: %w", err)
-	}
-	if ident == nil {
-		return DeliverRequest{}, fmt.Errorf("merge-and-retire: no delivery identity for task %s; capture one first", id)
-	}
-	if err := domain.ValidateIdentity(ident); err != nil {
-		return DeliverRequest{}, fmt.Errorf("merge-and-retire: incomplete delivery identity: %w", err)
-	}
-	method := "squash"
-	for _, arg := range extraArgs {
-		switch strings.TrimSpace(arg) {
-		case "--merge":
-			method = "merge"
-		case "--rebase":
-			method = "rebase"
-		case "--squash":
-			method = "squash"
-		}
-	}
-	return DeliverRequest{
-		Kind:     taskauthority.DeliveryAuthorizationProviderMerge,
-		Identity: *ident,
-		Method:   method,
-		Preconditions: []taskauthority.DeliveryPrecondition{
-			taskauthority.DeliveryPreconditionPRMergeable,
-			taskauthority.DeliveryPreconditionPRHeadCurrent,
-		},
-	}, nil
 }

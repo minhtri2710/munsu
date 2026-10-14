@@ -206,14 +206,8 @@ func writeFenceDiagnostic(unsupported error, unfenced []string) *ConfigDiagnosti
 // Uses exit code only: gh auth status exits 0 when authenticated,
 // regardless of whether it prints to stdout or stderr.
 func ghAuth() bool {
-	cmd := exec.Command("gh", "auth", "status")
-	// Capture both stdout and stderr to suppress output
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return false
-	}
-	return true
+	_, err := runCapabilityCommand("gh", []string{"auth", "status"}, "", capabilityProbeTimeout)
+	return err == nil
 }
 
 // installTool runs the appropriate install command for a tool.
