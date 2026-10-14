@@ -1,5 +1,3 @@
-// Package herdrprune implements the operator prune command for munsu-created
-// herdr workspaces that have zero live tabs.
 package backend
 
 import (

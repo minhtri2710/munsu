@@ -1,4 +1,3 @@
-// Package captain implements persistent domain supervisors (captains).
 package fleet
 
 import (

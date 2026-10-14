@@ -10,6 +10,7 @@
 // capability negotiation and real-binary evidence qualify it, the native
 // event lane stays proposed/experimental: any gate failure falls back to
 // polling with a typed error (see observation_event.go return contract).
+
 package backend
 
 import (
