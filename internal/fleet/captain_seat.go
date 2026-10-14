@@ -87,9 +87,14 @@ func prepareCaptainSeat(captainHome, parentHome, captainID, harnessName string) 
 	if err := harness.BuildPiAgentDir(src, harness.SeatBuildDir(captainHome), agentDir); err != nil {
 		return captainSeat{}, fmt.Errorf("captain fence: %w", err)
 	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return captainSeat{}, fmt.Errorf("captain fence: resolving user home: %w", err)
+	}
 	launch := fence.Launch{
 		Role: fence.RoleCaptain, Harness: harnessName, Home: captainHome, ParentHome: parentHome,
-		Socket: captainSeatSocket(captainHome), HarnessStateDir: agentDir,
+		UserHome: userHome,
+		Socket:   captainSeatSocket(captainHome), HarnessStateDir: agentDir,
 		PathDirs: seatPathDirs(captainHome), ShimDir: gitShimDir(captainHome),
 	}
 	if _, gitDir, commonDir, err := ClassifyIdentity(captainHome); err == nil {

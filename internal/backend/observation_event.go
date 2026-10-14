@@ -8,6 +8,7 @@
 // re-probe of the exact binding (ObserveEndpoint) may produce a lifecycle
 // observation; the orchestrator always re-probes before recovery/relaunch/
 // dispose.
+
 package backend
 
 import (

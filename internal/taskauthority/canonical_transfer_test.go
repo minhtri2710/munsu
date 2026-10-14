@@ -53,6 +53,25 @@ func mustReserveTransfer(t *testing.T, c *Canonical, taskID string, prec domain.
 	return reservationID
 }
 
+// seedReservationForTest reserves a task the transfer rule refuses (a
+// non-queued phase), so the reservation fence on later mutations stays
+// testable. It writes the same transfer state ReserveTransfer writes.
+func seedReservationForTest(t *testing.T, c *Canonical, taskID string, prec domain.Precondition, dest string) string {
+	t.Helper()
+	reservationID := "res-" + taskID
+	req := reserveTransferRequest(t, c, taskID, prec, reservationID, dest)
+	_, err := c.mutateTask(mustOperation(t, "op-reserve-"+taskID, req), req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
+		next := cur.clone()
+		next.Transfer = &TransferState{ReservationID: reservationID, DestinationHome: dest, FenceToken: req.FenceToken, ReservedAt: c.now().UnixNano()}
+		next.Revision++
+		return next, nil
+	})
+	if err != nil {
+		t.Fatalf("seed reservation %s: %v", taskID, err)
+	}
+	return reservationID
+}
+
 func receiveTransferRequest(t *testing.T, c *Canonical, taskID, reservationID, sourceHome string, sourceGen uint64) CanonicalReceiveTransferRequest {
 	return CanonicalReceiveTransferRequest{
 		HomeID:           c.HomeID(),
@@ -308,6 +327,45 @@ func TestTransferRefusals(t *testing.T) {
 			req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 1), "res-1", "dest-home")
 			_, err := c.ReserveTransfer(mustOperation(t, "op-reserve-1", req), req)
 			return err
+		}},
+		{name: "reserve refuses a task that is not queued", class: ErrConflict, want: "only queued tasks may be transferred", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepStart(t, c, "t1", 1))
+			req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 2), "res-1", "dest-home")
+			_, err := c.ReserveTransfer(mustOperation(t, "op-reserve-1", req), req)
+			return err
+		}},
+		{name: "reserve refuses a task under a handoff hold", class: ErrDispatchHeld, want: "dispatch is held: hold-1 (freeze)", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			stepAddHold(t, c, DispatchActionHandoff)
+			req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 1), "res-1", "dest-home")
+			_, err := c.ReserveTransfer(mustOperation(t, "op-reserve-1", req), req)
+			return err
+		}},
+		{name: "reserve allows a task whose hold gates another action", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			stepAddHold(t, c, DispatchActionStart)
+			req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 1), "res-1", "dest-home")
+			_, err := c.ReserveTransfer(mustOperation(t, "op-reserve-1", req), req)
+			return err
+		}},
+		{name: "reserve refuses a child whose parent task is under a handoff hold", class: ErrDispatchHeld, want: "dispatch is held: hold-1 (freeze)", run: func(t *testing.T, c *Canonical) error {
+			create := createRequest(c, "child")
+			create.ParentTaskID = mustTaskID(t, "t1")
+			_, err := c.Create(mustOperation(t, "op-create-child", create), create)
+			mustStep(t, err)
+			stepAddHold(t, c, DispatchActionHandoff)
+			req := reserveTransferRequest(t, c, "child", preconditionOf(1, 1), "res-1", "dest-home")
+			_, err = c.ReserveTransfer(mustOperation(t, "op-reserve-1", req), req)
+			return err
+		}},
+		{name: "receive preflight refuses a task under a destination handoff hold", class: ErrDispatchHeld, want: "dispatch is held: hold-1 (freeze)", run: func(t *testing.T, c *Canonical) error {
+			stepAddHold(t, c, DispatchActionHandoff)
+			return c.CheckReceivable(Aggregate{TaskID: "t1", Generation: 1})
+		}},
+		{name: "receive preflight ignores a destination hold on the parent task", run: func(t *testing.T, c *Canonical) error {
+			stepAddHold(t, c, DispatchActionHandoff)
+			return c.CheckReceivable(Aggregate{TaskID: "child", Generation: 1, Definition: TaskDefinition{ParentTaskID: "t1"}})
 		}},
 
 		{name: "a reserved task refuses an unrelated mutation", class: ErrConflict, want: "is reserved for transfer; unrelated mutations fail closed", run: func(t *testing.T, c *Canonical) error {

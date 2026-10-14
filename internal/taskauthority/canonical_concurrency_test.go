@@ -165,6 +165,14 @@ func TestCanonicalAddHoldSerializesWithBeginSpawnAcrossCanonicalInstances(t *tes
 	})
 }
 
+func TestCanonicalAddHoldSerializesWithReserveTransferAcrossCanonicalInstances(t *testing.T) {
+	runAddHoldRace(t, DispatchActionHandoff, "reserve-transfer", func(c *Canonical) error {
+		req := reserveTransferRequest(t, c, "t1", preconditionOf(1, 1), "res-t1", "dest-home")
+		_, err := c.ReserveTransfer(mustOperation(t, "op-mutate-reserve", req), req)
+		return err
+	})
+}
+
 func launchRequestForConcurrency(taskID domain.TaskID) CanonicalBeginSpawnRequest {
 	return CanonicalBeginSpawnRequest{
 		TaskID:                taskID,
@@ -185,6 +193,7 @@ func launchRequestForConcurrency(taskID domain.TaskID) CanonicalBeginSpawnReques
 		EndpointReservationID: "ep-res-concurrency",
 		EndpointFenceToken:    "ep-fence-concurrency",
 		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-concurrency",
-		Reason: "spawn",
+		SeatEnv: SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"},
+		Reason:  "spawn",
 	}
 }

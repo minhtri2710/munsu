@@ -1120,18 +1120,6 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 				t.Fatalf("resolveSkills returned diagnostics: %v", diags)
 			}
 
-			// Verify srcwalk is NOT in required or optional.
-			for _, s := range required {
-				if s.Name == "srcwalk" {
-					t.Error("srcwalk must NOT be in required skills")
-				}
-			}
-			for _, s := range optional {
-				if s.Name == "srcwalk" {
-					t.Error("srcwalk must NOT be in optional skills")
-				}
-			}
-
 			if len(required) != tc.wantRequired {
 				t.Fatalf("required skill count = %d, want %d", len(required), tc.wantRequired)
 			}

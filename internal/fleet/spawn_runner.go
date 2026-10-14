@@ -99,6 +99,9 @@ type Runner struct {
 	// seatPath is the seat's launch PATH as the committed intent holds it. The
 	// fence profile and the launch script are both built from it.
 	seatPath []string
+	// seatEnv is the seat's launch TMPDIR and home, committed with the intent:
+	// the seat temp and the fence are built from it.
+	seatEnv taskauthority.SeatEnv
 
 	// launch submission evidence: the exact endpoint command submitted for
 	// the launch and its sha256 digest, durably recorded after submission.
@@ -129,6 +132,9 @@ type Runner struct {
 
 // NewRunner creates a Runner for the given Args.
 func NewRunner(args Args) *Runner {
+	if args.HarnessFlag == "default" {
+		args.HarnessFlag = ""
+	}
 	return &Runner{args: args, endpoints: args.Endpoints}
 }
 
@@ -856,7 +862,7 @@ func (r *Runner) checkSupervision() error {
 	// Supervision gate: spawn fails closed when the watcher lease is degraded.
 	// Durable Dispatch Holds are evaluated atomically inside the Task Authority
 	// ConfirmSpawn operation, never here.
-	return CheckSupervisionForDispatch(r.homeDir, home.DispatchActionSpawn)
+	return CheckSupervisionForDispatch(r.homeDir)
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.
@@ -890,15 +896,19 @@ func (r *Runner) checkScopeGate() error {
 }
 
 func (r *Runner) preflightNoMistakes() error {
-	if r.effectiveMode != "no-mistakes" {
-		return nil
-	}
 	preflight := r.args.NoMistakesPreflight
 	if preflight == nil {
 		preflight = defaultNoMistakesPreflight
 	}
-	if err := preflight(r.projPath, r.reviewStep); err != nil {
-		return fmt.Errorf("review adapter %s probe/preflight failed: %w", r.reviewStep.Adapter, err)
+	return reviewPreflight(r.effectiveMode, r.projPath, r.reviewStep, preflight)
+}
+
+func reviewPreflight(mode, projPath string, review taskauthority.DeliveryStep, preflight func(string, taskauthority.DeliveryStep) error) error {
+	if mode != "no-mistakes" {
+		return nil
+	}
+	if err := preflight(projPath, review); err != nil {
+		return fmt.Errorf("review adapter %s probe/preflight failed: %w", review.Adapter, err)
 	}
 	return nil
 }
@@ -1085,27 +1095,7 @@ func (r *Runner) preflightHarness() error {
 			return err
 		}
 	}
-
-	// A fenced claude seat logs in from a config dir of its own; ask the way it will.
-	var claudeSeat *harness.ClaudeSeat
-	if r.harness == harness.Claude && fence.Supported() == nil {
-		cfg, err := harness.HumanClaudeConfig(home.StateDir(r.homeDir))
-		if err != nil {
-			return err
-		}
-		claudeSeat = &harness.ClaudeSeat{Config: cfg, BuildDir: harness.SeatBuildDir(r.homeDir)}
-	}
-	result, err := harness.Preflight(r.harness, claudeSeat)
-	if err != nil {
-		return err
-	}
-	if result.BinaryOnPath == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "binary-absent"}
-	}
-	if result.AuthConfigured == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "auth-absent"}
-	}
-	return nil
+	return SoldierHarnessPreflight(r.homeDir, r.harness)
 }
 
 // beginLaunchIntent resolves the current canonical Task aggregate/Generation
@@ -1147,8 +1137,12 @@ func (r *Runner) beginLaunchIntent() error {
 	// launch adopts the committed list, so its profile and script bytes are the
 	// same whatever PATH the resuming process has.
 	endpointIncarnation, seatPath := "", seatPathDirs(r.homeDir)
+	seatEnv, err := currentSeatEnv()
+	if err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
 	if agg.Launch != nil {
-		endpointIncarnation, seatPath = agg.Launch.EndpointIncarnation, agg.Launch.SeatPathDirs
+		endpointIncarnation, seatPath, seatEnv = agg.Launch.EndpointIncarnation, agg.Launch.SeatPathDirs, agg.Launch.SeatEnv
 	} else {
 		inc, err := r.mintEndpointIncarnation()
 		if err != nil {
@@ -1157,7 +1151,7 @@ func (r *Runner) beginLaunchIntent() error {
 		endpointIncarnation = inc
 	}
 	r.incarnation = endpointIncarnation
-	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation, seatPath)
+	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation, seatPath, seatEnv)
 	if agg.Launch != nil {
 		if !r.launchIntentMatches(req, *agg.Launch) {
 			return fmt.Errorf("launch intent: task %s generation %s already holds a different launch intent; refuse to re-launch", r.args.ID, agg.Generation)
@@ -1247,7 +1241,7 @@ func (r *Runner) recordDeliveryContract() error {
 // freshly minted on first attempt). Every derived value is reproducible on a
 // retry (same Operation ID and digest); the incarnation is provided by the
 // caller because it is opaque and cannot be re-derived.
-func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string, seatPath []string) taskauthority.CanonicalBeginSpawnRequest {
+func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string, seatPath []string, seatEnv taskauthority.SeatEnv) taskauthority.CanonicalBeginSpawnRequest {
 	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
 	if r.kind == taskauthority.KindReview {
 		wtRes, wtFence = "", "" // a review task reserves no worktree
@@ -1273,6 +1267,7 @@ func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthor
 		EndpointFenceToken:    epFence,
 		EndpointIncarnation:   endpointIncarnation,
 		SeatPathDirs:          seatPath,
+		SeatEnv:               seatEnv,
 		Reason:                "spawn",
 	}
 }
@@ -1287,7 +1282,7 @@ func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnReques
 		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
 		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
 		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation &&
-		slices.Equal(l.SeatPathDirs, req.SeatPathDirs)
+		slices.Equal(l.SeatPathDirs, req.SeatPathDirs) && l.SeatEnv == req.SeatEnv
 }
 
 // adoptLaunch copies the committed launch intent identities onto the Runner
@@ -1298,6 +1293,17 @@ func (r *Runner) adoptLaunch(l taskauthority.LaunchIntent) {
 	r.launchID = l.LaunchID
 	r.windowLabel = l.WindowLabel
 	r.seatPath = slices.Clone(l.SeatPathDirs)
+	r.seatEnv = l.SeatEnv
+}
+
+// currentSeatEnv reads the launch environment a fresh seat is built from; a
+// resumed launch adopts the committed SeatEnv instead.
+func currentSeatEnv() (taskauthority.SeatEnv, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return taskauthority.SeatEnv{}, fmt.Errorf("resolving the Human's home: %w", err)
+	}
+	return taskauthority.SeatEnv{TempDir: os.TempDir(), UserHome: home}, nil
 }
 
 // spawnReservationIdentities derives the one-time worktree/endpoint
@@ -1873,6 +1879,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 		OptionalSkills:  optionalSkills,
 		HarnessName:     r.harness,
 		ScoutScope:      r.taskScoutScope,
+		Scaffold:        r.projectConfig.Soldier.Scaffold,
 	}
 
 	// Modes that do not hard-gate on skill presence still report what is absent,
@@ -1908,7 +1915,7 @@ func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	// Review launch files live under the home and are not covered by the
 	// reviewed worktree's soldier manifest. Soldier files are prepared later,
 	// after the exact manifest digest is committed canonically.
-	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode)
+	charter := DefaultCharter(r.args.ID, r.kind, r.effectiveMode, r.projectConfig.Soldier.Scaffold)
 	if r.review != nil {
 		if err := PersistLaunchFiles(r.launchDir, charter, briefData, env, promptText); err != nil {
 			return fmt.Errorf("persisting reviewer launch files: %w", err)
@@ -2016,6 +2023,7 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	}
 	launch := fence.Launch{
 		Role: fence.RoleSoldier, Harness: r.launchBin, Home: r.homeDir, Primary: primary,
+		UserHome: r.seatEnv.UserHome,
 		Worktree: bound.Path(), GitDir: gitDir, CommonDir: commonDir, Branch: "mu/" + r.args.ID,
 		PathDirs: r.seatPath, ShimDir: gitShimDir(r.homeDir),
 	}
@@ -2181,6 +2189,7 @@ func (r *Runner) submitLaunch() error {
 			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
 			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
+			SeatEnv: r.seatEnv,
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
 		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
@@ -2298,11 +2307,12 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath,
+		SeatEnv:  r.seatEnv,
 	})
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode, r.projectConfig.Soldier.Scaffold), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
 	}

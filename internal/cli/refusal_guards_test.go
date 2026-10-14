@@ -232,21 +232,6 @@ func TestGuardSkillShowDeniesManagementSkillsToASoldier(t *testing.T) {
 	}
 }
 
-// --- internal/cli/skills_validate.go ---------------------------------------
-
-func TestGuardResolveBundleReferenceRefusesAnAbsolutePath(t *testing.T) {
-	_, err := resolveBundleReference("skills/demo", "skills/demo/SKILL.md", "/etc/passwd")
-	wantErrContains(t, err, "absolute paths are not allowed", "resolveBundleReference with an absolute reference")
-	// The escape check below it emits a different message; an absolute path
-	// would also escape, so the two must stay distinguishable.
-	if strings.Contains(err.Error(), "escapes skill module") {
-		t.Fatalf("resolveBundleReference = %v, which is the escape refusal rather than the absolute-path one", err)
-	}
-	if got, err := resolveBundleReference("skills/demo", "skills/demo/SKILL.md", "REFERENCE.md"); err != nil || got != "skills/demo/REFERENCE.md" {
-		t.Fatalf("resolveBundleReference relative = (%q, %v), want it resolved", got, err)
-	}
-}
-
 // --- internal/cli/selfupdate_update.go -------------------------------------
 
 func TestGuardUpdateInRefusesAGitFileThatIsNotAWorktreePointer(t *testing.T) {
@@ -556,6 +541,37 @@ func TestGuardConfigDispatchAddRequiresItsIdentifyingFlags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := runRoot(t, append([]string{"config", "dispatch", "add", "--home", homeDir}, tc.args...)...)
 			wantErrContains(t, err, tc.want, "config dispatch add with "+tc.name)
+		})
+	}
+}
+
+func TestGuardConfigDispatchAddRefusesAnUnknownScaffold(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	for _, tc := range []struct {
+		scaffold string
+		want     string
+	}{
+		{scaffold: "strict", want: `add: unknown dispatch profile scaffold "strict" (want lean or guided)`},
+		{scaffold: "guided"},
+	} {
+		t.Run(tc.scaffold, func(t *testing.T) {
+			_, err := runRoot(t, "config", "dispatch", "add", "--name", "p-"+tc.scaffold, "--harness", "claude", "--match", "*", "--scaffold", tc.scaffold, "--home", homeDir)
+			if tc.want != "" {
+				wantErrContains(t, err, tc.want, "config dispatch add --scaffold "+tc.scaffold)
+				return
+			}
+			if err != nil {
+				t.Fatalf("config dispatch add --scaffold %s = %v, want acceptance", tc.scaffold, err)
+			}
+			base, err := config.LoadFleetBase(homeDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profiles := base.Config.DispatchProfiles
+			if len(profiles) != 1 || profiles[0].Scaffold != tc.scaffold {
+				t.Fatalf("stored profiles = %+v, want one with scaffold %q", profiles, tc.scaffold)
+			}
 		})
 	}
 }

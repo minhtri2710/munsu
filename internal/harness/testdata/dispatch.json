@@ -4,14 +4,12 @@
     {
       "name": "code-review",
       "match": ["review", "audit", "check"],
-      "harness": "codex",
-      "maxConcurrent": 2
+      "harness": "codex"
     },
     {
       "name": "research",
       "match": ["research", "investigate"],
-      "harness": "claude",
-      "maxConcurrent": 1
+      "harness": "claude"
     },
     {
       "name": "default",

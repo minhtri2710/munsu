@@ -298,7 +298,7 @@ func newTaskStartCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Supervision gate: start fails closed when the watcher lease is
 			// degraded, before any Task Authority call.
-			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
+			if err := fleet.CheckSupervisionForDispatch(ctx.Home); err != nil {
 				return err
 			}
 			return runTaskLifecycleTransition(ctx, "start", "working", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {

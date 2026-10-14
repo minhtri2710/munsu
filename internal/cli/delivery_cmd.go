@@ -62,9 +62,11 @@ replaces the earlier one.`,
 func newMergeStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "merge-status <id>",
-		Short: "Query delivery merge status via provider-neutral seam",
-		Long: `Query the current merge status of a delivery identity (PR or MR)
-via the provider-neutral QueryDeliveryMergeStatus seam.
+		Short: "Report whether a task's delivery landed",
+		Long: `Report whether the PR or MR named by the task's current delivery
+authorization landed, read through the task's captured forge step. The
+authorization commits before the merge, so this works while a delivery is
+in flight.
 Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -172,8 +174,7 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 }
 
 // projectDeliveryIdentity overlays one captured delivery identity onto the
-// task .meta projection (pr_* keys). It is a post-commit projection for the
-// read-only seams (merge-status, retirement poll, soldier state); the
+// task .meta projection (pr_* keys). Review-diff reads its base from it; the
 // canonical delivery authorization/outcome remains the delivery truth and is
 // never derived from these keys.
 func projectDeliveryIdentity(homeDir, taskID string, ident domain.DeliveryIdentity) error {
@@ -197,8 +198,9 @@ canonical delivery authorization gates the exact identity against the verdict
 head and the head git reads at the bound worktree now, and the truthful closed-set outcome commits canonically.
 
 Delivery requires a PASS review verdict for the exact head (recorded from a review
-task by record-verdict) and
-the Human's words (--grantor, --channel, --quote); each external write is preceded
+task by record-verdict), unless every changed path is prose (.md, .txt, or under
+docs/, outside doctrine, skills and fixtures); then no verdict is needed. The
+Human's words (--grantor, --channel, --quote); each external write is preceded
 by a gate record carrying the head and those words.
 
 Default merge method is squash. Use -- --merge or -- --rebase to override.
@@ -230,16 +232,19 @@ resuming retirement only after a completed canonical delivery outcome.`,
 				return fmt.Errorf("pr-merge %s: composing task authority: %w", id, err)
 			}
 
+			req, err := buildDeliverRequest(auth, id, prURL, extra, words)
+			if err != nil {
+				return fmt.Errorf("pr-merge %s: %w", id, err)
+			}
 			if !doTeardown {
-				req, err := buildDeliverRequest(auth, id, prURL, extra, words)
-				if err != nil {
-					return fmt.Errorf("pr-merge %s: %w", id, err)
-				}
 				result, err := fleet.Deliver(taskHome, id, req)
 				if err != nil {
 					return err
 				}
 				fmt.Print(result.Render())
+				for _, note := range recoveredDeliveryNotes(result.Recovered) {
+					fmt.Println(note)
+				}
 				// Every non-completed outcome is a non-zero exit for script
 				// chaining; the rendered partial-state report is printed first so
 				// retryable/partial/remote-unknown detail stays visible.
@@ -252,22 +257,19 @@ resuming retirement only after a completed canonical delivery outcome.`,
 				return nil
 			}
 
-			// --teardown: the delivery preparation projection pins the identity
-			// for the B thin MergeAndRetire continuation (mirroring the retired
-			// pr-check preparation); the canonical authorization remains the
-			// delivery truth. MergeAndRetire runs the journaled delivery (or
-			// resumes retirement when the outcome is already committed) and
-			// retires only after a completed outcome.
-			req, err := buildDeliverRequest(auth, id, prURL, extra, words)
-			if err != nil {
-				return fmt.Errorf("pr-merge %s: %w", id, err)
-			}
-			if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
-				return fmt.Errorf("pr-merge %s: writing delivery identity projection: %w", id, perr)
-			}
+			// --teardown: MergeAndRetire delivers this same request (or resumes
+			// retirement when the outcome is already committed) and retires
+			// only after a completed outcome. Teardown's merge proof reads the
+			// identity of the delivery authorization, not .meta.
 			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
-			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, words, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
+			mars := fleet.MergeAndRetire(taskHome, id, req, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
+			for _, note := range recoveredDeliveryNotes(mars.Recovered) {
+				fmt.Println(note)
+			}
 			if mars.TeardownResult != nil {
+				for _, note := range recoveredDeliveryNotes(mars.TeardownResult.Recovered) {
+					fmt.Println(note)
+				}
 				for _, step := range mars.TeardownResult.Steps {
 					fmt.Println(step)
 				}
@@ -286,4 +288,14 @@ resuming retirement only after a completed canonical delivery outcome.`,
 	cmd.Flags().StringVar(&words.Quote, "quote", "", "the Human's verbatim words permitting this delivery (required)")
 	cmd.Flags().BoolVar(&doTeardown, "teardown", false, "after successful merge, teardown the soldier (pane+worktree+meta) in the task home")
 	return cmd
+}
+
+// recoveredDeliveryNotes renders each recovered non-completed delivery outcome
+// as one line, so every command that resumes journals reports them the same way.
+func recoveredDeliveryNotes(outcomes []fleet.DeliverResult) []string {
+	notes := make([]string, 0, len(outcomes))
+	for _, o := range outcomes {
+		notes = append(notes, fmt.Sprintf("delivery recovery: task %s committed outcome %s: %s", o.TaskID, o.Status, o.Detail))
+	}
+	return notes
 }

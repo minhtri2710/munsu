@@ -1251,7 +1251,8 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 		EndpointReservationID: "ep-res-2",
 		EndpointFenceToken:    "ep-fence-2",
 		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID, // REUSED from generation 1
-		Reason: "spawn",
+		SeatEnv: testSeatEnv(),
+		Reason:  "spawn",
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-2", begin), begin); err != nil {
 		t.Fatalf("BeginSpawn(gen 2): %v", err)
@@ -1542,6 +1543,7 @@ func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) 
 		Mode: "direct-PR", Kind: "ship", Project: "proj", ParentTaskID: "parent", LaunchID: "launch-" + taskID,
 		WindowLabel: "window-" + taskID, WorktreeReservationID: "wt-res-1", WorktreeFenceToken: "wt-fence-1",
 		EndpointReservationID: "ep-res-1", EndpointFenceToken: "ep-fence-1", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID, Reason: "spawn",
+		SeatEnv: testSeatEnv(),
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-"+taskID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn: %v", err)
@@ -1619,7 +1621,8 @@ func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
 		EndpointReservationID: "ep-res-1",
 		EndpointFenceToken:    "ep-fence-1",
 		SeatPathDirs:          []string{"/usr/bin"}, EndpointIncarnation: "inc-" + taskID,
-		Reason: "spawn",
+		SeatEnv: testSeatEnv(),
+		Reason:  "spawn",
 	}
 	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-"+taskID, begin), begin); err != nil {
 		t.Fatalf("BeginSpawn: %v", err)
