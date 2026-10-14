@@ -85,7 +85,7 @@ func writeTestManifestRaw(t *testing.T, dir, content string) {
 // setupTestLaunchFiles creates all required launch artifact files in dir.
 func setupTestLaunchFiles(t *testing.T, dir string) {
 	t.Helper()
-	charter := DefaultCharter("test", "ship", "direct-PR")
+	charter := DefaultCharter("test", "ship", "direct-PR", "")
 	os.WriteFile(filepath.Join(dir, CharterName), []byte(charter), 0644)
 	os.WriteFile(filepath.Join(dir, BriefName), []byte("brief"), 0644)
 	os.WriteFile(filepath.Join(dir, EnvelopeName), []byte("{}"), 0644)
