@@ -40,10 +40,10 @@ const (
 type Launch struct {
 	Role    Role
 	Harness string // harness kind; selects the harness state directories
-	// Home is the munsu home. No seat writes its state/, data/, .journal/,
-	// .lock/, config/ or projects/: a soldier writes only its own Files there
-	// (its status, ack log and current scout report) and its HarnessStateDir.
-	// A reviewer may leave it empty when it has no HarnessStateDir.
+	// Home is the munsu home. No seat writes anything in it but its own Files
+	// (a soldier's status, ack log and current scout report) and its
+	// HarnessStateDir. A reviewer may leave it empty when it has no
+	// HarnessStateDir.
 	Home string
 	// UserHome is the Human's home as the launch intent recorded it; absolute.
 	UserHome string
