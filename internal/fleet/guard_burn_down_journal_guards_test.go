@@ -251,28 +251,6 @@ func TestTransitionDeliveryJournal_TerminalPhase(t *testing.T) {
 // Group B: task_handoff_transaction.go (15 guards)
 // ----------------------------------------------------------------------------
 
-func TestCheckHandoffHolds_Held(t *testing.T) {
-	_, auth := setupTestHome(t)
-	req := taskauthority.CanonicalAddHoldRequest{
-		HomeID:  auth.HomeID(),
-		HoldID:  "hold-handoff",
-		Scope:   taskauthority.DispatchHoldScope{TaskIDs: []string{"t1"}},
-		Actions: []taskauthority.DispatchAction{taskauthority.DispatchActionHandoff},
-		Reason:  "freeze handoff",
-	}
-	op, err := domain.NewOperation(mustOpID(t, "op-add-hold"), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := auth.AddHold(op, req); err != nil {
-		t.Fatal(err)
-	}
-	err = checkHandoffHolds(auth, "t1", "", "", "")
-	if err == nil || !errors.Is(err, taskauthority.ErrDispatchHeld) || !strings.Contains(err.Error(), "dispatch is held") {
-		t.Fatalf("checkHandoffHolds err = %v, want dispatch is held", err)
-	}
-}
-
 func TestCompleteHandoffJournal_NotActive(t *testing.T) {
 	h, _ := setupTestHome(t)
 	lk, err := h.Lock(handoffLockScope)

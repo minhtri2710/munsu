@@ -852,7 +852,7 @@ func (r *Runner) checkSupervision() error {
 	// Supervision gate: spawn fails closed when the watcher lease is degraded.
 	// Durable Dispatch Holds are evaluated atomically inside the Task Authority
 	// ConfirmSpawn operation, never here.
-	return CheckSupervisionForDispatch(r.homeDir, home.DispatchActionSpawn)
+	return CheckSupervisionForDispatch(r.homeDir)
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.
