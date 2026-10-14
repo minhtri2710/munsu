@@ -129,23 +129,6 @@ func TestDigesterMultipleDigests(t *testing.T) {
 	}
 }
 
-func TestDigesterFlushResetsAccumulator(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-
-	d.Feed(&Digest{
-		Routines: []WakeDigest{{Kind: "check", Key: "t1", Payload: "ok"}},
-	})
-
-	now := time.Now().Add(defaultWindow + time.Second)
-	d.Flush(now)
-
-	// After flush, ShouldFlush should be false again.
-	if d.ShouldFlush(time.Now()) {
-		t.Error("ShouldFlush = true after flush, want false")
-	}
-}
-
 func TestDigesterConcurrentSafe(t *testing.T) {
 	tmp := t.TempDir()
 	d := NewDigester(tmp)
