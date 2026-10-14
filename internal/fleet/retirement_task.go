@@ -1,4 +1,3 @@
-// Package teardown implements soldier teardown safety checks and lifecycle.
 package fleet
 
 import (
@@ -41,8 +40,9 @@ type Options struct {
 
 // TeardownResult describes the outcome of each teardown step.
 type TeardownResult struct {
-	Steps  []string
-	Proofs []string // merge-proof evidence emitted by safety checks
+	Steps     []string
+	Proofs    []string // merge-proof evidence emitted by safety checks
+	Recovered []DeliverResult
 }
 
 // RetirementCleanupPendingError is the typed partial outcome of a retirement
@@ -261,7 +261,7 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 // reopened generation. Without --force it refuses an unanswered delivery
 // authorization (settleDeliveryForRetirement). Production callers always supply
 // the canonical Authority; nil fails closed.
-func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical) (taskauthority.Outcome, error) {
+func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical, result *TeardownResult) (taskauthority.Outcome, error) {
 	if authority == nil {
 		return taskauthority.Outcome{}, fmt.Errorf("retirement requires a composed task authority")
 	}
@@ -332,7 +332,7 @@ func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical)
 	// committed receipt observes the retired generation before this gate.
 	if !opts.Force {
 		var err error
-		if agg, err = settleDeliveryForRetirement(opts, authority, taskID, agg); err != nil {
+		if agg, err = settleDeliveryForRetirement(opts, authority, taskID, agg, result); err != nil {
 			return taskauthority.Outcome{}, err
 		}
 	}
@@ -379,7 +379,7 @@ func lockWaitConflict(opts Options, bound, cur taskauthority.Aggregate) error {
 // lock, recovers its own pending journals under it, re-reads the task and
 // decides again; a lock held by another process refuses with the same text,
 // since the unanswered authorization is this task's own.
-func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonical, taskID domain.TaskID, bound taskauthority.Aggregate) (taskauthority.Aggregate, error) {
+func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonical, taskID domain.TaskID, bound taskauthority.Aggregate, result *TeardownResult) (taskauthority.Aggregate, error) {
 	cur, err := authority.DeliveryCurrency(taskID)
 	if err != nil {
 		return bound, fmt.Errorf("reading the delivery authorization: %w", err)
@@ -399,7 +399,8 @@ func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonica
 		return bound, fmt.Errorf("locking the delivery scope: %w", err)
 	}
 	defer lk.Release()
-	recoveryErr := recoverPendingDeliveryJournals(h, lk, opts.ID)
+	recovered, recoveryErr := recoverPendingDeliveryJournals(h, lk, opts.ID)
+	result.Recovered = recovered
 	// Recovery may commit an outcome or a release, which advances the
 	// revision the retirement is fenced to; nothing else may move.
 	agg, err := authority.Get(taskID)
@@ -792,7 +793,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// retired generation (Replayed outcome) and resumes cleanup without
 	// re-committing. Without --force it refuses while the task holds an
 	// unanswered delivery authorization. nil fails closed.
-	committed, err := retireTaskAuthoritatively(opts, authority)
+	committed, err := retireTaskAuthoritatively(opts, authority, result)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 	}
@@ -1280,7 +1281,17 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 	case taskauthority.KindReview:
 		return nil, nil
 	default:
-		return shipSafetyCheck(opts, meta, backend, authority, binding, partialLaunch)
+		// The identity is the current delivery authorization's, so a task
+		// authorized but not landed refuses even when its .meta carries no
+		// pr_* keys. Human words (domain.Words): grantor the Human, channel
+		// direct chat with the Lead, 2026-10-13, words=selected, 1A:
+		// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự
+		// quyết đi" record: teardown reads the canonical delivery identity).
+		ident, err := deliveryIdentity(authority, opts.ID)
+		if err != nil {
+			return nil, fmt.Errorf("reading delivery identity: %w", err)
+		}
+		return shipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
 	}
 }
 
@@ -1384,29 +1395,19 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 	return unresolved, nil
 }
 
-// shipSafetyCheck verifies work is landed before
-// It separates cleanliness checks (dirty worktree) from merge-proof checks
-// (topology-aware PR merge verification using delivery identity).
+// shipSafetyCheck verifies work is landed before teardown. It separates
+// cleanliness checks (dirty worktree) from merge-proof checks (topology-aware
+// PR merge verification of the delivery identity, deliveryIdentity's).
 // Returns proof strings emitted during merge-proof checks.
-// shipSafetyCheck verifies work is landed before
-// It separates cleanliness checks (dirty worktree) from merge-proof checks
-// (topology-aware PR merge verification using delivery identity).
-// Returns proof strings emitted during merge-proof checks.
-func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
 	if binding == nil || binding.Path == "" {
 		return nil, fmt.Errorf("no canonical worktree path for %s", opts.ID)
 	}
 	if binding.LaunchManifest == nil {
 		return nil, fmt.Errorf("no canonical launch manifest evidence for %s", opts.ID)
 	}
-	if partialLaunch {
-		ident, err := identityFromMeta(meta)
-		if err != nil {
-			return nil, fmt.Errorf("reading delivery identity: %w", err)
-		}
-		if ident != nil {
-			return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
-		}
+	if partialLaunch && ident != nil {
+		return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
 	}
 	wtPath := binding.Path
 	expectedManifestSHA := binding.LaunchManifest.ManifestSHA256
@@ -1487,20 +1488,8 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 
 	// If the task has a delivery identity, use provider-confirmed PR status
 	// to determine whether the work is safely landed.
-	ident, err := identityFromMeta(meta)
-	if err != nil {
-		return nil, fmt.Errorf("reading delivery identity: %w", err)
-	}
-
 	if ident != nil {
-		// Validate identity before any provider query or fallback.
-		// Partial/corrupt identity must fail closed and never silently
-		// degrade to the legacy branch check.
-		if err := domain.ValidateIdentity(ident); err != nil {
-			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
-		}
-
-		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident, backend, authority)
+		proof, err := topologyAwareMergeCheck(opts, wtPath, ident, backend, authority)
 		if err != nil {
 			return nil, err
 		}
@@ -1521,15 +1510,6 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 	return nil, nil
 }
 
-// identityFromMeta reconstructs a delivery identity from task meta using the
-// authoritative IdentityFromMeta, which correctly distinguishes:
-//   - nil, nil     (truly no identity metadata — legacy fallback allowed)
-//   - nil, error   (partial identity with missing pr_url — fail closed)
-//   - identity, nil (valid identity — proceed to topology-aware check)
-func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) {
-	return domain.IdentityFromMeta(meta)
-}
-
 // topologyAwareMergeCheck verifies the work is landed using the provider's
 // confirmed PR/MR merge status. It supports three merge topologies:
 //   - Squash/rebase merge with deleted head: accepts provider-confirmed merged PR identity
@@ -1537,7 +1517,7 @@ func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) 
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical) (string, error) {
+func topologyAwareMergeCheck(opts Options, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical) (string, error) {
 	// The merged prerequisite is derived from the canonical committed
 	// delivery outcome when one exists: a non-completed canonical outcome
 	// fails the safety check before any provider query. The .meta projection never authorizes or blocks merged truth.
@@ -1561,75 +1541,46 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}
 
-	// Check for refused states
-	if status.Closed && !status.Merged {
+	landed, err := classifyLanding(*status, *ident)
+	switch landed {
+	case landingClosed:
 		return "", fmt.Errorf("PR #%d is closed but not merged (use --force to override)", ident.Number)
-	}
-
-	if !status.Merged && status.State == "OPEN" {
+	case landingOpen:
 		return "", fmt.Errorf("PR #%d is still open and not merged (use --force to override)", ident.Number)
+	case landingUnknown:
+		return "", fmt.Errorf("%w (use --force to override)", err)
 	}
 
-	// PR is confirmed merged. Verify head SHA consistency for ALL merged
-	// topologies, including deleted remote head (squash/rebase).
-	// The live provider HeadSHA must be nonempty and exactly equal to the
-	// stored ident.HeadSHA before accepting. A wrong head must fail even
-	// when the remote head has been deleted.
-	// Require non-empty MergedSHA as merge-result evidence.
-	if status.Merged {
-		if status.HeadSHA == "" {
-			return "", fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
+	// Build the exact proof used, augmented with topology details below.
+	proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
+	// For deleted remote head (squash/rebase), the provider-confirmed merge is
+	// sufficient proof. If the remote branch still exists, add ancestry detail.
+	remoteBranchExists := false
+	if ident.HeadRef != "" {
+		checkCmd := exec.Command("git", "ls-remote", "--exit-code", "origin", "refs/heads/"+ident.HeadRef)
+		checkCmd.Dir = wtPath
+		if checkCmd.Run() == nil {
+			remoteBranchExists = true
 		}
-		if status.MergedSHA == "" {
-			return "", fmt.Errorf("provider returned no merge-result evidence for merged PR #%d (use --force to override)", ident.Number)
-		}
-		if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
-			return "", fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
-		}
-
-		// Build the exact proof used, augmented with topology details below.
-		proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
-
-		// For deleted remote head (squash/rebase), confirm the PR IS merged
-		// — that's sufficient proof. The remote branch may be gone.
-		// Check: if the remote branch still exists, we can do a stronger check.
-		remoteBranchExists := false
-		if ident.HeadRef != "" {
-			checkCmd := exec.Command("git", "ls-remote", "--exit-code", "origin", "refs/heads/"+ident.HeadRef)
-			checkCmd.Dir = wtPath
-			if checkCmd.Run() == nil {
-				remoteBranchExists = true
-			}
-		}
-
-		if remoteBranchExists {
-			baseRef := ident.BaseRef
-			if baseRef != "" {
-				// For squash/rebase merges, MergedSHA (merge commit on target)
-				// is an ancestor of origin/main, but HeadSHA is not. Prefer
-				// MergedSHA when it differs from HeadSHA.
-				ancestrySHA := status.HeadSHA
-				if status.MergedSHA != "" && status.MergedSHA != status.HeadSHA {
-					ancestrySHA = status.MergedSHA
-				}
-				ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", ancestrySHA, "origin/"+baseRef)
-				ancestorCmd.Dir = wtPath
-				if err := ancestorCmd.Run(); err != nil {
-					// Ancestry check is an additional verification, not a blocker.
-					// Provider-confirmed MERGED + head SHA match is sufficient.
-					proof += fmt.Sprintf("; ancestry check inconclusive: %s is not ancestor of origin/%s", ancestrySHA, baseRef)
-				} else {
-					proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", ancestrySHA, baseRef)
-				}
-			}
-		}
-
-		// PR is confirmed merged by the provider — accept as landed and
-		// return the exact proof used.
-		return proof, nil
 	}
-
-	return "", fmt.Errorf("PR #%d is in an unexpected state: merged=%v closed=%v (use --force to override)", ident.Number, status.Merged, status.Closed)
+	if remoteBranchExists && ident.BaseRef != "" {
+		// For squash/rebase merges, MergedSHA (merge commit on target) is an
+		// ancestor of origin/main, but HeadSHA is not. Prefer MergedSHA when it
+		// differs from HeadSHA.
+		ancestrySHA := status.HeadSHA
+		if status.MergedSHA != status.HeadSHA {
+			ancestrySHA = status.MergedSHA
+		}
+		ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", ancestrySHA, "origin/"+ident.BaseRef)
+		ancestorCmd.Dir = wtPath
+		if err := ancestorCmd.Run(); err != nil {
+			// Ancestry check is an additional verification, not a blocker.
+			proof += fmt.Sprintf("; ancestry check inconclusive: %s is not ancestor of origin/%s", ancestrySHA, ident.BaseRef)
+		} else {
+			proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", ancestrySHA, ident.BaseRef)
+		}
+	}
+	return proof, nil
 }
 
 // checkRemoteBranch proves the worktree's task branch head is on origin: the

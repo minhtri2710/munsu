@@ -19,15 +19,14 @@ func newDoctorCmd() *cobra.Command {
 		Long: `Run bootstrap diagnostics and print fix commands for each issue.
 
 Hard-required tools (doctor exits non-zero if missing):
-  git, session backend (herdr, or tmux: tmux has no prompt support yet, so
-  wake, mailbox, nudge and captain prompts need herdr), and at least
+  git, session backend (herdr or tmux), and at least
   one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
   treehouse, no-mistakes, gh-axi, gh, and GitHub auth.
 
 Use --role for role-specific integration matrix:
-  --role general   Harness adapter, session backend, gh auth, go toolchain
+  --role general   Harness adapter, session backend, gh auth, go toolchain, per-project launch readiness
   --role captain   Watcher integration, config, captain homes, converge readiness
   --role soldier   Worktree state, pipeline readiness, soldier brief`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

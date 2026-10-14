@@ -85,10 +85,10 @@ func TestDeliverStaleRevisionAuthorizedJournalReleases(t *testing.T) {
 	bumpTaskRevisionCanonically(t, c, taskID)
 
 	provider := installScriptedProviderFor(t, "open-then-merged")
-	err := RecoverDeliveryJournals(homeDir)
+	_, err := RecoverDeliveryOutcomes(homeDir)
 	var failClosed *DeliveryFailClosedError
 	if !errors.As(err, &failClosed) || failClosed.ReleaseErr != nil {
-		t.Fatalf("RecoverDeliveryJournals err = %v, want fail-closed with a completed release", err)
+		t.Fatalf("RecoverDeliveryOutcomes err = %v, want fail-closed with a completed release", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("merges = %d, want 0", provider.merges)
@@ -103,7 +103,7 @@ func TestDeliverStaleRevisionAuthorizedJournalReleases(t *testing.T) {
 	if !isRevokedCurrency(cur) {
 		t.Fatalf("currency = %+v, want the journal's authorization revoked", cur.Reasons)
 	}
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
 		t.Fatalf("second recovery: %v", err)
 	}
 }
@@ -121,8 +121,8 @@ func TestDeliverStaleRevisionOutcomeJournalCommits(t *testing.T) {
 	bumpTaskRevisionCanonically(t, c, taskID)
 
 	provider := installScriptedProviderFor(t, "merged")
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("merges = %d, want 0", provider.merges)
@@ -172,8 +172,8 @@ func TestDeliverOutcomeJournalCommitsAcrossPhaseChange(t *testing.T) {
 			tc.change(t, c, tid, domain.Of(uint64(agg.Generation), uint64(agg.Revision)))
 
 			installScriptedProviderFor(t, "merged")
-			if err := RecoverDeliveryJournals(homeDir); err != nil {
-				t.Fatalf("RecoverDeliveryJournals: %v", err)
+			if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+				t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 			}
 			out, err := c.DeliveryOutcome(tid)
 			if err != nil || out.Status != taskauthority.DeliveryOutcomeCompleted || out.MergedSHA != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
@@ -206,10 +206,10 @@ func TestDeliverStaleRevisionAuthorizationGoneCompletesWithoutMutation(t *testin
 			before := taskRevision(t, c, taskID)
 
 			provider := installScriptedProviderFor(t, "merged")
-			err := RecoverDeliveryJournals(homeDir)
+			_, err := RecoverDeliveryOutcomes(homeDir)
 			var failClosed *DeliveryFailClosedError
 			if !errors.As(err, &failClosed) || failClosed.ReleaseErr != nil {
-				t.Fatalf("RecoverDeliveryJournals err = %v, want fail-closed terminal completion", err)
+				t.Fatalf("RecoverDeliveryOutcomes err = %v, want fail-closed terminal completion", err)
 			}
 			if provider.merges != 0 {
 				t.Fatalf("merges = %d, want 0", provider.merges)
@@ -259,7 +259,7 @@ func TestDeliverCrashAfterOutcomeCommitThenRevisionBumpConverges(t *testing.T) {
 
 			provider := installScriptedProviderFor(t, "merged")
 			for i := 0; i < 2; i++ {
-				if err := RecoverDeliveryJournals(homeDir); err != nil {
+				if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
 					t.Fatalf("recovery %d: %v", i, err)
 				}
 			}
@@ -322,26 +322,16 @@ func TestDeliverRecoveryContinuesPastFailedJournal(t *testing.T) {
 	mustWorkingDeliveryTask(t, c, "t2", deliveryTestGitHubForge)
 	installScriptedProviderFor(t, "open-then-merged")
 	runDeliveryCrashHelper(t, homeDir, "t1", "authorized", "open-then-merged")
-	agg, err := c.Get(mustFleetTaskID(t, "t1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reserve := taskauthority.CanonicalReserveTransferRequest{
-		HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, "t1"),
-		Precondition:  domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		ReservationID: "res-t1", Destination: mustFleetHomeID(t, "dest-home"), FenceToken: "fence-res", Reason: "transfer",
-	}
-	if _, err := c.ReserveTransfer(mustFleetOperation(t, "op-res-t1", reserve), reserve); err != nil {
-		t.Fatal(err)
-	}
+	// ReserveTransfer refuses a working task; seed the reservation on disk.
+	rewriteFleetTaskAggregate(t, homeDir, "t1", "transfer", `{"reservation_id":"res-t1","destination_home":"dest-home","fence_token":"fence-res"}`)
 	first := listActiveDeliveryJournals(t, homeDir)[0]
 	second := writeAuthorizeStageJournal(t, c, homeDir, "t2")
 
 	provider := installScriptedProviderFor(t, "open-then-merged")
-	err = RecoverDeliveryJournals(homeDir)
+	_, err := RecoverDeliveryOutcomes(homeDir)
 	var failClosed *DeliveryFailClosedError
 	if !errors.As(err, &failClosed) || failClosed.ReleaseErr == nil || !errors.Is(failClosed.ReleaseErr, taskauthority.ErrConflict) {
-		t.Fatalf("RecoverDeliveryJournals err = %v, want t1's release refused by the reservation", err)
+		t.Fatalf("RecoverDeliveryOutcomes err = %v, want t1's release refused by the reservation", err)
 	}
 	if active := listActiveDeliveryJournals(t, homeDir); len(active) != 1 || active[0] != first {
 		t.Fatalf("active journals = %v, want only %s", active, first)
@@ -376,8 +366,8 @@ func TestDeliverRecoveryStopsBeforeResumingOnContradictoryEntry(t *testing.T) {
 	}
 
 	provider := installScriptedProviderFor(t, "open-then-merged")
-	if err := RecoverDeliveryJournals(homeDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("RecoverDeliveryJournals err = %v, want the missing journal", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("RecoverDeliveryOutcomes err = %v, want the missing journal", err)
 	}
 	if cur, err := c.DeliveryCurrency(mustFleetTaskID(t, "t1")); err != nil || cur.Authorization != nil || len(cur.Reasons) != 1 || cur.Reasons[0] != taskauthority.DeliveryCurrencyNoAuthorization {
 		t.Fatalf("t1 authorization currency = %+v, %v, want none (nothing resumed)", cur, err)
@@ -422,9 +412,9 @@ func TestDeliverRecoveryRefusesMalformedCommittedOutcome(t *testing.T) {
 	}
 
 	provider := installScriptedProviderFor(t, "merged")
-	err = RecoverDeliveryJournals(homeDir)
+	_, err = RecoverDeliveryOutcomes(homeDir)
 	if err == nil || !strings.Contains(err.Error(), "resolving committed delivery outcome") {
-		t.Fatalf("RecoverDeliveryJournals err = %v, want the unreadable committed outcome surfaced", err)
+		t.Fatalf("RecoverDeliveryOutcomes err = %v, want the unreadable committed outcome surfaced", err)
 	}
 	if provider.merges != 0 {
 		t.Fatalf("merges = %d, want 0", provider.merges)
@@ -515,8 +505,8 @@ func TestDeliverOutcomeCommitsAfterHoldReleased(t *testing.T) {
 	provider := deliverWithHoldAt(t, c, homeDir, "t1", "mutating")
 	releaseDeliveryHold(t, c, "hold-t1")
 
-	if err := RecoverDeliveryJournals(homeDir); err != nil {
-		t.Fatalf("RecoverDeliveryJournals: %v", err)
+	if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+		t.Fatalf("RecoverDeliveryOutcomes: %v", err)
 	}
 	if provider.merges != 1 {
 		t.Fatalf("merges = %d, want 1", provider.merges)
@@ -535,9 +525,9 @@ func TestDeliverOutcomeRefusedWhileHoldActive(t *testing.T) {
 			mustWorkingDeliveryTask(t, c, "t1", deliveryTestGitHubForge)
 			provider := deliverWithHoldAt(t, c, homeDir, "t1", boundary)
 
-			err := RecoverDeliveryJournals(homeDir)
+			_, err := RecoverDeliveryOutcomes(homeDir)
 			if err == nil || !strings.Contains(err.Error(), string(taskauthority.DeliveryCurrencyMatchingHold)) {
-				t.Fatalf("RecoverDeliveryJournals err = %v, want matching-hold refusal", err)
+				t.Fatalf("RecoverDeliveryOutcomes err = %v, want matching-hold refusal", err)
 			}
 			if _, err := c.DeliveryOutcome(mustFleetTaskID(t, "t1")); !errors.Is(err, taskauthority.ErrNotFound) {
 				t.Fatalf("outcome err = %v, want none recorded while the hold is active", err)
@@ -547,8 +537,8 @@ func TestDeliverOutcomeRefusedWhileHoldActive(t *testing.T) {
 			}
 
 			releaseDeliveryHold(t, c, "hold-t1")
-			if err := RecoverDeliveryJournals(homeDir); err != nil {
-				t.Fatalf("RecoverDeliveryJournals after release: %v", err)
+			if _, err := RecoverDeliveryOutcomes(homeDir); err != nil {
+				t.Fatalf("RecoverDeliveryOutcomes after release: %v", err)
 			}
 			if provider.merges != 1 {
 				t.Fatalf("merges = %d, want 1", provider.merges)

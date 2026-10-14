@@ -150,6 +150,7 @@ func TestDeliverAuthorizationPinsExactRequestDigests(t *testing.T) {
 		Kind:          journal.Kind,
 		Identity:      journal.Identity,
 		Preconditions: journal.Preconditions,
+		Diff:          journal.Diff,
 		Words:         journal.Words,
 	}
 	digest, err := domain.Digest(req)
@@ -368,6 +369,30 @@ func rewriteTaskDocBumpRevision(t *testing.T, homeDir, taskID string) {
 	}
 }
 
+// rewriteFleetTaskAggregate replaces one aggregate field of the current task
+// document on disk and bumps its envelope revision.
+func rewriteFleetTaskAggregate(t *testing.T, homeDir, taskID, field, raw string) {
+	t.Helper()
+	path := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		HomeRevision uint64                     `json:"home_revision"`
+		Aggregate    map[string]json.RawMessage `json:"aggregate"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc.Aggregate[field] = []byte(raw)
+	doc.HomeRevision++
+	next, _ := json.Marshal(doc)
+	if err := os.WriteFile(path, next, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestDeliverFailClosedBeforeMutation proves stale revision, hold add/release,
 // binding change, transfer reservation, revocation, and identity/head change
 // all fail closed before any irreversible provider mutation.
@@ -403,38 +428,11 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 			}
 		}, true},
 		{"binding-change", func(t *testing.T, c *taskauthority.Canonical, homeDir, taskID string) {
-			path := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var doc struct {
-				HomeRevision uint64                     `json:"home_revision"`
-				Aggregate    map[string]json.RawMessage `json:"aggregate"`
-			}
-			if err := json.Unmarshal(data, &doc); err != nil {
-				t.Fatal(err)
-			}
-			doc.Aggregate["worktree"] = []byte(`{"path":"/changed/path"}`)
-			doc.HomeRevision++
-			next, _ := json.Marshal(doc)
-			if err := os.WriteFile(path, next, 0600); err != nil {
-				t.Fatal(err)
-			}
+			rewriteFleetTaskAggregate(t, homeDir, taskID, "worktree", `{"path":"/changed/path"}`)
 		}, false},
 		{"transfer-reservation", func(t *testing.T, c *taskauthority.Canonical, homeDir, taskID string) {
-			agg, err := c.Get(mustFleetTaskID(t, taskID))
-			if err != nil {
-				t.Fatal(err)
-			}
-			req := taskauthority.CanonicalReserveTransferRequest{
-				HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-				Precondition:  domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-				ReservationID: "res-" + taskID, Destination: mustFleetHomeID(t, "dest-home"), FenceToken: "fence-res", Reason: "transfer",
-			}
-			if _, err := c.ReserveTransfer(mustFleetOperation(t, "op-res-"+taskID, req), req); err != nil {
-				t.Fatal(err)
-			}
+			// ReserveTransfer refuses a working task; seed the reservation on disk.
+			rewriteFleetTaskAggregate(t, homeDir, taskID, "transfer", `{"reservation_id":"res-`+taskID+`","destination_home":"dest-home","fence_token":"fence-res"}`)
 		}, false},
 		{"revocation", func(t *testing.T, c *taskauthority.Canonical, homeDir, taskID string) {
 			cur, err := c.DeliveryCurrency(mustFleetTaskID(t, taskID))
@@ -531,14 +529,4 @@ func TestDeliverNoMetaSubstitutionAuthorizesDelivery(t *testing.T) {
 	if provider.merges != 1 {
 		t.Fatalf("merges = %d, want 1", provider.merges)
 	}
-}
-
-// mustFleetHomeID builds a validated home identity.
-func mustFleetHomeID(t *testing.T, value string) domain.HomeID {
-	t.Helper()
-	id, err := domain.NewHomeID(value)
-	if err != nil {
-		t.Fatalf("NewHomeID(%s): %v", value, err)
-	}
-	return id
 }

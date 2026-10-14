@@ -64,6 +64,9 @@ type DeliverResult struct {
 	AuthorizationOperationID string
 	OutcomeOperationID       string
 	Replayed                 bool
+	// Recovered holds the non-completed outcomes of other tasks' journals that
+	// this call resumed under the delivery lock; they are reported, not failed on.
+	Recovered []DeliverResult
 }
 
 // IsError reports whether the committed outcome is not completed (partial,
@@ -247,7 +250,8 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 	// Converge any pending delivery journals before creating a new one, so an
 	// interrupted delivery completes first and the new delivery observes
 	// truthful state (the accepted Task Transfer journal mechanics).
-	if err := recoverPendingDeliveryJournals(h, lk, ""); err != nil {
+	recovered, err := recoverPendingDeliveryJournals(h, lk, "")
+	if err != nil {
 		return nil, fmt.Errorf("deliver %s: recovering pending delivery journals: %w", taskID, err)
 	}
 
@@ -273,7 +277,11 @@ func Deliver(homeDir, taskID string, req DeliverRequest) (*DeliverResult, error)
 	}
 	deliveryCrashHook("journal")
 
-	return resumeDeliveryJournal(h, lk, c, journal)
+	res, err := resumeDeliveryJournal(h, lk, c, journal)
+	if res != nil {
+		res.Recovered = recovered
+	}
+	return res, err
 }
 
 // validateDeliverRequest checks the typed delivery intent: a supported
@@ -362,6 +370,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Kind:          req.Kind,
 		Identity:      req.Identity,
 		Preconditions: req.Preconditions,
+		Diff:          deliveryChanges(agg.Worktree.Path, req.Identity),
 		Words:         req.Words,
 	}
 	authorizeDigest, err := domain.Digest(authorizeReq)
@@ -383,6 +392,7 @@ func buildDeliveryJournal(homeDir string, c *taskauthority.Canonical, agg taskau
 		Method:          method,
 		Preconditions:   preconditions,
 		Words:           req.Words,
+		Diff:            authorizeReq.Diff,
 		AuthorizeOpID:   deliveryAuthorizeOpID(id, agg.TaskID),
 		GateOpID:        deliveryGateOpID(id, agg.TaskID),
 		RevokeOpID:      deliveryRevokeOpID(id, agg.TaskID),
@@ -526,6 +536,7 @@ func issueDeliveryAuthorization(c *taskauthority.Canonical, journal *deliveryJou
 		Kind:          journal.Kind,
 		Identity:      journal.Identity,
 		Preconditions: journal.Preconditions,
+		Diff:          journal.Diff,
 		Words:         journal.Words,
 	}
 	digest, err := domain.Digest(req)
@@ -668,10 +679,11 @@ type deliveryOutcomeDerivation struct {
 	mergedSHA string
 }
 
-// deriveDeliveryOutcome classifies a provider observation into the closed-set
-// canonical outcome: merged -> completed, open -> retryable, closed ->
-// partial, unknown/unreachable -> remote-unknown. The merge attempt error is
-// preserved in the detail when present (the observation decides the status).
+// deriveDeliveryOutcome classifies a provider observation through
+// classifyLanding into the closed-set canonical outcome: landed -> completed,
+// open -> retryable, closed -> partial, unknown/unreachable -> remote-unknown.
+// The merge attempt error is preserved in the detail when present (the
+// observation decides the status).
 func deriveDeliveryOutcome(journal *deliveryJournal, obs DeliveryProviderObservation, obsErr, mergeErr error) deliveryOutcomeDerivation {
 	head := obs.HeadSHA
 	if head == "" {
@@ -684,20 +696,21 @@ func deriveDeliveryOutcome(journal *deliveryJournal, obs DeliveryProviderObserva
 		}
 		return deliveryOutcomeDerivation{status: taskauthority.DeliveryOutcomeRemoteUnknown, detail: detail, headSHA: head}
 	}
-	switch obs.State {
-	case "MERGED":
+	status := domain.PRMergeStatus{State: obs.State, Merged: obs.State == "MERGED", Closed: obs.State == "CLOSED", HeadSHA: obs.HeadSHA, MergedSHA: obs.MergedSHA}
+	landed, err := classifyLanding(status, journal.Identity)
+	switch landed {
+	case landingLanded:
 		return deliveryOutcomeDerivation{status: taskauthority.DeliveryOutcomeCompleted, detail: "provider confirms merged", headSHA: head, mergedSHA: obs.MergedSHA}
-	case "OPEN":
+	case landingOpen:
 		detail := "provider reports open; merge did not take effect"
 		if mergeErr != nil {
 			detail += "; merge attempt failed: " + mergeErr.Error()
 		}
 		return deliveryOutcomeDerivation{status: taskauthority.DeliveryOutcomeRetryable, detail: detail, headSHA: head}
-	case "CLOSED":
+	case landingClosed:
 		return deliveryOutcomeDerivation{status: taskauthority.DeliveryOutcomePartial, detail: "provider reports closed but not merged", headSHA: head}
-	default:
-		return deliveryOutcomeDerivation{status: taskauthority.DeliveryOutcomeRemoteUnknown, detail: "provider reported unknown state " + obs.State, headSHA: head}
 	}
+	return deliveryOutcomeDerivation{status: taskauthority.DeliveryOutcomeRemoteUnknown, detail: "provider evidence is inconclusive: " + err.Error(), headSHA: head}
 }
 
 // pinAndCommitOutcome pins the derived outcome in the journal (stage

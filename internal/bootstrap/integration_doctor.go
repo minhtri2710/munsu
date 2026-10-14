@@ -1,7 +1,7 @@
-// Package integrate manages opt-in harness integration.
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,6 +89,9 @@ func scanGeneral(homeDir string) []StatusEntry {
 	// Go toolchain
 	entries = append(entries, checkGoToolchain())
 
+	// Per project: the refusal a soldier launch would hit, probed without spawning
+	entries = append(entries, checkProjectReadiness(homeDir)...)
+
 	return entries
 }
 
@@ -122,7 +125,7 @@ func checkSessionBackend() StatusEntry {
 		return StatusEntry{
 			Subsystem: "session_backend",
 			Status:    StatusCurrent,
-			Detail:    "tmux found on PATH (no prompt support yet: wake, mailbox, nudge and captain prompts need herdr)",
+			Detail:    "tmux found on PATH",
 		}
 	}
 	// Check herdr env
@@ -136,14 +139,13 @@ func checkSessionBackend() StatusEntry {
 	return StatusEntry{
 		Subsystem: "session_backend",
 		Status:    StatusAbsent,
-		Detail:    "no session backend (herdr, or tmux without prompt support) detected",
-		RepairCmd: "run munsu inside herdr (HERDR_ENV=1), or install tmux (no prompt support yet): brew install tmux | apt install tmux",
+		Detail:    "no session backend (herdr or tmux) detected",
+		RepairCmd: "run munsu inside herdr (HERDR_ENV=1), or install tmux: brew install tmux | apt install tmux",
 	}
 }
 
 func checkGitHubAuth() StatusEntry {
-	cmd := exec.Command("gh", "auth", "status")
-	if err := cmd.Run(); err == nil {
+	if _, err := runCapabilityCommand("gh", []string{"auth", "status"}, "", capabilityProbeTimeout); err == nil {
 		return StatusEntry{
 			Subsystem: "gh_auth",
 			Status:    StatusCurrent,
@@ -181,6 +183,60 @@ func checkGoToolchain() StatusEntry {
 		Status:    StatusCurrent,
 		Detail:    strings.TrimSpace(string(out)),
 	}
+}
+
+// checkProjectReadiness predicts, for each registered project, whether a
+// General-direct soldier launch would pass spawn's delivery and harness
+// preflights, and whether each harness a dispatch profile can select would
+// pass. It probes and reports; it refuses nothing.
+func checkProjectReadiness(homeDir string) []StatusEntry {
+	// Same guard as checkCaptainRegistry: opening the registry creates a home
+	// for a missing directory, and doctor must stay read-only.
+	if _, err := os.Stat(filepath.Join(homeDir, home.IdentityFileName)); err != nil {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusCurrent, Detail: "no projects configured"}}
+	}
+	projects, err := fleet.List(homeDir)
+	if err != nil {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusStale, Detail: fmt.Sprintf("cannot read project registry: %v", err)}}
+	}
+	if len(projects) == 0 {
+		return []StatusEntry{{Subsystem: "project_readiness", Status: StatusCurrent, Detail: "no projects configured"}}
+	}
+	var entries []StatusEntry
+	for _, project := range projects {
+		subsystem := "project " + project.Name
+		pr, err := fleet.ProbeProjectReadiness(homeDir, project.Name)
+		if err != nil {
+			entries = append(entries, StatusEntry{Subsystem: subsystem, Status: StatusStale, Detail: fmt.Sprintf("cannot resolve project: %v", err)})
+			continue
+		}
+		entries = append(entries, projectDefaultReadinessEntry(subsystem, pr))
+		for _, profile := range pr.Profiles {
+			profileSubsystem := subsystem + " harness " + profile.Harness
+			if profile.Err == nil {
+				entries = append(entries, StatusEntry{Subsystem: profileSubsystem, Status: StatusCurrent,
+					Detail: "profile harness would pass"})
+				continue
+			}
+			entries = append(entries, StatusEntry{Subsystem: profileSubsystem, Status: StatusAbsent,
+				Detail: fmt.Sprintf("profile harness would be refused: %v", profile.Err)})
+		}
+	}
+	return entries
+}
+
+func projectDefaultReadinessEntry(subsystem string, pr fleet.ProjectReadiness) StatusEntry {
+	if pr.Err == nil {
+		return StatusEntry{Subsystem: subsystem, Status: StatusCurrent,
+			Detail: fmt.Sprintf("launch would pass: delivery %s, harness %s", pr.Mode, pr.Harness)}
+	}
+	entry := StatusEntry{Subsystem: subsystem, Status: StatusAbsent,
+		Detail: fmt.Sprintf("launch would be refused: %v", pr.Err)}
+	var gate *fleet.GateBlockerError
+	if errors.As(pr.Err, &gate) {
+		entry.RepairCmd = gate.Guidance
+	}
+	return entry
 }
 
 // ---------------------------------------------------------------------------

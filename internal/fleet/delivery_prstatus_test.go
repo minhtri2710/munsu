@@ -286,3 +286,37 @@ func mergeabilityRunner(json, reviewers string) *fakeGlabRunner {
 		return []byte(json), nil
 	}}
 }
+
+// TestClassifyLanding pins the one "delivery landed" rule: merged needs merge
+// commit evidence and the exact identity head, each refused row beside the
+// nearest row it allows.
+func TestClassifyLanding(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	merge := strings.Repeat("b", 40)
+	ident := domain.DeliveryIdentity{Number: 9, HeadSHA: head}
+	cases := []struct {
+		name    string
+		status  domain.PRMergeStatus
+		want    landing
+		wantErr string
+	}{
+		{"merged at the identity head lands", domain.PRMergeStatus{State: "MERGED", Merged: true, HeadSHA: head, MergedSHA: merge}, landingLanded, ""},
+		{"merged with no head is unknown", domain.PRMergeStatus{State: "MERGED", Merged: true, MergedSHA: merge}, landingUnknown, "empty head SHA"},
+		{"merged with no merge commit is unknown", domain.PRMergeStatus{State: "MERGED", Merged: true, HeadSHA: head, MergedSHA: "abc123"}, landingUnknown, "no merge-result evidence"},
+		{"merged at another head is unknown", domain.PRMergeStatus{State: "MERGED", Merged: true, HeadSHA: strings.Repeat("c", 40), MergedSHA: merge}, landingUnknown, "PR head SHA mismatch"},
+		{"open is open", domain.PRMergeStatus{State: "OPEN", HeadSHA: head}, landingOpen, ""},
+		{"closed is closed", domain.PRMergeStatus{State: "CLOSED", Closed: true, HeadSHA: head}, landingClosed, ""},
+		{"an unknown state is unknown", domain.PRMergeStatus{State: "LOCKED"}, landingUnknown, "unexpected state \"LOCKED\""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := classifyLanding(tc.status, ident)
+			if got != tc.want {
+				t.Fatalf("landing = %v (%v), want %v", got, err, tc.want)
+			}
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

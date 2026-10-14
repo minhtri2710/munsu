@@ -614,3 +614,19 @@ func gitOnlyPath(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 }
+
+// TestWriteTeardownStepsListsPartialSteps proves a failed teardown still lists
+// the steps it completed, and a nil result prints nothing.
+func TestWriteTeardownStepsListsPartialSteps(t *testing.T) {
+	var b strings.Builder
+	writeTeardownSteps(&b, &fleet.TeardownResult{Steps: []string{"released lease", "cleanup pending"}})
+	if want := "  - released lease\n  - cleanup pending\n"; b.String() != want {
+		t.Fatalf("steps = %q, want %q", b.String(), want)
+	}
+
+	var none strings.Builder
+	writeTeardownSteps(&none, nil)
+	if none.Len() != 0 {
+		t.Fatalf("nil result printed %q", none.String())
+	}
+}
