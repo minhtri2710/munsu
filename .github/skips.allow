@@ -1,7 +1,7 @@
 # Skips the four CI coverage lanes take on purpose, one row per test:
-# `package test reason`. Seeded from a linux run of the lanes (golang:1.26, arm64
-# container, no tmux, herdr, node or no-mistakes on PATH), so environment
-# skips appear here as the container sees them.
+# `package test reason`. Derived from the ubuntu-latest lanes of ci.yml: no tmux,
+# herdr or no-mistakes on PATH. The runner image ships Node.js, so no row skips
+# for a missing node. Environment skips appear here as the runner sees them.
 # The ledger is report only: `.github/scripts/skip-ledger.sh check` prints a
 # skip the lanes take that no row lists, and a row no lane takes; neither fails.
 github.com/minhtri2710/munsu/internal/backend TestBackendForTask_HerdrSessionFallsBackToDefault herdr not on PATH (BackendForTask verifies the requested capability)
@@ -19,7 +19,6 @@ github.com/minhtri2710/munsu/internal/bootstrap TestResolveMunsuPath_ActualMunsu
 github.com/minhtri2710/munsu/internal/cli TestHelperNewWatcher not a helper invocation
 github.com/minhtri2710/munsu/internal/cli TestOrphanScanChildProcess helper process for TestOrphanScanReportsRealGarbageAndLeavesItRunning
 github.com/minhtri2710/munsu/internal/cli TestResolveShellWritePathWindows Windows path semantics required
-github.com/minhtri2710/munsu/internal/cli TestSafetyCheckProductionJSONFeedsTSRuntime Node.js not on PATH — skipping TS runtime fixture test
 github.com/minhtri2710/munsu/internal/cli TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites ambiguous drive-relative cwd is Windows-specific
 github.com/minhtri2710/munsu/internal/cli TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites ambiguous drive-relative cwd is Windows-specific
 github.com/minhtri2710/munsu/internal/cli TestShellWriteComputedCdDoesNotBecomeLiteralPath computed Windows cwd semantics are Windows-specific
