@@ -562,41 +562,66 @@ func TestReceiver_Ack_WrongReceiverRank(t *testing.T) {
 	}
 }
 
-func TestReceiver_Ack_WrongSenderIdentity(t *testing.T) {
-	home := t.TempDir()
+func TestReceiver_Ack_SenderIdentityGuard(t *testing.T) {
+	tests := []struct {
+		name      string
+		refSender string
+		wantErr   string
+	}{
+		{"ref sender differs from envelope sender is refused", "general-beta", "ack sender identity mismatch"},
+		{"ref sender matches envelope sender is accepted", "general-alpha", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			wireCaptainToGeneral(t, home, "general-alpha")
+			inboxDir := filepath.Join(home, "state", mhome.InboxDir, tt.refSender)
+			if err := os.MkdirAll(inboxDir, 0755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			env := &mhome.Envelope{
+				MessageID:      "sender-msg",
+				SenderRank:     mhome.RankGeneral,
+				SenderIdentity: "general-alpha",
+				ReceiverRank:   mhome.RankCaptain,
+				ReceiverID:     "captain-1",
+				Payload:        "hello",
+				PayloadHash:    mhome.PayloadHashHex("hello"),
+				SchemaVersion:  mhome.SchemaVersion,
+				CreatedAt:      time.Now().UnixNano(),
+			}
+			data, _ := json.MarshalIndent(env, "", "  ")
+			if err := os.WriteFile(filepath.Join(inboxDir, env.MessageID+".json"), data, 0644); err != nil {
+				t.Fatalf("write envelope: %v", err)
+			}
 
-	mismatchDir := filepath.Join(home, "state", mhome.InboxDir, "general-beta")
-	if err := os.MkdirAll(mismatchDir, 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	mismatchEnv := &mhome.Envelope{
-		MessageID:      "mismatch-msg",
-		SenderRank:     mhome.RankGeneral,
-		SenderIdentity: "general-alpha",
-		ReceiverRank:   mhome.RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "hello",
-		PayloadHash:    mhome.PayloadHashHex("hello"),
-		SchemaVersion:  mhome.SchemaVersion,
-		CreatedAt:      time.Now().UnixNano(),
-	}
-	data, _ := json.MarshalIndent(mismatchEnv, "", "  ")
-	if err := os.WriteFile(filepath.Join(mismatchDir, "mismatch-msg.json"), data, 0644); err != nil {
-		t.Fatalf("write mismatch envelope: %v", err)
-	}
-
-	recv := setupReceiver(t, home, "captain-1", mhome.RankCaptain)
-	_, err := recv.Ack(mhome.NotificationRef{
-		MessageID: "mismatch-msg", SenderIdentity: "general-beta",
-	})
-	if err == nil {
-		t.Fatal("expected error for wrong sender identity")
+			recv := setupReceiver(t, home, "captain-1", mhome.RankCaptain)
+			ack, err := recv.Ack(mhome.NotificationRef{
+				MessageID: env.MessageID, SenderIdentity: tt.refSender,
+			})
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Ack failed: %v", err)
+				}
+				if ack.Outcome != mhome.OutcomeAccepted {
+					t.Errorf("ack outcome=%q, want %q", ack.Outcome, mhome.OutcomeAccepted)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected %q error, got accepted ack", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected %q error, got: %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
 func TestReceiver_Ack_TamperedPayloadHash(t *testing.T) {
 	home := t.TempDir()
 	store := mhome.NewStore(home)
+	wireCaptainToGeneral(t, home, "general-1")
 
 	env := setupEnvelope(t, store, &mhome.Envelope{
 		SenderRank:     mhome.RankGeneral,
@@ -623,11 +648,15 @@ func TestReceiver_Ack_TamperedPayloadHash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for tampered payload")
 	}
+	if !strings.Contains(err.Error(), "payload hash mismatch") {
+		t.Errorf("expected payload hash mismatch error, got: %v", err)
+	}
 }
 
 func TestReceiver_Ack_TamperedHashField(t *testing.T) {
 	home := t.TempDir()
 	store := mhome.NewStore(home)
+	wireCaptainToGeneral(t, home, "general-1")
 
 	env := setupEnvelope(t, store, &mhome.Envelope{
 		SenderRank:     mhome.RankGeneral,
@@ -651,6 +680,9 @@ func TestReceiver_Ack_TamperedHashField(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for tampered hash")
+	}
+	if !strings.Contains(err.Error(), "payload hash mismatch") {
+		t.Errorf("expected payload hash mismatch error, got: %v", err)
 	}
 }
 

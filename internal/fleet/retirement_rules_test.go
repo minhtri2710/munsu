@@ -35,6 +35,8 @@ func TestRetirementRules(t *testing.T) {
 		{"ship PR is not open unmerged", openUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship merged PR head matches the identity", wrongPRHeadBlock, mergedMatchingHeadAllow},
 		{"ship canonical delivery outcome is completed", outcomeNotCompletedBlock, outcomeCompletedAllow},
+		{"ship delivery identity is the authorization's, not .meta", authorizedIdentityBlock, unauthorizedIdentityAllow},
+		{"an earlier generation's authorization is not the delivery identity", authorizedIdentityBlock, earlierGenerationIdentityAllow},
 	} {
 		t.Run(rule.name+"/blocks", rule.block)
 		t.Run(rule.name+"/allows", rule.allow)

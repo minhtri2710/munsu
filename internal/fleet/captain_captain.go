@@ -1,4 +1,3 @@
-// Package captain manages persistent domain supervisors (captains).
 package fleet
 
 import (
@@ -183,8 +182,8 @@ var gitRun = func(args ...string) (string, error) {
 
 // launchCmd builds a shell-safe command string for sending via session backend.
 // Override in tests.
-var launchCmd = func(binPath string, args []string, captainHome string, parentHome string, captainID string) (string, error) {
-	return buildLaunchScript(binPath, args, captainHome, parentHome, captainID)
+var launchCmd = func(binPath string, args []string, captainHome string, parentHome string, captainID string, seat captainSeat) (string, error) {
+	return buildLaunchScript(binPath, args, captainHome, parentHome, captainID, seat)
 }
 
 // --- Helpers ---
@@ -198,7 +197,10 @@ func shQuote(s string) string {
 // buildLaunchScript writes a bash launch script into the general home and
 // returns a fish-safe command that runs it. Herdr panes may use fish, so the
 // bash-only identity/env plumbing must not be typed directly into the pane.
-func buildLaunchScript(binPath string, args []string, cwd string, parentHome string, captainID string) (string, error) {
+// With a fence the script runs the captain under it from `munsu captain
+// seat`, which stays outside to run the captain's seat commands, on exactly
+// the PATH the fence denies and from the captain's own pi agent dir.
+func buildLaunchScript(binPath string, args []string, cwd string, parentHome string, captainID string, seat captainSeat) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/bin/env bash\n")
 	b.WriteString("set -euo pipefail\n")
@@ -225,12 +227,32 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	if err != nil {
 		return "", fmt.Errorf("provisioning captain git shim: %w", err)
 	}
-	b.WriteString("export PATH=")
-	b.WriteString(shQuote(shimDir))
-	b.WriteString(":\"$PATH\"\n")
-	b.WriteString("exec ")
-	b.WriteString(shQuote(binPath))
-	for _, arg := range args {
+	argv := append([]string{binPath}, args...)
+	if seat.fence == nil {
+		b.WriteString("export PATH=")
+		b.WriteString(shQuote(shimDir))
+		b.WriteString(":\"$PATH\"\n")
+	} else {
+		b.WriteString("export PATH=")
+		b.WriteString(shQuote(strings.Join(seat.pathDirs, string(os.PathListSeparator))))
+		b.WriteString("\nexport PI_CODING_AGENT_DIR=")
+		b.WriteString(shQuote(seat.agentDir))
+		b.WriteString("\nexport GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")
+		wrapped, err := seat.fence.Wrap(argv)
+		if err != nil {
+			return "", fmt.Errorf("captain launch: %w", err)
+		}
+		self, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("captain launch: resolving munsu: %w", err)
+		}
+		if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
+			self = resolved
+		}
+		argv = append([]string{self, "captain", "seat", "--"}, wrapped...)
+	}
+	b.WriteString("exec")
+	for _, arg := range argv {
 		b.WriteString(" ")
 		b.WriteString(shQuote(arg))
 	}
@@ -301,7 +323,7 @@ When a message carries the General marker:
 - If the text is a plain command, do the work.
 - Answer via %[6]smunsu report%[6]s (see Uplink below), never chat-only.
 - Terse result: one status line is the whole answer.
-- Detailed result: write a doc under this home's data/ and append a status line that points to it.
+- Detailed result: write a .md doc in this home's state/captain-docs/ and append a status line that points to it.
 
 ## Command Envelope (General → Captain)
 
@@ -356,8 +378,7 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 - NEVER poll the General for work. NEVER sleep-loop.
 - %[6]smunsu peek%[6]s is only for stuck recovery (see Soldier Lifecycle).
 - Provider polling only after terminal PR notification — no early polling.
-- Fallback (only when %[6]smunsu report%[6]s is unavailable):
-    echo "{state}: {one short line}" >> %[5]s
+- If %[6]smunsu report%[6]s is unavailable, wait; never write the status file directly (a fenced captain cannot).
 
 ## Delivery / Merge Authorization
 
@@ -921,7 +942,11 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	if err != nil {
 		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
 	}
-	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome, parentHome, markerID)
+	seat, err := prepareCaptainSeat(canonicalCaptainHome, parentHome, markerID, h)
+	if err != nil {
+		return err
+	}
+	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome, parentHome, markerID, seat)
 	if err != nil {
 		return fmt.Errorf("building launch script: %w", err)
 	}
@@ -946,6 +971,9 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 	}
 
 	for k, v := range launched.Meta {
+		meta[k] = v
+	}
+	for k, v := range seat.meta() {
 		meta[k] = v
 	}
 
@@ -1767,7 +1795,6 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, stateErr))
 			continue
 		}
-		taskID := taskIDForCaptain(sm.ID)
 		switch state {
 		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
@@ -1787,35 +1814,12 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			errs = append(errs, fmt.Sprintf("%s: endpoint state unproven; strict-dead-only refuses relaunch", sm.ID))
 			continue
 		case CaptainDead:
-			// Launched-but-dead (binding already validated by checkAliveWithProbe):
-			// refuse a duplicate relaunch while the guard is armed, verify the
-			// canonical integration, then relaunch.
-			refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, time.Now())
-			if gErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: gErr.Error()})
-				errs = append(errs, fmt.Sprintf("%s: relaunch guard check failed: %v", sm.ID, gErr))
-				continue
-			}
-			if refused {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))})
-				errs = append(errs, fmt.Sprintf("%s: duplicate relaunch refused (guard expires in %s)", sm.ID, remaining.Round(time.Second)))
-				continue
-			}
-			if lErr := Launch(sm.Home, parentHome, caps.Launch, caps.Integration); lErr != nil {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
-				errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
+			if err := relaunchDeadCaptain(parentHome, sm, caps.Launch, caps.Integration, caps.Probe, proveSleep, time.Now); err != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", err)})
+				errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, err))
 			} else {
-				proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, proveSleep, time.Now)
-				if pErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recovered but %v", pErr)})
-					errs = append(errs, fmt.Sprintf("%s: auto-recover liveness proof failed: %v", sm.ID, pErr))
-				} else if !proven {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: "dead agent — auto-recovered but post-launch liveness could not be proven; duplicate relaunch guarded"})
-					errs = append(errs, fmt.Sprintf("%s: auto-recover relaunched but post-launch liveness could not be proven", sm.ID))
-				} else {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
-					fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
-				}
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
+				fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
 			}
 		}
 
@@ -1997,7 +2001,6 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			res.Entries = append(res.Entries, entry)
 			continue
 		}
-		taskID := taskIDForCaptain(sm.ID)
 		switch state {
 		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
@@ -2026,44 +2029,13 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		// CaptainDead: launched-but-dead (binding already validated by
-		// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
-		// armed, verify the bound harness integration, then relaunch.
-		// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
-		refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, time.Now())
-		if gErr != nil {
+		if err := relaunchDeadCaptain(parentHome, sm, capabilities.Launch, capabilities.Integration, capabilities.Probe, proveSleep, time.Now); err != nil {
 			entry.Outcome = RecoverFailed
-			entry.Error = gErr.Error()
-			res.Failed++
-			res.Entries = append(res.Entries, entry)
-			continue
-		}
-		if refused {
-			entry.Outcome = RecoverFailed
-			entry.Error = fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))
-			res.Failed++
-			res.Entries = append(res.Entries, entry)
-			continue
-		}
-
-		if lErr := Launch(sm.Home, parentHome, capabilities.Launch, capabilities.Integration); lErr != nil {
-			entry.Outcome = RecoverFailed
-			entry.Error = lErr.Error()
+			entry.Error = err.Error()
 			res.Failed++
 		} else {
-			proven, pErr := proveRelaunch(parentHome, sm, capabilities.Probe, proveSleep, time.Now)
-			if pErr != nil {
-				entry.Outcome = RecoverFailed
-				entry.Error = fmt.Sprintf("relaunched but %v", pErr)
-				res.Failed++
-			} else if !proven {
-				entry.Outcome = RecoverFailed
-				entry.Error = "relaunched but post-launch liveness could not be proven; duplicate relaunch guarded"
-				res.Failed++
-			} else {
-				entry.Outcome = RecoverRelaunched
-				res.Relaunched++
-			}
+			entry.Outcome = RecoverRelaunched
+			res.Relaunched++
 		}
 		res.Entries = append(res.Entries, entry)
 	}

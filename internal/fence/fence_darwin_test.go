@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -22,24 +23,42 @@ import (
 
 func (l layout) claudeStateDir() string { return filepath.Join(l.home, "state", "T-1.claude-config") }
 
-// outsideDir returns a fresh directory under the real user home: neither a temp
-// root nor a dev path, so only a profile rule can make it writable.
+// outsideDir returns a fresh directory under /var/tmp, outside every temp root
+// the fence grants (/private/tmp and /private/var/folders), so only a profile
+// rule can make it writable.
 func outsideDir(t *testing.T) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
+	dir, err := os.MkdirTemp("/var/tmp", "fence-outside-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := os.MkdirTemp(home, ".fence-outside-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { removeFenceOutside(t, dir) })
 	dir, err = filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// removeFenceOutside makes every directory searchable and writable before
+// RemoveAll, so a mode-000 tree left by a seat cannot survive cleanup.
+func removeFenceOutside(t *testing.T, dir string) {
+	t.Helper()
+	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.Chmod(p, 0o755)
+		}
+		return nil
+	})
+	if err := os.RemoveAll(dir); err != nil {
+		t.Errorf("remove %s: %v", dir, err)
+	}
+	if walkErr != nil {
+		t.Errorf("chmod walk %s: %v", dir, walkErr)
+	}
 }
 
 // seatEnv points the user home and the Go cache roots at dirs under out and
@@ -189,10 +208,11 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(tempGate, "logs", "refs", "heads", "mu"), filepath.Join(tempGate, "hooks"))
 	tempLaunch := launch
 	tempLaunch.GateRepo = tempGate
+	tempFence := mustNew(t, tempLaunch)
 	for _, gt := range []struct {
 		f    *Fence
 		repo string
-	}{{f, gateRepo}, {mustNew(t, tempLaunch), tempGate}} {
+	}{{f, gateRepo}, {tempFence, tempGate}} {
 		// What a push creates in the gate: objects/ and refs/.
 		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"))
 		// The branch reflog (B1): munsu pre-creates it at spawn, the seat appends
@@ -212,19 +232,23 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-2"), filepath.Join(gt.repo, "logs", "refs", "heads", "evil"))
 	}
 
+	// Under a temp root the fence cannot tell the gate's state database from any
+	// other file, so the temp-root allow keeps it and its -wal, -shm and -journal
+	// writable. Outside a temp root the same paths are refused above (G1154).
+	tempState := filepath.Join(l.root, "gate", "state.sqlite")
+	mustWrite(t, tempFence, tempState, tempState+"-wal", tempState+"-shm", tempState+"-journal")
+
 	mustWrite(t, f,
 		filepath.Join(l.worktree, "f"),
 		filepath.Join(l.gitDir, "index.lock"),
 		filepath.Join(l.common, "objects", "f"),
 		filepath.Join(l.common, "refs", "remotes", "f"),
-		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
-		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
-		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 		filepath.Join(l.root, "temp-elsewhere-f"),
 	)
 	mustRefuse(t, f,
+		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(l.primary, "f"),
 		filepath.Join(l.common, "HEAD"), filepath.Join(l.common, "config"), filepath.Join(l.common, "packed-refs"),
 		filepath.Join(l.common, "hooks", "f"), filepath.Join(l.common, "refs", "heads", "main"),
@@ -238,6 +262,8 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		// The gate's state database (G1154).
 		gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
 		gateState+"-x", filepath.Join(out, "gate", "f"),
+		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
+		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 	)
 	// Neither the gate root nor objects/, refs/ or logs/ can be renamed away
 	// (into a writable temp root) and replaced, and an absent logs/ cannot be
@@ -332,6 +358,39 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		t.Errorf("the worktree HEAD reflog is no longer a regular file: %v", err)
 	}
 	mustWrite(t, f, filepath.Join(l.gitDir, "ORIG_HEAD"), filepath.Join(l.gitDir, "index.new"))
+	// The worktree's own name and every directory above it cannot be renamed
+	// away (the first step of planting a link the next launch's fence grants
+	// the target of), and its .git file, whose gitdir: line picks the git dir
+	// the next launch grants and unfenced git reads, cannot be rewritten or
+	// swapped. The temp-root layout's worktree sits where the temp-root allow
+	// covers its parent. Nearest allow: a rename inside the worktree.
+	gitFile := filepath.Join(l.worktree, ".git")
+	if err := os.WriteFile(gitFile, []byte("gitdir: "+l.gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tl := newLayout(t)
+	tf := mustNew(t, tl.soldier())
+	for _, mv := range []struct {
+		f   *Fence
+		dir string
+	}{{f, l.worktree}, {tf, tl.worktree}, {tf, tl.root}} {
+		if o, err := fenced(t, mv.f, "/bin/mv", mv.dir, filepath.Join(dest, "wt-swap")); err == nil || !strings.Contains(o, "Operation not permitted") {
+			t.Errorf("renaming %s away was not refused by the fence: %v %s", mv.dir, err, o)
+		}
+		if fi, err := os.Lstat(mv.dir); err != nil || !fi.IsDir() {
+			t.Fatalf("%s is gone after a rename the fence must refuse: %v", mv.dir, err)
+		}
+	}
+	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", gitFile); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("rewriting the worktree's .git was not refused by the fence: %v %s", err, o)
+	}
+	mustNotSwap(t, f, gitFile)
+	if err := os.WriteFile(filepath.Join(l.worktree, "a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := fenced(t, f, "/bin/mv", filepath.Join(l.worktree, "a"), filepath.Join(l.worktree, "b")); err != nil {
+		t.Errorf("a rename inside the worktree was refused: %v %s", err, o)
+	}
 }
 
 // The production sequence under the fence: a detached `git worktree add`
@@ -407,7 +466,7 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, Primary: primary, Worktree: wt,
+	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, UserHome: testUserHome(), Primary: primary, Worktree: wt,
 		GitDir: filepath.Join(common, "worktrees", "wt"), CommonDir: common, Branch: "mu/T-1",
 		GateRepo: gate})
 	fencedGit := func(args ...string) {
@@ -439,14 +498,64 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	}
 }
 
+// Remote-tracking reflogs (fence-reflog-remotes-residual): munsu pre-creates
+// one per existing remote-tracking ref at spawn (ensureRemoteReflogs) and passes
+// the paths in Launch.RemoteReflogs. The seat appends to exactly those files;
+// under logs/refs/remotes it cannot create, link or rename any other file or
+// dir, so an unfenced fetch never appends through a link the seat planted.
+// Each refused row sits beside its nearest allowed row.
+func TestSoldierFenceRemoteReflogs(t *testing.T) {
+	out := outsideDir(t)
+	seatEnv(t, out)
+	l := newSplitLayout(t, out)
+	remotes := filepath.Join(l.common, "logs", "refs", "remotes")
+	reflog := filepath.Join(remotes, "origin", "main")
+	mkdirs(t, filepath.Dir(reflog), filepath.Join(l.common, "refs", "remotes", "origin"))
+	if err := os.WriteFile(reflog, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	launch := l.soldier()
+	launch.RemoteReflogs = []string{reflog}
+	f := mustNew(t, launch)
+	victim := filepath.Join(out, "victim")
+	if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		argv []string
+		path string
+	}{
+		{"a new reflog file is refused", []string{touchBin, filepath.Join(remotes, "origin", "new")}, filepath.Join(remotes, "origin", "new")},
+		{"a link planted as a reflog is refused", []string{"/bin/ln", "-s", victim, filepath.Join(remotes, "origin", "evil")}, filepath.Join(remotes, "origin", "evil")},
+		{"a new remote's reflog dir is refused", []string{"/bin/mkdir", filepath.Join(remotes, "upstream")}, filepath.Join(remotes, "upstream")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if o, err := fenced(t, f, tc.argv...); err == nil || !strings.Contains(o, "Operation not permitted") {
+				t.Fatalf("%v was not refused by the fence: %v %s", tc.argv, err, o)
+			}
+			if _, err := os.Lstat(tc.path); err == nil {
+				t.Errorf("%s exists after a write the fence must refuse", tc.path)
+			}
+		})
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "safe" {
+		t.Errorf("the victim was written: %q", b)
+	}
+	// Nearest allowed rows: the pre-created reflog takes an append and no swap,
+	// and the remote-tracking ref it names is still written (a fetch updates it).
+	mustAppend(t, f, reflog)
+	mustNotSwap(t, f, reflog)
+	mustWrite(t, f, filepath.Join(l.common, "refs", "remotes", "origin", "new"))
+}
+
 // In its dispatcher's home a soldier writes only its own status file, ack log
 // and current scout report (Files) and its harness state dir; every other path
-// under state/, data/, .journal/, .lock/, config/ and projects/ is refused, and
-// so is renaming a root away to plant a tree of its own (G1058; G1085 for
-// config/ and projects/). Each refused row names its nearest allowed
-// neighbour. The table runs for a home outside the temp roots
+// in the home is refused, and so is renaming a root away to plant a tree of
+// its own (G1058; G1085 for config/ and projects/). Each refused row names its
+// nearest allowed neighbour. The table runs for a home outside the temp roots
 // and for one inside a temp root (shim set, as a launch sets it), where only the
-// profile's home-root deny refuses.
+// profile's home deny refuses.
 func TestSoldierFenceHomeWrites(t *testing.T) {
 	for _, placement := range []string{"outside the temp roots", "inside a temp root"} {
 		t.Run(placement, func(t *testing.T) {
@@ -480,13 +589,15 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 			// to the project registry.
 			registry := filepath.Join(state, "fleet-registry", "projects.json")
 			overlays := filepath.Join(l.home, "config", "project-overlays.json")
-			for _, f := range []string{registry, overlays} {
+			identity, agents := filepath.Join(l.home, "identity.json"), filepath.Join(l.home, "AGENTS.md")
+			for _, f := range []string{registry, overlays, identity, agents} {
 				if err := os.WriteFile(f, []byte("{}\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			hook := filepath.Join(l.home, "projects", "p1", ".git", "hooks", "post-checkout")
-			mkdirs(t, filepath.Dir(hook))
+			otherWT := filepath.Join(l.home, ".worktrees", "abc123")
+			mkdirs(t, filepath.Dir(hook), otherWT)
 			linkedAcks := filepath.Join(state, "T-3.acks")
 			if err := os.Symlink(registry, linkedAcks); err != nil {
 				t.Fatal(err)
@@ -540,6 +651,10 @@ func TestSoldierFenceHomeWrites(t *testing.T) {
 				{"a project overlay in config/ (allowed: own status append)", sh(`printf x >> ` + overlays), true, overlays, nil},
 				{"renaming config/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "config"), filepath.Join(l.home, "config.x")}, true, filepath.Join(l.home, "config.x"), nil},
 				{"a hook in a cloned project under projects/ (allowed: own status append)", []string{touchBin, hook}, true, hook, nil},
+				{"the home identity (allowed: own status append)", sh(`printf x >> ` + identity), true, identity, nil},
+				{"the home AGENTS.md (allowed: own status append)", sh(`printf x >> ` + agents), true, agents, nil},
+				{"a new top-level name in the home (allowed: own status)", []string{touchBin, filepath.Join(l.home, "x")}, true, filepath.Join(l.home, "x"), nil},
+				{"another task's worktree under .worktrees/ (allowed: own status)", []string{touchBin, filepath.Join(otherWT, "f")}, true, filepath.Join(otherWT, "f"), nil},
 				{"renaming data/ away (allowed: own status atomic rename)", []string{"/bin/mv", filepath.Join(l.home, "data"), filepath.Join(l.home, "data.x")}, true, filepath.Join(l.home, "data.x"), nil},
 				{"own harness state dir", sh(`/bin/mkdir -p ` + launch.HarnessStateDir + ` && printf x > ` + launch.HarnessStateDir + `/f`), false, "", nil},
 			}
@@ -642,24 +757,35 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 	launch.Files = []string{verdict}
 	// A git dir apart from the common dir and the worktree is protected on its own.
 	launch.GitDir = filepath.Join(l.root, "gitdir-apart")
-	mkdirs(t, launch.HarnessStateDir, launch.GitDir)
+	mkdirs(t, launch.HarnessStateDir, launch.GitDir, filepath.Join(l.home, ".worktrees", "abc123"))
 	f := mustNew(t, launch)
 
 	mustWrite(t, f,
 		filepath.Join(launch.HarnessStateDir, "f"),
-		verdict, verdict+".tmp.9.ff", filepath.Join(out, "gocache", "f"),
+		verdict, verdict+".tmp.9.ff",
 		filepath.Join(l.root, "temp-elsewhere-f"),
 	)
 	// These sit under a temp root, which is writable; only the reviewer's
 	// explicit denies refuse them.
 	mustRefuse(t, f,
+		filepath.Join(out, "gocache", "f"),
 		filepath.Join(l.worktree, "f"), filepath.Join(launch.GitDir, "f"), filepath.Join(l.primary, "f"),
 		filepath.Join(l.common, "HEAD"),
 		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),
 		filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
 		filepath.Join(l.home, "config", "f"), filepath.Join(l.home, "projects", "f"),
+		filepath.Join(l.home, "identity.json"), filepath.Join(l.home, "AGENTS.md"),
+		filepath.Join(l.home, ".worktrees", "abc123", "f"), filepath.Join(l.home, "newtop"),
 		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, ".pi", "agent", "f"), verdict+"2",
 	)
+	// A reviewer's own Files stay writable where they sit under the home it
+	// denies; its siblings, the atomic-write temp files, too.
+	hl := l.reviewer()
+	hl.Harness, hl.HarnessStateDir = harness.Pi, l.stateDir()
+	hl.Files = []string{filepath.Join(l.home, "verdict.json")}
+	hf := mustNew(t, hl)
+	mustWrite(t, hf, hl.Files[0], hl.Files[0]+".tmp.9.ff")
+	mustRefuse(t, hf, filepath.Join(l.home, "newtop"), filepath.Join(l.home, "verdict-other.json"))
 
 	// A claude reviewer writes its own config dir, carved out of the refused
 	// home roots, and never the Human's claude config or the seat build dir.
@@ -1148,7 +1274,7 @@ func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 	}{
 		{"soldier", l.soldier(), append([]string{l.primary, l.common}, homeRoots(l.home)...)},
 		{"no-mistakes soldier", gated, append(append([]string{l.primary, l.common}, homeRoots(l.home)...), filepath.Join(gate, "hooks"))},
-		{"reviewer", l.reviewer(), []string{l.primary, l.common, l.worktree, l.gitDir, filepath.Join(l.home, "state")}},
+		{"reviewer", l.reviewer(), []string{l.primary, l.common, l.worktree, l.gitDir, l.home}},
 		{"home-less reviewer", func() Launch { x := l.reviewer(); x.Home = ""; return x }(), []string{l.primary, l.common, l.worktree, l.gitDir}},
 	}
 	for _, tt := range tests {
@@ -1288,6 +1414,7 @@ func TestNewRefusals(t *testing.T) {
 		{"a file inside the git common dir", func(x *Launch) { x.Files = []string{filepath.Join(l.common, "v.json")} }, "overlaps protected path"},
 		{"a file inside the git dir", func(x *Launch) { x.Files = []string{filepath.Join(l.gitDir, "v.json")} }, "overlaps protected path"},
 		{"a relative PATH directory", func(x *Launch) { x.PathDirs = []string{"/usr/bin", "bin"} }, `PATH directory "bin" is not absolute`},
+		{"a remote reflog outside the remote-tracking logs is refused", func(x *Launch) { x.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "heads", "main")} }, "fence: remote reflogs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1314,6 +1441,14 @@ func TestNewRefusals(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("a reviewer has no remote reflogs", func(t *testing.T) {
+		launch := l.reviewer()
+		launch.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "remotes", "origin", "main")}
+		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "fence: remote reflogs are a soldier's only") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
 	t.Run("absolute PATH directories are accepted", func(t *testing.T) {
 		launch := l.soldier()
 		launch.PathDirs = []string{filepath.Join(l.home, "git-shim", "bin"), "/usr/bin"}
@@ -1324,15 +1459,17 @@ func TestNewRefusals(t *testing.T) {
 		launch.Files = []string{filepath.Join(l.worktree, "v.json")}
 		mustNew(t, launch)
 	})
-	t.Run("no user home", func(t *testing.T) {
-		t.Setenv("HOME", "")
-		if _, err := New(l.soldier()); err == nil || !strings.Contains(err.Error(), "fence: resolving user home") {
+	t.Run("a relative user home", func(t *testing.T) {
+		launch := l.soldier()
+		launch.UserHome = "relative/home"
+		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "fence: user home must be absolute") {
 			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("a user home that does not exist", func(t *testing.T) {
-		t.Setenv("HOME", filepath.Join(l.root, "no-such-home"))
-		if _, err := New(l.soldier()); err == nil || !strings.Contains(err.Error(), "fence: user home:") {
+		launch := l.soldier()
+		launch.UserHome = filepath.Join(l.root, "no-such-home")
+		if _, err := New(launch); err == nil || !strings.Contains(err.Error(), "fence: user home:") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -1366,5 +1503,132 @@ func TestWritableRootsAreWritableAndTheProbeStillRefuses(t *testing.T) {
 	ev, err := f.Probe(context.Background())
 	if err != nil || len(ev.WritableRoots) != 1 || ev.WritableRoots[0] != cache {
 		t.Fatalf("probe = %+v, %v; want the roots in the evidence and every refusal proven", ev, err)
+	}
+}
+
+// captainFence is l's captain launch on the PATH a launch gives it, with the
+// dirs its rows write in made.
+func captainFence(t *testing.T, l layout) (*Fence, Launch) {
+	t.Helper()
+	launch := l.captain(t)
+	launch.ShimDir = filepath.Join(l.home, "git-shim", "bin")
+	launch.PathDirs = []string{launch.ShimDir, filepath.Join(l.root, "bin")}
+	mkdirs(t, append(launch.PathDirs, launch.HarnessStateDir, filepath.Join(l.home, "data", "T-1"),
+		filepath.Join(l.home, "state", "T-9.pi-agent"), harness.SeatBuildDir(l.home), filepath.Join(l.common, "hooks"),
+		filepath.Join(launch.ParentHome, "config"))...)
+	return mustNew(t, launch), launch
+}
+
+// A captain writes its own pi agent dir, the temp roots, the briefs munsu
+// scaffolds in its home and its docs; nothing else of its home or its General's
+// home, no git dir of its home's repository, no other seat's dir, no PATH dir
+// and not the Human's harness config (G1085). The home sits outside the temp
+// roots, as a real one does, and inside one, where only the profile's denies
+// refuse.
+func TestCaptainFenceWritesOnlyItsSeatStateBriefsAndDocs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		out  func(*testing.T) string
+	}{
+		{"a home outside the temp roots", outsideDir},
+		{"a home inside a temp root", func(*testing.T) string { return "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			uhome := seatEnv(t, outsideDir(t))
+			l := newSplitLayout(t, tc.out(t))
+			f, launch := captainFence(t, l)
+			data, state := filepath.Join(l.home, "data"), filepath.Join(l.home, "state")
+			mustWrite(t, f,
+				filepath.Join(launch.HarnessStateDir, "sessions.jsonl"),
+				filepath.Join(data, "T-1", "brief.md"), filepath.Join(data, "T-1", "brief.md.tmp.42.1f"),
+				filepath.Join(state, CaptainDocsDir, "result.md"),
+				filepath.Join(t.TempDir(), "scratch"),
+			)
+			mustRefuse(t, f,
+				filepath.Join(data, "T-1", "report-g1.md"), filepath.Join(data, "result.md"),
+				filepath.Join(state, "T-1.meta"), filepath.Join(state, "T-9.pi-agent", "settings.json"),
+				filepath.Join(harness.SeatBuildDir(l.home), "f"),
+				filepath.Join(l.home, "config", "f"), filepath.Join(l.home, "projects", "f"),
+				filepath.Join(l.home, ".journal", "f"), filepath.Join(l.home, ".lock", "f"),
+				filepath.Join(l.home, ".captain-launch.sh"), filepath.Join(launch.ShimDir, "git"),
+				filepath.Join(launch.ParentHome, "state", "captain:c.status"), filepath.Join(launch.ParentHome, "config", "f"),
+				filepath.Join(l.common, "hooks", "pre-commit"), filepath.Join(l.gitDir, "HEAD"),
+				launch.PathDirs[1]+"/f", filepath.Join(uhome, ".pi", "agent", "f"), filepath.Join(uhome, ".claude", "f"),
+			)
+			mustRefuseMkdir(t, f, filepath.Join(data, "T-2"), filepath.Join(state, CaptainDocsDir, "sub"))
+			for _, argv := range [][]string{
+				{"/bin/mv", filepath.Join(data, "T-1"), filepath.Join(data, "T-1x")},
+				{"/bin/ln", "-s", l.root, filepath.Join(data, "T-3")},
+				{"/bin/mv", filepath.Join(state, CaptainDocsDir), filepath.Join(t.TempDir(), "docs")},
+			} {
+				if out, err := fenced(t, f, argv...); err == nil || !strings.Contains(out, "Operation not permitted") {
+					t.Errorf("%v was not refused by the fence: %v %s", argv, err, out)
+				}
+			}
+		})
+	}
+}
+
+// A captain connects to its seat socket and DNS, and to no tmux server, herdr
+// or claude session, nor another socket beside its seat's (G1148, G1085, the
+// delegated captain-fence design). It cannot remove its seat socket or rename
+// a directory above it to plant its own.
+func TestCaptainConnectsOnlyToDNSAndItsSeatSocket(t *testing.T) {
+	tmp, uhome := socketScratch(t)
+	uid := strconv.Itoa(os.Getuid())
+	l := newSplitLayout(t, tmp)
+	f, launch := captainFence(t, l)
+	for _, tt := range []struct {
+		name    string
+		addr    string
+		reaches bool
+	}{
+		{"its seat socket", launch.Socket, true},
+		{"another socket beside its seat's", filepath.Join(l.home, "state", "other.sock"), false},
+		{"a tmux server", filepath.Join(tmp, "tmux-"+uid, "default"), false},
+		{"the herdr server", filepath.Join(uhome, ".config", "herdr", "herdr.sock"), false},
+		{"another claude session's message socket", filepath.Join(tmp, "cc-socks", "1.sock"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, err := connects(t, f, "unix", tt.addr, nil)
+			if tt.reaches && (!ok || err != nil) {
+				t.Errorf("connect to %s was refused: connected=%v nc=%v", tt.addr, ok, err)
+			}
+			if !tt.reaches && (ok || err == nil) {
+				t.Errorf("connect to %s was not refused by the fence: connected=%v nc=%v", tt.addr, ok, err)
+			}
+		})
+	}
+	t.Run("a DNS lookup", func(t *testing.T) {
+		if out, err := fenced(t, f, "/usr/bin/perl", "-MSocket", "-e", `my ($e) = Socket::getaddrinfo("github.com", "443"); die "getaddrinfo: $e\n" if $e`); err != nil {
+			t.Errorf("a DNS lookup was refused: %v %s", err, out)
+		}
+	})
+	plantSocket(t, launch.Socket)
+	for _, argv := range [][]string{
+		{"/bin/rm", launch.Socket},
+		{"/bin/mv", l.home, l.home + ".moved"},
+		{"/bin/mv", tmp, tmp + ".moved"},
+	} {
+		if out, err := fenced(t, f, argv...); err == nil || !strings.Contains(out, "Operation not permitted") {
+			t.Errorf("%v was not refused by the fence: %v %s", argv, err, out)
+		}
+	}
+}
+
+// The probe proves the captain's home, its roots and the General home's
+// durable roots refused, and the captain's git common dir.
+func TestCaptainProbeProvesItsHomeAndTheGeneralHomeRefused(t *testing.T) {
+	seatEnv(t, t.TempDir())
+	l := newLayout(t)
+	f, launch := captainFence(t, l)
+	ev, err := f.Probe(context.Background())
+	if err != nil || ev.Role != RoleCaptain || len(ev.Steps) != 1+len(f.refuse) {
+		t.Fatalf("probe = %+v, %v; want the control and every refusal proven", ev, err)
+	}
+	for _, want := range []string{l.home, filepath.Join(l.home, "state"), filepath.Join(l.home, "projects"), launch.ParentHome, filepath.Join(launch.ParentHome, "state"), l.common} {
+		if !slices.Contains(f.refuse, want) {
+			t.Errorf("probe refuses %q, want %s among them", f.refuse, want)
+		}
 	}
 }

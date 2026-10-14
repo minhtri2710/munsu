@@ -32,7 +32,9 @@ jobs:
       # single store per block. The profiles are what let that job tell "no test
       # reaches this refusal" from "this refusal is only reached by a lane that
       # is not this one" -- see .github/scripts/uncovered-guards.sh.
-      - run: go test -count=1 -coverprofile=coverage/default.out ./...
+      - run: |
+          set -o pipefail
+          go test -count=1 -json -coverprofile=coverage/default.out ./... | tee coverage/skips-default.json | jq -rj '.Output // empty'
       # GOOS-gated files never compile on a linux runner, so no test lane can
       # reach them -- three _test.go files had never been compiled by CI at
       # all. Cross-target vet is the only cover for the darwin-gated files; the
@@ -53,12 +55,14 @@ jobs:
       # would silently fall outside of.
       - name: e2e-tagged tests
         run: |
+          set -o pipefail
           # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -count=1 -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e)
+          go test -count=1 -json -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e) | tee coverage/skips-e2e.json | jq -rj '.Output // empty'
       - name: lifecycle_integration-tagged tests
         run: |
+          set -o pipefail
           # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -count=1 -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration)
+          go test -count=1 -json -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration) | tee coverage/skips-lifecycle_integration.json | jq -rj '.Output // empty'
       # Uploaded even when a step above failed, so a lane that got partway still
       # hands over what it measured. `warn` rather than `error` on an empty
       # upload, because `always()` also fires when `go build` broke and there is
@@ -173,13 +177,16 @@ jobs:
           TestProbeFenceOnAHostWithoutAFence
           TestLaunchRecordsTheSeatOfTheLaunch
           TestProbeFenceRefusesTheSeatsPathDirs
+          TestProbeFencePreCreatesTheRemoteReflogs
           TestFencedSoldierWritesOnlyItsOwnFiles
           TestFencedSoldierReadsCommittedTaskDocuments
           TestFencedSoldierCannotTakeTheGitShimOffItsPath
           TestFencedClaudeLaunchRunsFromItsOwnConfigDir
           TestFencedClaudeReviewerWritesItsOwnConfigDir
-          TestFencedClaudePreflightAsksForTheSeatsLogin'
-          gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout'
+          TestFencedClaudePreflightAsksForTheSeatsLogin
+          TestFencedCaptainRunsItsSeatCommandsOutsideTheFence'
+          gated integration 'TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout
+          TestLaunchRunsTheCaptainUnderItsSeat'
 
   race:
     name: Race detector
@@ -237,8 +244,9 @@ jobs:
       # indistinguishable from a passing one in the job log.
       - run: mkdir -p coverage
       - run: |
+          set -o pipefail
           # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -v -count=1 -timeout 35m -tags integration -coverprofile=coverage/integration.out $(.github/scripts/build-tags.sh packages integration)
+          go test -v -json -count=1 -timeout 35m -tags integration -coverprofile=coverage/integration.out $(.github/scripts/build-tags.sh packages integration) | tee coverage/skips-integration.json | jq -rj '.Output // empty'
       # This is the profile the merge cannot do without. soldier_soldier_test.go
       # is integration-tagged, so `soldier_launch.go:474.23` reads count 0 in the
       # default profile and count 1 here; without this artifact the guards lane
@@ -732,3 +740,9 @@ jobs:
           echo "GUARDS_BASE_REF=$GUARDS_BASE_REF" >> "$GITHUB_ENV"
       - name: Every refusal branch must be tested or waived
         run: .github/scripts/uncovered-guards.sh check
+      # Report-only: prints the skipped tests with no row in .github/skips.allow
+      # and the rows no lane skips, and never fails on either. It fails only when
+      # a lane's `go test -json` stream is missing, so a lane cannot read as clean
+      # by its output being absent.
+      - name: Skip ledger (report only)
+        run: .github/scripts/skip-ledger.sh check

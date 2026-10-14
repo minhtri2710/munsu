@@ -30,7 +30,7 @@ var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
 type launchPaths struct {
 	home, primary, worktree, gitDir, commonDir string
 	stateDir, gateRepo                         string
-	files                                      []string
+	files, remoteReflogs                       []string
 	roots                                      []string
 }
 
@@ -38,21 +38,23 @@ type launchPaths struct {
 // missing, or that would widen the writable set over the primary checkout or the
 // git common dir is refused; New never falls back to a looser profile.
 func New(l Launch) (*Fence, error) {
-	if l.Role != RoleSoldier && l.Role != RoleReviewer {
+	if l.Role != RoleSoldier && l.Role != RoleReviewer && l.Role != RoleCaptain {
 		return nil, fmt.Errorf("fence: unknown role %q", l.Role)
+	}
+	if !filepath.IsAbs(l.UserHome) {
+		return nil, fmt.Errorf("fence: user home must be absolute: %q", l.UserHome)
 	}
 	if err := Supported(); err != nil {
 		return nil, err
+	}
+	if l.Role == RoleCaptain {
+		return newCaptain(l)
 	}
 	p, err := resolveLaunch(l)
 	if err != nil {
 		return nil, err
 	}
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("fence: resolving user home: %w", err)
-	}
-	userHome, err = resolvePath(userHome, true)
+	userHome, err := resolvePath(l.UserHome, true)
 	if err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}
@@ -60,7 +62,6 @@ func New(l Launch) (*Fence, error) {
 	if err != nil {
 		return nil, err
 	}
-	dirs = append(dirs, goCaches(userHome)...)
 	dirs = append(dirs, p.roots...)
 
 	protected := []string{p.primary, p.commonDir, p.gitDir}
@@ -80,6 +81,11 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	// Observe only: the report modifier logs every outbound connect to the
+	// Sandbox log (log show --predicate 'sender == "Sandbox"') and refuses
+	// nothing. It sits before the socket denies, which are last-match-wins,
+	// so those denies still decide.
+	b.WriteString("(allow network-outbound (with report))\n")
 	var gateSocket string
 	if p.gateRepo != "" {
 		// The no-mistakes daemon's socket is NM_HOME/socket, and fleet's
@@ -114,7 +120,17 @@ func New(l Launch) (*Fence, error) {
 		// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence
 		// không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence
 		// sẽ chạy, và không gửi input vào session ngoài session của nó."
-		deny(&b, "subpath", homeRoots(p.home)...)
+		// G1058 (quoted above) for a soldier, and the same for a reviewer: a seat
+		// writes nothing else in its home, so a new top-level name there is
+		// refused. identity.json, AGENTS.md and the tasks' worktrees are
+		// configuration and programs that unfenced munsu, the General and the
+		// daemon read and run: G1085 (quoted above). A soldier's worktree is
+		// allowed back below; a reviewer's Files and harness state dir are too.
+		// Human words (domain.Words): grantor the Human, channel direct chat
+		// with the Lead, 2026-10-13, words=selected, 1A:
+		// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự
+		// quyết đi" record: decide the deferred items).
+		deny(&b, "subpath", p.home)
 	}
 	allowFiles(&b, p.files...)
 	if p.gateRepo != "" {
@@ -144,8 +160,8 @@ func New(l Launch) (*Fence, error) {
 		// state.sqlite(+wal/shm/journal); database-open error when the daemon
 		// is stopped accepted". A temp-root NM_HOME keeps its other files and
 		// state.sqlite writable through the temp-root allow (the fence does
-		// not know the state path); no lane runs that, and the temp-root
-		// allow covers it. Even there the daemon's socket name is refused, and
+		// not know the state path); no lane runs this; TestSoldierFenceWritableSet
+		// covers it. Even there the daemon's socket name is refused, and
 		// every directory above it is locked against unlink and rename, so a
 		// seat can neither move another session's socket onto that name nor
 		// swap NM_HOME for a dir holding one: G1085 (quoted above) keeps
@@ -173,7 +189,7 @@ func New(l Launch) (*Fence, error) {
 	}
 	if l.Role == RoleSoldier {
 		allowRoots(p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
-			filepath.Join(p.commonDir, "refs", "remotes"), filepath.Join(p.commonDir, "logs", "refs", "remotes"))
+			filepath.Join(p.commonDir, "refs", "remotes"))
 		allow(&b, "literal", gitBranchRefFiles(p.commonDir, branch)...)
 		// The seat appends to its own reflogs but cannot swap one for a symlink
 		// an unfenced push or fetch then writes through (fence-reflog-symlink-
@@ -184,10 +200,12 @@ func New(l Launch) (*Fence, error) {
 		// under their logs/. The gitDir logs deny comes after the gitDir root
 		// allow so it wins. The gitDir is itself a writable root, so its own name
 		// is denied too: without it the seat could rename the gitDir away, swap
-		// logs/HEAD inside the moved copy, and rename it back. <common>/logs/
-		// refs/remotes stays a root (fetch creates its remote-tracking reflogs
-		// on the fly); that residual is the separate task
-		// fence-reflog-remotes-residual. Human words (domain.Words): grantor the
+		// logs/HEAD inside the moved copy, and rename it back. <common>/
+		// refs/remotes is a root; <common>/logs/refs/remotes is not. The seat
+		// appends only to the remote reflogs munsu pre-created at spawn
+		// (Launch.RemoteReflogs), so a link it plants there is never one an
+		// unfenced fetch writes through (fence-reflog-remotes-residual).
+		// Human words (domain.Words): grantor the
 		// Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
 		// (Recommended): B on the seat branch reflog, worktree HEAD and gate
 		// reflog; munsu pre-creates the gate branch reflog at spawn (probe
@@ -198,9 +216,30 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "subpath", filepath.Join(p.gitDir, "logs"))
 		allowData(&b, filepath.Join(p.gitDir, "logs", "HEAD"),
 			filepath.Join(p.commonDir, "logs", "refs", "heads", filepath.FromSlash(branch)))
+		// Human words (domain.Words): grantor the Human, channel direct chat with
+		// the Lead, words=selected, 2026-10-13: "Vá ngay: munsu tạo sẵn reflog
+		// remote lúc spawn và khóa logs/refs/remotes; fetch remote mới fail cho tới
+		// khi reflog được tạo sẵn".
+		allowData(&b, p.remoteReflogs...)
 		deny(&b, "literal", p.gitDir)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
+		// The worktree's own name and every directory above it cannot be
+		// unlinked or renamed, and its .git file cannot be written: a seat
+		// that moved its worktree away and planted a link at its name, or
+		// rewrote the gitdir: line, would have the next launch's fence grant
+		// another task's worktree and git dir, whose config and hooks unfenced
+		// git runs. Human words (domain.Words), each grantor the Human, channel
+		// supervisor-relay:dialog, words=selected: G1058: "A soldier's write
+		// fence lets it write only its own task's status, report and request
+		// files; it can never write another task's documents, any review
+		// verdict, delivery authorization or gate record, or the fleet
+		// registries (projects.json, captains.json)." G1085: "Quy tắc chung
+		// (Recommended): Seat có fence không bao giờ ghi chương trình hay cấu
+		// hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
+		// session ngoài session của nó."
+		denyUnlink(&b, append(ancestors(p.worktree), p.worktree)...)
+		deny(&b, "literal", filepath.Join(p.worktree, ".git"))
 	}
 	if p.home != "" {
 		// After every allow, so they hold wherever the home lives, a temp root
@@ -238,14 +277,15 @@ func New(l Launch) (*Fence, error) {
 	denyUnlink(&b, removable...)
 	denySocketRemoval(&b, keptSocketDirs())
 
-	// The probe proves the home roots refused: every soldier root (G1058,
-	// quoted above), and a reviewer's state/. For a no-mistakes soldier it also
+	// The probe proves the home refused: a soldier's every home root (G1058,
+	// quoted above), and a reviewer's whole home, which no reviewer writes but
+	// its Files and harness state dir. For a no-mistakes soldier it also
 	// proves the gate's hooks refused (G1085, quoted at the gate denies).
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
 		refuse = append(refuse, p.worktree, p.gitDir)
 		if p.home != "" {
-			refuse = append(refuse, filepath.Join(p.home, "state"))
+			refuse = append(refuse, p.home)
 		}
 	} else {
 		refuse = append(refuse, homeRoots(p.home)...)
@@ -347,6 +387,24 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 		}
 		p.files = append(p.files, filepath.Join(dir, filepath.Base(f)))
 	}
+	if len(l.RemoteReflogs) > 0 && l.Role != RoleSoldier {
+		return p, fmt.Errorf("fence: remote reflogs are a soldier's only")
+	}
+	remotes := filepath.Join(p.commonDir, "logs", "refs", "remotes")
+	for _, f := range l.RemoteReflogs {
+		if err := lexicalPath(f); err != nil {
+			return p, fmt.Errorf("fence: remote reflogs: %w", err)
+		}
+		dir, err := resolvePath(filepath.Dir(f), false)
+		if err != nil {
+			return p, fmt.Errorf("fence: remote reflogs: %w", err)
+		}
+		path := filepath.Join(dir, filepath.Base(f))
+		if path == remotes || !within(path, remotes) {
+			return p, fmt.Errorf("fence: remote reflogs: %s is not under %s", f, remotes)
+		}
+		p.remoteReflogs = append(p.remoteReflogs, path)
+	}
 	if p.home != "" {
 		if err := realHomeRoots(p.home, l.Role); err != nil {
 			return p, err
@@ -405,7 +463,7 @@ func durableHomeRoots(home string) []string {
 }
 
 // realHomeRoots refuses a home root that is a symlink or not a directory. The
-// profile denies each root by its name, and the sandbox matches resolved
+// profile denies the home by its name, and the sandbox matches resolved
 // paths, so a root linked elsewhere (into a temp root, say) would escape the
 // deny while the seat's own files, resolved through the link, stay allowed. A
 // missing root is fine: the seat cannot create it. It runs for every seat
@@ -466,7 +524,7 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 		return fmt.Errorf("fence: harness state dir %s is not a proper subdirectory of %s", r, state)
 	}
 	for _, o := range []string{p.primary, p.worktree, p.gitDir, p.commonDir} {
-		if overlaps(r, o) {
+		if o != "" && overlaps(r, o) {
 			return fmt.Errorf("fence: harness state dir %s overlaps %s", r, o)
 		}
 	}
@@ -601,10 +659,12 @@ func keptSocketDirs() []string {
 }
 
 // denySocketConnects refuses connecting to every unix socket but DNS's
-// (mDNSResponder) and gateSocket, the no-mistakes daemon's socket of a soldier
+// (mDNSResponder) and seatSocket: the no-mistakes daemon's socket of a soldier
 // with a gate, which its gate push's pre-receive hook and its no-mistakes
-// commands dial. So a seat cannot inject messages into another claude session,
-// type into a tmux pane, drive any herdr pane (its own included), or reach any
+// commands dial, or a captain's seat socket, through which munsu runs the
+// captain's record and pane commands outside its fence. So a seat cannot
+// inject messages into another claude session, type into a tmux pane, drive
+// any herdr pane (its own included), or reach any
 // other daemon or listener, its own included. The allows are exact paths, and
 // a symlink at one is matched at its target. The daemon serves every lane, so
 // through it a seat can still answer another lane's run; G1153's row accepts
@@ -616,10 +676,15 @@ func keptSocketDirs() []string {
 // a soldier with a gate". G1148: "Chặn hẳn (Recommended): deny the herdr
 // socket entirely for fenced seats". G1085: "Quy tắc chung (Recommended): Seat
 // có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
-// fence sẽ chạy, và không gửi input vào session ngoài session của nó."
-func denySocketConnects(b *strings.Builder, gateSocket string) {
+// fence sẽ chạy, và không gửi input vào session ngoài session của nó." The
+// captain's seat socket: grantor the Human, channel direct chat with the Lead,
+// 2026-10-13, words=selected, 1A: "Xác nhận cả 7 refusal đã ghi theo tự quyết
+// đi" (ratifies the "tự quyết đi" record, scope: the captain-fence design);
+// 2A, words=selected: "Captain được gửi input vào session của chính soldier
+// của nó qua munsu".
+func denySocketConnects(b *strings.Builder, seatSocket string) {
 	b.WriteString("(deny network-outbound (remote unix-socket))\n")
-	for _, s := range []string{"/private/var/run/mDNSResponder", gateSocket} {
+	for _, s := range []string{"/private/var/run/mDNSResponder", seatSocket} {
 		if s != "" {
 			b.WriteString("(allow network-outbound (remote unix-socket (path-literal " + quote(s) + ")))\n")
 		}
@@ -648,39 +713,6 @@ func ancestors(paths ...string) []string {
 		}
 	}
 	return dedupe(out)
-}
-
-// goCaches returns the Go build cache, module cache (with the checksum db) and
-// telemetry directories, from the environment as go itself reads it.
-func goCaches(userHome string) []string {
-	cache, _ := os.UserCacheDir()
-	config, _ := os.UserConfigDir()
-	gopath := filepath.Join(userHome, "go")
-	if gp := filepath.SplitList(os.Getenv("GOPATH")); len(gp) > 0 && gp[0] != "" {
-		gopath = gp[0]
-	}
-	dirs := []string{
-		envOr("GOCACHE", filepath.Join(cache, "go-build")),
-		envOr("GOMODCACHE", filepath.Join(gopath, "pkg", "mod")),
-		filepath.Join(gopath, "pkg"),
-		envOr("GOTELEMETRYDIR", filepath.Join(config, "go", "telemetry")),
-	}
-	var out []string
-	for _, d := range dirs {
-		if filepath.IsAbs(d) {
-			if r, err := resolvePath(d, false); err == nil {
-				out = append(out, r)
-			}
-		}
-	}
-	return out
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" && v != "off" {
-		return v
-	}
-	return def
 }
 
 // resolvePath returns the symlink-resolved absolute path. A path that does not

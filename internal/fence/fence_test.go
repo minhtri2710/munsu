@@ -53,16 +53,94 @@ func newSplitLayout(t *testing.T, out string) layout {
 }
 
 func (l layout) soldier() Launch {
-	return Launch{Role: RoleSoldier, Harness: harness.Claude, Home: l.home, Primary: l.primary,
+	return Launch{Role: RoleSoldier, Harness: harness.Claude, Home: l.home, UserHome: testUserHome(), Primary: l.primary,
 		Worktree: l.worktree, GitDir: l.gitDir, CommonDir: l.common, Branch: "mu/T-1"}
 }
 
 func (l layout) reviewer() Launch {
-	return Launch{Role: RoleReviewer, Harness: harness.Claude, Home: l.home, Primary: l.primary,
+	return Launch{Role: RoleReviewer, Harness: harness.Claude, Home: l.home, UserHome: testUserHome(), Primary: l.primary,
 		Worktree: l.worktree, GitDir: l.gitDir, CommonDir: l.common}
 }
 
+// testUserHome is the Human's home as the test process sees it; the fence
+// takes it from its Launch, never from the environment.
+func testUserHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+	return home
+}
+
 func (l layout) stateDir() string { return filepath.Join(l.home, "state", "T-1.pi-agent") }
+
+// captain is a captain launch from l.home under a General home beside it, as
+// Launch makes it: its docs dir made, its seat socket and pi agent dir named.
+func (l layout) captain(t *testing.T) Launch {
+	t.Helper()
+	parent := filepath.Join(l.root, "general")
+	for _, d := range []string{filepath.Join(parent, "state"), filepath.Join(l.home, "state", CaptainDocsDir)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Launch{Role: RoleCaptain, Harness: harness.Pi, Home: l.home, ParentHome: parent, UserHome: testUserHome(),
+		Socket: filepath.Join(l.home, "state", ".captain-seat.sock"), HarnessStateDir: filepath.Join(l.home, "state", "captain.pi-agent"),
+		GitDir: l.gitDir, CommonDir: l.common}
+}
+
+// Each captain refusal has its blocked row; the allowed row is the launch as
+// Launch makes it, and as it makes it for a home that is no git checkout.
+func TestResolveCaptainRefusals(t *testing.T) {
+	l := newLayout(t)
+	file := filepath.Join(l.root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs := filepath.Join(l.home, "state", CaptainDocsDir)
+	for _, tt := range []struct {
+		name string
+		mut  func(*Launch)
+		want string
+	}{
+		{"as Launch makes it", func(*Launch) {}, ""},
+		{"a home that is no git checkout", func(x *Launch) { x.GitDir, x.CommonDir = "", "" }, ""},
+		{"a soldier's worktree", func(x *Launch) { x.Worktree = l.worktree }, "a captain launch has no worktree"},
+		{"a soldier's branch", func(x *Launch) { x.Branch = "mu/T-1" }, "a captain launch has no worktree"},
+		{"a home that is a file", func(x *Launch) { x.Home = file }, "home " + file + " is not a directory"},
+		{"a General home that is a file", func(x *Launch) { x.ParentHome = file }, "General home " + file + " is not a directory"},
+		{"the General home as its own home", func(x *Launch) { x.ParentHome = x.Home }, "is its General home"},
+		{"a git common dir that is a file", func(x *Launch) { x.CommonDir = file }, "git common dir " + file + " is not a directory"},
+		{"a harness state dir outside state/", func(x *Launch) { x.HarnessStateDir = filepath.Join(l.home, "pi") }, "is not a proper subdirectory"},
+		{"a relative seat socket", func(x *Launch) { x.Socket = ".captain-seat.sock" }, "fence: seat socket: path"},
+		{"a seat socket outside state/", func(x *Launch) { x.Socket = filepath.Join(l.home, ".captain-seat.sock") }, "is not directly under"},
+		{"a seat socket deeper in state/", func(x *Launch) { x.Socket = filepath.Join(docs, "s.sock") }, "is not directly under"},
+		{"no docs dir", func(x *Launch) { os.Remove(docs) }, "captain docs dir " + docs + " is missing"},
+		{"a docs dir that is a link", func(x *Launch) { os.Remove(docs); os.Symlink(l.root, docs) }, "captain docs dir " + docs + " is missing, a symlink"},
+		// Last: the General home keeps the link.
+		{"a General home whose state/ is a link", func(x *Launch) {
+			moved := filepath.Join(l.root, "moved-state")
+			os.Rename(filepath.Join(x.ParentHome, "state"), moved)
+			os.Symlink(moved, filepath.Join(x.ParentHome, "state"))
+		}, "is a symlink or not a directory"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Remove(docs)
+			launch := l.captain(t)
+			tt.mut(&launch)
+			c, err := resolveCaptain(launch)
+			if tt.want == "" {
+				if err != nil || c.socket != launch.Socket || c.docs != docs {
+					t.Fatalf("resolveCaptain = %+v, %v; want it accepted", c, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("resolveCaptain err = %v, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
 
 func TestUnsupportedErrorNamesTheGOOS(t *testing.T) {
 	got := (&UnsupportedError{GOOS: "plan9"}).Error()
@@ -339,6 +417,7 @@ func TestResolveLaunchRefusals(t *testing.T) {
 		{"worktree contains the primary", func(x *Launch) { x.Worktree = l.root }, "overlaps the primary checkout"},
 		{"worktree inside the common dir only", func(x *Launch) { setBare(x); x.Worktree = inBare }, "overlaps the primary checkout"},
 		{"worktree contains the common dir only", func(x *Launch) { setBare(x); x.Worktree = bare }, "overlaps the primary checkout"},
+		{"a remote reflog outside the remote-tracking logs", func(x *Launch) { x.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "heads", "main")} }, "is not under"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -357,6 +436,13 @@ func TestResolveLaunchRefusals(t *testing.T) {
 		launch := l.reviewer()
 		launch.Branch = "mu/T-1"
 		if _, err := resolveLaunch(launch); err == nil || !strings.Contains(err.Error(), "a reviewer launch has no task branch") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a reviewer has no remote reflogs", func(t *testing.T) {
+		launch := l.reviewer()
+		launch.RemoteReflogs = []string{filepath.Join(l.common, "logs", "refs", "remotes", "origin", "main")}
+		if _, err := resolveLaunch(launch); err == nil || !strings.Contains(err.Error(), "fence: remote reflogs are a soldier's only") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -627,69 +713,38 @@ func TestResolveGateRefusals(t *testing.T) {
 	}
 }
 
-func TestGoCaches(t *testing.T) {
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CACHE_HOME", "")
-	t.Setenv("XDG_CONFIG_HOME", "")
-	cache, _ := os.UserCacheDir()
-	config, _ := os.UserConfigDir()
-	set := func(gocache, modcache, gopath, telemetry string) {
-		t.Setenv("GOCACHE", gocache)
-		t.Setenv("GOMODCACHE", modcache)
-		t.Setenv("GOPATH", gopath)
-		t.Setenv("GOTELEMETRYDIR", telemetry)
-	}
-	join := func(dirs []string) string { return strings.Join(dirs, "\n") }
-
-	set("", "", "", "")
-	def := []string{
-		filepath.Join(cache, "go-build"), filepath.Join(home, "go", "pkg", "mod"),
-		filepath.Join(home, "go", "pkg"), filepath.Join(config, "go", "telemetry"),
-	}
-	if got := goCaches(home); join(got) != join(def) {
-		t.Fatalf("defaults = %q, want %q", got, def)
-	}
-	t.Run("off counts as unset", func(t *testing.T) {
-		set("off", "off", "", "off")
-		if got := goCaches(home); join(got) != join(def) {
-			t.Fatalf("got %q, want the defaults %q", got, def)
-		}
-	})
-	t.Run("the environment wins and GOPATH's first entry is used", func(t *testing.T) {
-		set(home+"/gc", home+"/gm", home+"/gp1"+string(os.PathListSeparator)+home+"/gp2", home+"/gt")
-		want := []string{home + "/gc", home + "/gm", home + "/gp1/pkg", home + "/gt"}
-		if got := goCaches(home); join(got) != join(want) {
-			t.Fatalf("got %q, want %q", got, want)
-		}
-	})
-	t.Run("a relative path is dropped, not resolved against the cwd", func(t *testing.T) {
-		set("rel/gc", home+"/gm", "", home+"/gt")
-		got := goCaches(home)
-		for _, d := range got {
-			if strings.Contains(d, "rel/gc") {
-				t.Fatalf("relative GOCACHE survived: %q", got)
-			}
-		}
-		if len(got) != 3 {
-			t.Fatalf("got %q, want the other three roots", got)
-		}
-	})
-}
-
 func TestNewRefusesAnUnknownRole(t *testing.T) {
 	l := newLayout(t)
-	for _, role := range []Role{"", "captain"} {
+	for _, role := range []Role{"", "general"} {
 		launch := l.soldier()
 		launch.Role = role
 		f, err := New(launch)
 		if f != nil || err == nil || err.Error() != fmt.Sprintf("fence: unknown role %q", role) {
 			t.Fatalf("New(role %q) = %v, %v; want the unknown role refusal", role, f, err)
 		}
+	}
+}
+
+// TestNewRefusesARelativeUserHome runs on every GOOS: the guard precedes the
+// platform check, so the refused row is refused here, not by Supported.
+func TestNewRefusesARelativeUserHome(t *testing.T) {
+	l := newLayout(t)
+	for _, tt := range []struct {
+		name, home string
+		refused    bool
+	}{
+		{"a relative user home is refused", "relative/home", true},
+		{"an absolute user home is not refused by this guard", filepath.Join(l.root, "uhome"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := l.soldier()
+			launch.UserHome = tt.home
+			_, err := New(launch)
+			refused := err != nil && strings.Contains(err.Error(), "fence: user home must be absolute")
+			if refused != tt.refused {
+				t.Fatalf("New(UserHome %q) err = %v; want refused=%v", tt.home, err, tt.refused)
+			}
+		})
 	}
 }
 

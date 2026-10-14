@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // generalPaneConfig is the config file path that optionally specifies a hardcoded
@@ -23,6 +25,9 @@ const (
 	RuntimeSource
 	// Unsupported means no target could be resolved.
 	Unsupported
+	// CaptainSource means a captain home's target: its captain's own pane,
+	// from the captain task meta in the parent General home.
+	CaptainSource
 )
 
 func (ts TargetSource) String() string {
@@ -33,6 +38,8 @@ func (ts TargetSource) String() string {
 		return "runtime-metadata"
 	case Unsupported:
 		return "unsupported"
+	case CaptainSource:
+		return "captain-task-meta"
 	default:
 		return "unknown"
 	}
@@ -72,8 +79,15 @@ func ValidateTargetOwnership(result *TargetResult) error {
 	return nil
 }
 
-// ResolveTargetWithSource resolves the general pane handle with source diagnostics.
+// ResolveTargetWithSource resolves the general pane handle with source
+// diagnostics. A captain home resolves its own captain's pane and never the
+// General's config/general-pane or runtime pane.
 func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
+	if captain, err := home.IsCaptainHome(homeDir); err != nil {
+		return TargetResult{}, fmt.Errorf("reading home identity: %w", err)
+	} else if captain {
+		return captainPaneTarget(homeDir), nil
+	}
 	path := filepath.Join(homeDir, generalPaneConfig)
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -123,4 +137,45 @@ func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
 		Source:       Unsupported,
 		SourceDetail: "no explicit target or verified runtime pane metadata",
 	}, nil
+}
+
+// captainPane reads the captain task meta that this captain home's launch
+// wrote in its parent General home, bound to this home by marker id and
+// canonical path.
+func captainPane(homeDir string) (map[string]string, error) {
+	id, err := home.ValidateCaptainProvenance(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	parent, err := config.Get(homeDir, "parent-home")
+	if err != nil {
+		return nil, fmt.Errorf("captain home has no parent-home: %w", err)
+	}
+	meta, err := home.ReadMeta(strings.TrimSpace(parent), "captain:"+id)
+	if err != nil {
+		return nil, fmt.Errorf("reading captain task meta: %w", err)
+	}
+	canonical, err := home.CanonicalCaptainHome(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	if meta["kind"] != "captain" || meta["sm_id"] != id || meta["home"] != canonical || meta["window"] == "" {
+		return nil, fmt.Errorf("captain task meta for %s does not name a pane launched for %s", id, canonical)
+	}
+	return meta, nil
+}
+
+func captainPaneTarget(homeDir string) TargetResult {
+	meta, err := captainPane(homeDir)
+	if err != nil {
+		return TargetResult{Source: Unsupported, SourceDetail: err.Error()}
+	}
+	if meta["backend"] != "herdr" {
+		return TargetResult{Source: Unsupported, SourceDetail: fmt.Sprintf("captain pane backend %q takes no wake push", meta["backend"])}
+	}
+	session := meta[backend.MetaSessionOwner]
+	if session == "" {
+		session = backend.HandleSession(meta["window"])
+	}
+	return TargetResult{Source: CaptainSource, Handle: meta["window"], Session: session, SourceDetail: "captain task meta"}
 }

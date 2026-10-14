@@ -291,7 +291,7 @@ func newTaskStartCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Supervision gate: start fails closed when the watcher lease is
 			// degraded, before any Task Authority call.
-			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
+			if err := fleet.CheckSupervisionForDispatch(ctx.Home); err != nil {
 				return err
 			}
 			return runTaskLifecycleTransition(ctx, "start", "working", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
@@ -318,7 +318,7 @@ func newTaskDoneCmd() *cobra.Command {
 		Short: "Mark a task as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return runTaskLifecycleTransition(ctx, "done", "done", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+			if err := runTaskLifecycleTransition(ctx, "done", "done", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
 				req := taskauthority.CanonicalCompleteRequest{
 					HomeID:       auth.HomeID(),
 					TaskID:       tid,
@@ -332,7 +332,11 @@ func newTaskDoneCmd() *cobra.Command {
 				}
 				_, err = auth.Complete(op, req)
 				return err
-			})
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "task %s: %s\n", args[0], taskauthority.PhaseDone)
+			return nil
 		}),
 	}
 }

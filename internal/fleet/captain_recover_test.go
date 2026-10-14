@@ -41,8 +41,8 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(parent, Info{ID: "sm-bad", Home: smHome})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance must fail.
@@ -55,6 +55,9 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 		if res.Steps[i].State != StepSkipped {
 			t.Errorf("step %d (%s) expected skipped, got %s", i, res.Steps[i].Name, res.Steps[i].State)
 		}
+		if res.Steps[i].Name == "terminal-reconcile" {
+			t.Errorf("phantom terminal-reconcile step must not be emitted on provenance failure")
+		}
 	}
 }
 
@@ -62,8 +65,8 @@ func TestRecoverTransaction_EmptyHomeFailed(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(t.TempDir(), Info{ID: "empty", Home: ""})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	if res.Steps[0].Name != "provenance" || res.Steps[0].State != StepFailed {
@@ -140,6 +143,74 @@ func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *
 	}
 	if meta["window"] != "window" || meta["backend"] != "test" {
 		t.Fatalf("relaunched meta = %#v, want fresh endpoint metadata", meta)
+	}
+}
+
+type lockProbingLaunchEndpoint struct {
+	parent     string
+	calls      int
+	lockFreeAt int
+}
+
+func (e *lockProbingLaunchEndpoint) Launch(string, LaunchRequest) (LaunchResult, error) {
+	e.calls++
+	if release, err := convergeLockAcquire(e.parent); err == nil {
+		e.lockFreeAt++
+		release()
+	}
+	return LaunchResult{Backend: "test", Window: "window"}, nil
+}
+func (e *lockProbingLaunchEndpoint) Cleanup(string, LaunchResult) error { return nil }
+
+// captain recover relaunches only under the converge lock that Converge and
+// fleet.Recover hold, and fails without relaunching while another holder has it.
+func TestRecoverTransaction_RelaunchesOnlyUnderConvergeLock(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		lockHeld   bool
+		wantLaunch int
+	}{
+		{name: "lock free", wantLaunch: 1},
+		{name: "lock held by another sweep", lockHeld: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			home := seedCaptainForTest(t, parent, "locked-recover")
+			writeCanonicalPiIntegration(t, home)
+			writeCaptainMeta(t, parent, "locked-recover", home, "dead-window")
+			if tc.lockHeld {
+				release, err := convergeLockAcquire(parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(release)
+			}
+			launch := &lockProbingLaunchEndpoint{parent: parent}
+			tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
+				Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+				Launch:      launch,
+				Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
+			}}
+
+			result := tx.Recover(parent, Info{ID: "locked-recover", Home: home})
+			if launch.calls != tc.wantLaunch {
+				t.Fatalf("launch calls = %d, want %d (steps: %s)", launch.calls, tc.wantLaunch, result.StepsString())
+			}
+			if launch.lockFreeAt != 0 {
+				t.Fatalf("relaunch ran while the converge lock was free")
+			}
+			lock := findStep(result.Steps, "converge-lock")
+			if tc.lockHeld {
+				if lock == nil || lock.State != StepFailed || !strings.Contains(lock.Detail, "held by another process") {
+					t.Fatalf("converge-lock step = %+v, want held-lock failure", lock)
+				}
+				if step := findStep(result.Steps, "relaunch-pane"); step == nil || step.State != StepSkipped {
+					t.Fatalf("relaunch step = %+v, want skipped", step)
+				}
+			} else if lock != nil {
+				t.Fatalf("converge-lock step = %+v, want none when acquired", lock)
+			}
+		})
 	}
 }
 

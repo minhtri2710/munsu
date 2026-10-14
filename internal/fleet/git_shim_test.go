@@ -71,6 +71,7 @@ func TestSoldierLaunchScriptPrependsGitShim(t *testing.T) {
 		LaunchDir:      wt,
 		HomeDir:        home,
 		PathDirs:       seatPathDirs(home),
+		SeatEnv:        testSeatEnv(),
 		TaskID:         "ship-shim",
 		SnapshotDigest: "digest",
 		LaunchBin:      "/bin/true",
@@ -105,6 +106,7 @@ func TestSoldierLaunchScriptExportsExactlyTheSeatPathDirs(t *testing.T) {
 	t.Setenv("PATH", strings.Join([]string{"/munsu/a", ".", "", "rel/bin", "/munsu/b/"}, ":"))
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath: wt, LaunchDir: wt, HomeDir: home, PathDirs: seatPathDirs(home), TaskID: "ship-shim", SnapshotDigest: "digest",
+		SeatEnv:   testSeatEnv(),
 		LaunchBin: "/bin/true", LaunchArgs: []string{"--go"}, LaunchID: "lid", Generation: "1", EndpointFence: "fence",
 	})
 	if err != nil {
@@ -152,7 +154,7 @@ func TestSoldierLaunchScriptExportsExactlyTheSeatPathDirs(t *testing.T) {
 
 func TestCaptainLaunchScriptPrependsGitShim(t *testing.T) {
 	cwd := t.TempDir()
-	cmd, err := buildLaunchScript("/usr/local/bin/pi", []string{"# charter"}, cwd, cwd, filepath.Base(cwd))
+	cmd, err := buildLaunchScript("/usr/local/bin/pi", []string{"# charter"}, cwd, cwd, filepath.Base(cwd), captainSeat{})
 	if err != nil {
 		t.Fatalf("buildLaunchScript: %v", err)
 	}

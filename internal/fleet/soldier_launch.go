@@ -39,6 +39,7 @@ type LaunchPromptInput struct {
 	OptionalSkills  []SkillEntry
 	HarnessName     string
 	ScoutScope      string
+	Scaffold        string // matched dispatch profile's charter scaffold
 }
 
 // BuildLaunchPrompt constructs the complete, role-specific Soldier launch prompt.
@@ -76,7 +77,7 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	}
 
 	// 1. Build charter.
-	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
+	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode, input.Scaffold)
 
 	// 2. Build the skill manifest section.
 	skillSection := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills)
@@ -220,16 +221,10 @@ Summary of report states:
 // expressible question deny, which every soldier launch carries;
 // unsupported harnesses fail closed.
 func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (string, []string, error) {
-	adapter, ok := harness.GetAdapter(harnessName)
-	if !ok {
-		return "", nil, fmt.Errorf("soldier launch: harness %q is not a verified harness", harnessName)
+	if err := soldierLaunchContract(harnessName); err != nil {
+		return "", nil, err
 	}
-	if !adapter.SoldierLaunch.Supported {
-		return "", nil, fmt.Errorf("soldier launch: harness %q does not have a verified prompt-arg contract", harnessName)
-	}
-	if len(adapter.QuestionDeny) == 0 {
-		return "", nil, fmt.Errorf("soldier launch: harness %q cannot deny its ask-the-user tool; decision-hold is the only question path", harnessName)
-	}
+	adapter, _ := harness.GetAdapter(harnessName)
 	tmpl := adapter.LaunchTemplate
 
 	args := []string{}
@@ -312,6 +307,9 @@ type LaunchArtifactInput struct {
 	// PathDirs is the seat's PATH, shim first: the launch intent's committed
 	// list, the one the fence was built from.
 	PathDirs []string
+	// SeatEnv is the seat's launch environment, read once and committed with
+	// the intent: the seat temp is built from its TempDir.
+	SeatEnv taskauthority.SeatEnv
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
@@ -415,12 +413,30 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	if len(in.PathDirs) == 0 {
 		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: the seat PATH is required")
 	}
+	if in.SeatEnv.TempDir == "" {
+		return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: the seat temp dir is required")
+	}
 	b.WriteString("export PATH=")
 	b.WriteString(shQuote(strings.Join(in.PathDirs, string(os.PathListSeparator))))
 	b.WriteString("\n")
 	// A fenced git cannot write the gc and maintenance state it would start in
 	// the background, so turn both off for every git the harness runs.
 	b.WriteString("export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")
+	// Tool caches and Go's build, module, checksum-db (GOPATH/pkg/sumdb) and
+	// telemetry dirs live under the seat's temp, never under the Human's. Human
+	// words (domain.Words): grantor the Human, channel supervisor-relay:dialog,
+	// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không bao
+	// giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và không
+	// gửi input vào session ngoài session của nó."
+	seatTemp := filepath.Join(in.SeatEnv.TempDir, "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
+	caches := []struct{ name, dir string }{
+		{"npm_config_cache", "npm-cache"}, {"npm_config_store_dir", "npm-store"},
+		{"PIP_CACHE_DIR", "pip-cache"}, {"UV_CACHE_DIR", "uv-cache"}, {"XDG_CACHE_HOME", "xdg-cache"},
+		{"GOCACHE", "go-build"}, {"GOMODCACHE", "go-mod"}, {"GOPATH", "go-path"}, {"GOTELEMETRYDIR", "go-telemetry"},
+	}
+	for _, c := range caches {
+		b.WriteString("export " + c.name + "=" + shQuote(filepath.Join(seatTemp, c.dir)) + "\n")
+	}
 	// Persistent re-entrant launch guard: created by the launched script
 	// BEFORE invoking the harness. The guard directory is created atomically
 	// (mkdir succeeds for exactly one submission), so even concurrent
@@ -450,6 +466,12 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 			return preparedLaunchArtifact{}, fmt.Errorf("soldier launch: %w", err)
 		}
 	}
+	// The pane shell may leak descriptors above stdio, and a fenced write
+	// through one, opened before the sandbox applied, is not re-checked.
+	b.WriteString("for fd in /dev/fd/*; do\n")
+	b.WriteString("  n=${fd##*/}\n")
+	b.WriteString("  if [ \"$n\" -gt 2 ]; then eval \"exec $n>&-\" 2>/dev/null || true; fi\n")
+	b.WriteString("done\n")
 	b.WriteString("exec")
 	for _, arg := range argv {
 		b.WriteString(" ")

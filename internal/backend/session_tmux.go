@@ -1,8 +1,13 @@
 package backend
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // TmuxBackend implements Backend using the tmux CLI.
@@ -208,6 +213,85 @@ func (t *TmuxBackend) Teardown(windowID string) error {
 		return wrapBackendCommandError("tmux kill-window", out, stderr, err)
 	}
 	return nil
+}
+
+// tmuxShells are foreground commands of a pane with no agent in it. A prompt
+// is never typed into one (G1085: no input into a session other than its own).
+var tmuxShells = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "fish": true, "dash": true, "ksh": true,
+	"tcsh": true, "csh": true, "nu": true, "login": true, "tmux": true,
+}
+
+// tmuxPromptSettle is the pause between the paste and Enter, and between Enter
+// and the capture that looks for the turn start.
+var tmuxPromptSettle = 200 * time.Millisecond
+
+// tmuxPromptStartPolls bounds how many settle intervals AgentPrompt waits for
+// the pane to change after Enter.
+const tmuxPromptStartPolls = 25
+
+// AgentPrompt pastes text into the pane as one bracketed paste (the payload
+// never reaches a shell argument) and presses Enter. tmux reports no agent
+// status, so a turn start is taken as the pane redrawing after Enter; a pane
+// that does not change within the window reports PromptStalled.
+func (t *TmuxBackend) AgentPrompt(windowID, text string) PromptResult {
+	bin, err := lookBackendBin("tmux")
+	if err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "tmux not available", Err: err}
+	}
+	alive, err := t.CheckAlive(windowID)
+	if errors.Is(err, ErrPaneNotFound) || (err == nil && !alive) {
+		return PromptResult{Status: PromptEndpointDead, Detail: "pane not found"}
+	}
+	if err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "pane liveness check failed", Err: err}
+	}
+	process, err := t.ForegroundProcess(windowID)
+	if err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "reading the pane's foreground process failed", Err: err}
+	}
+	if tmuxShells[filepath.Base(process)] {
+		return PromptResult{Status: PromptUnsupported, Detail: "pane runs " + process + ", not an agent"}
+	}
+	target := normalizeTarget(windowID)
+	before, err := t.Capture(windowID, 30)
+	if err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "capturing the pane failed", Err: err}
+	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "naming the paste buffer failed", Err: err}
+	}
+	buffer := "munsu-prompt-" + hex.EncodeToString(nonce[:])
+	if out, stderr, err := runBackendCommand(bin, []string{"set-buffer", "-b", buffer, "--", text}, "", nil); err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "nothing was typed", Err: wrapBackendCommandError("tmux set-buffer", out, stderr, err)}
+	}
+	if out, stderr, err := runBackendCommand(bin, []string{"paste-buffer", "-d", "-r", "-p", "-b", buffer, "-t", target}, "", nil); err != nil {
+		_, _, _ = runBackendCommand(bin, []string{"delete-buffer", "-b", buffer}, "", nil)
+		return PromptResult{Status: PromptBackendFailed, Detail: "paste state unknown", Err: wrapBackendCommandError("tmux paste-buffer", out, stderr, err)}
+	}
+	time.Sleep(tmuxPromptSettle)
+	staged, err := t.Capture(windowID, 30)
+	if err != nil {
+		return PromptResult{Status: PromptBackendFailed, Detail: "text pasted, Enter not sent", Err: err}
+	}
+	if staged == before {
+		return PromptResult{Status: PromptStalled, Detail: "the paste did not render; Enter not sent"}
+	}
+	if out, stderr, err := runBackendCommand(bin, []string{"send-keys", "-t", target, "Enter"}, "", nil); err != nil {
+		return PromptResult{Status: PromptStalled, Detail: "text pasted, Enter failed", Err: wrapBackendCommandError("tmux send-keys", out, stderr, err)}
+	}
+	for range tmuxPromptStartPolls {
+		time.Sleep(tmuxPromptSettle)
+		after, err := t.Capture(windowID, 30)
+		if err != nil {
+			return PromptResult{Status: PromptBackendFailed, Detail: "Enter sent, turn start unreadable", Err: err}
+		}
+		if after != staged {
+			return PromptResult{Status: PromptSubmitted}
+		}
+	}
+	return PromptResult{Status: PromptStalled, Detail: "no turn start observed after Enter"}
 }
 
 // isTmuxTargetAbsent reports whether a tmux list-panes error is an exact,

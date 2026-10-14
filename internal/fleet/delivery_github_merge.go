@@ -3,7 +3,6 @@ package fleet
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 
@@ -74,20 +73,14 @@ func ProbeGitHubDeliveryCapability() backend.State {
 	return backend.Ready
 }
 
-// ghCLI runs one gh invocation and returns stdout; a failure carries stderr.
+// ghCLI runs one bounded gh invocation and returns stdout; a failure carries
+// stderr.
 func ghCLI(args ...string) ([]byte, error) {
 	ghPath, err := ghCLILookPath()
 	if err != nil {
 		return nil, fmt.Errorf("gh not found on PATH: %w", err)
 	}
-	out, err := exec.Command(ghPath, args...).Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh %s: %s", strings.Join(args, " "), strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("gh %s: %w", strings.Join(args, " "), err)
-	}
-	return out, nil
+	return runForgeCommand("gh "+strings.Join(args, " "), ghPath, args...)
 }
 
 // githubNoRequiredChecks lists the provider answers that mean a source holds

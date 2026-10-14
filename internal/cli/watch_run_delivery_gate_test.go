@@ -13,7 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// deliveryLockScopeName derives the scope `fleet.RecoverDeliveryJournals` locks
+// deliveryLockScopeName derives the scope `fleet.RecoverDeliveryOutcomes` locks
 // from the lock file it creates, rather than hard-coding the unexported
 // fleet constant. A rename there renames the file, and this test keeps
 // contending with the scope the gate actually takes instead of silently
@@ -35,7 +35,7 @@ func deliveryLockScopeName(t *testing.T, homeDir string) string {
 		return scopes
 	}
 	before := lockScopes()
-	if err := fleet.RecoverDeliveryJournals(homeDir); err != nil {
+	if _, err := fleet.RecoverDeliveryOutcomes(homeDir); err != nil {
 		t.Fatalf("priming the delivery recovery gate: %v", err)
 	}
 	var scopes []string

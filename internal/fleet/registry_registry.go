@@ -1,10 +1,3 @@
-// Package fleet owns workforce execution, including Project and Captain
-// registries and the Captain-Project Binding. The Registry is
-// the canonical home-backed surface for that identity and lifecycle: it owns
-// Project registration, Captain lifecycle, and the Captain-Project Binding
-// through typed operations and queries. Config consumes scoped registry facts
-// only; it no longer creates, retires, or rebinds them.
-//
 // The canonical implementation uses three independent aggregates: the Project
 // registry, the Captain registry, and the Captain-Project Binding. Each has its
 // own scoped fenced lock and revision, so independent Project and Captain
@@ -16,6 +9,7 @@
 // deletion markers). There is no Store
 // interface, in-memory fake, projection, legacy adapter, or fleet-wide lock
 // behind this surface.
+
 package fleet
 
 import (

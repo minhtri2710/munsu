@@ -1,7 +1,11 @@
 // Package fence confines a launched seat's whole process tree to a set of
 // writable roots with an OS sandbox (macOS sandbox-exec), refuses every
-// unix-socket connect but DNS's and a gate soldier's no-mistakes daemon's, and
-// refuses the removal or replacement of a claude or tmux socket. It is defense
+// unix-socket connect but DNS's and the one socket its launch names (a gate
+// soldier's no-mistakes daemon, a captain's seat), and refuses the removal or
+// replacement of a claude or tmux socket. It also
+// reports every outbound connect to the Sandbox log: an observe-only (allow
+// network-outbound (with report)) sits before the socket denies, which are
+// last-match-wins, so it logs seat egress and refuses nothing. It is defense
 // in depth beside the shell lexer and the git shim: those refuse by reading
 // argv; the fence refuses at the syscall, so a wrapped program, an
 // absolute-path git, or a reset PATH cannot write outside the roots.
@@ -29,6 +33,11 @@ const (
 	// review, including every .git path; it keeps only seat state, temp roots
 	// and its own files.
 	RoleReviewer Role = "reviewer"
+	// RoleCaptain may write only its own harness state, temp roots and the
+	// briefs and docs it authors in its home; every munsu command that writes
+	// a record or drives a pane runs outside the fence through its seat
+	// socket.
+	RoleCaptain Role = "captain"
 )
 
 // Launch carries the facts one fenced launch needs. Every path must be absolute
@@ -37,12 +46,14 @@ const (
 type Launch struct {
 	Role    Role
 	Harness string // harness kind; selects the harness state directories
-	// Home is the munsu home. No seat writes its state/, data/, .journal/,
-	// .lock/, config/ or projects/: a soldier writes only its own Files there
-	// (its status, ack log and current scout report) and its HarnessStateDir.
-	// A reviewer may leave it empty when it has no HarnessStateDir.
-	Home    string
-	Primary string // primary checkout; never writable
+	// Home is the munsu home. No seat writes anything in it but its own Files
+	// (a soldier's status, ack log and current scout report) and its
+	// HarnessStateDir. A reviewer may leave it empty when it has no
+	// HarnessStateDir.
+	Home string
+	// UserHome is the Human's home as the launch intent recorded it; absolute.
+	UserHome string
+	Primary  string // primary checkout; never writable
 	// Worktree is the soldier's bound worktree (writable) or the reviewer's
 	// checkout under review (never writable).
 	Worktree  string
@@ -50,6 +61,11 @@ type Launch struct {
 	CommonDir string   // the repository's common git dir
 	Branch    string   // soldier only: the task-local branch, e.g. mu/<task>
 	Files     []string // exact files also writable, with their atomic .tmp.<pid>.<hex> siblings; a soldier's own home files
+	// RemoteReflogs are a soldier's remote-tracking reflog files that munsu
+	// pre-created at spawn, one per existing refs/remotes ref, under
+	// <CommonDir>/logs/refs/remotes. The seat may only append to them. A reviewer
+	// has none.
+	RemoteReflogs []string
 	// HarnessStateDir is the per-launch harness state directory (the task's
 	// PI_CODING_AGENT_DIR for pi, its CLAUDE_CONFIG_DIR for claude). It is
 	// writable under both roles: a proper subdirectory of Home's state/, never a
@@ -74,6 +90,12 @@ type Launch struct {
 	// like a PATH dir, and every directory above it is locked against chmod,
 	// rename and removal whatever else the seat may write.
 	ShimDir string
+	// ParentHome is a captain's General home, never writable. Socket is the
+	// captain's seat socket, directly under Home's state/: the one socket it
+	// may connect to, which it can neither create, remove nor rename. Both are
+	// captain only.
+	ParentHome string
+	Socket     string
 }
 
 // UnsupportedError is returned by New on a GOOS with no fence implementation.
