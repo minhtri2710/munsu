@@ -1032,16 +1032,23 @@ func TestDispatchWake_DeferredWakeReclaimsAfterLeaseExpiry(t *testing.T) {
 		t.Fatalf("expected 1 lease, got %d err=%v", len(entries), err)
 	}
 
-	// Reclaim expired leases — our lease has 60s expiry, so it's valid.
-	// To test reclaim, delete the lease file to simulate expiry.
+	// Expire the lease in place: set its header expires_at to the past.
 	leasePath := filepath.Join(mhome.LeaseDir(home), entries[0].Name())
-	if err := os.Remove(leasePath); err != nil {
-		t.Fatalf("removing lease: %v", err)
+	data, err := os.ReadFile(leasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerAndBody := strings.SplitN(string(data), "\n", 2)
+	fields := strings.Split(headerAndBody[0], "\t")
+	fields[2] = "1"
+	headerAndBody[0] = strings.Join(fields, "\t")
+	if err := os.WriteFile(leasePath, []byte(strings.Join(headerAndBody, "\n")), 0600); err != nil {
+		t.Fatal(err)
 	}
 
-	// Manually re-enqueue to simulate reclaim
-	if err := EnqueueWake(home, "signal", "task-1", "test payload"); err != nil {
-		t.Fatalf("EnqueueWake: %v", err)
+	reclaimed, err := mhome.ReclaimExpiredLeases(home)
+	if err != nil || reclaimed != 1 {
+		t.Fatalf("ReclaimExpiredLeases = %d, err=%v; want 1 reclaimed", reclaimed, err)
 	}
 
 	// Second dispatch should succeed (retry path)

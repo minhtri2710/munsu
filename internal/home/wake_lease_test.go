@@ -1,6 +1,7 @@
 package home
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -284,5 +285,227 @@ func TestClaimWakesNeverLeasesProcessEventWakes(t *testing.T) {
 	}
 	if len(rest) != 2 || rest[0].Kind != ProcessEventWakeKind || rest[1].Kind != ProcessEventWakeKind {
 		t.Fatalf("queue after exhausting claimable wakes = %#v, want both process-event wakes intact", rest)
+	}
+}
+
+func writeQueueLines(t *testing.T, home string, lines []string) {
+	t.Helper()
+	writeWakeQueueForTest(t, home, strings.Join(lines, "\n"))
+}
+
+func TestClaimWakes(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1780000000\t1\tsignal\tkey1\tpayload1",
+		"1780000001\t2\tstale\tkey2\tpayload2",
+		"1780000002\t3\tcheck\tkey3\tpayload3",
+	})
+
+	result, err := ClaimWakes(home, "test-consumer", 60, 2)
+	if err != nil {
+		t.Fatalf("ClaimWakes() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.Consumer != "test-consumer" {
+		t.Errorf("consumer = %q, want test-consumer", result.Consumer)
+	}
+	if len(result.Wakes) != 2 {
+		t.Errorf("claimed %d wakes, want 2", len(result.Wakes))
+	}
+	if result.LeaseID == "" {
+		t.Error("lease ID is empty")
+	}
+	if result.ExpiresAt == 0 {
+		t.Error("expires_at is 0")
+	}
+
+	records, err := DrainWakes(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Seq != "3" {
+		t.Fatalf("remaining queue = %+v, want only seq 3", records)
+	}
+}
+
+func TestAckWakes(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1780000000\t1\tsignal\tkey1\tpayload1",
+		"1780000001\t2\tstale\tkey2\tpayload2",
+	})
+
+	result, err := ClaimWakes(home, "consumer", 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{"1780000001:2"}); err != nil {
+		t.Fatalf("AckWakes() error = %v", err)
+	}
+
+	leasePath := LeaseFilePath(home, result.LeaseID)
+	if _, err := os.Stat(leasePath); os.IsNotExist(err) {
+		t.Error("lease file should still exist with unacked wakes")
+	}
+}
+
+func TestAckWakesAllRemovesLease(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1780000000\t1\tsignal\tkey1\tpayload1",
+	})
+
+	result, err := ClaimWakes(home, "consumer", 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{"1780000000:1"}); err != nil {
+		t.Fatalf("AckWakes() error = %v", err)
+	}
+
+	leasePath := LeaseFilePath(home, result.LeaseID)
+	if _, err := os.Stat(leasePath); !os.IsNotExist(err) {
+		t.Error("lease file should be removed after all wakes acked")
+	}
+}
+
+func TestAckWakesNonexistentLease(t *testing.T) {
+	home := t.TempDir()
+	err := AckWakes(home, "nonexistent-lease", []string{"1:1"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent lease")
+	}
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "expired") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLeaseExpiryReclaim(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1780000000\t1\tsignal\tkey1\tpayload1",
+	})
+
+	result, err := ClaimWakes(home, "consumer", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("claimed %d wakes, want 1", len(result.Wakes))
+	}
+
+	result2, err := ClaimWakes(home, "consumer2", 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Reclaimed < 1 {
+		t.Errorf("expected reclaimed >= 1, got %d", result2.Reclaimed)
+	}
+	if len(result2.Wakes) < 1 {
+		t.Errorf("expected at least 1 wake in new claim, got %d", len(result2.Wakes))
+	}
+}
+
+func TestClaimWakesDefaults(t *testing.T) {
+	home := t.TempDir()
+	var lines []string
+	for i := 1; i <= 11; i++ {
+		lines = append(lines, fmt.Sprintf("%d\t%d\tsignal\tkey%d\tpayload%d", 1780000000+i, i, i, i))
+	}
+	writeQueueLines(t, home, lines)
+
+	result, err := ClaimWakes(home, "consumer", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExpiresAt == 0 {
+		t.Error("expires_at should be set")
+	}
+	if len(result.Wakes) != 10 {
+		t.Errorf("claimed %d wakes, want the default limit 10", len(result.Wakes))
+	}
+}
+
+func TestClaimWakesLimit(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1\t1\tkind1\tk1\tp1",
+		"2\t2\tkind2\tk2\tp2",
+		"3\t3\tkind3\tk3\tp3",
+		"4\t4\tkind4\tk4\tp4",
+		"5\t5\tkind5\tk5\tp5",
+	})
+
+	result, err := ClaimWakes(home, "consumer", 60, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Wakes) != 3 {
+		t.Errorf("claimed %d wakes, want 3", len(result.Wakes))
+	}
+}
+
+func TestCrashAtEachStepNoLostWakes(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"100\t1\ta\tk1\tp1",
+		"101\t2\tb\tk2\tp2",
+		"102\t3\tc\tk3\tp3",
+	})
+
+	r1, err := ClaimWakes(home, "consumer", 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r1.Wakes) != 2 {
+		t.Fatalf("first claim got %d wakes", len(r1.Wakes))
+	}
+
+	r2, err := ClaimWakes(home, "consumer2", 60, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(r2.Wakes) != 3 {
+		t.Errorf("after reclaim, got %d wakes, want 3 (2 reclaimed + 1 remaining)", len(r2.Wakes))
+	}
+	if r2.Reclaimed != 2 {
+		t.Errorf("reclaimed = %d, want 2", r2.Reclaimed)
+	}
+}
+
+func TestParity_WakeKind_Signal(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1781000000\t1\tsignal\tcaptain:1\tdone: task complete",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	w := result.Wakes[0]
+	if w.Kind != "signal" {
+		t.Errorf("kind = %q, want signal", w.Kind)
+	}
+	if w.Key != "captain:1" {
+		t.Errorf("key = %q, want captain:1", w.Key)
+	}
+	if w.Payload != "done: task complete" {
+		t.Errorf("payload = %q, want 'done: task complete'", w.Payload)
+	}
+	if w.Seq != "1" {
+		t.Errorf("seq = %q, want 1", w.Seq)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+		t.Fatalf("AckWakes: %v", err)
 	}
 }
