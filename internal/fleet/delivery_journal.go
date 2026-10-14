@@ -90,6 +90,7 @@ type deliveryJournal struct {
 	Method        string                                  `json:"method,omitempty"`
 	Preconditions []taskauthority.DeliveryPrecondition    `json:"preconditions"`
 	Words         domain.Words                            `json:"words"`
+	Diff          domain.DeliveryDiff                     `json:"diff"`
 
 	AuthorizeOpID string `json:"authorize_op_id"`
 	GateOpID      string `json:"gate_op_id"`
