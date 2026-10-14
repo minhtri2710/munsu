@@ -1,10 +1,8 @@
-// Package integrate manages opt-in harness integration — installing, repairing,
-// and verifying native hooks and adapter artifacts for the detected agent harness.
-//
 // Each integration is scoped to one harness and one scope (user-global or
 // project-local). Ownership markers ensure we never overwrite unrelated user
 // content. All writes are atomic (write-to-temp, then rename with fsync).
 // Existing user hook files that cannot be parsed are refused, never replaced.
+
 package bootstrap
 
 import (

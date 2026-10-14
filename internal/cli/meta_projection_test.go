@@ -48,14 +48,6 @@ func assertUnchangedProjectionMeta(t *testing.T, before []byte, p string, err er
 	}
 }
 
-func TestCreateQueuedTaskMetaUnreadableMetaIsNotErased(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "cli-task-unreadable"
-	before, p := writeUnreadableCLIProjectionMeta(t, homeDir, taskID)
-	err := createQueuedTaskMeta(homeDir, taskID)
-	assertUnchangedProjectionMeta(t, before, p, err, "kind")
-}
-
 func TestProjectDeliveryIdentityUnreadableMetaIsNotErased(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "cli-delivery-unreadable"

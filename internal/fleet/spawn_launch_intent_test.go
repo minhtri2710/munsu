@@ -313,11 +313,12 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath, TaskKind: r.kind,
+		SeatEnv: testSeatEnv(),
 	})
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)
 	}
-	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
+	prepared, err := prepareLaunchFiles(DefaultCharter(r.args.ID, r.kind, r.effectiveMode, r.projectConfig.Soldier.Scaffold), r.briefData, r.promptEnv, r.prompt, scriptBytes, r.harness, artifact.GuardName, artifact.GuardIdentity)
 	if err != nil {
 		t.Fatalf("prepareLaunchFiles: %v", err)
 	}
@@ -748,7 +749,7 @@ func TestLaunchIntentMatchesComparesTheSeatPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := f.runner.buildBeginSpawnRequest(domain.Of(uint64(agg.Generation), uint64(agg.Revision)), agg.Generation, agg.Launch.EndpointIncarnation, tt.path)
+			req := f.runner.buildBeginSpawnRequest(domain.Of(uint64(agg.Generation), uint64(agg.Revision)), agg.Generation, agg.Launch.EndpointIncarnation, tt.path, agg.Launch.SeatEnv)
 			if got := f.runner.launchIntentMatches(req, *agg.Launch); got != tt.match {
 				t.Errorf("launchIntentMatches with seat PATH %q = %v, want %v", tt.path, got, tt.match)
 			}

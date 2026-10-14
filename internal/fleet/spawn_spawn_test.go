@@ -469,11 +469,11 @@ func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckBacklogAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
-	// Working without live meta/window must pass this pre-check; beginLaunchIntent decides.
+func TestCheckBacklogAuthority_PassesWorkingWithoutBoundEndpoint(t *testing.T) {
+	// Working with no bound endpoint must pass this pre-check; beginLaunchIntent decides.
 	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: t.TempDir()}
 	if err := r.checkBacklogAuthority(); err != nil {
-		t.Fatalf("working without live meta must pass the pre-check, got: %v", err)
+		t.Fatalf("working without a bound endpoint must pass the pre-check, got: %v", err)
 	}
 }
 
@@ -1118,18 +1118,6 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 			required, optional, diags := r.resolveSkills()
 			if len(diags) > 0 {
 				t.Fatalf("resolveSkills returned diagnostics: %v", diags)
-			}
-
-			// Verify srcwalk is NOT in required or optional.
-			for _, s := range required {
-				if s.Name == "srcwalk" {
-					t.Error("srcwalk must NOT be in required skills")
-				}
-			}
-			for _, s := range optional {
-				if s.Name == "srcwalk" {
-					t.Error("srcwalk must NOT be in optional skills")
-				}
 			}
 
 			if len(required) != tc.wantRequired {

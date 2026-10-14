@@ -8,6 +8,7 @@ import (
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestCountQueuedWakes_UsesLifecycleQueuePath(t *testing.T) {
@@ -53,7 +54,7 @@ func TestWatchRun_UsesRunCycleDedup(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	mhome.WriteMeta(home, "task-1", map[string]string{"window": "@missing-watch-run"})
+	mustBindCLIEndpoint(t, home, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@missing-watch-run"})
 
 	run := func() string {
 		root := NewRootCommand()
