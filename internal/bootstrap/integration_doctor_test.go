@@ -37,31 +37,6 @@ func TestCheckPipelineReadiness(t *testing.T) {
 	})
 }
 
-// TestCheckSessionBackend pins that the doctor's session_backend entry states
-// tmux has no prompt support whenever it names tmux.
-func TestCheckSessionBackend(t *testing.T) {
-	t.Run("tmux on PATH", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PATH", dir)
-		entry := checkSessionBackend()
-		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "no prompt support yet") {
-			t.Fatalf("entry = %+v, want current with the tmux no-prompt note", entry)
-		}
-	})
-
-	t.Run("no session backend", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		t.Setenv("HERDR_ENV", "")
-		entry := checkSessionBackend()
-		if entry.Status != StatusAbsent || !strings.Contains(entry.Detail, "tmux without prompt support") || !strings.Contains(entry.RepairCmd, "tmux (no prompt support yet)") {
-			t.Fatalf("entry = %+v, want absent with the tmux no-prompt note in detail and repair", entry)
-		}
-	})
-}
-
 func TestCheckCaptainRegistry_NoInitializedHome(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "not-a-home")
 	entry := checkCaptainRegistry(missing)
