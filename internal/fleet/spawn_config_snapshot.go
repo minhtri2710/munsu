@@ -11,10 +11,11 @@ import (
 )
 
 type SpawnSoldierConfig struct {
-	Harness string
-	Model   string
-	Effort  string
-	Mode    string
+	Harness  string
+	Model    string
+	Effort   string
+	Mode     string
+	Scaffold string
 }
 
 type SpawnProjectConfig struct {
@@ -133,10 +134,11 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		ReviewStep:       deliveryStep(resolved.ReviewStep),
 		ForgeStep:        deliveryStep(resolved.ForgeStep),
 		Soldier: SpawnSoldierConfig{
-			Harness: selection.Harness,
-			Model:   selection.Model,
-			Effort:  selection.Effort,
-			Mode:    mode,
+			Harness:  selection.Harness,
+			Model:    selection.Model,
+			Effort:   selection.Effort,
+			Mode:     mode,
+			Scaffold: selection.Scaffold,
 		},
 	}, nil
 }
@@ -221,6 +223,10 @@ func validateResolvedDispatchProfiles(profiles []fleetconfig.DispatchProfile) er
 			if err := harness.ValidateHarness(candidate.Harness); err != nil {
 				return fleetconfig.Remediate(fleetconfig.RemediateInvalidProfile, "fix or remove the invalid dispatch profile candidate", err)
 			}
+		}
+		// Human words: quoted at config.ValidateScaffold.
+		if err := fleetconfig.ValidateScaffold(profile.Scaffold); err != nil {
+			return fleetconfig.Remediate(fleetconfig.RemediateInvalidProfile, "set the dispatch profile scaffold to lean or guided, or remove it", err)
 		}
 	}
 	return nil
