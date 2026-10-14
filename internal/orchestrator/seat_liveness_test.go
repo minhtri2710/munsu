@@ -11,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // seatWorld is one watched home with a single live seat "seat-1".
@@ -25,9 +26,7 @@ func newSeatWorld(t *testing.T) *seatWorld {
 	t.Helper()
 	t.Setenv("PATH", "/usr/bin:/bin")
 	w := &seatWorld{t: t, home: t.TempDir()}
-	if err := mhome.WriteMeta(w.home, "seat-1", map[string]string{"window": "@w"}); err != nil {
-		t.Fatal(err)
-	}
+	seedBoundSoldier(t, w.home, "seat-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@w"})
 	return w
 }
 

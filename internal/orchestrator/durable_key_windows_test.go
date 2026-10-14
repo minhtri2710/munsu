@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestCollectStatusIDsRoundTrip(t *testing.T) {
@@ -24,14 +25,12 @@ func TestCollectStatusIDsRoundTrip(t *testing.T) {
 
 func TestScanFleetWithProbeCheckPath(t *testing.T) {
 	tmp := t.TempDir()
-	if err := home.WriteMeta(tmp, "ship:1", map[string]string{"kind": "ship", "window": "@win"}); err != nil {
-		t.Fatal(err)
-	}
+	seedBoundSoldier(t, tmp, "ship-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@win"})
 	reasons := scanFleetWithProbe(tmp, false, nil, testTaskStatePort{}, testSeatLiveness, nil)
 	if len(reasons) == 0 {
-		t.Fatalf("scanFleetWithProbe returned no reasons for encoded ship:1 meta")
+		t.Fatalf("scanFleetWithProbe returned no reasons for bound ship-1")
 	}
-	if reasons[0].Kind != "check" || len(reasons[0].TaskIDs) != 1 || reasons[0].TaskIDs[0] != "ship:1" {
-		t.Errorf("scanFleetWithProbe reason = %+v, want check reason for logical id ship:1", reasons[0])
+	if reasons[0].Kind != "check" || len(reasons[0].TaskIDs) != 1 || reasons[0].TaskIDs[0] != "ship-1" {
+		t.Errorf("scanFleetWithProbe reason = %+v, want check reason for ship-1", reasons[0])
 	}
 }
