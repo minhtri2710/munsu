@@ -1,9 +1,8 @@
-// Package turnend implements durable role-aware turn-end obligations.
-//
 // Turn-end obligations are actions that must be performed at the end of a turn
 // and are persisted under the munsu home so they survive process restarts.
 // Obligations differ by role: general, captain, and soldier each have a
 // distinct set of obligations.
+
 package orchestrator
 
 import (
