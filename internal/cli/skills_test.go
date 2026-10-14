@@ -352,6 +352,9 @@ func TestValidateSkillBundleReferences(t *testing.T) {
 		{name: "path escape", files: fstest.MapFS{
 			"skills/main/SKILL.md": {Data: []byte("See [outside](../outside.md).")},
 		}, wantErr: "escapes skill module"},
+		{name: "absolute path", files: fstest.MapFS{
+			"skills/main/SKILL.md": {Data: []byte("See [passwd](/etc/passwd).")},
+		}, wantErr: "absolute paths are not allowed"},
 		{name: "external and anchor ignored", files: fstest.MapFS{
 			"skills/main/SKILL.md": {Data: []byte("[web](https://example.com/x.md) [section](#local)")},
 		}},
