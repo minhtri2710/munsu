@@ -155,61 +155,6 @@ func TestGlabClient_CaptureIdentity_EmptyTargetBranch(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// Group D: delivery_mergeandretire.go (1 guard)
-// ----------------------------------------------------------------------------
-
-func TestMergeAndRetireDeliveryRequest_NilIdentity(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := home.Init(tmpDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(h.Root(), "t1", map[string]string{
-		"description": "test task without delivery identity",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	_, err = mergeAndRetireDeliveryRequest(h.Root(), "t1", "", nil)
-	if err == nil || !strings.Contains(err.Error(), "no delivery identity for task t1; capture one first") {
-		t.Fatalf("mergeAndRetireDeliveryRequest err = %v, want no delivery identity", err)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Group E: delivery_mrcheck.go (1 guard)
-// ----------------------------------------------------------------------------
-
-func TestMergeStatus_ClosedNotMerged(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := home.Init(tmpDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := mustAuthority(t, h.Root())
-	seedCanonicalQueuedTask(t, c, "t1", "general")
-	seedSourceContract(t, c, "t1", deliveryTestGitHubForge)
-	ident := &domain.DeliveryIdentity{
-		Provider:   "github",
-		Owner:      "owner",
-		Repo:       "repo",
-		Number:     1,
-		URL:        "https://github.com/owner/repo/pull/1",
-		BaseRef:    "main",
-		HeadRef:    "feat",
-		HeadSHA:    "abc1234567890123456789012345678901234567",
-		CapturedAt: "2026-07-18T12:00:00Z",
-	}
-	if err := home.WriteMeta(h.Root(), "t1", ident.ToMeta()); err != nil {
-		t.Fatal(err)
-	}
-	installFakeGH(t, ghReply{match: "pr view", stdout: `{"state":"CLOSED","headRefOid":"abc1234567890123456789012345678901234567"}`})
-	err = MergeStatus(h.Root(), "t1")
-	if err == nil || !strings.Contains(err.Error(), "is closed but not merged") {
-		t.Fatalf("MergeStatus err = %v, want closed but not merged", err)
-	}
-}
-
-// ----------------------------------------------------------------------------
 // Group F: delivery_prstatus.go (2 guards)
 // ----------------------------------------------------------------------------
 

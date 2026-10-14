@@ -99,6 +99,9 @@ type Runner struct {
 	// seatPath is the seat's launch PATH as the committed intent holds it. The
 	// fence profile and the launch script are both built from it.
 	seatPath []string
+	// seatEnv is the seat's launch TMPDIR and home, committed with the intent:
+	// the seat temp and the fence are built from it.
+	seatEnv taskauthority.SeatEnv
 
 	// launch submission evidence: the exact endpoint command submitted for
 	// the launch and its sha256 digest, durably recorded after submission.
@@ -607,11 +610,10 @@ func (r *Runner) resolveDispatchPolicy() error {
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
 // the task has a canonical Task Authority record that is not done or blocked.
-// It refuses a task whose meta names a live window or pane, so a duplicate live
+// It refuses a task with a live soldier session (liveSession), so a duplicate live
 // execution never starts; --force skips the whole check and is an emergency
 // bypass only. This check passes a queued or a working task; whether spawn may
-// proceed is decided later by beginLaunchIntent, which requires queued and
-// accepts working only to resume a launch that already holds its endpoint.
+// proceed is decided later by beginLaunchIntent, which requires queued.
 // Spawn performs the queued-to-working transition, so do not run
 // `munsu task start` for a task that will be spawned.
 func (r *Runner) checkCaptainBacklogAuthority() error {
@@ -621,30 +623,35 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.spawnRole != "captain" {
 		return nil
 	}
-	if window := recordedWindow(r.homeDir, r.args.ID); window != "" {
-		return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
-	}
 	agg, err := r.taskAggregate()
 	if err != nil {
 		return err
 	}
+	if window, live := liveSession(agg); live {
+		return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
+	}
 	return r.checkCaptainBacklogAuthorityForPhase(r.args.ID, agg.Phase)
 }
 
-// recordedWindow returns the live-session window a task's meta records, or ""
-// when it records none.
-func recordedWindow(homeDir, taskID string) string {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return ""
+// liveSession reports a task's live soldier session and its window: the
+// canonical endpoint is bound. A launch intent or an acquired endpoint without
+// the final bind is not live, so that launch re-enters; a bound task is refused
+// whatever its .meta records. Human words (domain.Words): grantor the Human,
+// channel direct chat with the Lead, 2026-10-13, words=selected, 1A:
+// "Xác nhận cả 7 refusal đã ghi theo tự quyết đi" (ratifies the "tự quyết
+// đi" record: the Lead decided to refuse a bound task whose .meta lost its
+// window).
+func liveSession(agg taskauthority.Aggregate) (string, bool) {
+	if agg.Endpoint == nil {
+		return "", false
 	}
-	return meta["window"]
+	return agg.Endpoint.Handle, true
 }
 
 func (r *Runner) checkCaptainBacklogAuthorityForPhase(taskID string, phase taskauthority.Phase) error {
 	switch phase {
 	case taskauthority.PhaseWorking:
-		// Passes this check only; beginLaunchIntent refuses a working task unless it resumes a completed launch.
+		// Passes this check only; beginLaunchIntent refuses a working task.
 		return nil
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", taskID)
@@ -827,31 +834,20 @@ func (r *Runner) checkBacklogAuthority() error {
 		return err
 	}
 
-	// Check already-live: existing meta with a window or pane means a soldier session exists
-	metaExists := recordedWindow(r.homeDir, r.args.ID) != ""
-
 	// State-based checks. Running `munsu task start` first is refused: spawn
-	// needs a queued task. A working task without live meta passes this check
-	// only so beginLaunchIntent can resume a launch that already holds its
-	// endpoint; it refuses any other working task.
+	// needs a queued task. A working task with no live session passes this
+	// check and beginLaunchIntent refuses it. A queued task that holds only a
+	// pre-bind acquired endpoint passes too: beginLaunchIntent re-enters the
+	// launch and re-adopts the pane.
 	switch agg.Phase {
 	case taskauthority.PhaseBlocked:
 		return fmt.Errorf("lifecycle guard: task %q is blocked; clear the blocker with 'munsu task unblock %s' before spawning", r.args.ID, r.args.ID)
 	case taskauthority.PhaseDone:
 		return fmt.Errorf("lifecycle guard: task %q is done; reopen it with 'munsu task reopen %s' before spawning", r.args.ID, r.args.ID)
-	case taskauthority.PhaseWorking:
-		// Allow when no live session; refuse only duplicate live execution.
-		if metaExists {
-			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
-		}
-		return nil
 	}
-
-	// Live session without matching state still refuses (stale meta after teardown failure).
-	if metaExists {
-		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
+	if window, live := liveSession(agg); live {
+		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, window)
 	}
-
 	return nil
 }
 
@@ -893,15 +889,19 @@ func (r *Runner) checkScopeGate() error {
 }
 
 func (r *Runner) preflightNoMistakes() error {
-	if r.effectiveMode != "no-mistakes" {
-		return nil
-	}
 	preflight := r.args.NoMistakesPreflight
 	if preflight == nil {
 		preflight = defaultNoMistakesPreflight
 	}
-	if err := preflight(r.projPath, r.reviewStep); err != nil {
-		return fmt.Errorf("review adapter %s probe/preflight failed: %w", r.reviewStep.Adapter, err)
+	return reviewPreflight(r.effectiveMode, r.projPath, r.reviewStep, preflight)
+}
+
+func reviewPreflight(mode, projPath string, review taskauthority.DeliveryStep, preflight func(string, taskauthority.DeliveryStep) error) error {
+	if mode != "no-mistakes" {
+		return nil
+	}
+	if err := preflight(projPath, review); err != nil {
+		return fmt.Errorf("review adapter %s probe/preflight failed: %w", review.Adapter, err)
 	}
 	return nil
 }
@@ -911,11 +911,12 @@ func (r *Runner) preflightNoMistakes() error {
 // attempt consumes the durable reservation identity). It is re-entrant under
 // the committed launch intent: when the aggregate already holds the durable
 // worktree binding (recovery after a crash), the bound path is adopted and no
-// provider call happens. A recovery of an acquired-but-unbound reservation is
-// passed to the provider, which must return the SAME reservation-owned
-// worktree (git fallback: deterministic reservation-keyed path) or fail
-// closed (treehouse: no reservation-keyed recovery) — never allocate a
-// replacement. The binding identity is verified at bindWorktree.
+// provider call happens. A re-entry with no binding is passed to the provider
+// as a recovery: it returns the SAME reservation-owned worktree (git fallback:
+// deterministic reservation-keyed path), acquires afresh a reservation nothing
+// holds (treehouse: lease-holder lookup), or fails closed (treehouse: a held
+// reservation it cannot re-acquire) — never a replacement for a held lease.
+// The binding identity is verified at bindWorktree.
 func (r *Runner) acquireWorktree() error {
 	if r.args.Authority != nil {
 		if taskID, err := domain.NewTaskID(r.args.ID); err == nil {
@@ -1088,27 +1089,7 @@ func (r *Runner) preflightHarness() error {
 			return err
 		}
 	}
-
-	// A fenced claude seat logs in from a config dir of its own; ask the way it will.
-	var claudeSeat *harness.ClaudeSeat
-	if r.harness == harness.Claude && fence.Supported() == nil {
-		cfg, err := harness.HumanClaudeConfig(home.StateDir(r.homeDir))
-		if err != nil {
-			return err
-		}
-		claudeSeat = &harness.ClaudeSeat{Config: cfg, BuildDir: harness.SeatBuildDir(r.homeDir)}
-	}
-	result, err := harness.Preflight(r.harness, claudeSeat)
-	if err != nil {
-		return err
-	}
-	if result.BinaryOnPath == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "binary-absent"}
-	}
-	if result.AuthConfigured == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "auth-absent"}
-	}
-	return nil
+	return SoldierHarnessPreflight(r.homeDir, r.harness)
 }
 
 // beginLaunchIntent resolves the current canonical Task aggregate/Generation
@@ -1150,8 +1131,12 @@ func (r *Runner) beginLaunchIntent() error {
 	// launch adopts the committed list, so its profile and script bytes are the
 	// same whatever PATH the resuming process has.
 	endpointIncarnation, seatPath := "", seatPathDirs(r.homeDir)
+	seatEnv, err := currentSeatEnv()
+	if err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
 	if agg.Launch != nil {
-		endpointIncarnation, seatPath = agg.Launch.EndpointIncarnation, agg.Launch.SeatPathDirs
+		endpointIncarnation, seatPath, seatEnv = agg.Launch.EndpointIncarnation, agg.Launch.SeatPathDirs, agg.Launch.SeatEnv
 	} else {
 		inc, err := r.mintEndpointIncarnation()
 		if err != nil {
@@ -1160,18 +1145,12 @@ func (r *Runner) beginLaunchIntent() error {
 		endpointIncarnation = inc
 	}
 	r.incarnation = endpointIncarnation
-	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation, seatPath)
+	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation, seatPath, seatEnv)
 	if agg.Launch != nil {
 		if !r.launchIntentMatches(req, *agg.Launch) {
 			return fmt.Errorf("launch intent: task %s generation %s already holds a different launch intent; refuse to re-launch", r.args.ID, agg.Generation)
 		}
 		if agg.Phase != taskauthority.PhaseQueued {
-			if agg.Phase == taskauthority.PhaseWorking && agg.Endpoint != nil && agg.AcquiredEndpoint != nil && agg.LaunchEvidence != nil {
-				// Recovery after the final bind: the launch is complete under
-				// this exact identity; the remaining phases replay idempotently.
-				r.adoptLaunch(*agg.Launch)
-				return nil
-			}
 			return fmt.Errorf("launch intent: task %s generation %s is %s, spawn requires queued; duplicate or stale live spawn refused", r.args.ID, agg.Generation, agg.Phase)
 		}
 		r.launchReentry = true
@@ -1250,7 +1229,7 @@ func (r *Runner) recordDeliveryContract() error {
 // freshly minted on first attempt). Every derived value is reproducible on a
 // retry (same Operation ID and digest); the incarnation is provided by the
 // caller because it is opaque and cannot be re-derived.
-func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string, seatPath []string) taskauthority.CanonicalBeginSpawnRequest {
+func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string, seatPath []string, seatEnv taskauthority.SeatEnv) taskauthority.CanonicalBeginSpawnRequest {
 	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
 	if r.kind == taskauthority.KindReview {
 		wtRes, wtFence = "", "" // a review task reserves no worktree
@@ -1276,6 +1255,7 @@ func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthor
 		EndpointFenceToken:    epFence,
 		EndpointIncarnation:   endpointIncarnation,
 		SeatPathDirs:          seatPath,
+		SeatEnv:               seatEnv,
 		Reason:                "spawn",
 	}
 }
@@ -1290,7 +1270,7 @@ func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnReques
 		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
 		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
 		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation &&
-		slices.Equal(l.SeatPathDirs, req.SeatPathDirs)
+		slices.Equal(l.SeatPathDirs, req.SeatPathDirs) && l.SeatEnv == req.SeatEnv
 }
 
 // adoptLaunch copies the committed launch intent identities onto the Runner
@@ -1301,6 +1281,17 @@ func (r *Runner) adoptLaunch(l taskauthority.LaunchIntent) {
 	r.launchID = l.LaunchID
 	r.windowLabel = l.WindowLabel
 	r.seatPath = slices.Clone(l.SeatPathDirs)
+	r.seatEnv = l.SeatEnv
+}
+
+// currentSeatEnv reads the launch environment a fresh seat is built from; a
+// resumed launch adopts the committed SeatEnv instead.
+func currentSeatEnv() (taskauthority.SeatEnv, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return taskauthority.SeatEnv{}, fmt.Errorf("resolving the Human's home: %w", err)
+	}
+	return taskauthority.SeatEnv{TempDir: os.TempDir(), UserHome: home}, nil
 }
 
 // spawnReservationIdentities derives the one-time worktree/endpoint
@@ -2020,6 +2011,7 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 	}
 	launch := fence.Launch{
 		Role: fence.RoleSoldier, Harness: r.launchBin, Home: r.homeDir, Primary: primary,
+		UserHome: r.seatEnv.UserHome,
 		Worktree: bound.Path(), GitDir: gitDir, CommonDir: commonDir, Branch: "mu/" + r.args.ID,
 		PathDirs: r.seatPath, ShimDir: gitShimDir(r.homeDir),
 	}
@@ -2194,6 +2186,7 @@ func (r *Runner) submitLaunch() error {
 			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
 			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
+			SeatEnv: r.seatEnv,
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
 		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
@@ -2311,6 +2304,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath,
+		SeatEnv:  r.seatEnv,
 	})
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)
@@ -2533,8 +2527,8 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 // queued → working. Only this operation transitions the phase; it requires the
 // bound worktree, the recorded acquired endpoint (AttachEndpoint), the
 // recorded launch evidence (RecordLaunch), and the exact intent fence when a
-// launch intent exists. Recovery after the final bind (task already working
-// under the identical launch) replays idempotently. The returned Outcome is
+// launch intent exists. A task another run of the identical launch bound in
+// the meantime replays idempotently. The returned Outcome is
 // the authoritative spawn receipt: its Generation is the exact generation the
 // attestation evidence binds to.
 func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {

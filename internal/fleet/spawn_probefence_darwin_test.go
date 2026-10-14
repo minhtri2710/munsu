@@ -443,6 +443,7 @@ func TestFencedClaudePreflightAsksForTheSeatsLogin(t *testing.T) {
 			testutil.WriteFakeExecutable(t, filepath.Join(bin, "claude"), script)
 			r := NewRunner(Args{ID: "task-1", HarnessFlag: "claude", HomeDir: homeDir})
 			r.projPath, r.effectiveMode = t.TempDir(), "direct-PR"
+			r.seatEnv = testSeatEnv()
 			if err := r.resolveHome(); err != nil {
 				t.Fatal(err)
 			}

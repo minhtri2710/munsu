@@ -74,8 +74,7 @@ func mustCanonicalOp(t *testing.T, id string, intent domain.Intent) domain.Opera
 
 // TestTaskAddCreatesCanonicalQueuedGeneration proves one `task add` produces
 // exactly one queued Task Generation at Revision one with owner, definition,
-// kind, and project, and that the post-commit .meta write copies none of
-// them.
+// kind, and project, and writes no .meta projection.
 func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -92,12 +91,8 @@ func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	if agg.Definition.Owner != filepath.Base(homeDir) || agg.Definition.Description != "ship beta" || agg.Definition.Kind != "ship" || agg.Definition.Project != "munsu" {
 		t.Fatalf("definition = %+v", agg.Definition)
 	}
-	meta, err := home.ReadMeta(homeDir, "beta")
-	if err != nil {
-		t.Fatalf("meta projection: %v", err)
-	}
-	if len(meta) != 0 {
-		t.Fatalf("task add copied task fields into meta: %v", meta)
+	if _, err := os.Stat(filepath.Join(homeDir, "state", "beta.meta")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("task add wrote a .meta projection (stat err=%v)", err)
 	}
 }
 
@@ -110,18 +105,17 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "original", "--home", homeDir}); err != nil {
 		t.Fatalf("first add: %v\n%s", err, out)
 	}
-	beforeMeta := readFileForTest(t, filepath.Join(homeDir, "state", "beta.meta"))
 	beforeCurrent := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "beta", "current.json"))
 	if _, err := runTaskCommand(t, []string{"task", "add", "beta", "changed", "--home", homeDir}); err == nil {
 		t.Fatal("duplicate task add succeeded")
 	} else if !errors.Is(err, taskauthority.ErrConflict) {
 		t.Fatalf("duplicate add error = %v, want task conflict", err)
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", "beta.meta")); got != beforeMeta {
-		t.Fatal("duplicate add rewrote meta projection")
-	}
 	if got := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "beta", "current.json")); got != beforeCurrent {
 		t.Fatal("duplicate add changed authoritative aggregate")
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "state", "beta.meta")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("task add wrote a .meta projection (stat err=%v)", err)
 	}
 }
 

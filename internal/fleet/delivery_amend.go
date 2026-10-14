@@ -22,19 +22,8 @@ import (
 // Task Authority delivery authorization/outcome evidence.
 type DeliveryState string
 
-const (
-	// DeliveryStateReviewReady: PR/MR is open, identity captured, awaiting review.
-	DeliveryStateReviewReady DeliveryState = "review-ready"
-	// DeliveryStateAmending: amendment in progress, identity is being refreshed.
-	DeliveryStateAmending DeliveryState = "amending"
-	// DeliveryStateMerged: PR/MR is merged, awaiting parent verification.
-	DeliveryStateMerged DeliveryState = "merged"
-	// DeliveryStateRemoteUnknown: provider result was ambiguous or unreachable;
-	// the same mutation attempt must never be repeated. Operator attention required.
-	DeliveryStateRemoteUnknown DeliveryState = "remote-unknown"
-	// DeliveryStateDelivered: parent-verified delivery complete.
-	DeliveryStateDelivered DeliveryState = "delivered"
-)
+// DeliveryStateReviewReady: PR/MR is open, identity captured, awaiting review.
+const DeliveryStateReviewReady DeliveryState = "review-ready"
 
 // ProviderSnapshot captures a single point-in-time view of a PR/MR from the
 // provider. It is the read-only snapshot seam used by the retained helper
