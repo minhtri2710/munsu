@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // fakeHerdrForPopups installs a herdr on PATH that appends its arguments, one
@@ -146,6 +147,7 @@ func TestPopupHumanNeededSkipsWhatHasNoNotifier(t *testing.T) {
 func TestRunCyclePopsUpOnlyFreshHumanNeededSignals(t *testing.T) {
 	logPath, _ := fakeHerdrForPopups(t)
 	homeDir := t.TempDir()
+	seedBoundSoldier(t, homeDir, "idle", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s1:p3", SessionOwner: "s1"})
 	popupTask(t, homeDir, "needs", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p1"})
 	popupTask(t, homeDir, "finished", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p2"})
 	popupTask(t, homeDir, "idle", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p3"})

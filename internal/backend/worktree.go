@@ -110,12 +110,13 @@ func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
 // treehouse: the first acquisition passes `get --lease --lease-holder
 // <reservationID>` (the reservation is recorded as the lease holder), but the
 // treehouse CLI cannot re-acquire a worktree by holder (`get` always allocates
-// from the pool, `return` is by path), so a recovery fails closed instead of
-// allocating a replacement (DEPENDENCY_REQUEST evidence; owner-clean
-// alternative is operator reconciliation of the orphan lease before re-running
-// the launch). The holder is readable the other direction via `status --json`
-// lease_holder, which `worktree reclaim` uses to spare a reserved-but-unbound
-// treehouse worktree.
+// from the pool, `return` is by path). A recovery reads the holders through
+// `status --json`: a reservation no pooled worktree holds was never acquired
+// or was returned, so it is acquired as on the first attempt; a held one fails
+// closed instead of allocating a replacement (DEPENDENCY_REQUEST evidence;
+// owner-clean alternative is operator reconciliation of the orphan lease
+// before re-running the launch). `worktree reclaim` reads the same holders to
+// spare a reserved-but-unbound treehouse worktree.
 func GetWorktreeReserved(homeDir, repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
 	if strings.TrimSpace(reservationID) == "" {
 		return "", fmt.Errorf("worktree: reservation-aware acquisition requires a reservation identity")
@@ -192,19 +193,27 @@ func (p *treehouseProvider) ReservedPath(repoPath, reservationID string) (string
 	return "", false
 }
 
-// GetReserved acquires a worktree owned by one launch reservation. On the
-// FIRST acquisition the reservation is passed as the treehouse lease holder
-// (--lease-holder <reservationID>) so the lease is durably labeled. The
-// treehouse CLI cannot re-acquire a worktree by holder — `get` always allocates
-// from the pool (there is no get-by-holder) and `return` is by path — so a
-// recovery fails closed with ErrWorktreeReservationRecoveryUnsupported instead
-// of allocating a replacement (DEPENDENCY_REQUEST evidence). Reclaim reads the
-// holder the other direction, via `status --json` lease_holder (StatusWorktrees),
-// to spare a reserved-but-unbound worktree; re-adopting one on recovery is a
+// GetReserved acquires a worktree owned by one launch reservation. The
+// reservation is passed as the treehouse lease holder (--lease-holder
+// <reservationID>) so the lease is durably labeled. The treehouse CLI cannot
+// re-acquire a worktree by holder — `get` always allocates from the pool
+// (there is no get-by-holder) and `return` is by path — so a recovery first
+// reads the holders (StatusWorktrees). Only when a pooled worktree still holds
+// the reservation does it fail closed with
+// ErrWorktreeReservationRecoveryUnsupported instead of allocating a
+// replacement (DEPENDENCY_REQUEST evidence); re-adopting that worktree is a
 // separate concern not built here.
 func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
 	if recovery {
-		return "", fmt.Errorf("%w: treehouse CLI has no get-by-holder to re-acquire the reserved worktree (get allocates from the pool; return is by path); the launch reservation %q cannot be recovered without allocating a replacement — owner-clean recovery requires operator reconciliation of the orphan lease", ErrWorktreeReservationRecoveryUnsupported, reservationID)
+		entries, err := p.StatusWorktrees()
+		if err != nil {
+			return "", fmt.Errorf("worktree: reading treehouse lease holders for reservation %q: %w", reservationID, err)
+		}
+		for _, e := range entries {
+			if e.LeaseHolder == reservationID {
+				return "", fmt.Errorf("%w: treehouse CLI has no get-by-holder to re-acquire the reserved worktree %s (get allocates from the pool; return is by path); the launch reservation %q cannot be recovered without allocating a replacement — owner-clean recovery requires operator reconciliation of the orphan lease", ErrWorktreeReservationRecoveryUnsupported, e.Path, reservationID)
+			}
+		}
 	}
 	bin, err := treehouseBin()
 	if err != nil {
