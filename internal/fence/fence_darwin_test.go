@@ -227,8 +227,6 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "logs", "refs", "remotes", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
 		verdict, verdict+".tmp.9.ff",
-		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
-		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 		filepath.Join(l.root, "temp-elsewhere-f"),
 	)
 	mustRefuse(t, f,
@@ -245,6 +243,8 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		// The gate's state database (G1154).
 		gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
 		gateState+"-x", filepath.Join(out, "gate", "f"),
+		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
+		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 	)
 	// Neither the gate root nor objects/, refs/ or logs/ can be renamed away
 	// (into a writable temp root) and replaced, and an absent logs/ cannot be
@@ -654,12 +654,13 @@ func TestReviewerFenceWritesOnlySeatStateTempAndItsFiles(t *testing.T) {
 
 	mustWrite(t, f,
 		filepath.Join(launch.HarnessStateDir, "f"),
-		verdict, verdict+".tmp.9.ff", filepath.Join(out, "gocache", "f"),
+		verdict, verdict+".tmp.9.ff",
 		filepath.Join(l.root, "temp-elsewhere-f"),
 	)
 	// These sit under a temp root, which is writable; only the reviewer's
 	// explicit denies refuse them.
 	mustRefuse(t, f,
+		filepath.Join(out, "gocache", "f"),
 		filepath.Join(l.worktree, "f"), filepath.Join(launch.GitDir, "f"), filepath.Join(l.primary, "f"),
 		filepath.Join(l.common, "HEAD"),
 		filepath.Join(l.home, "state", "f"), filepath.Join(l.home, "data", "f"),

@@ -627,60 +627,6 @@ func TestResolveGateRefusals(t *testing.T) {
 	}
 }
 
-func TestGoCaches(t *testing.T) {
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CACHE_HOME", "")
-	t.Setenv("XDG_CONFIG_HOME", "")
-	cache, _ := os.UserCacheDir()
-	config, _ := os.UserConfigDir()
-	set := func(gocache, modcache, gopath, telemetry string) {
-		t.Setenv("GOCACHE", gocache)
-		t.Setenv("GOMODCACHE", modcache)
-		t.Setenv("GOPATH", gopath)
-		t.Setenv("GOTELEMETRYDIR", telemetry)
-	}
-	join := func(dirs []string) string { return strings.Join(dirs, "\n") }
-
-	set("", "", "", "")
-	def := []string{
-		filepath.Join(cache, "go-build"), filepath.Join(home, "go", "pkg", "mod"),
-		filepath.Join(home, "go", "pkg"), filepath.Join(config, "go", "telemetry"),
-	}
-	if got := goCaches(home); join(got) != join(def) {
-		t.Fatalf("defaults = %q, want %q", got, def)
-	}
-	t.Run("off counts as unset", func(t *testing.T) {
-		set("off", "off", "", "off")
-		if got := goCaches(home); join(got) != join(def) {
-			t.Fatalf("got %q, want the defaults %q", got, def)
-		}
-	})
-	t.Run("the environment wins and GOPATH's first entry is used", func(t *testing.T) {
-		set(home+"/gc", home+"/gm", home+"/gp1"+string(os.PathListSeparator)+home+"/gp2", home+"/gt")
-		want := []string{home + "/gc", home + "/gm", home + "/gp1/pkg", home + "/gt"}
-		if got := goCaches(home); join(got) != join(want) {
-			t.Fatalf("got %q, want %q", got, want)
-		}
-	})
-	t.Run("a relative path is dropped, not resolved against the cwd", func(t *testing.T) {
-		set("rel/gc", home+"/gm", "", home+"/gt")
-		got := goCaches(home)
-		for _, d := range got {
-			if strings.Contains(d, "rel/gc") {
-				t.Fatalf("relative GOCACHE survived: %q", got)
-			}
-		}
-		if len(got) != 3 {
-			t.Fatalf("got %q, want the other three roots", got)
-		}
-	})
-}
-
 func TestNewRefusesAnUnknownRole(t *testing.T) {
 	l := newLayout(t)
 	for _, role := range []Role{"", "captain"} {
