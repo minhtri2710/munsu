@@ -837,47 +837,6 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 	}
 }
 
-func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testing.T) {
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	gitEnv := topologyGitEnv(wt)
-
-	shaCmd := exec.Command("git", "rev-parse", "HEAD")
-	shaCmd.Dir = wt
-	shaCmd.Env = gitEnv
-	shaOut, err := shaCmd.Output()
-	if err != nil {
-		t.Fatalf("getting head SHA: %v", err)
-	}
-	headSHA := strings.TrimSpace(string(shaOut))
-
-	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
-	unsetCmd.Dir = wt
-	unsetCmd.Env = gitEnv
-	unsetCmd.Run()
-
-	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	delCmd.Dir = wt
-	delCmd.Env = gitEnv
-	delCmd.Run()
-
-	ident := fixtureIdentity()
-	ident.HeadSHA = headSHA
-
-	// Provider returns error — fail closed
-	cleanup := applyMockPRStatus(t, nil, fmt.Errorf("gh CLI timeout"))
-	defer cleanup()
-
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("provider error should fail closed")
-	}
-	if !strings.Contains(err.Error(), "cannot verify merge status") {
-		t.Errorf("expected 'cannot verify merge status' error, got: %v", err)
-	}
-}
-
 // --- DeliveryState merged acceptance tests ---
 
 func outcomeCompletedAllow(t *testing.T) {

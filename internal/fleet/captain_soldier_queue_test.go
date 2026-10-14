@@ -882,3 +882,56 @@ func TestSoldierAckHasAProductionWriter(t *testing.T) {
 func soldierAcked(store *home.Store, taskID, senderIdentity, messageID string) bool {
 	return store.IsAcked(&home.Envelope{ReceiverRank: home.RankSoldier, TaskID: taskID, SenderIdentity: senderIdentity, MessageID: messageID})
 }
+
+// TestFlushPendingSoldierCommands_AckedPendingIsClearedNotSent proves a pending
+// envelope the soldier already acked is removed without a second send, and the
+// result says so (Cleared), rather than reporting no action.
+func TestFlushPendingSoldierCommands_AckedPendingIsClearedNotSent(t *testing.T) {
+	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
+
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   home.RankSoldier,
+		ReceiverID:     home.ReceiverIDForTask(soldierTaskID),
+		TaskID:         soldierTaskID,
+		Payload:        "do: already done",
+	}
+	store := home.NewStore(captainHome)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if err := store.WriteAck(&home.ProcessingAck{
+		SchemaVersion:  home.AckSchemaVersion,
+		MessageID:      env.MessageID,
+		TaskID:         env.TaskID,
+		SenderRank:     env.SenderRank,
+		SenderIdentity: env.SenderIdentity,
+		ReceiverRank:   env.ReceiverRank,
+		ReceiverID:     env.ReceiverID,
+		PayloadHash:    env.PayloadHash,
+		ProcessedAt:    1,
+		Outcome:        home.OutcomeAccepted,
+	}); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	be := &fakeAgentEndpoint{acknowledged: true}
+	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
+
+	if result.Err != nil {
+		t.Fatalf("FlushPendingSoldierCommands: %v", result.Err)
+	}
+	if !result.Cleared || result.Sent || result.MessageID != env.MessageID {
+		t.Fatalf("result = %+v, want Cleared=true Sent=false MessageID=%s", result, env.MessageID)
+	}
+	if be.promptCalls != 0 {
+		t.Errorf("promptCalls=%d, want 0 for an already-acked envelope", be.promptCalls)
+	}
+	if pending, _ := store.ReadPending(senderIdentity, env.MessageID); pending != nil {
+		t.Error("acked pending should be removed by flush")
+	}
+}

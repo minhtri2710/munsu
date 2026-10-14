@@ -859,7 +859,7 @@ func (r *Runner) checkSupervision() error {
 	// Supervision gate: spawn fails closed when the watcher lease is degraded.
 	// Durable Dispatch Holds are evaluated atomically inside the Task Authority
 	// ConfirmSpawn operation, never here.
-	return CheckSupervisionForDispatch(r.homeDir, home.DispatchActionSpawn)
+	return CheckSupervisionForDispatch(r.homeDir)
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.
@@ -893,15 +893,19 @@ func (r *Runner) checkScopeGate() error {
 }
 
 func (r *Runner) preflightNoMistakes() error {
-	if r.effectiveMode != "no-mistakes" {
-		return nil
-	}
 	preflight := r.args.NoMistakesPreflight
 	if preflight == nil {
 		preflight = defaultNoMistakesPreflight
 	}
-	if err := preflight(r.projPath, r.reviewStep); err != nil {
-		return fmt.Errorf("review adapter %s probe/preflight failed: %w", r.reviewStep.Adapter, err)
+	return reviewPreflight(r.effectiveMode, r.projPath, r.reviewStep, preflight)
+}
+
+func reviewPreflight(mode, projPath string, review taskauthority.DeliveryStep, preflight func(string, taskauthority.DeliveryStep) error) error {
+	if mode != "no-mistakes" {
+		return nil
+	}
+	if err := preflight(projPath, review); err != nil {
+		return fmt.Errorf("review adapter %s probe/preflight failed: %w", review.Adapter, err)
 	}
 	return nil
 }
@@ -1088,27 +1092,7 @@ func (r *Runner) preflightHarness() error {
 			return err
 		}
 	}
-
-	// A fenced claude seat logs in from a config dir of its own; ask the way it will.
-	var claudeSeat *harness.ClaudeSeat
-	if r.harness == harness.Claude && fence.Supported() == nil {
-		cfg, err := harness.HumanClaudeConfig(home.StateDir(r.homeDir))
-		if err != nil {
-			return err
-		}
-		claudeSeat = &harness.ClaudeSeat{Config: cfg, BuildDir: harness.SeatBuildDir(r.homeDir)}
-	}
-	result, err := harness.Preflight(r.harness, claudeSeat)
-	if err != nil {
-		return err
-	}
-	if result.BinaryOnPath == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "binary-absent"}
-	}
-	if result.AuthConfigured == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: r.harness, Reason: "auth-absent"}
-	}
-	return nil
+	return SoldierHarnessPreflight(r.homeDir, r.harness)
 }
 
 // beginLaunchIntent resolves the current canonical Task aggregate/Generation
