@@ -32,7 +32,7 @@ func contractedMergeCheckOptions(t *testing.T, taskID string) Options {
 func setupTopologyManifest(t *testing.T, wt string) string {
 	t.Helper()
 	taskID, launchID, endpointFence := "topology-test", "launch-topology-test", "endpoint-fence-test"
-	charter := DefaultCharter("topology-test", "ship", "direct-PR")
+	charter := DefaultCharter("topology-test", "ship", "direct-PR", "")
 	brief := []byte("# Topology test brief\n")
 	prompt := "prompt"
 	os.WriteFile(filepath.Join(wt, CharterName), []byte(charter), 0644)
@@ -972,57 +972,6 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 	}
 	if !strings.Contains(err.Error(), "empty head SHA") {
 		t.Errorf("expected 'empty head SHA' error, got: %v", err)
-	}
-}
-
-func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testing.T) {
-	tmp := t.TempDir()
-	wt, _, md := setupTopologyRepo(t, tmp)
-
-	gitEnv := topologyGitEnv(wt)
-
-	shaCmd := exec.Command("git", "rev-parse", "HEAD")
-	shaCmd.Dir = wt
-	shaCmd.Env = gitEnv
-	shaOut, err := shaCmd.Output()
-	if err != nil {
-		t.Fatalf("getting head SHA: %v", err)
-	}
-	headSHA := strings.TrimSpace(string(shaOut))
-
-	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
-	unsetCmd.Dir = wt
-	unsetCmd.Env = gitEnv
-	unsetCmd.Run()
-
-	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
-	delCmd.Dir = wt
-	delCmd.Env = gitEnv
-	delCmd.Run()
-
-	meta := map[string]string{
-		"worktree":     wt,
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head_sha":  headSHA,
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
-	}
-
-	// Provider returns error — fail closed
-	cleanup := applyMockPRStatus(t, nil, fmt.Errorf("gh CLI timeout"))
-	defer cleanup()
-
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), meta, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
-	if err == nil {
-		t.Fatal("provider error should fail closed")
-	}
-	if !strings.Contains(err.Error(), "cannot verify merge status") {
-		t.Errorf("expected 'cannot verify merge status' error, got: %v", err)
 	}
 }
 

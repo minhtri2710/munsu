@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -358,6 +359,17 @@ func newPromoteCmd() *cobra.Command {
 	return cmd
 }
 
+// writeTeardownSteps lists the steps a failed teardown completed before it
+// stopped, so a partial outcome keeps what already happened visible.
+func writeTeardownSteps(w io.Writer, result *fleet.TeardownResult) {
+	if result == nil {
+		return
+	}
+	for _, step := range result.Steps {
+		fmt.Fprintf(w, "  - %s\n", step)
+	}
+}
+
 func newTeardownCmd() *cobra.Command {
 	var force bool
 	var targetGen uint
@@ -424,11 +436,15 @@ generation must pass its explicit generation here.
 
 			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if err != nil {
+				writeTeardownSteps(cmd.ErrOrStderr(), result)
 				return err
 			}
 
 			var b strings.Builder
 			b.WriteString(fmt.Sprintf("Teardown %s completed:\n", id))
+			for _, note := range recoveredDeliveryNotes(result.Recovered) {
+				b.WriteString(fmt.Sprintf("  - %s\n", note))
+			}
 			for _, step := range result.Steps {
 				b.WriteString(fmt.Sprintf("  - %s\n", step))
 			}
@@ -506,7 +522,7 @@ Calling when the soldier is busy returns with "still busy".
 				SchemaVersion: SchemaVersion,
 				Kind:          "soldier-flush",
 				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("%s: cleared already-acked pending command (message=%s)", id, result.MessageID)},
 			})
 		}),
 	}

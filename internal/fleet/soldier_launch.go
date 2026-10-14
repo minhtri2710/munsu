@@ -39,6 +39,7 @@ type LaunchPromptInput struct {
 	OptionalSkills  []SkillEntry
 	HarnessName     string
 	ScoutScope      string
+	Scaffold        string // matched dispatch profile's charter scaffold
 }
 
 // BuildLaunchPrompt constructs the complete, role-specific Soldier launch prompt.
@@ -76,7 +77,7 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	}
 
 	// 1. Build charter.
-	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
+	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode, input.Scaffold)
 
 	// 2. Build the skill manifest section.
 	skillSection := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills)
@@ -220,16 +221,10 @@ Summary of report states:
 // expressible question deny, which every soldier launch carries;
 // unsupported harnesses fail closed.
 func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (string, []string, error) {
-	adapter, ok := harness.GetAdapter(harnessName)
-	if !ok {
-		return "", nil, fmt.Errorf("soldier launch: harness %q is not a verified harness", harnessName)
+	if err := soldierLaunchContract(harnessName); err != nil {
+		return "", nil, err
 	}
-	if !adapter.SoldierLaunch.Supported {
-		return "", nil, fmt.Errorf("soldier launch: harness %q does not have a verified prompt-arg contract", harnessName)
-	}
-	if len(adapter.QuestionDeny) == 0 {
-		return "", nil, fmt.Errorf("soldier launch: harness %q cannot deny its ask-the-user tool; decision-hold is the only question path", harnessName)
-	}
+	adapter, _ := harness.GetAdapter(harnessName)
 	tmpl := adapter.LaunchTemplate
 
 	args := []string{}

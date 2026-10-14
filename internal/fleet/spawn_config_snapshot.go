@@ -11,10 +11,11 @@ import (
 )
 
 type SpawnSoldierConfig struct {
-	Harness string
-	Model   string
-	Effort  string
-	Mode    string
+	Harness  string
+	Model    string
+	Effort   string
+	Mode     string
+	Scaffold string
 }
 
 type SpawnProjectConfig struct {
@@ -55,6 +56,12 @@ func resolvedStep(step taskauthority.DeliveryStep) fleetconfig.ResolvedStep {
 // none. When present it is the mode authority for the launch; every other
 // field of the snapshot resolves exactly as it does without one.
 func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy, contract *taskauthority.DeliveryContract) (SpawnProjectConfig, error) {
+	return resolveSpawnProjectConfig(homeDir, args, policy, contract, spawnTaskDescription(args))
+}
+
+// resolveSpawnProjectConfig selects the dispatch profile by taskDesc. The
+// readiness probe passes "" so no profile matches on the project's name.
+func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy, contract *taskauthority.DeliveryContract, taskDesc string) (SpawnProjectConfig, error) {
 	if contract != nil && contract.Mode != taskauthority.DeliveryModeForSteps(contract.Review, contract.Forge) {
 		return SpawnProjectConfig{}, fmt.Errorf("task delivery contract mode disagrees with captured review and forge steps")
 	}
@@ -100,7 +107,7 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	// The delivery mode is derived from the captured review and forge steps;
 	// no separate mode decision exists to compose.
 	mode := taskauthority.DeliveryModeForSteps(deliveryStep(resolved.ReviewStep), deliveryStep(resolved.ForgeStep))
-	selection := resolveSnapshotDispatchSelection(resolved, args)
+	selection := resolveSnapshotDispatchSelection(resolved, taskDesc)
 	selection.Harness = firstNonEmpty(args.HarnessFlag, selection.Harness, resolved.SoldierHarness)
 	selection.Model = firstNonEmpty(args.ModelFlag, selection.Model, resolved.Model)
 	selection.Effort = firstNonEmpty(args.EffortFlag, selection.Effort)
@@ -127,10 +134,11 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		ReviewStep:       deliveryStep(resolved.ReviewStep),
 		ForgeStep:        deliveryStep(resolved.ForgeStep),
 		Soldier: SpawnSoldierConfig{
-			Harness: selection.Harness,
-			Model:   selection.Model,
-			Effort:  selection.Effort,
-			Mode:    mode,
+			Harness:  selection.Harness,
+			Model:    selection.Model,
+			Effort:   selection.Effort,
+			Mode:     mode,
+			Scaffold: selection.Scaffold,
 		},
 	}, nil
 }
@@ -216,17 +224,21 @@ func validateResolvedDispatchProfiles(profiles []fleetconfig.DispatchProfile) er
 				return fleetconfig.Remediate(fleetconfig.RemediateInvalidProfile, "fix or remove the invalid dispatch profile candidate", err)
 			}
 		}
+		// Human words: quoted at config.ValidateScaffold.
+		if err := fleetconfig.ValidateScaffold(profile.Scaffold); err != nil {
+			return fleetconfig.Remediate(fleetconfig.RemediateInvalidProfile, "set the dispatch profile scaffold to lean or guided, or remove it", err)
+		}
 	}
 	return nil
 }
 
-func resolveSnapshotDispatchSelection(resolved fleetconfig.ResolvedProjectConfig, args Args) harness.DispatchSelection {
+func resolveSnapshotDispatchSelection(resolved fleetconfig.ResolvedProjectConfig, taskDesc string) harness.DispatchSelection {
 	cfg := &harness.DispatchConfig{
 		DefaultHarness: resolved.SoldierHarness,
 		DefaultModel:   resolved.Model,
 		Profiles:       resolved.DispatchProfiles,
 	}
-	return harness.ResolveDispatchSelection(cfg, spawnTaskDescription(args))
+	return harness.ResolveDispatchSelection(cfg, taskDesc)
 }
 
 func spawnTaskDescription(args Args) string {

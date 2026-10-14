@@ -1,6 +1,3 @@
-// Package spawn implements the soldier spawn orchestration — the full
-// sequence of resolving home, validating inputs, acquiring a worktree,
-// launching the harness, and wiring the agent session.
 package fleet
 
 import (
@@ -323,12 +320,16 @@ func claudeNeutralizationPreserved(args []string) bool {
 // worktree acquisition. It verifies environmental readiness for the
 // resolved delivery mode (e.g. gh auth, remotes).
 func (r *Runner) preflightDelivery() error {
-	result, err := Preflight(r.effectiveMode, r.projPath, r.forgeStep)
+	return deliveryPreflight(r.effectiveMode, r.projPath, r.forgeStep)
+}
+
+func deliveryPreflight(mode, projPath string, forge taskauthority.DeliveryStep) error {
+	result, err := Preflight(mode, projPath, forge)
 	if err != nil {
 		return fmt.Errorf("delivery preflight: %w", err)
 	}
 	if !result.Feasible {
-		return fmt.Errorf("delivery preflight for %q blocked: %s", r.effectiveMode, formatPreflightFailures(result.Checks))
+		return fmt.Errorf("delivery preflight for %q blocked: %s", mode, formatPreflightFailures(result.Checks))
 	}
 	return nil
 }

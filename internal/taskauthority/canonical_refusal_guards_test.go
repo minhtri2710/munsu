@@ -311,7 +311,7 @@ func TestTaskLifecycleRefusals(t *testing.T) {
 		{name: "reopen refuses a task reserved for transfer", class: ErrConflict, want: "is reserved for transfer; unrelated mutations fail closed", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "t1")
 			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
-			mustReserveTransfer(t, c, "t1", preconditionOf(1, 2), "dest-home")
+			seedReservationForTest(t, c, "t1", preconditionOf(1, 2), "dest-home")
 			return stepReopen(t, c, "t1", 3)
 		}},
 

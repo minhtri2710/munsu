@@ -1,4 +1,3 @@
-// Package teardown implements soldier teardown safety checks and lifecycle.
 package fleet
 
 import (
@@ -41,8 +40,9 @@ type Options struct {
 
 // TeardownResult describes the outcome of each teardown step.
 type TeardownResult struct {
-	Steps  []string
-	Proofs []string // merge-proof evidence emitted by safety checks
+	Steps     []string
+	Proofs    []string // merge-proof evidence emitted by safety checks
+	Recovered []DeliverResult
 }
 
 // RetirementCleanupPendingError is the typed partial outcome of a retirement
@@ -261,7 +261,7 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 // reopened generation. Without --force it refuses an unanswered delivery
 // authorization (settleDeliveryForRetirement). Production callers always supply
 // the canonical Authority; nil fails closed.
-func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical) (taskauthority.Outcome, error) {
+func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical, result *TeardownResult) (taskauthority.Outcome, error) {
 	if authority == nil {
 		return taskauthority.Outcome{}, fmt.Errorf("retirement requires a composed task authority")
 	}
@@ -332,7 +332,7 @@ func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical)
 	// committed receipt observes the retired generation before this gate.
 	if !opts.Force {
 		var err error
-		if agg, err = settleDeliveryForRetirement(opts, authority, taskID, agg); err != nil {
+		if agg, err = settleDeliveryForRetirement(opts, authority, taskID, agg, result); err != nil {
 			return taskauthority.Outcome{}, err
 		}
 	}
@@ -379,7 +379,7 @@ func lockWaitConflict(opts Options, bound, cur taskauthority.Aggregate) error {
 // lock, recovers its own pending journals under it, re-reads the task and
 // decides again; a lock held by another process refuses with the same text,
 // since the unanswered authorization is this task's own.
-func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonical, taskID domain.TaskID, bound taskauthority.Aggregate) (taskauthority.Aggregate, error) {
+func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonical, taskID domain.TaskID, bound taskauthority.Aggregate, result *TeardownResult) (taskauthority.Aggregate, error) {
 	cur, err := authority.DeliveryCurrency(taskID)
 	if err != nil {
 		return bound, fmt.Errorf("reading the delivery authorization: %w", err)
@@ -399,7 +399,8 @@ func settleDeliveryForRetirement(opts Options, authority *taskauthority.Canonica
 		return bound, fmt.Errorf("locking the delivery scope: %w", err)
 	}
 	defer lk.Release()
-	recoveryErr := recoverPendingDeliveryJournals(h, lk, opts.ID)
+	recovered, recoveryErr := recoverPendingDeliveryJournals(h, lk, opts.ID)
+	result.Recovered = recovered
 	// Recovery may commit an outcome or a release, which advances the
 	// revision the retirement is fenced to; nothing else may move.
 	agg, err := authority.Get(taskID)
@@ -792,7 +793,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// retired generation (Replayed outcome) and resumes cleanup without
 	// re-committing. Without --force it refuses while the task holds an
 	// unanswered delivery authorization. nil fails closed.
-	committed, err := retireTaskAuthoritatively(opts, authority)
+	committed, err := retireTaskAuthoritatively(opts, authority, result)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 	}
