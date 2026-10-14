@@ -112,7 +112,7 @@ func testWorktreeBinding(path, digest string) *taskauthority.WorktreeBinding {
 func setupRetirementTestManifest(t *testing.T, wt string) string {
 	t.Helper()
 	taskID, launchID, epFence := "retirement-test", "launch-retirement-test", "endpoint-fence-test"
-	charter := DefaultCharter("retirement-test", "ship", "direct-PR")
+	charter := DefaultCharter("retirement-test", "ship", "direct-PR", "")
 	brief := []byte("# Retirement test brief\n")
 	prompt := "prompt"
 	os.WriteFile(filepath.Join(wt, CharterName), []byte(charter), 0644)
