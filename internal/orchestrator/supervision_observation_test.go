@@ -2,6 +2,7 @@
 // (issue #546): scan count, measured stale age per task, and duplicate
 // suppression. These assert the observation capture at the internals level and
 // verify that wall-clock age never leaks into the wake message or fingerprint.
+
 package orchestrator
 
 import (

@@ -1,4 +1,3 @@
-// Package brief scaffolds task brief templates for soldier agents.
 package fleet
 
 import (
@@ -133,6 +132,8 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 
 	return fmt.Sprintf(`# Task brief: %s
 
+{TASK}
+
 ## Setup
 You are in a disposable git worktree of %s, at a detached HEAD on a clean default branch.
 
@@ -140,7 +141,7 @@ You are in a disposable git worktree of %s, at a detached HEAD on a clean defaul
 The path check is authoritative: `+"`"+`git rev-parse --git-dir`+"`"+` and `+"`"+`git rev-parse --git-common-dir`+"`"+` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append `+"`"+`blocked: launched in primary checkout, not an isolated worktree`+"`"+` to the status file and stop.
 
-1. First action: create your branch: `+"`"+`git checkout -b mu/%s`+"`"+`
+1. First action: create your branch, or switch to it if it already exists at this base: `+"`"+`git checkout -b mu/%[3]s || git checkout mu/%[3]s`+"`"+`
 %s
 %s
 

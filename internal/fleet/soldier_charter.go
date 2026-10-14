@@ -1,5 +1,3 @@
-// Package soldier implements the Soldier launch prompt, charter, envelope,
-// and skill manifest — the full verifiable launch context contract.
 package fleet
 
 import (
@@ -8,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -42,12 +41,26 @@ const keptTestRules = `- Assert through the public seam production uses; never r
 - A contract has one owning test; a missing case is a row or case added to that owner, not a sibling test.
 - Assert on prose or wording only when that wording is itself the contract, such as a by-value clause.`
 
+// guidedPlanScaffold is the section a guided dispatch profile adds after
+// Validation Scope; a lean or empty scaffold adds nothing.
+const guidedPlanScaffold = "## Plan Scaffold\n\n" +
+	"Before your first edit, write a numbered plan of small steps in one progress\n" +
+	"line: `munsu report working \"<numbered plan>\" --key plan`. Work one step at a\n" +
+	"time. After each step run the per-edit check above and the tests of each changed\n" +
+	"package or module, and paste the ran and skipped counts it printed. Report done\n" +
+	"only after the tests of every package or module you touched have passed.\n\n"
+
 // DefaultCharter returns the canonical, versioned Soldier charter.
 // Soldier authority only — no Captain or General authority.
 // The charter is embedded in the launch prompt and written to .soldier-charter.md.
-func DefaultCharter(taskID, taskKind, deliveryMode string) string {
+// scaffold is the matched dispatch profile's config scaffold.
+func DefaultCharter(taskID, taskKind, deliveryMode, scaffold string) string {
 	if taskKind == taskauthority.KindReview {
 		return reviewerCharter(taskID)
+	}
+	planScaffold := ""
+	if scaffold == config.ScaffoldGuided {
+		planScaffold = guidedPlanScaffold
 	}
 	bt := "`"
 	doneMessage := "PR {url}"
@@ -122,7 +135,9 @@ fixtures-only change.
 Each check row pastes the ran and skipped counts its command printed, and a
 check that did not run is a failed row.
 
-## Tests
+Per edit, run the fastest read-only check the project offers for each changed file: a formatter in check mode, then static analysis. Full suites run on CI.
+
+%[9]s## Tests
 
 A test you add or change follows these rules:
 
@@ -133,12 +148,17 @@ A test you add or change follows these rules:
 - Your parent Captain is at %[5]s$MUNSU_PARENT_STATUS%[5]s.
 - Your task ID is %[5]s$MUNSU_TASK_ID%[5]s.
 - Your home is at %[5]s$MUNSU_HOME%[5]s.
+- After any context compaction, re-read %[5]s.soldier-charter.md%[5]s before your next action.
 - Terminal reporting: %[5]smunsu report <state> "<msg>" --key <slug>%[5]s
   - Report material phases with --key <slug> so later done/failed/resolved supersede them.
   - States: working, needs-decision, blocked, paused, done, failed, resolved.
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
   - Use %[5]smunsu report needs-decision "{summary}"%[5]s when a human decision is required.
   - Terminal report: %[5]smunsu report done "%[6]s"%[5]s — %[7]s.
+
+## Git Lock Noise
+
+A line like "Unable to create '.../packed-refs.lock': Operation not permitted" is expected and harmless. Your fence refuses .git/packed-refs.lock by design, and checkout and push still succeed. It is fatal only when you delete a packed ref or when auto-gc runs pack-refs; then report blocked with the exact message.
 
 ## Incoming Commands
 
@@ -183,7 +203,7 @@ The task is complete only when:
 
 Do not merge the PR.
 
-`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules)
+`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules, planScaffold)
 }
 
 // reviewerCharter returns the charter of the read-only reviewer seat. The
