@@ -369,6 +369,22 @@ func runContract(t *testing.T, args []string) (string, error) {
 	return strings.TrimSpace(buffer.String()), err
 }
 
+func TestGuardUnknownFlagReturnsExactErrorCode(t *testing.T) {
+	out, err := runContract(t, []string{"guard", "--nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag, got nil")
+	}
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "error_code: unknown_flag" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("output must contain the exact line error_code: unknown_flag, got: %s", out)
+	}
+}
+
 func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 	for _, command := range []struct {
 		name string
