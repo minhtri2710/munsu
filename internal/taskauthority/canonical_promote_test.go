@@ -142,18 +142,7 @@ func TestCanonicalPromoteRefusesTransferReservation(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	prec := mustDoneScout(t, c, "scout-1")
 
-	reserve := CanonicalReserveTransferRequest{
-		HomeID:        c.HomeID(),
-		TaskID:        mustTaskID(t, "scout-1"),
-		Precondition:  prec,
-		ReservationID: "res-1",
-		Destination:   mustHomeID(t, "dest"),
-		FenceToken:    "fence-1",
-		Reason:        "transfer",
-	}
-	if _, err := c.ReserveTransfer(mustOperation(t, "op-reserve", reserve), reserve); err != nil {
-		t.Fatal(err)
-	}
+	seedReservationForTest(t, c, "scout-1", prec, "dest")
 	req := promoteRequest(t, c, "scout-1", preconditionOf(1, 3))
 	if _, err := c.Promote(mustOperation(t, "op-promote-reserved", req), req); err == nil || !errors.Is(err, ErrConflict) {
 		t.Fatalf("promote reserved task = %v, want ErrConflict", err)
