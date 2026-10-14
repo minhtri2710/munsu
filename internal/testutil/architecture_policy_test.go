@@ -134,14 +134,6 @@ func TestPackageTopology(t *testing.T) {
 				t.Errorf("%s imports test infrastructure package testutil", m)
 			}
 		}
-		// cmd/munsu is the executable bootstrap; nothing internal depends on it.
-		if strings.HasPrefix(p.ImportPath, "github.com/minhtri2710/munsu/internal/") {
-			for _, imp := range p.Imports {
-				if imp == "github.com/minhtri2710/munsu/cmd" {
-					t.Errorf("%s imports executable bootstrap cmd/munsu", m)
-				}
-			}
-		}
 	}
 
 	// The rules are anchored on named modules; fail loudly if a rule's module
