@@ -3638,6 +3638,13 @@ func TestSeedCaptain_InvokesIntegrationOnce(t *testing.T) {
 	if err != nil || port.calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, port.calls)
 	}
+	snapshot, err := config.LoadPublishedSnapshot(filepath.Join(parent, "captains/test-captain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Config().Backend; got != "herdr" {
+		t.Fatalf("seeded captain backend = %q, want herdr", got)
+	}
 }
 
 func safeStr(s string) string {
