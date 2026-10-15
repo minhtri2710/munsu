@@ -20,11 +20,6 @@ type fakeCmd struct {
 
 // fakeTreehouseOnPath installs a fake `treehouse` in a fresh directory and
 // prepends that directory to PATH for the duration of the test.
-//
-// Without it selectProvider finds no treehouse on windows, silently falls back
-// to real `git worktree`, and the test measures git rather than the fake it
-// installed (#549 group 8). testutil.FakeOnPath owns why a shell script needs a
-// companion to be visible there.
 func fakeTreehouseOnPath(t *testing.T, spec fakeCmd) {
 	t.Helper()
 	testutil.FakeOnPath(t, "treehouse", spec.script())

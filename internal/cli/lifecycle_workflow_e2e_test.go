@@ -99,8 +99,6 @@ type workflowTeardown struct {
 	returned int
 }
 
-func (w *workflowTeardown) RefuseGate() error { return nil }
-
 func (w *workflowTeardown) Probe(string, map[string]string) (fleet.RetirementEndpointStatus, error) {
 	return fleet.RetirementEndpointStatus{
 		Lifecycle:      fleet.LifecycleDead,
@@ -493,7 +491,6 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 		SoldierHarness:   harness.Pi,
 		Model:            "workflow-captain-model",
 		CaptainProfile:   config.CaptainProfile{Harness: harness.Pi},
-		ReviewStep:       config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
 		ForgeStep:        config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
 		FenceUnsupported: "allow",
 		Digest:           workflowPublishedDigest,
@@ -576,14 +573,7 @@ func TestWorkflowSessionStartHelper(t *testing.T) {
 func workflowSessionStart(t *testing.T, homeDir, role string, wantEnsured int) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run", "^"+workflowSessionHelper+"$", "-test.v")
-	env := make([]string, 0, len(os.Environ())+3)
-	for _, entry := range os.Environ() {
-		if len(entry) >= len("NO_MISTAKES_GATE=") && entry[:len("NO_MISTAKES_GATE=")] == "NO_MISTAKES_GATE=" {
-			continue
-		}
-		env = append(env, entry)
-	}
-	cmd.Env = append(env,
+	cmd.Env = append(os.Environ(),
 		workflowSessionHomeEnv+"="+homeDir,
 		workflowSessionRoleEnv+"="+role,
 		workflowSessionEnsureEnv+"="+strconv.Itoa(wantEnsured),
@@ -659,7 +649,7 @@ func workflowSupervisionCycle(t *testing.T, homeDir string) bool {
 	t.Helper()
 	emitted, err := orchestrator.RunCycleWithProbeAndSender(homeDir,
 		runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(),
-		fleetReviewVerdictPort{}, runtimeTaskStatePort{})
+		fleetReviewVerdictPort{})
 	if err != nil {
 		t.Fatalf("supervision cycle on %s: %v", homeDir, err)
 	}

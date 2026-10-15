@@ -184,7 +184,6 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		effort:              "high",
 		effectiveMode:       "direct-PR",
 		contractMode:        "direct-PR",
-		reviewStep:          taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"},
 		forgeStep:           taskauthority.DeliveryStep{Adapter: "github", Path: "/usr/local/bin/gh-axi", ProbeState: "ready"},
 		spawnRole:           "general",
 		dispatchPolicy:      DispatchPolicyGeneralDirect,
@@ -962,7 +961,15 @@ func TestRefusedExcludesLeaveNoPaneOrEndpoint(t *testing.T) {
 func TestRefusedFenceProbeLeavesNoPaneOrEndpoint(t *testing.T) {
 	isolateHuman(t)
 	f := newLaunchFixture(t, "fence-refused")
-	f.runner.effectiveMode = "no-mistakes" // the primary has no gate remote, so the fence cannot name its gate
+	// A symlinked parent of the seat's branch reflog makes the fence refuse
+	// to pre-create it.
+	heads := filepath.Join(f.repoPath, ".git", "logs", "refs", "heads")
+	if err := os.MkdirAll(heads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(heads, "mu")); err != nil {
+		t.Fatal(err)
+	}
 	err := runLaunchPhases(f, "")
 	if err == nil || !strings.HasPrefix(err.Error(), "probe-fence: launch fence: ") {
 		t.Fatalf("err = %v, want the probe-fence refusal", err)

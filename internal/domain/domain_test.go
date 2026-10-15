@@ -1,6 +1,8 @@
 package domain_test
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -36,16 +38,10 @@ func TestPRCanMerge(t *testing.T) {
 	}
 }
 
-func TestLegacyPRMetaAliasesRemoved(t *testing.T) {
-	legacyAliases := []string{"pr", "pr_base", "pr_head"}
-	canonicalKeys := []string{
-		"pr_provider", "pr_owner", "pr_repo",
-		"pr_number", "pr_url",
-		"pr_base_ref", "pr_head_ref", "pr_head_sha",
-		"pr_timestamp",
-	}
-
-	// 1) ToMeta must emit only canonical keys, never the legacy aliases.
+// TestToMetaEmitsExactlyMetaKeys pins that ToMeta writes every key MetaKeys
+// advertises and no other, so persisted identity and the keys readers clear or
+// check cannot drift apart.
+func TestToMetaEmitsExactlyMetaKeys(t *testing.T) {
 	id := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
@@ -57,44 +53,10 @@ func TestLegacyPRMetaAliasesRemoved(t *testing.T) {
 		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	meta := id.ToMeta()
-	for _, k := range legacyAliases {
-		if _, ok := meta[k]; ok {
-			t.Errorf("ToMeta emitted legacy alias key %q; it must be removed", k)
-		}
-	}
-	for _, k := range canonicalKeys {
-		if _, ok := meta[k]; !ok {
-			t.Errorf("ToMeta missing canonical key %q", k)
-		}
-	}
-
-	// 2) MetaKeys must no longer advertise the legacy aliases.
-	for _, k := range id.MetaKeys() {
-		for _, legacy := range legacyAliases {
-			if k == legacy {
-				t.Errorf("MetaKeys still advertises legacy alias %q", legacy)
-			}
-		}
-	}
-
-	// 3) The hard cut on read: a dev .meta carrying ONLY the legacy aliases and
-	// no canonical key must no longer resolve to a delivery identity. The
-	// fallback/conflict-reconciliation read branches were deleted, so IdentityFromMeta
-	// must treat legacy-only state as having no identity (nil, nil) and must not
-	// synthesize pr_url/headSHA/baseRef from pr/pr_head/pr_base.
-	legacyOnly := map[string]string{
-		"pr":      "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_base": "main",
-		"pr_head": "abc123def456abc123def456abc123def456abc1",
-		"kind":    "ship",
-	}
-	resolved, err := domain.IdentityFromMeta(legacyOnly)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta returned error on legacy-only meta: %v (legacy keys must be silently ignored, not reconciled)", err)
-	}
-	if resolved != nil {
-		t.Fatalf("legacy-only meta resolved to identity %+v; legacy aliases pr/pr_base/pr_head must be dead on read", resolved)
+	got := slices.Sorted(maps.Keys(id.ToMeta()))
+	want := slices.Sorted(slices.Values(id.MetaKeys()))
+	if !slices.Equal(got, want) {
+		t.Fatalf("ToMeta keys = %v, want MetaKeys %v", got, want)
 	}
 }
 

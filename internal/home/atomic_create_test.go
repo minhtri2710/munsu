@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 )
@@ -19,11 +18,8 @@ func TestAtomicCreatePublishesWithoutReplacing(t *testing.T) {
 	if err != nil || string(got) != "anchored bytes" {
 		t.Fatalf("content = %q, %v; want anchored bytes", got, err)
 	}
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0640 {
-			t.Fatalf("mode = %v, %v; want 0640", info, err)
-		}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0640 {
+		t.Fatalf("mode = %v, %v; want 0640", info, err)
 	}
 	if err := AtomicCreate(path, []byte("replacement"), 0600); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("AtomicCreate on existing target = %v, want os.ErrExist", err)

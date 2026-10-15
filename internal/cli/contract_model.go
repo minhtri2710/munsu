@@ -56,13 +56,9 @@ type TaskObserve struct {
 	Description         string `json:"description,omitempty"`
 	Branch              string `json:"branch,omitempty"`
 	PaneAlive           *bool  `json:"pane_alive,omitempty"`
-	NoMistakesStep      string `json:"no_mistakes_step,omitempty"`
 	StatusLines         int    `json:"status_lines,omitempty"`
 	StatusLogSuperseded bool   `json:"status_log_superseded,omitempty"`
-	PRState             string `json:"pr_state,omitempty"`
 	PR                  string `json:"pr,omitempty"`
-	PRHead              string `json:"pr_head,omitempty"`
-	PRUnverifiedReason  string `json:"pr_unverified_reason,omitempty"`
 }
 
 // FleetSnapshot is the fleet state with cheap aggregate counts.
@@ -456,13 +452,12 @@ type ProjectEntry struct {
 // Both block and gate_refused MUST always serialize (no omitempty)
 // because the TS parseSafetyCheck helper requires typeof boolean checks.
 type SafetyCheckData struct {
-	Identity       string `json:"identity"`
-	GateCapability string `json:"gate_capability"`
-	CanonicalPath  string `json:"canonical_path,omitempty"`
-	GateRefused    bool   `json:"gate_refused"`
-	Block          bool   `json:"block"`
-	Reason         string `json:"reason,omitempty"`
-	Error          string `json:"error,omitempty"`
+	Identity      string `json:"identity"`
+	CanonicalPath string `json:"canonical_path,omitempty"`
+	GateRefused   bool   `json:"gate_refused"`
+	Block         bool   `json:"block"`
+	Reason        string `json:"reason,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // WatchStatus reports the bounded watcher health and status.

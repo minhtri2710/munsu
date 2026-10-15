@@ -7,5 +7,4 @@ data:
   description: Writing contract fixtures
   branch: mu/phase-0
   pane_alive: true
-  no_mistakes_step: test
 help[1]: "Run `munsu task observe phase-0 --fields description,branch` for expanded fields"

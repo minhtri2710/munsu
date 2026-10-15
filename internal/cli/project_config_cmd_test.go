@@ -44,19 +44,16 @@ func TestProjectConfigSetGetRoundTrip(t *testing.T) {
 	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err != nil {
 		t.Fatalf("set forge: %v", err)
 	}
-	if _, err := runProjectConfig(t, "set", "sample", "review", `{"adapter":"no-mistakes"}`); err != nil {
-		t.Fatalf("set review: %v", err)
-	}
 	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", "floor --base <base>"); err != nil {
 		t.Fatalf("set tamper-check: %v", err)
 	}
 
-	out, err := runProjectConfig(t, "get", "sample", "review")
+	out, err := runProjectConfig(t, "get", "sample", "forge")
 	if err != nil {
-		t.Fatalf("get review: %v", err)
+		t.Fatalf("get forge: %v", err)
 	}
-	if got := extractConfigValueFromTOON(out); !strings.Contains(got, "no-mistakes") {
-		t.Errorf("get review = %q, want the stored no-mistakes tool entry", got)
+	if got := extractConfigValueFromTOON(out); !strings.Contains(got, "github") {
+		t.Errorf("get forge = %q, want the stored github tool entry", got)
 	}
 
 	out, err = runProjectConfig(t, "get", "sample", "tamper-check")
@@ -72,8 +69,8 @@ func TestProjectConfigSetGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.Review == nil || overlay.Review.Adapter != "no-mistakes" || overlay.Forge == nil || overlay.Forge.Adapter != "github" || overlay.TamperCheck != "floor --base <base>" {
-		t.Errorf("overlay = %+v, want review no-mistakes, forge github, TamperCheck=%q", overlay, "floor --base <base>")
+	if overlay.Forge == nil || overlay.Forge.Adapter != "github" || overlay.TamperCheck != "floor --base <base>" {
+		t.Errorf("overlay = %+v, want forge github, TamperCheck=%q", overlay, "floor --base <base>")
 	}
 }
 
@@ -87,15 +84,8 @@ func TestProjectConfigClearReturnsToInherit(t *testing.T) {
 	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err != nil {
 		t.Fatalf("set forge: %v", err)
 	}
-	if _, err := runProjectConfig(t, "set", "sample", "review", `{"adapter":"no-mistakes"}`); err != nil {
-		t.Fatalf("set review: %v", err)
-	}
 	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", "floor --base <base>"); err != nil {
 		t.Fatalf("set tamper-check: %v", err)
-	}
-	// Clearing forge while review still needs it is refused, so review clears first.
-	if _, err := runProjectConfig(t, "set", "sample", "review", ""); err != nil {
-		t.Fatalf("clear review: %v", err)
 	}
 	if _, err := runProjectConfig(t, "set", "sample", "forge", ""); err != nil {
 		t.Fatalf("clear forge: %v", err)
@@ -103,20 +93,20 @@ func TestProjectConfigClearReturnsToInherit(t *testing.T) {
 	if _, err := runProjectConfig(t, "set", "sample", "tamper-check", ""); err != nil {
 		t.Fatalf("clear tamper-check: %v", err)
 	}
-	out, err := runProjectConfig(t, "get", "sample", "review")
+	out, err := runProjectConfig(t, "get", "sample", "forge")
 	if err != nil {
-		t.Fatalf("get cleared review: %v", err)
+		t.Fatalf("get cleared forge: %v", err)
 	}
 	if out != "" {
-		t.Errorf("get cleared review = %q, want empty (inherit base)", out)
+		t.Errorf("get cleared forge = %q, want empty (inherit base)", out)
 	}
 
 	overlay, err := config.LoadProjectOverlay(home, "sample")
 	if err != nil {
 		t.Fatalf("LoadProjectOverlay: %v", err)
 	}
-	if overlay.Review != nil || overlay.Forge != nil || overlay.TamperCheck != "" {
-		t.Errorf("cleared overlay review = %+v forge = %+v TamperCheck = %q, want empty", overlay.Review, overlay.Forge, overlay.TamperCheck)
+	if overlay.Forge != nil || overlay.TamperCheck != "" {
+		t.Errorf("cleared overlay forge = %+v TamperCheck = %q, want empty", overlay.Forge, overlay.TamperCheck)
 	}
 }
 
@@ -137,25 +127,6 @@ func TestProjectConfigRefusesInvalidToolEntryWithoutWriting(t *testing.T) {
 	}
 	if overlay.Forge != nil {
 		t.Errorf("refused forge entry was written: %+v", overlay.Forge)
-	}
-
-	// Clearing the forge under a configured no-mistakes review is refused, and
-	// the overlay keeps both entries.
-	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err != nil {
-		t.Fatalf("set forge: %v", err)
-	}
-	if _, err := runProjectConfig(t, "set", "sample", "review", `{"adapter":"no-mistakes"}`); err != nil {
-		t.Fatalf("set review: %v", err)
-	}
-	if _, err := runProjectConfig(t, "set", "sample", "forge", ""); err == nil {
-		t.Fatal("clearing forge under a no-mistakes review should be refused")
-	}
-	overlay, err = config.LoadProjectOverlay(home, "sample")
-	if err != nil {
-		t.Fatalf("LoadProjectOverlay: %v", err)
-	}
-	if overlay.Forge == nil || overlay.Review == nil {
-		t.Errorf("refused clear changed the overlay: review = %+v forge = %+v", overlay.Review, overlay.Forge)
 	}
 }
 
@@ -180,7 +151,7 @@ func TestProjectConfigSetUnknownKeyRefused(t *testing.T) {
 func TestProjectConfigGetUnknownProjectRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
-	if _, err := runProjectConfig(t, "get", "ghost", "review"); err == nil {
+	if _, err := runProjectConfig(t, "get", "ghost", "forge"); err == nil {
 		t.Fatal("get for an unregistered project should be refused")
 	}
 }
@@ -239,7 +210,7 @@ func TestProjectConfigMalformedOverlayDocFailsClosed(t *testing.T) {
 		t.Fatalf("write malformed overlay doc: %v", err)
 	}
 
-	if _, err := runProjectConfig(t, "get", "sample", "review"); err == nil {
+	if _, err := runProjectConfig(t, "get", "sample", "forge"); err == nil {
 		t.Fatal("get against a malformed overlay document should fail closed")
 	}
 	if _, err := runProjectConfig(t, "set", "sample", "forge", `{"adapter":"github"}`); err == nil {

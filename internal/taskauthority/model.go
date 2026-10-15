@@ -418,9 +418,8 @@ type Aggregate struct {
 // it persists. A mode it does not know fails closed here rather than being
 // persisted as an unenforceable contract.
 var DeliveryModes = map[string]bool{
-	"no-mistakes": true,
-	"direct-PR":   true,
-	"local-only":  true,
+	"direct-PR":  true,
+	"local-only": true,
 }
 
 type DeliveryStep struct {
@@ -434,30 +433,28 @@ type DeliveryStep struct {
 }
 
 // DeliveryContract is the durable delivery contract of one task generation: the
-// mode and the captured review and forge steps, recorded once at that
+// mode and the captured forge step, recorded once at that
 // generation's first spawn and READ thereafter, never re-resolved. A reopen
 // starts a new generation with no contract. A transfer carries the source's
 // recorded contract onto the destination generation.
 type DeliveryContract struct {
 	OperationID string       `json:"operation_id"`
 	Mode        string       `json:"mode"`
-	Review      DeliveryStep `json:"review"`
 	Forge       DeliveryStep `json:"forge"`
 	RecordedAt  int64        `json:"recorded_at"`
 }
 
-// Matches reports whether the contract records mode with exactly these review
-// and forge steps.
-func (c DeliveryContract) Matches(mode string, review, forge DeliveryStep) bool {
-	return c.Mode == mode && deliveryStepsEqual(c.Review, review) && deliveryStepsEqual(c.Forge, forge)
+// Matches reports whether the contract records mode with exactly this forge
+// step.
+func (c DeliveryContract) Matches(mode string, forge DeliveryStep) bool {
+	return c.Mode == mode && deliveryStepsEqual(c.Forge, forge)
 }
 
-func DeliveryModeForSteps(review, forge DeliveryStep) string {
+// DeliveryModeForForge derives the delivery mode from the forge step: a
+// baseline forge delivers locally, a configured one opens a PR.
+func DeliveryModeForForge(forge DeliveryStep) string {
 	if forge.Baseline {
 		return "local-only"
-	}
-	if !review.Baseline && review.Adapter == "no-mistakes" {
-		return "no-mistakes"
 	}
 	return "direct-PR"
 }
@@ -612,7 +609,6 @@ func cloneDeliveryStep(step DeliveryStep) DeliveryStep {
 }
 
 func cloneDeliveryContract(dc DeliveryContract) DeliveryContract {
-	dc.Review = cloneDeliveryStep(dc.Review)
 	dc.Forge = cloneDeliveryStep(dc.Forge)
 	return dc
 }
@@ -637,19 +633,6 @@ func deliveryStepsEqual(a, b DeliveryStep) bool {
 	return true
 }
 
-func validateDeliveryStepPair(review, forge DeliveryStep) error {
-	if err := validateDeliveryStep(review, "review", map[string]bool{"no-mistakes": true}); err != nil {
-		return err
-	}
-	if err := validateDeliveryStep(forge, "forge", map[string]bool{"github": true, "gitlab": true}); err != nil {
-		return err
-	}
-	if !review.Baseline && review.Adapter == "no-mistakes" && forge.Baseline {
-		return validationError("delivery contract review adapter no-mistakes requires a configured forge tool")
-	}
-	return nil
-}
-
 // validateDeliveryContract checks the durable delivery contract shape: the
 // recording Operation ID, a mode inside the authoritative delivery mode set,
 // and a recording timestamp.
@@ -663,24 +646,24 @@ func validateDeliveryContract(dc DeliveryContract) error {
 	if dc.RecordedAt <= 0 {
 		return validationError("delivery contract missing recorded timestamp")
 	}
-	if err := validateDeliveryStepPair(dc.Review, dc.Forge); err != nil {
+	if err := validateForgeStep(dc.Forge); err != nil {
 		return err
 	}
-	if dc.Mode != DeliveryModeForSteps(dc.Review, dc.Forge) {
-		return validationError("delivery contract mode %q disagrees with captured review and forge steps", dc.Mode)
+	if dc.Mode != DeliveryModeForForge(dc.Forge) {
+		return validationError("delivery contract mode %q disagrees with the captured forge step", dc.Mode)
 	}
 	return nil
 }
 
-func validateDeliveryStep(step DeliveryStep, name string, adapters map[string]bool) error {
+func validateForgeStep(step DeliveryStep) error {
 	if step.Baseline {
 		if step.Adapter != "" || step.Path != "" || len(step.Args) != 0 || step.ProbeState != "baseline" {
-			return validationError("delivery contract %s baseline carries configured tool data", name)
+			return validationError("delivery contract forge baseline carries configured tool data")
 		}
 		return nil
 	}
-	if !adapters[step.Adapter] || step.ProbeState != "ready" || step.Path == "" || !filepath.IsAbs(step.Path) {
-		return validationError("delivery contract %s step is not a Ready supported adapter with an absolute executable path", name)
+	if (step.Adapter != "github" && step.Adapter != "gitlab") || step.ProbeState != "ready" || step.Path == "" || !filepath.IsAbs(step.Path) {
+		return validationError("delivery contract forge step is not a Ready supported adapter with an absolute executable path")
 	}
 	return nil
 }

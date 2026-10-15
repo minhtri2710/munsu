@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -468,9 +467,6 @@ func TestSpawn_ProjectConfigModelValidated(t *testing.T) {
 // is identical to the one validated. A quota-balanced profile makes each
 // selector invocation exec quota-axi; a fake quota-axi on PATH counts calls.
 func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake quota-axi executable is POSIX-only")
-	}
 	homeDir := t.TempDir()
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,

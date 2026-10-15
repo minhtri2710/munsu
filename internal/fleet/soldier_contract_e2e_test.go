@@ -360,7 +360,7 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 	input := LaunchPromptInput{
 		TaskID:          taskID,
 		TaskKind:        "ship",
-		DeliveryMode:    "no-mistakes",
+		DeliveryMode:    "direct-PR",
 		Repository:      "munsu",
 		ParentCaptainID: "captain-prod",
 		ParentHome:      "/tmp/general-home",
@@ -379,8 +379,8 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 	if env.TaskID != taskID {
 		t.Errorf("env.TaskID = %q, want %q", env.TaskID, taskID)
 	}
-	if env.DeliveryMode != "no-mistakes" {
-		t.Errorf("env.DeliveryMode = %q, want 'no-mistakes'", env.DeliveryMode)
+	if env.DeliveryMode != "direct-PR" {
+		t.Errorf("env.DeliveryMode = %q, want 'direct-PR'", env.DeliveryMode)
 	}
 	if env.ParentCaptainID != "captain-prod" {
 		t.Errorf("env.ParentCaptainID = %q, want 'captain-prod'", env.ParentCaptainID)

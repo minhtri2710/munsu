@@ -295,10 +295,7 @@ func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 }
 
 func TestSeed_InvalidPath(t *testing.T) {
-	// A home under a parent that is a regular file cannot be created on any
-	// platform. "/nonexistent/parent/sm" was not that: on Windows a leading
-	// separator names the current drive's root, so the whole chain was simply
-	// created and the refusal under test never happened.
+	// A home under a parent that is a regular file cannot be created.
 	blocker := filepath.Join(t.TempDir(), "parent")
 	if err := os.WriteFile(blocker, []byte("not a directory\n"), 0644); err != nil {
 		t.Fatal(err)

@@ -1,9 +1,0 @@
-README.md	symbol	home.Run	fixture: qualified ownership
-
-README.md	symbol	PR.CanMerge	fixture: qualified ownership
-
-README.md	symbol	(*Store).Missing	fixture: qualified ownership
-
-README.md	symbol	Store.NestedField	fixture: nested ownership
-
-README.md	symbol	X.Reader	fixture: interface embedding is not a direct member

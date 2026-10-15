@@ -74,14 +74,14 @@ func ResolveProjectSnapshot(homeDir, projectName string) (config.ResolvedSnapsho
 }
 
 // resolveCapturedProjectSnapshot resolves one Project's snapshot against the
-// tool steps its task generation captured, without probing the overlay's
-// current tool entries.
-func resolveCapturedProjectSnapshot(homeDir, projectName string, review, forge config.ResolvedStep) (config.ResolvedSnapshot, error) {
+// forge step its task generation captured, without probing the overlay's
+// current tool entry.
+func resolveCapturedProjectSnapshot(homeDir, projectName string, forge config.ResolvedStep) (config.ResolvedSnapshot, error) {
 	base, facts, err := loadProjectFacts(homeDir, projectName)
 	if err != nil {
 		return config.ResolvedSnapshot{}, err
 	}
-	return config.NewResolvedSnapshotWithCapturedSteps(base, facts, review, forge)
+	return config.NewResolvedSnapshotWithCapturedSteps(base, facts, forge)
 }
 
 func loadProjectFacts(homeDir, projectName string) (config.FleetBaseDocument, config.ProjectFacts, error) {
@@ -128,12 +128,9 @@ func probeConfiguredForge(entry config.ToolEntry) backend.State {
 		return backend.Unsupported
 	}
 }
-func configuredToolProbe(step string, entry config.ToolEntry) config.ResolvedStep {
-	switch {
-	case step == "review" && entry.Adapter == "no-mistakes":
-		probe := ProbeNoMistakesTool(entry)
-		return config.ResolvedStep{Path: probe.Path, ProbeState: probe.State.String(), Version: probe.Version, Reason: probe.Detail}
-	case step == "forge" && entry.Adapter == "gitlab":
+func configuredToolProbe(entry config.ToolEntry) config.ResolvedStep {
+	switch entry.Adapter {
+	case "gitlab":
 		runner := glabRunnerFor(entry)
 		state := probeGlabCapability(runner)
 		path, _ := runner.LookPath()
@@ -142,7 +139,7 @@ func configuredToolProbe(step string, entry config.ToolEntry) config.ResolvedSte
 			reason = fmt.Sprintf("glab probe state: %s", state)
 		}
 		return config.ResolvedStep{Path: path, ProbeState: strings.ToLower(state.String()), Reason: reason}
-	case step == "forge" && entry.Adapter == "github":
+	case "github":
 		state := ProbeGitHubDeliveryCapability()
 		path, _ := ghAxiLookPath()
 		reason := fmt.Sprintf("gh-axi and gh probe state: %s", state)

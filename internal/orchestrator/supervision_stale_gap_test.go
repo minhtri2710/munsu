@@ -11,12 +11,6 @@ type staleGapProbe bool
 
 func (a staleGapProbe) Probe(string, map[string]string) (bool, error) { return bool(a), nil }
 
-type runStepPort string
-
-func (s runStepPort) ReadTaskState(string, string) (*ObservedTaskState, error) {
-	return &ObservedTaskState{NoMistakesRunStep: string(s)}, nil
-}
-
 func writeAgedStatus(t *testing.T, home, id, line string, age time.Duration) {
 	t.Helper()
 	dir := filepath.Join(home, "state")
@@ -30,19 +24,6 @@ func writeAgedStatus(t *testing.T, home, id, line string, age time.Duration) {
 	at := time.Now().Add(-age)
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// A dead pane with a leftover working line is stale unless its no-mistakes
-// run is active, which absorbs it.
-func TestShouldAbsorbStaleActiveNoMistakesRun(t *testing.T) {
-	home := t.TempDir()
-	writeAgedStatus(t, home, "t1", "working: leftover", 0)
-	if shouldAbsorbStale(home, "t1", false, runStepPort(""), testSeatLiveness) {
-		t.Fatal("a dead pane with no active run absorbed")
-	}
-	if !shouldAbsorbStale(home, "t1", false, runStepPort("ci"), testSeatLiveness) {
-		t.Fatal("a dead pane whose no-mistakes run is in ci did not absorb")
 	}
 }
 
@@ -63,7 +44,7 @@ func TestScanTaskIdleThreshold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			writeAgedStatus(t, home, "t1", tc.line, tc.age)
-			got := scanTaskWithProbe(home, "t1", meta, staleGapProbe(true), runStepPort(""), testSeatLiveness)
+			got := scanTaskWithProbe(home, "t1", meta, staleGapProbe(true), testSeatLiveness)
 			if (got != nil) != tc.stale {
 				t.Fatalf("scanTaskWithProbe = %+v, want stale=%v", got, tc.stale)
 			}

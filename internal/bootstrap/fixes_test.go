@@ -12,7 +12,6 @@ func TestFixCommand(t *testing.T) {
 	}{
 		{"git", "Install git: https://git-scm.com/downloads"},
 		{"treehouse", "go install github.com/kunchenguid/treehouse@latest"},
-		{"no-mistakes", "go install github.com/kunchenguid/no-mistakes@latest"},
 		{"gh-axi", "npm install -g gh-axi"},
 		{"gh", "Install GitHub CLI: brew install gh  |  https://cli.github.com/"},
 		{"tmux", "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
@@ -38,11 +37,11 @@ func TestToolDiagnostic_Fix_Missing(t *testing.T) {
 }
 
 func TestToolDiagnostic_Fix_InstallFailed(t *testing.T) {
-	d := ToolDiagnostic{Tool: "no-mistakes", Status: ToolInstallFailed, Err: errors.New("timeout")}
+	d := ToolDiagnostic{Tool: "treehouse", Status: ToolInstallFailed, Err: errors.New("timeout")}
 	got := d.Fix()
-	want := "go install github.com/kunchenguid/no-mistakes@latest"
+	want := "go install github.com/kunchenguid/treehouse@latest"
 	if got != want {
-		t.Errorf("ToolDiagnostic{Fix} for install-failed no-mistakes = %q, want %q", got, want)
+		t.Errorf("ToolDiagnostic{Fix} for install-failed treehouse = %q, want %q", got, want)
 	}
 }
 

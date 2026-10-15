@@ -12,8 +12,7 @@ var syncTemp = (*os.File).Sync
 
 // AtomicWrite durably writes data to path with mode perm via a unique temp
 // file in the same directory, an fsync, and RenameDurable, whose durability is
-// carried by a parent-directory fsync on unix and a write-through move on
-// windows. On success readers observe either the old or the new content, never
+// carried by a parent-directory fsync. On success readers observe either the old or the new content, never
 // a partial write. The parent directory must already exist; callers own its
 // mode.
 func AtomicWrite(path string, data []byte, perm os.FileMode) error {

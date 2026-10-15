@@ -30,7 +30,6 @@ func Ensure(projectDir string, stage bool) (*EnsureResult, error) {
 		content = fmt.Sprintf("# %s -- project agent memory\n\n", base)
 		content += "This file is the conventions file for soldiers working on this project.\n\n"
 		content += "## Build / test / lint\n\n" + probeBuildCommands(projectDir) + "\n\n"
-		content += "Delivery mode: no-mistakes (push through the gate, never to origin directly).\n\n"
 	} else {
 		content = string(existing)
 	}

@@ -388,9 +388,8 @@ When a Soldier opens a PR:
 - After merge, run %[6]smunsu teardown <soldier-id>%[6]s.
 - Decision holds: if you need a decision from General, report %[6]sneeds-decision%[6]s and wait.
 - Never use bare %[6]sgh pr merge%[6]s without %[6]smunsu delivery%[6]s when meta lives here.
-- The selected delivery mode (direct-PR, no-mistakes, local-only) is authoritative:
-  - **no-mistakes**: Automated code review, tests, lint, docs, push, PR, CI — all gates must pass. Failure fails closed.
-  - **direct-PR**: Commit, push, and open PR directly (no automated gate pipeline).
+- The selected delivery mode (direct-PR, local-only) is authoritative:
+  - **direct-PR**: Commit, push, and open PR directly.
   - **local-only**: Changes stay local (no push, no PR).
 
 ## AXI-First / Fail-Closed

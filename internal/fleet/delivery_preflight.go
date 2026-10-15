@@ -29,8 +29,6 @@ type Check struct {
 // whether to proceed.
 func Preflight(mode, repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {
 	switch mode {
-	case "no-mistakes":
-		return preflightNoMistakes(forge)
 	case "direct-PR":
 		return preflightDirectPR(repoPath, forge)
 	case "local-only":
@@ -38,16 +36,6 @@ func Preflight(mode, repoPath string, forge taskauthority.DeliveryStep) (*Prefli
 	default:
 		return nil, fmt.Errorf("unknown delivery mode: %q", mode)
 	}
-}
-
-// preflightNoMistakes re-probes the captured forge: no-mistakes delivers
-// through it, so a forge that is not Ready must refuse before any mutation.
-func preflightNoMistakes(forge taskauthority.DeliveryStep) (*PreflightResult, error) {
-	check, err := checkConfiguredForge(forge)
-	if err != nil {
-		return nil, err
-	}
-	return &PreflightResult{Mode: "no-mistakes", Feasible: true, Checks: []Check{check}}, nil
 }
 
 func preflightDirectPR(repoPath string, forge taskauthority.DeliveryStep) (*PreflightResult, error) {

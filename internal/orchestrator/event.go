@@ -128,8 +128,7 @@ func repairTornTail(path string) error {
 // text fields are stored home.EscapeLine-encoded, so a tab or newline in any of
 // them stays inside its field. The ID is assigned and written under one
 // exclusive lock, so concurrent writers in any process never share an ID. The
-// lock is a sibling file, not the log itself: on Windows a LockFileEx lock is
-// mandatory and would fail concurrent readers of the log. A torn tail is cut
+// lock is a sibling file, not the log itself. A torn tail is cut
 // before the ID is assigned, and the write is synced before Append returns.
 func Append(homeDir, eventType, producer, key, payload string) (uint64, error) {
 	path := LogPath(homeDir)

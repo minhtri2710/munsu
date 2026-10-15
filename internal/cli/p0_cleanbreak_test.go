@@ -77,7 +77,6 @@ func TestPrerunGuardSurfacesUnreadableTruth(t *testing.T) {
 // TestWakeClaimResolveAckActualSyntax proves wake uses the real invocation
 // strings documented in the contract: claim by --consumer, resolve by
 // --claim-id/--event-id/--summary, and ack by positional lease-id + event-ids.
-// The legacy positional-claim / --owner / --claim forms are rejected.
 func TestWakeClaimResolveAckActualSyntax(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
@@ -109,19 +108,6 @@ func TestWakeClaimResolveAckActualSyntax(t *testing.T) {
 	}
 	if !strings.Contains(ack, "kind: wake.ack") {
 		t.Errorf("wake ack must emit kind wake.ack, got:\n%s", ack)
-	}
-
-	// Legacy positional claim form is rejected.
-	if out, err := runContract(t, []string{"wake", "claim", "wake-1"}); err == nil {
-		t.Errorf("wake claim with positional wake-id must be rejected, got:\n%s", out)
-	}
-	// Legacy --owner flag is rejected.
-	if out, err := runContract(t, []string{"wake", "claim", "--owner", "x"}); err == nil {
-		t.Errorf("wake claim --owner must be rejected (unknown flag), got:\n%s", out)
-	}
-	// Legacy ack --claim form is rejected.
-	if out, err := runContract(t, []string{"wake", "ack", "--claim", "claim-1"}); err == nil {
-		t.Errorf("wake ack --claim must be rejected (requires positional lease-id + event-ids), got:\n%s", out)
 	}
 }
 
@@ -219,8 +205,8 @@ func TestTaskObserveCorruptCanonicalFailsClosed(t *testing.T) {
 
 // decodeContractError decodes the structured error envelope so the assertions
 // below read fields instead of a rendering. The TOON encoder quotes any scalar
-// holding ":" or "\\" (toonString, contract_output.go:180), so a windows home
-// path is always escaped in the rendered text and no raw substring of it can
+// holding ":" or "\\" (toonString, contract_output.go:180), so a home path
+// holding either is always escaped in the rendered text and no raw substring of it can
 // ever match; --output=json makes the same envelope machine-readable.
 func decodeContractError(t *testing.T, out string) ErrorResponse {
 	t.Helper()

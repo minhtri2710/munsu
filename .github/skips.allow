@@ -1,6 +1,6 @@
 # Skips the four CI coverage lanes take on purpose, one row per test:
-# `package test reason`. Derived from the ubuntu-latest lanes of ci.yml: no tmux,
-# herdr or no-mistakes on PATH. The runner image ships Node.js, so no row skips
+# `package test reason`. Derived from the ubuntu-latest lanes of ci.yml: no tmux or
+# herdr on PATH. The runner image ships Node.js, so no row skips
 # for a missing node. Environment skips appear here as the runner sees them.
 # The ledger is report only: `.github/scripts/skip-ledger.sh check` prints a
 # skip the lanes take that no row lists, and a row no lane takes; neither fails.
@@ -15,22 +15,9 @@ github.com/minhtri2710/munsu/internal/backend TestTmux_NewWindow tmux not on PAT
 github.com/minhtri2710/munsu/internal/backend TestTmux_NewWindow_SessionAutoCreated tmux not on PATH
 github.com/minhtri2710/munsu/internal/backend TestTmux_SendKeys_NoWindow tmux not on PATH
 github.com/minhtri2710/munsu/internal/backend TestTmux_Teardown_AbsentTargetIsDone tmux not on PATH
-github.com/minhtri2710/munsu/internal/bootstrap TestResolveMunsuPath_ActualMunsuTestExe requires test binary named munsu.test.exe, got "/tmp/go-build2363403646/b207/bootstrap.test"
 github.com/minhtri2710/munsu/internal/cli TestHelperNewWatcher not a helper invocation
 github.com/minhtri2710/munsu/internal/cli TestOrphanScanChildProcess helper process for TestOrphanScanReportsRealGarbageAndLeavesItRunning
-github.com/minhtri2710/munsu/internal/cli TestResolveShellWritePathWindows Windows path semantics required
-github.com/minhtri2710/munsu/internal/cli TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites ambiguous drive-relative cwd is Windows-specific
-github.com/minhtri2710/munsu/internal/cli TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites ambiguous drive-relative cwd is Windows-specific
-github.com/minhtri2710/munsu/internal/cli TestShellWriteComputedCdDoesNotBecomeLiteralPath computed Windows cwd semantics are Windows-specific
-github.com/minhtri2710/munsu/internal/cli TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows drive-relative paths are Windows-specific
-github.com/minhtri2710/munsu/internal/cli TestShellWriteHeredocBackslashDelimiterRefusesProtectedWindowsWrite protected Windows paths require Windows filepath semantics
-github.com/minhtri2710/munsu/internal/cli TestShellWriteNoMalformedEmbeddedVolumeCandidates Windows volume resolution semantics required
-github.com/minhtri2710/munsu/internal/cli TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary drive-relative paths are Windows-specific
-github.com/minhtri2710/munsu/internal/cli TestShellWriteRefusedByVolumeLessRootedWindowsTargetIntoBoundPrimary volume-less rooted paths are Windows-specific
-github.com/minhtri2710/munsu/internal/cli TestShellWriteTargetsAfterAmbiguousWindowsCd Windows path semantics required
-github.com/minhtri2710/munsu/internal/cli TestShellWriteTrailingBackslashRootedTargetAfterAmbiguousCd Windows path semantics required
 github.com/minhtri2710/munsu/internal/fleet TestOrphanScanChildProcess helper process for TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets
-github.com/minhtri2710/munsu/internal/fleet TestProbeNoMistakesTool_Ready no-mistakes not on PATH
 github.com/minhtri2710/munsu/internal/orchestrator TestAFKDaemonChildProcess AFK daemon child process entry point
 github.com/minhtri2710/munsu/internal/orchestrator TestHelperDaemonIgnoresSIGTERM child process entry point for startSIGTERMIgnoringDaemon
 github.com/minhtri2710/munsu/internal/orchestrator TestLifecycleLockHelper helper mode

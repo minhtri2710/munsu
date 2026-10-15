@@ -47,7 +47,6 @@ func TestDefaultCharter_ForbiddenActions(t *testing.T) {
 		"Never spawn",
 		"Never invent work beyond",
 		"after committing, push the task branch to `origin` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
-		"after committing, push the task branch to `no-mistakes` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(charter, check) {
@@ -251,9 +250,6 @@ func TestSkillAuthorityClass_DeniedByList(t *testing.T) {
 	}
 	if got := SkillAuthorityClass("captain-provisioning", ""); got != "captain" {
 		t.Errorf("captain-provisioning = %q, want 'captain' (denied)", got)
-	}
-	if got := SkillAuthorityClass("no-mistakes", ""); got != "captain" {
-		t.Errorf("no-mistakes = %q, want 'captain' (denied)", got)
 	}
 	if got := SkillAuthorityClass("harness-adapters", ""); got != "captain" {
 		t.Errorf("harness-adapters = %q, want 'captain' (denied)", got)
@@ -480,11 +476,9 @@ func TestFailClosedDuringLaunch_RequiredSkillBinaryPresent(t *testing.T) {
 // only where the charter actually mandates the tool.
 func TestFailClosedDuringLaunch_RequiredSkillGateIsModeScoped(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	for _, mode := range []string{"direct-PR", "no-mistakes"} {
-		input := requiredSkillLaunchInput(t, mode, SkillEntry{Name: shipRequiredSkill, Applicable: true})
-		if err := FailClosedDuringLaunch(input); err == nil {
-			t.Errorf("mode %q: expected hard fail on missing required skill", mode)
-		}
+	direct := requiredSkillLaunchInput(t, "direct-PR", SkillEntry{Name: shipRequiredSkill, Applicable: true})
+	if err := FailClosedDuringLaunch(direct); err == nil {
+		t.Error("direct-PR: expected hard fail on missing required skill")
 	}
 
 	local := requiredSkillLaunchInput(t, "local-only", SkillEntry{Name: shipRequiredSkill, Applicable: true})

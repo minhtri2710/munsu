@@ -80,17 +80,14 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 	}
 }
 
-// TestCharter_DeliveryModeNeutrality verifies the charter documents mode-specific
-// behavior and does NOT mandate no-mistakes for all paths.
+// TestCharter_DeliveryModeNeutrality verifies the charter documents
+// mode-specific behavior.
 func TestCharter_DeliveryModeNeutrality(t *testing.T) {
 	charter := defaultCaptainCharter(t, "mode-test", t.TempDir())
 
-	// Must mention all three delivery modes.
+	// Must mention both delivery modes.
 	if !strings.Contains(charter, "direct-PR") {
 		t.Error("DefaultCaptainCharter must mention direct-PR delivery mode")
-	}
-	if !strings.Contains(charter, "no-mistakes") {
-		t.Error("DefaultCaptainCharter must mention no-mistakes delivery mode")
 	}
 	if !strings.Contains(charter, "local-only") {
 		t.Error("DefaultCaptainCharter must mention local-only delivery mode")
@@ -99,11 +96,6 @@ func TestCharter_DeliveryModeNeutrality(t *testing.T) {
 	// Must say the selected mode is authoritative.
 	if !strings.Contains(charter, "selected delivery mode") {
 		t.Error("DefaultCaptainCharter must state that the selected delivery mode is authoritative")
-	}
-
-	// Must NOT mandate no-mistakes for all code changes.
-	if strings.Contains(charter, "All code changes go through the no-mistakes") {
-		t.Error("DefaultCaptainCharter must NOT mandate no-mistakes for all code changes")
 	}
 }
 

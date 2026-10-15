@@ -259,8 +259,8 @@ func TestHandoffCarriesDeliveryContractToDestination(t *testing.T) {
 	if agg.DeliveryContract.Mode != "direct-PR" {
 		t.Fatalf("destination contract mode = %q, want direct-PR", agg.DeliveryContract.Mode)
 	}
-	if agg.DeliveryContract.Forge.Adapter != "github" || !agg.DeliveryContract.Review.Baseline {
-		t.Fatalf("destination contract steps = review %+v forge %+v, want baseline review and github forge", agg.DeliveryContract.Review, agg.DeliveryContract.Forge)
+	if agg.DeliveryContract.Forge.Adapter != "github" {
+		t.Fatalf("destination contract forge = %+v, want github", agg.DeliveryContract.Forge)
 	}
 }
 
@@ -278,7 +278,6 @@ func seedSourceContract(t *testing.T, c *taskauthority.Canonical, taskID string,
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Mode:         "direct-PR",
-		Review:       taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"},
 		Forge:        forge,
 	}
 	if _, err := c.RecordDeliveryContract(mustTransferOp(t, "seed-contract-"+taskID, contractReq), contractReq); err != nil {

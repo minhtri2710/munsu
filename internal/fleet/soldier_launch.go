@@ -799,7 +799,7 @@ func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
 	if taskKind == taskauthority.KindScout || taskKind == taskauthority.KindReview {
 		return false
 	}
-	return deliveryMode == "direct-PR" || deliveryMode == "no-mistakes"
+	return deliveryMode == "direct-PR"
 }
 
 // FailClosedDuringLaunch returns an error when a pre-session-allocation check

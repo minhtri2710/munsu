@@ -52,29 +52,17 @@ Unlisted skips and stale rows print and never fail the job; the job fails only w
 lane's `go test -json` stream is missing. Each row names a test a lane skips on purpose
 and why; the reason column is documentation, matching is on package and test.
 
-That job also checks documentation citations against the tree, compared both
-ways with `.github/citations.allow` (`.github/scripts/citations.sh check`).
-Classified file paths and Go identifiers in the covered set must resolve to an
-existing file or a declaration this tree makes; the parser recognizes funcs,
-methods, types, consts, vars and struct fields. The covered set is `README.md`,
-`AGENTS.md` and `CLAUDE.md` (the last two are the same file here). Line numbers are ignored. The tool reports
-classified-but-unjudged shapes as `unchecked` and does not extract some fenced
-or malformed spans; the implementation comment at
-`.github/scripts/citations/main.go` owns those boundaries. Rules are pinned by
-fixtures (`citations.sh selftest`), and waiver rows follow the reason rule in the
-`.github/citations.allow` header.
-
 That job also enforces the flake ledger: a test CI caught being flaky on
 `main` has a row there with a deadline, and an `open` row past its deadline
-turns `invariants` red on every PR until someone fixes the test. The ledger
-workflow and pull-request re-derivation rules are documented authoritatively in
-`.github/flake-ledger.md`; never close a row because the test has been green for
+turns `invariants` red on every PR until someone fixes the test. Rows come from
+the post-merge sweep in `.github/workflows/flake-ledger.yml`, which reports the
+diff for a person to apply; the rules live in `.github/flake-ledger.md`; never close a row because the test has been green for
 a while.
 
 ### Working the guard registers
 
 The machine-enforced rules live in the header of the script that enforces them
-(`uncovered-guards.sh`, `citations.sh`, `deadcode.sh`). These only a reader
+(`uncovered-guards.sh`, `deadcode.sh`). These only a reader
 enforces; they apply to every waiver, mutant and unreachable function:
 
 - Do not assert `err != nil` at a guard site: it is green for an error raised by an earlier guard. Assert what this guard refuses.
@@ -113,14 +101,14 @@ every platform it guards.
 
 ## Delivery rules
 
-Delivery: push the feature branch to `origin` and open a PR with `gh`; the required checks on `main` gate the merge, and the Human merges. no-mistakes is not used (Human, 2026-10-14: "bỏ hết no-mistakes đi, chỉ khi nào cần thì tôi sẽ tích hợp"); re-adding it is the Human's call.
+Delivery: push the feature branch to `origin` and open a PR with `gh`; the required checks on `main` gate the merge, and the Human merges.
 Do not enable `required_pull_request_reviews` on `main` while one account authors
 every PR: GitHub does not let an author approve their own PR, so every merge
 deadlocks and `enforce_admins` leaves no bypass.
 The required checks on `main` are load-bearing: a PR that `.github/workflows/auto-update-branch.yml`
 updated with its `GITHUB_TOKEN` merge commit and whose sweep was cancelled before
 it released the parked CI run carries no checks, and stays unmergeable only
-because the four required checks never report on it. Relaxing the required checks
+because the five required checks never report on it. Relaxing the required checks
 would give that PR a merge path.
 
 ## Package map
@@ -153,7 +141,7 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - Match existing style in the file you're editing.
 - Test home resolution and other core logic in `internal/*/` packages.
 - `munsu doctor` in `internal/cli/doctor_cmd.go` reuses `internal/bootstrap/bootstrap.go` diagnostics; fix strings live in `internal/bootstrap/fixes.go`.
-- Delivery mode is derived from the resolved review and forge steps (`taskauthority.DeliveryModeForSteps`), never selected. A configured step that is not Ready refuses before any task mutation.
+- Delivery mode is derived from the resolved forge step (`taskauthority.DeliveryModeForForge`), never selected. A configured forge step that is not Ready refuses before any task mutation.
 - Init auto-detect logic lives in `internal/cli/init.go` (`autoDetectConfig`) and respects `--reconfigure` flag.
 - Captain launch lives in `internal/fleet/captain_captain.go`; it resolves the verified adapter through `internal/harness` and fails closed for unknown harnesses. Test launch argument generation without depending on PATH.
 - Delivery acceptance has one owner in `internal/domain`. Provider orchestration and CLI-compatible delivery operations live in `internal/fleet/delivery_*.go`.

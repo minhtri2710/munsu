@@ -165,11 +165,10 @@ func TestClaudeSafetyCheckDenyViaStdin(t *testing.T) {
 }
 
 // TestClaudeSafetyCheckGateRefused verifies claude safety-check blocks
-// when gate is active (gate_refused).
+// when the path's scope refuses (gate_refused: an unrelated directory).
 func TestClaudeSafetyCheckGateRefused(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("NO_MISTAKES_GATE", "1")
 
 	var exitCode int
 	oldExit := exitWithCode
@@ -347,32 +346,6 @@ func TestClaudeGuardHealthyExit(t *testing.T) {
 	}
 }
 
-// TestSessionStartNudgeGateAgent verifies sessionstart-nudge stays silent
-// when NO_MISTAKES_GATE is set.
-func TestSessionStartNudgeGateAgent(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("NO_MISTAKES_GATE", "1")
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-
-	stdout, stderr := captureBoth(func() {
-		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	if strings.TrimSpace(stdout) != "" {
-		t.Errorf("expected silent output for gate agent, got: %s", stdout)
-	}
-	if strings.TrimSpace(stderr) != "" {
-		t.Errorf("expected silent stderr for gate agent, got: %s", stderr)
-	}
-}
-
 // TestSessionStartNudgeNonPrimary verifies sessionstart-nudge stays silent
 // when not in a primary checkout.
 func TestSessionStartNudgeNonPrimary(t *testing.T) {
@@ -470,7 +443,7 @@ func TestReadParentPID(t *testing.T) {
 }
 
 // TestSessionStartNudgeAlwaysExitsZero verifies every path exits 0.
-// Gate agent, non-primary, lock-held, and primary-unlocked must all
+// Non-primary, lock-held, and primary-unlocked must all
 // exit 0 because Claude/Codex-class hooks treat non-zero as blocking
 // session init.
 func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
@@ -481,12 +454,6 @@ func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
 	}
 
 	tests := []testCase{
-		{
-			name: "gate agent silent exit 0",
-			setup: func(t *testing.T, tmpDir string) {
-				t.Setenv("NO_MISTAKES_GATE", "1")
-			},
-		},
 		{
 			name: "non-primary silent exit 0",
 			setup: func(t *testing.T, tmpDir string) {

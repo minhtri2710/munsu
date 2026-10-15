@@ -6,35 +6,50 @@ import (
 	"testing"
 )
 
-// TestUpdateCaptainsFlagRegistered verifies the --captains flag exists on the
-// update command. This is the one-shot D5 command: self-update + FF captains +
-// nudge. Without the flag, the update command is self-update only.
-func TestUpdateCaptainsFlagRegistered(t *testing.T) {
-	root := NewRootCommand()
-	updateCmd, _, err := root.Find([]string{"update"})
-	if err != nil {
-		t.Fatalf("Find(update): %v", err)
-	}
-	if updateCmd.Flags().Lookup("captains") == nil {
-		t.Fatal("update must register --captains (D5: one-shot self-update + captain FF + nudge)")
-	}
-}
+// TestUpdateCaptainsFlagReachesCaptainStep drives `munsu update` through cobra
+// parsing with the self-update stubbed: only --captains reaches the captain
+// fast-forward step, which reports the empty registry. A registered captain
+// would run fleet.Converge against live session endpoints, so no row registers
+// one; that branch has no hermetic test.
+func TestUpdateCaptainsFlagReachesCaptainStep(t *testing.T) {
+	savedUpdateIn := doUpdateIn
+	doUpdateIn = func(string) error { return nil }
+	t.Cleanup(func() { doUpdateIn = savedUpdateIn })
 
-// TestUpdateCaptainsHelpDocuments verifies --captains is documented in help.
-func TestUpdateCaptainsHelpDocuments(t *testing.T) {
-	root := NewRootCommand()
-	root.SetArgs([]string{"update", "--help"})
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-	if err := root.Execute(); err != nil {
-		t.Fatalf("update --help failed: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "--captains") {
-		t.Errorf("update --help should document --captains, got: %s", out)
-	}
-	if !strings.Contains(out, "captain") {
-		t.Errorf("update --help should mention captain fast-forward behavior, got: %s", out)
+	const captainStep = "No captains registered"
+	for _, tc := range []struct {
+		name         string
+		captains     bool
+		wantCaptains bool
+	}{
+		{name: "without --captains stops after self-update", captains: false, wantCaptains: false},
+		{name: "with --captains reaches captain step", captains: true, wantCaptains: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, "main")
+			t.Setenv("MUNSU_HOME", homeDir)
+
+			args := []string{"update", "--repo", repo}
+			if tc.captains {
+				args = append(args, "--captains")
+			}
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs(args)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, buf.String())
+			}
+			out := buf.String()
+			if !strings.Contains(out, "Updated munsu to") {
+				t.Fatalf("%v did not report the self-update:\n%s", args, out)
+			}
+			if got := strings.Contains(out, captainStep); got != tc.wantCaptains {
+				t.Fatalf("%v: captain step reached = %t, want %t\n%s", args, got, tc.wantCaptains, out)
+			}
+		})
 	}
 }

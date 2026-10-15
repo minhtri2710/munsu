@@ -27,7 +27,6 @@ var SoldierSkillDenied = map[string]bool{
 	"captain-provisioning":   true,
 	"munsu-ops":              true,
 	"stuck-soldier-recovery": true,
-	"no-mistakes":            true,
 	"bootstrap-diagnostics":  true,
 	"harness-adapters":       true, // spawn authority
 

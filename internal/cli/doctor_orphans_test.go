@@ -164,13 +164,6 @@ func TestOrphanScanExitCodes(t *testing.T) {
 			wantExit: documentedOrphanExitNeedsMember,
 			wantCode: "orphan_scan_failed",
 		},
-		{
-			name:       "unsupported platform inventory exits 2 with stated inability",
-			fence:      stubFence(fleet.MarkerScan{}, fleet.ErrProcessInventoryUnsupported, fleet.RunUnresolved),
-			wantExit:   documentedOrphanExitNeedsMember,
-			wantCode:   "orphan_scan_failed",
-			wantReport: true,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,22 +211,5 @@ func TestOrphanScanExitPrioritisesGarbageOverUnknown(t *testing.T) {
 	}
 	if !strings.Contains(contract.value.Error.Message, "1 unresolved") {
 		t.Fatalf("the exit-1 message must still mention the unresolved ones, got %q", contract.value.Error.Message)
-	}
-}
-
-func TestOrphanScanUnsupportedPlatformReportsPlainUnavailability(t *testing.T) {
-	var out bytes.Buffer
-	fence := stubFence(fleet.MarkerScan{}, fleet.ErrProcessInventoryUnsupported, fleet.RunUnresolved)
-	err := runOrphanScanWith(&out, fence, t.TempDir())
-
-	if got := orphanShellExit(t, err); got != documentedOrphanExitNeedsMember {
-		t.Fatalf("unsupported platform must exit %d, got %d", documentedOrphanExitNeedsMember, got)
-	}
-	output := out.String()
-	if !strings.Contains(output, "orphan detection is unavailable on this platform") {
-		t.Fatalf("expected plain statement of unavailability, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Orphan scan (home:") {
-		t.Fatalf("expected home header in output, got:\n%s", output)
 	}
 }

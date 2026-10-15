@@ -124,13 +124,13 @@ func TestReturn_DigestRoutineOnly(t *testing.T) {
 
 // --- Return string format tests ---
 
-// A report without LossyStop reads "All clear" and names no lossy stop,
-// whether or not it drained anything.
+// A report with nothing actionable reads "All clear", whether or not it
+// drained anything.
 func TestReturnReport_StringClean(t *testing.T) {
 	for _, r := range []*ReturnReport{{}, {DigestedCount: 1}} {
 		s := r.String()
-		if !strings.Contains(s, "All clear") || strings.Contains(s, "Lossy stop") {
-			t.Errorf("clean report %+v string = %q, want 'All clear' and no lossy stop", r, s)
+		if !strings.Contains(s, "All clear") {
+			t.Errorf("clean report %+v string = %q, want 'All clear'", r, s)
 		}
 	}
 }
@@ -147,37 +147,6 @@ func TestReturnReport_StringActionable(t *testing.T) {
 	}
 	if !strings.Contains(s, "build broken") {
 		t.Errorf("report string missing escalation detail: %q", s)
-	}
-}
-
-// TestReturnReport_LossyStopRefusesAllClear covers the #530 contract: a
-// report that records a lossy stop must never read "All clear", even when the
-// digest itself drained empty -- the stop may have dropped up to one window of
-// entries that never reached the digest, so a clean digest is not evidence of
-// a clean record. HasActionable must surface the loss, and the string form
-// must name it.
-func TestReturnReport_LossyStopRefusesAllClear(t *testing.T) {
-	r := &ReturnReport{LossyStop: true}
-	if !r.HasActionable() {
-		t.Fatal("lossy report: HasActionable() = false, want true even with an empty digest")
-	}
-	s := r.String()
-	if strings.Contains(s, "All clear") {
-		t.Errorf("lossy report string claims 'All clear', got: %q", s)
-	}
-	if !strings.Contains(s, "Lossy stop") {
-		t.Errorf("lossy report string missing the lossy-stop notice, got: %q", s)
-	}
-}
-
-// TestReturnReport_StringLossyStop still reports the actionable summary after
-// the lossy notice, so a caller reading the tail of the report is not told
-// "All clear" there either.
-func TestReturnReport_StringLossyStop(t *testing.T) {
-	r := &ReturnReport{LossyStop: true, DigestedCount: 2}
-	s := r.String()
-	if !strings.Contains(s, "Actionable items remain") {
-		t.Errorf("lossy report string missing 'Actionable items remain', got: %q", s)
 	}
 }
 

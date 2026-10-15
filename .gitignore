@@ -9,9 +9,7 @@
 # artifact, so it merges silently unless it is ignored here. gitignore has no way
 # to say "a file named after its own directory", so each tool needs its own line.
 /.github/scripts/guardsites/guardsites
-/.github/scripts/citations/citations
 /.github/scripts/testnames/testnames
-/.github/scripts/flake-sweep-topology/flake-sweep-topology
 *.test
 *.test.exe
 *.test.exe~
@@ -42,7 +40,6 @@
 /data/
 /config/
 /projects/
-.no-mistakes/
 .env
 .DS_Store
 __pycache__/
@@ -58,15 +55,14 @@ __pycache__/
 .pi/settings.json
 .soldier-md
 .herdr-test/
-/.no-mistakes-document-result.json
 /.review-result.json
 /review_findings.json
 
-# Agent-skill mirror: munsu ships its own skills here (bootstrap-diagnostics,
+# Agent skills: munsu's own skills here (bootstrap-diagnostics,
 # captain-provisioning, harness-adapters, munsu-ops, munsu-update,
-# stuck-soldier-recovery), each mirrored from the //go:embed source and already
-# tracked. A generic engineering-skill library also gets installed here per
-# checkout; it is machine-local, not munsu-owned, and must stay out of the repo.
-# gitignore never untracks the six, so this ignores every skill subdir and the
-# tracked ones stay tracked; a new munsu skill is added with `git add -f`.
+# stuck-soldier-recovery) are tracked symlinks into internal/cli/skills, the
+# //go:embed source. A generic engineering-skill library also gets installed
+# here per checkout as real directories; it is machine-local, not munsu-owned,
+# and must stay out of the repo. A trailing-slash pattern matches directories
+# only, never a symlink, so this ignores the library and not the links.
 /.agents/skills/*/

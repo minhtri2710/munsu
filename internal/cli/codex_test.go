@@ -12,7 +12,8 @@ import (
 )
 
 // TestCodexSafetyCheckDeny verifies safety-check --harness codex deny
-// produces exit 2 and stderr text (NOT JSON).
+// produces exit 2 and stderr text (NOT JSON). It runs through cobra parsing, so
+// a --harness flag wired to nothing falls back to the pi shape and fails here.
 func TestCodexSafetyCheckDeny(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
@@ -27,12 +28,8 @@ func TestCodexSafetyCheckDeny(t *testing.T) {
 	os.MkdirAll(gitDir, 0755)
 	runGit(t, gitDir, "init")
 
-	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch", "", "codex")
+		runRoot(t, "integrate", "safety-check", gitDir, "--command", "munsu watch", "--harness", "codex")
 	})
 
 	if exitCode != 2 {

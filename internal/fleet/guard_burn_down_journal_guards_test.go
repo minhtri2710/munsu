@@ -177,10 +177,6 @@ func TestReadActiveDeliveryJournal_ProvenanceOrHomeMismatch(t *testing.T) {
 
 func TestReadActiveDeliveryJournal_TerminalPhase(t *testing.T) {
 	h, _ := setupTestHome(t)
-	// Marshal the record rather than interpolating h.Root() into a JSON
-	// literal: on windows the path's backslashes would be read back as JSON
-	// escapes ("\U" of C:\Users), and the record would fail to decode before
-	// the terminal-phase guard under test is ever reached.
 	jData, err := json.Marshal(&deliveryJournal{
 		Version: 1,
 		ID:      "j1",

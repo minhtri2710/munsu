@@ -46,11 +46,11 @@ for the complete registered set.
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> [<project>] [--backend herdr\|tmux] [--yolo]` | Launch a soldier agent in a worktree+herdr/tmux window; delivery mode is derived from the project's configured review and forge steps. |
+| `munsu spawn <id> [<project>] [--backend herdr\|tmux] [--yolo]` | Launch a soldier agent in a worktree+herdr/tmux window; delivery mode is derived from the project's configured forge step. |
 | `munsu send <id> "<line>"` | Send a mailbox command downlink to a Soldier or Captain endpoint; uplink to General is refused. |
 | `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy: one marked line in the parent's home, which becomes a `report` wake. |
 | `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |
-| `munsu soldier-state <id>` | Read soldier current state (meta + pane liveness + status log; `pr_state` delivered or reported when a PR is known, unverified unless the no-mistakes run matches the worktree HEAD). |
+| `munsu soldier-state <id>` | Read soldier current state (meta + pane liveness + status log; `pr` as `reported: PR <url> (unverified)` when the status log names one). |
 
 ## Watch / Wake / Guard
 
@@ -82,13 +82,13 @@ for the complete registered set.
 |---------|-------------|
 | `munsu task add <id> "<desc>" [--kind ship\|scout\|review] [--reviews <ship-id>] [--repo <name>]` | Register a queued task. |
 | `munsu task list` | List tasks from the canonical Task Authority. |
-| `munsu task show <id>` | Show a task; adds a `delivered: PR <url> @ <head>` line when the no-mistakes run matches the worktree, or `reported: PR <url> (unverified: <reason>)` from the status log. |
+| `munsu task show <id>` | Show a task; adds the PR the status log reports, when one is known. |
 | `munsu task start <id>` | Mark a queued task working without spawning it; `munsu spawn` does this itself. |
 | `munsu task block <id>` | Block a task on a dependency. |
 | `munsu task unblock <id>` | Mark a blocked task queued again. |
 | `munsu task done <id>` | Mark a task as done. |
 | `munsu task reopen <id>` | Reopen a terminal task as a new generation. |
-| `munsu task observe <task-id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |
+| `munsu task observe <task-id> [--fields description,branch,pane_alive]` | Observe one task using the orchestration contract. |
 | `munsu brief <id> <repo> [--scout]` | Scaffold a task brief. |
 | `munsu soldier-state <id>` | Read soldier current state. |
 | `munsu promote <id>` | Promote a scout task to ship. |
@@ -123,7 +123,7 @@ for the complete registered set.
 | `munsu integrate status [harness]` | Show integration state for a harness. |
 | `munsu update` | Fast-forward the munsu install root from origin. |
 | `munsu skill list` | Show available skill names. |
-| `munsu skill show <name>` | Display a skill's SKILL.md content. |
+| `munsu skill show <name>` | Print every file of a skill, SKILL.md and its companions. |
 
 ## AFK (Away Mode)
 

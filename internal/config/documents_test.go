@@ -366,10 +366,10 @@ func resolvedDigest(t *testing.T, base FleetBaseDocument, facts ProjectFacts) st
 	return resolved.Digest
 }
 
-// resolveBaseline resolves a project whose review and forge tools are both
-// baseline, the state of an overlay with no tool entries.
+// resolveBaseline resolves a project whose forge tool is baseline, the state
+// of an overlay with no tool entry.
 func resolveBaseline(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
-	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep())
+	return ResolveProjectWithSteps(base, facts, baselineStep())
 }
 
 func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
@@ -385,15 +385,13 @@ func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
 // nearest valid input and must resolve.
 func TestToolStepRefusals(t *testing.T) {
 	base := validBase()
-	pair := ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}}
-	facts := validFacts("alpha", "/alpha", pair)
+	facts := validFacts("alpha", "/alpha", ProjectOverlay{Forge: &ToolEntry{Adapter: "github"}})
 	bare := validFacts("alpha", "/alpha", ProjectOverlay{})
-	probe := func(state string) func(string, ToolEntry) ResolvedStep {
-		return func(string, ToolEntry) ResolvedStep {
+	probe := func(state string) func(ToolEntry) ResolvedStep {
+		return func(ToolEntry) ResolvedStep {
 			return ResolvedStep{ProbeState: state, Path: "/bin/tool", Reason: "not on PATH"}
 		}
 	}
-	ready := ResolvedStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"}
 	readyForge := ResolvedStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}
 	snapshot := func(t *testing.T) ResolvedSnapshot {
 		snap, err := NewResolvedSnapshotWithToolProbe(base, bare, nil)
@@ -407,65 +405,61 @@ func TestToolStepRefusals(t *testing.T) {
 		run  func(t *testing.T) error
 		want string
 	}{
-		{"unknown review adapter", func(*testing.T) error {
-			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "bogus"}, Forge: &ToolEntry{Adapter: "github"}})
-		}, "review tool has unknown adapter \"bogus\""},
-		{"known review adapter", func(*testing.T) error {
-			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "gitlab"}})
+		{"unknown forge adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "bogus"}})
+		}, "forge tool has unknown adapter \"bogus\""},
+		{"known forge adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "gitlab"}})
 		}, ""},
 		{"github forge with path", func(*testing.T) error {
-			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Path: "/usr/bin/gh-axi"}})
+			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "github", Path: "/usr/bin/gh-axi"}})
 		}, "forge adapter github does not accept path or args"},
 		{"github forge with args", func(*testing.T) error {
-			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github", Args: []string{"--x"}}})
+			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "github", Args: []string{"--x"}}})
 		}, "forge adapter github does not accept path or args"},
-		{"no-mistakes review with relative path", func(*testing.T) error {
-			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes", Path: "no-mistakes"}, Forge: &ToolEntry{Adapter: "github"}})
-		}, "review adapter no-mistakes path must be absolute"},
-		{"no-mistakes review without forge in the overlay", func(*testing.T) error {
-			return ValidateProjectTools(ProjectOverlay{Review: &ToolEntry{Adapter: "no-mistakes"}})
-		}, "review adapter no-mistakes requires a configured forge tool"},
-		{"no-mistakes review with forge in the overlay", func(*testing.T) error {
-			return ValidateProjectTools(pair)
+		{"github forge without path or args", func(*testing.T) error {
+			return ValidateProjectTools(facts.Overlay)
 		}, ""},
-		{"no-mistakes review without forge in a captured step", func(t *testing.T) error {
-			_, err := snapshot(t).WithSteps(ready, baselineStep())
-			return err
-		}, "review adapter no-mistakes requires a configured forge tool"},
-		{"no-mistakes review with forge in a captured step", func(t *testing.T) error {
-			_, err := snapshot(t).WithSteps(ready, readyForge)
-			return err
+		{"gitlab forge with relative path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "gitlab", Path: "glab"}})
+		}, "forge adapter gitlab path must be absolute"},
+		{"gitlab forge with absolute path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "gitlab", Path: "/bin/glab"}})
 		}, ""},
 		{"empty snapshot", func(*testing.T) error {
-			_, err := (ResolvedSnapshot{}).WithSteps(baselineStep(), baselineStep())
+			_, err := (ResolvedSnapshot{}).WithSteps(baselineStep())
 			return err
 		}, "resolved snapshot is empty"},
 		{"non-empty snapshot", func(t *testing.T) error {
-			_, err := snapshot(t).WithSteps(baselineStep(), baselineStep())
+			_, err := snapshot(t).WithSteps(readyForge)
 			return err
 		}, ""},
 		{"configured tool not Ready at probe", func(*testing.T) error {
 			_, err := ResolveProjectWithToolProbe(base, facts, probe("absent"))
 			return err
-		}, "resolved review adapter no-mistakes probe absent"},
+		}, "resolved forge adapter github probe absent"},
 		{"configured tool Ready at probe", func(*testing.T) error {
 			_, err := ResolveProjectWithToolProbe(base, facts, probe("ready"))
 			return err
 		}, ""},
-		{"review adapter outside the review set", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}, baselineStep())
+		{"adapter outside the forge set", func(*testing.T) error {
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "bogus", Path: "/bin/bogus", ProbeState: "ready"})
 			return err
-		}, "resolved review adapter github probe ready"},
+		}, "resolved forge adapter bogus probe ready"},
 		{"step not matching the overlay", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ready, baselineStep())
+			_, err := ResolveProjectWithSteps(base, bare, readyForge)
 			return err
-		}, "do not match the project overlay"},
+		}, "does not match the project overlay"},
+		{"step matching the overlay", func(*testing.T) error {
+			_, err := ResolveProjectWithSteps(base, facts, readyForge)
+			return err
+		}, ""},
 		{"baseline step carrying tool data", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "no-mistakes", ProbeState: "baseline"}, baselineStep())
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "github", ProbeState: "baseline"})
 			return err
 		}, "baseline carries configured tool data"},
 		{"relative executable path", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "no-mistakes", Path: "no-mistakes", ProbeState: "ready"}, baselineStep())
+			_, err := ResolveProjectWithSteps(base, facts, ResolvedStep{Adapter: "github", Path: "gh-axi", ProbeState: "ready"})
 			return err
 		}, "requires an absolute executable path"},
 		{"no session backend identity anywhere", func(*testing.T) error {

@@ -21,7 +21,6 @@ type fakeTeardown struct {
 	alive                bool
 }
 
-func (f fakeTeardown) RefuseGate() error { return nil }
 func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
 	lifecycle := LifecycleDead
 	if f.alive {

@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -115,6 +113,11 @@ type shellToken struct {
 // Widening the grammar needs evidence of a miss the fence cannot cover and the
 // Human's words. A file write on a shape outside the claim is allowed unless the
 // target is ambiguous, which the caller refuses; git mutation fails closed.
+// Drive-relative cwd tracking (and its refusal of a path that depends on an
+// unknown per-drive cwd) is removed with Windows support. Human words
+// (domain.Words): grantor the Human, channel Claude Code session with the Lead
+// (typed), 2026-10-15: "tạm thời xóa bỏ windows đi, vì hiện tại không có máy
+// window để chạy thử".
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	interpretations := []shellTargetResolution{
 		{mode: backslashEscapes},
@@ -186,17 +189,11 @@ const (
 )
 
 func shellWriteTargetsUnderDetailed(mode backslashMode, checkPath, command string) []shellTargetResult {
-	volume := filepath.VolumeName(checkPath)
 	walk := &shellWriteWalk{
 		mode:      mode,
 		payloads:  new(int),
 		functions: &shellFunctions{},
-		cwd: shellCwd{
-			path:              checkPath,
-			activeVolume:      volume,
-			activeVolumeKnown: true,
-			byVolume:          map[string]string{strings.ToLower(volume): checkPath},
-		},
+		cwd:       shellCwd{path: checkPath, known: true},
 	}
 	walk.walk(command, 0, "")
 	return walk.targets
@@ -328,26 +325,19 @@ func (f *shellFunctions) call(segment []shellToken) bool {
 	return slices.ContainsFunc(names, f.moves)
 }
 
-// shellCwd is the directory a command line runs in. activeVolume is the drive
-// a plain relative path resolves against: the drive left active by the last
-// `cd`. unknownCwd is the volume whose per-drive current directory this pass
-// cannot reconstruct ("" if none). An ambiguous drive-relative `cd D:docs`
-// only makes D:'s cwd unknowable: D-volume targets stay ambiguous, but
-// C-volume and absolute targets resolve against known state and must not be
-// refused for it. lost is a directory a payload or a
+// shellCwd is the directory a command line runs in. known is false after a
+// `cd` to a directory the shell computes: a relative `cd` from there cannot be
+// followed until an absolute one. lost is a directory a payload or a
 // wrapper moved to that this reading cannot know: every relative target is
 // ambiguous until an absolute `cd`. previous is the directory `cd -` returns
 // to, nil when this reading did not see the shell leave one; stack is the
 // directory stack pushd built, which a stack this does not follow empties.
 type shellCwd struct {
-	path              string
-	activeVolume      string
-	activeVolumeKnown bool
-	unknownCwd        string
-	byVolume          map[string]string
-	lost              bool
-	previous          *shellCwd
-	stack             *dirStack[shellCwd]
+	path     string
+	known    bool
+	lost     bool
+	previous *shellCwd
+	stack    *dirStack[shellCwd]
 }
 
 // dirStack is a directory stack, top first. A push shares the stack under it,
@@ -357,25 +347,19 @@ type dirStack[T any] struct {
 	next *dirStack[T]
 }
 
-func (c shellCwd) clone() shellCwd {
-	c.byVolume = maps.Clone(c.byVolume)
-	return c
-}
-
 func (c shellCwd) same(other shellCwd) bool {
-	return c.path == other.path && c.activeVolume == other.activeVolume && c.activeVolumeKnown == other.activeVolumeKnown &&
-		c.unknownCwd == other.unknownCwd && c.lost == other.lost
+	return c.path == other.path && c.known == other.known && c.lost == other.lost
 }
 
 // move applies what a segment's cd, pushd or popd does (segmentDirMove). A
 // directory it cannot follow, `cd -` with no previous directory and popd with
 // an empty stack among them, leaves c lost.
 func (c *shellCwd) move(move dirMove, operand shellToken) {
-	old := c.clone()
+	old := *c
 	old.previous, old.stack = nil, nil
 	restore := func(to shellCwd) {
 		stack := c.stack
-		*c = to.clone()
+		*c = to
 		c.stack = stack
 	}
 	switch move {
@@ -413,66 +397,28 @@ func (c *shellCwd) move(move dirMove, operand shellToken) {
 // cd moves c to operand.
 func (c *shellCwd) cd(operand shellToken) {
 	if operand.expandable {
-		c.unknownCwd = filepath.VolumeName(operand.text)
-		if c.unknownCwd == "" {
-			c.unknownCwd = c.activeVolume
-		}
-		c.activeVolume = c.unknownCwd
-		c.activeVolumeKnown = false
+		c.known = false
 		return
 	}
-	base := c.path
-	if volume := filepath.VolumeName(operand.text); volume != "" {
-		if known, ok := c.byVolume[strings.ToLower(volume)]; ok {
-			base = known
-		}
-	}
-	// A plain relative cd (no volume, not volume-less rooted) against a
-	// drive whose cwd is unknown cannot be resolved: the active drive's
-	// current directory is exactly what the prior drive-relative cd left
-	// unreconstructable. Keep the unknown state — do not resolve against
-	// the stale path of the previous volume or clear unknownCwd.
-	if !c.activeVolumeKnown && filepath.VolumeName(operand.text) == "" && !(len(operand.text) > 0 && os.IsPathSeparator(operand.text[0])) {
+	// A relative cd from a directory the shell computed cannot be resolved:
+	// keep the unknown state rather than resolve against the stale path.
+	if !c.known && !filepath.IsAbs(operand.text) {
 		return
 	}
-	resolved, pathAmbiguous := resolveShellWritePath(base, c.activeVolume, operand.text)
-	if pathAmbiguous {
-		// Different-volume drive-relative cd (D:docs from a C: base): D
-		// becomes the active drive with an unknowable cwd. C stays known,
-		// so C-volume and absolute targets stay resolvable.
-		c.activeVolume = filepath.VolumeName(operand.text)
-		c.activeVolumeKnown = false
-		c.unknownCwd = c.activeVolume
-		return
-	}
-	c.path = resolved
-	c.activeVolume = filepath.VolumeName(resolved)
-	c.activeVolumeKnown = true
-	c.byVolume[strings.ToLower(c.activeVolume)] = resolved
-	c.unknownCwd = ""
+	c.path = resolveSafetyPath(c.path, operand.text)
+	c.known = true
 	c.lost = c.lost && !filepath.IsAbs(operand.text)
 }
 
 // resolve resolves target against c, and reports whether it is ambiguous.
 func (c shellCwd) resolve(target string) (string, bool) {
-	base := c.path
-	if volume := filepath.VolumeName(target); volume != "" {
-		if known, ok := c.byVolume[strings.ToLower(volume)]; ok {
-			base = known
-		}
-	}
-	resolved, ambiguous := resolveShellWritePath(base, c.activeVolume, target)
-	if !ambiguous && (pathDependsOnUnknownCwd(c.activeVolume, c.unknownCwd, target) || (c.lost && !filepath.IsAbs(target))) {
-		ambiguous = true
-	}
-	return resolved, ambiguous
+	return resolveSafetyPath(c.path, target), c.lost && !filepath.IsAbs(target)
 }
 
 // under returns c moved into each directory chdirs names, in order, or false
 // under a changed root, where no target is knowable. A directory the shell
 // computes leaves it lost.
 func (c shellCwd) under(chdirs []shellToken, chroot bool) (shellCwd, bool) {
-	c = c.clone()
 	for _, dir := range chdirs {
 		if dir.expandable {
 			c.lost = true
@@ -521,7 +467,7 @@ func (w *shellWriteWalk) walk(command string, depth int, within string) {
 		}
 		if segment[0].subshell {
 			if segment[0].text == "(" {
-				opened := subshell{cwd: w.cwd.clone(), moves: w.moves, calls: len(w.functions.commandCall)}
+				opened := subshell{cwd: w.cwd, moves: w.moves, calls: len(w.functions.commandCall)}
 				if segment[0].functionBodyHead != nil {
 					opened.head = segment[0].functionBodyHead
 				}
@@ -1094,80 +1040,6 @@ func writeReadings(segment []shellToken) ([][]shellToken, bool) {
 		readings = next
 	}
 	return readings, true
-}
-
-// pathDependsOnUnknownCwd reports whether resolving target against the session's
-// shell state depends on the current directory of the volume unknownCwd names —
-// the only path context a drive-relative `cd` can leave unknowable. Absolute
-// paths, volume-less rooted paths (\foo, anchored to the active volume's root
-// rather than its cwd) and same-volume drive-relative paths (C:foo, resolved
-// against that volume's known cwd) do not, so they stay classified instead of
-// being swept into the refusal. filepath.IsAbs disagrees on the volume-less
-// rooted case (it reports false on Windows for a separator-led path), and a
-// shell-aware check is required there (#664).
-func pathDependsOnUnknownCwd(activeVolume, unknownCwd, target string) bool {
-	if unknownCwd == "" {
-		return false
-	}
-	if filepath.IsAbs(target) {
-		return false
-	}
-	if vol := filepath.VolumeName(target); vol != "" {
-		// Drive-relative/drive-absolute on some volume. Only the volume whose cwd
-		// is unknown makes it ambiguous; resolveShellWritePath already reports any
-		// other unknown volume as ambiguous on its own.
-		return strings.EqualFold(vol, unknownCwd)
-	}
-	if len(target) > 0 && os.IsPathSeparator(target[0]) {
-		// Volume-less rooted: anchored to the active volume's root, not its cwd.
-		return false
-	}
-	// Plain relative: resolved against the active drive's cwd.
-	return strings.EqualFold(activeVolume, unknownCwd)
-}
-
-// resolveShellWritePath resolves a write target against the directory the
-// command runs in, under the Windows path spellings the shell channel must
-// classify (#664). It is shell-specific on purpose: the native write channel's
-// resolver (resolveSafetyPathWithMode, in git_worktree_safety.go) is the #668 owner and
-// must not grow this logic, so the dual-reading guard stays the single owner of
-// its own comparison.
-//
-// Three cases sit beyond the plain relative join:
-//
-//   - Volume-less rooted (\foo): rooted at the current volume's root, with no
-//     volume in the target. It is anchored to the shell's active volume, so
-//     \foo with an active C: drive becomes C:\foo.
-//   - Same-volume drive-relative (C:foo): relative to the current directory on
-//     that drive. The session's cwd is the base, so the relative part is joined
-//     to it.
-//   - Different-volume drive-relative (D:foo) when the base is on C:: the
-//     per-drive current directory of D cannot be reconstructed here, so that
-//     candidate is reported as ambiguous. The enclosing shell command refuses
-//     only when no other backslash interpretation resolves the same target span;
-//     an independently resolved candidate is still classified.
-func resolveShellWritePath(base, activeVolume, path string) (string, bool) {
-	if filepath.IsAbs(path) {
-		return path, false
-	}
-	pathVolume := filepath.VolumeName(path)
-	baseVolume := filepath.VolumeName(base)
-	if pathVolume == "" && activeVolume != "" && len(path) > 0 && os.IsPathSeparator(path[0]) {
-		// Volume-less rooted: anchor to the active volume's root.
-		rooted := activeVolume + path
-		if filepath.IsAbs(rooted) {
-			return filepath.Clean(rooted), false
-		}
-	}
-	if pathVolume != "" {
-		if !strings.EqualFold(pathVolume, baseVolume) {
-			// Different volume: the per-drive cwd is unknowable.
-			return "", true
-		}
-		// Same volume: resolve the relative part against the base directory.
-		return filepath.Join(base, strings.TrimPrefix(path, pathVolume)), false
-	}
-	return filepath.Join(base, path), false
 }
 
 // evaluateWriteTargets refuses the first target that lands in the shared

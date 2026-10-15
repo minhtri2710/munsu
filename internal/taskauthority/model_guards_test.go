@@ -555,7 +555,6 @@ func TestValidateDeliveryContractRefusesUnenforceableRecord(t *testing.T) {
 		return DeliveryContract{
 			OperationID: "op-contract-1",
 			Mode:        "direct-PR",
-			Review:      DeliveryStep{Baseline: true, ProbeState: "baseline"},
 			Forge:       DeliveryStep{Adapter: "gitlab", Path: "/bin/glab", ProbeState: "ready"},
 			RecordedAt:  1700000000,
 		}
@@ -566,7 +565,7 @@ func TestValidateDeliveryContractRefusesUnenforceableRecord(t *testing.T) {
 		{"empty mode", func(d *DeliveryContract) { d.Mode = "" }, "delivery contract carries invalid delivery mode"},
 		{"unknown mode", func(d *DeliveryContract) { d.Mode = "direct-pr" }, "delivery contract carries invalid delivery mode"},
 		{"no recorded timestamp", func(d *DeliveryContract) { d.RecordedAt = 0 }, "delivery contract missing recorded timestamp"},
-		{"changed mode", func(d *DeliveryContract) { d.Mode = "local-only" }, "disagrees with captured review and forge steps"},
+		{"changed mode", func(d *DeliveryContract) { d.Mode = "local-only" }, "disagrees with the captured forge step"},
 		{"relative executable", func(d *DeliveryContract) { d.Forge.Path = "glab" }, "not a Ready supported adapter"},
 	})
 }

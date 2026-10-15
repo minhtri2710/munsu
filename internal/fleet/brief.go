@@ -19,7 +19,7 @@ type ScaffoldOptions struct {
 	Repo        string // project/repo name
 	Scout       bool   // generate scout brief instead of ship brief
 	Review      bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
-	Mode        string // delivery mode (no-mistakes / direct-PR / local-only)
+	Mode        string // delivery mode (direct-PR / local-only)
 	Yolo        bool   // yolo mode
 	ScoutScope  string
 	ReviewTask  string // the ship task a reviewer reads
@@ -99,7 +99,7 @@ func buildBrief(opts ScaffoldOptions) (string, error) {
 
 // shipBriefTemplate returns the ship-mode brief template. The delivery rules
 // are selected by the exact delivery mode: an empty or unknown mode is a
-// resolution failure, not a licence to render no-mistakes rules, so it fails
+// resolution failure, not a licence to render another mode's rules, so it fails
 // loud instead of silently briefing the soldier for the wrong contract.
 func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	modeLine := fmt.Sprintf("Delivery mode: %s", mode)
@@ -107,27 +107,17 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 		modeLine += " +yolo"
 	}
 
-	setupStep := ""
 	deliveryRules := ""
 	switch mode {
 	case "direct-PR":
 		deliveryRules = `## Delivery
 	Commit the completed change. Push the task branch and open a PR. Do not use ` + "`-u`" + ` or ` + "`--set-upstream`" + `; they write Git config, which is not yours to change.
-	Never run no-mistakes for this task. Never merge the PR.
+	Never merge the PR.
 `
 	case "local-only":
 		deliveryRules = `## Delivery
 	Commit locally and stop for orchestrator merge.
-	Do not push, open a PR, run no-mistakes, or merge the change yourself.
-`
-	case "no-mistakes":
-		setupStep = "2. Run `no-mistakes doctor`.\n"
-		deliveryRules = `## Delivery
-	You drive no-mistakes by responding to its gates, not by implementing fixes.
-	Follow ` + "`no-mistakes axi run --help`" + ` and the help lines in each AXI response.
-	Do not hand-edit findings while a run is active; the pipeline applies fixes.
-	Escalate ask-user findings through the task status protocol and answer gates with ` + "`no-mistakes axi respond`" + `; avoid ` + "`--yes`" + `.
-	Commit the completed change, then start the no-mistakes run by pushing ` + "`git push no-mistakes HEAD:refs/heads/mu/" + id + "`" + `; after the pipeline reports CI green, append ` + "`done: PR {url} checks green`" + ` and stop.
+	Do not push, open a PR, or merge the change yourself.
 `
 	default:
 		return "", fmt.Errorf("ship brief for %s: unknown delivery mode %q", id, mode)
@@ -145,7 +135,7 @@ The path check is authoritative: `+"`"+`git rev-parse --git-dir`+"`"+` and `+"`"
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append `+"`"+`blocked: launched in primary checkout, not an isolated worktree`+"`"+` to the status file and stop.
 
 1. First action: create your branch, or switch to it if it already exists at this base: `+"`"+`git checkout -b mu/%[3]s || git checkout mu/%[3]s`+"`"+`
-%s
+
 %s
 
 ## Rules
@@ -159,7 +149,6 @@ If the top-level path is the primary checkout or not the worktree you were launc
 5. If you hit the same obstacle twice, run `+"`"+`munsu report blocked "{why}"`+"`"+` and stop; munsu will help.
 6. If a decision belongs to a human, run `+"`"+`munsu report needs-decision "{summary of options}"`+"`"+` and stop.
 7. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
-8. Never stop, restart, or update the shared `+"`"+`no-mistakes`+"`"+` daemon - it is one instance serving every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes daemon error, append `+"`"+`blocked: {the daemon error}`+"`"+` and stop; only munsu manages the daemon.
 
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
@@ -176,7 +165,7 @@ Put the done evidence in the message body of a commit on your branch; the Review
 - For each new function, type or module, a reuse-search row: the code search you ran before writing it (`+"`"+`semble`+"`"+` or `+"`"+`zg`+"`"+`), the query and the hits, and why no hit served.
 When delivery is complete, run `+"`"+`munsu report done "{summary}"`+"`"+` and stop.
 Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`.
-`, id, repo, id, setupStep, modeLine+"\n"+deliveryRules), nil
+`, id, repo, id, modeLine+"\n"+deliveryRules), nil
 }
 
 // scoutBriefTemplate returns the scout-mode brief template. Scaffold

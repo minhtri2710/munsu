@@ -57,7 +57,7 @@ func reviewVerdictHome(t *testing.T) string {
 func runReviewCycle(t *testing.T, homeDir string, reviews ReviewVerdictPort) {
 	t.Helper()
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(homeDir, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, reviews, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(homeDir, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, reviews); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 }

@@ -668,17 +668,13 @@ func TestDeliveryRefusals(t *testing.T) {
 			}
 			return err
 		}},
-		{name: "contract refuses a baseline step that carries tool data", class: ErrInvalidInput, want: "review baseline carries configured tool data",
-			run: invalidPlan("direct-PR", func(r *CanonicalRecordDeliveryContractRequest) { r.Review.Adapter = "no-mistakes" })},
+		{name: "contract refuses a baseline step that carries tool data", class: ErrInvalidInput, want: "forge baseline carries configured tool data",
+			run: invalidPlan("local-only", func(r *CanonicalRecordDeliveryContractRequest) { r.Forge.Adapter = "github" })},
 		{name: "contract refuses a step that is not a ready adapter with an absolute path", class: ErrInvalidInput, want: "is not a Ready supported adapter with an absolute executable path",
-			run: invalidPlan("no-mistakes", func(r *CanonicalRecordDeliveryContractRequest) { r.Review.Path = "no-mistakes" })},
-		{name: "contract refuses a no-mistakes review with a baseline forge", class: ErrInvalidInput, want: "requires a configured forge tool",
-			run: invalidPlan("no-mistakes", func(r *CanonicalRecordDeliveryContractRequest) {
-				r.Forge = DeliveryStep{Baseline: true, ProbeState: "baseline"}
-			})},
-		{name: "contract refuses a mode that disagrees with the steps", class: ErrInvalidInput, want: "disagrees with captured review and forge steps",
-			run: invalidPlan("no-mistakes", func(r *CanonicalRecordDeliveryContractRequest) { r.Mode = "direct-PR" })},
-		{name: "contract allows a ready supported plan", run: invalidPlan("no-mistakes", noContractChange)},
+			run: invalidPlan("direct-PR", func(r *CanonicalRecordDeliveryContractRequest) { r.Forge.Path = "glab" })},
+		{name: "contract refuses a mode that disagrees with the step", class: ErrInvalidInput, want: "disagrees with the captured forge step",
+			run: invalidPlan("direct-PR", func(r *CanonicalRecordDeliveryContractRequest) { r.Mode = "local-only" })},
+		{name: "contract allows a ready supported plan", run: invalidPlan("direct-PR", noContractChange)},
 	})
 }
 
@@ -1641,7 +1637,7 @@ func bumpRevisionForTest(t *testing.T, c *Canonical, taskID string, rev uint64) 
 	t.Helper()
 	req := CanonicalRecordDeliveryContractRequest{
 		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev),
-		Mode: "local-only", Review: DeliveryStep{Baseline: true, ProbeState: "baseline"}, Forge: DeliveryStep{Baseline: true, ProbeState: "baseline"},
+		Mode: "local-only", Forge: DeliveryStep{Baseline: true, ProbeState: "baseline"},
 	}
 	if _, err := c.RecordDeliveryContract(mustOperation(t, "op-bump-"+taskID, req), req); err != nil {
 		t.Fatalf("RecordDeliveryContract: %v", err)

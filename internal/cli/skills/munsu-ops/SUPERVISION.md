@@ -4,9 +4,9 @@ This document details the soldier supervision loop. For the high-level step, see
 
 ## Watch loop (`munsu watch`)
 
-The watcher is a singleton persistent event-driven daemon. It queues actionable wake reasons and continues polling until stopped.
+The watcher is a singleton persistent event-driven daemon. It polls every 5 s, queues actionable wake reasons in the durable queue and continues polling until stopped.
 
-- **Ensure:** `munsu watch ensure [--restart]`
+- **Ensure:** `munsu watch ensure [--restart]` returns within the beacon timeout (3 s), plus up to 2 s to stop a holder on `--restart` or a stalled holder, with the watcher state (`attached`, `healthy` or `failed`). Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
 - **Run once:** `munsu watch run`
 - **Status:** `munsu watch status`
 - **Stop:** `munsu watch stop`
@@ -48,13 +48,16 @@ Run `munsu guard` after every fleet action. It checks for:
 
 ## Away mode (`munsu afk`)
 
-When stepping away from the fleet, start the away-mode daemon:
+When the Human steps away, run `munsu afk` in its own pane. The foreground daemon takes the identity lock `state/.afk.lock`, sets the consent flag `state/.afk`, clears stale `state/.seen-*` and `state/.subsuper-*` markers, then every 30 s triages wakes into the batched digest `state/.afk-digest` (flushed every 60 s; `afk-digest-window` overrides). A stale or missing watcher beat adds one `[wedge]` entry per incident, so keep the watcher running. The daemon never repairs, merges, approves or writes to the General's pane; the watcher's wake dispatch defers every wake while `state/.afk` exists. SIGTERM/SIGINT stops it and clears the flag and lock. Every operation is scoped to one `MUNSU_HOME`.
+
+On return:
 
 ```sh
-munsu afk
+munsu afk return        # stop the daemon, print escalations and blocked items, settle drained report wakes
+munsu afk return check  # exit 0 when clean, non-zero while actionable state remains
 ```
 
-This sets an AFK flag and polls the fleet at a reduced cadence. Only general-relevant events (done, failed, needs-decision) are printed. Stop with SIGTERM/SIGINT; the flag is cleared on stop.
+`munsu afk return` is idempotent. A scout report whose task it could not complete is listed with `munsu task done <id>`, to run once the cause is fixed; a report it could not settle is listed with `munsu teardown <id> --force`.
 
 ## Stuck soldier recovery
 

@@ -23,12 +23,6 @@ type testEndpointProbe struct{}
 
 func (testEndpointProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
 
-type testTaskStatePort struct{}
-
-func (testTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, error) {
-	return &ObservedTaskState{}, nil
-}
-
 type testCycleSender struct{}
 
 func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
@@ -37,7 +31,7 @@ func (testCycleSender) Send(string, map[string]string, string) mhome.BoundSendRe
 }
 
 func testScanFleet(home string) *WakeReason {
-	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{}, testSeatLiveness, nil)
+	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testSeatLiveness, nil)
 	if len(reasons) == 0 {
 		return nil
 	}
@@ -57,7 +51,7 @@ func (h testWatcherHooks) Activate(home string) {
 var activeTestHooks WatcherHooks = NoopWatcherHooks{}
 
 func testRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, testTaskStatePort{})
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil)
 }
 
 // --- handleStale / resetStreak tests (first-seen stale timestamp) ---
@@ -185,35 +179,6 @@ func TestScanFleet_MultipleTasks_OnlyOneBound(t *testing.T) {
 	}
 	if reason.Kind != "stale" {
 		t.Errorf("kind = %q, want stale", reason.Kind)
-	}
-}
-
-// --- Evidence: absorb tests ---
-//
-// These tests show that a provably-working seat (an active no-mistakes
-// run-step) absorbs a stale signal.
-
-func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
-	absorbSteps := []string{"running", "fixing", "ci", "awaiting_approval"}
-	for _, step := range absorbSteps {
-		s := &ObservedTaskState{NoMistakesRunStep: step}
-		if !absorbStaleSignal(s) {
-			t.Errorf("%s should absorb stale signal", step)
-		}
-	}
-}
-
-func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
-	nonAbsorbSteps := []string{"", "done", "failed", "checks-passed", "passed", "cancelled", "some-unknown-step"}
-	for _, step := range nonAbsorbSteps {
-		s := &ObservedTaskState{NoMistakesRunStep: step}
-		if absorbStaleSignal(s) {
-			t.Errorf("%q should NOT absorb stale signal", step)
-		}
-	}
-
-	if absorbStaleSignal(nil) {
-		t.Error("nil state should NOT absorb stale signal")
 	}
 }
 
@@ -507,25 +472,25 @@ func TestShouldAbsorbStale(t *testing.T) {
 
 	// Dead pane + leftover working: must NOT absorb (possible finish/wedge).
 	os.WriteFile(filepath.Join(stateDir, "dead-working.status"), []byte("working: leftover\n"), 0644)
-	if shouldAbsorbStale(tmp, "dead-working", false, testTaskStatePort{}, testSeatLiveness) {
+	if shouldAbsorbStale(tmp, "dead-working", false, testSeatLiveness) {
 		t.Error("dead pane with working status should not absorb")
 	}
 
 	// Alive pane + working: idle-healthy absorb.
-	if !shouldAbsorbStale(tmp, "dead-working", true, testTaskStatePort{}, testSeatLiveness) {
+	if !shouldAbsorbStale(tmp, "dead-working", true, testSeatLiveness) {
 		t.Error("alive pane with working status should absorb")
 	}
 
 	// Paused absorbs regardless of pane liveness.
 	os.WriteFile(filepath.Join(stateDir, "paused.status"), []byte("paused: waiting on human\n"), 0644)
-	if !shouldAbsorbStale(tmp, "paused", false, testTaskStatePort{}, testSeatLiveness) {
+	if !shouldAbsorbStale(tmp, "paused", false, testSeatLiveness) {
 		t.Error("paused should absorb even when pane is dead")
 	}
 
 	// A reported completion is not a stale condition, whatever the pane state.
 	os.WriteFile(filepath.Join(stateDir, "done.status"), []byte("done: finished\n"), 0644)
 	for _, alive := range []bool{true, false} {
-		if !shouldAbsorbStale(tmp, "done", alive, testTaskStatePort{}, testSeatLiveness) {
+		if !shouldAbsorbStale(tmp, "done", alive, testSeatLiveness) {
 			t.Errorf("done should absorb via shouldAbsorbStale (paneAlive=%v)", alive)
 		}
 	}
@@ -623,7 +588,7 @@ func TestShouldAbsorbStale_PauseResurface(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got := shouldAbsorbStale(tmp, "test-pause", tt.paneAlive, testTaskStatePort{}, testSeatLiveness)
+			got := shouldAbsorbStale(tmp, "test-pause", tt.paneAlive, testSeatLiveness)
 			if got != tt.wantAbsorb {
 				t.Errorf("shouldAbsorbStale = %v, want %v (pauseAge=%v, paneAlive=%v)",
 					got, tt.wantAbsorb, tt.pauseAge, tt.paneAlive)
@@ -944,7 +909,7 @@ func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
 		return time.NewTicker(time.Millisecond)
 	}
 
-	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, testTaskStatePort{}, nil, NoopActiveDeliveryPort{})
+	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, nil, NoopActiveDeliveryPort{})
 	if err == nil || !strings.Contains(err.Error(), "writing watcher beat") || reason != nil {
 		t.Fatalf("run = %+v, %v, want a writing-watcher-beat error and no wake", reason, err)
 	}
@@ -1035,7 +1000,7 @@ func TestRunWakesOnActiveDeliveryJournals(t *testing.T) {
 				stop()
 			}}
 
-			reason, err := run(homeDir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, testTaskStatePort{}, nil, port)
+			reason, err := run(homeDir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, nil, port)
 			if err != nil || reason == nil || reason.Kind != "signal" {
 				t.Fatalf("run = %+v, %v, want the daemon to keep running until signalled", reason, err)
 			}

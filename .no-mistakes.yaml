@@ -1,9 +1,0 @@
-disable_project_settings: true
-
-# commands.test stays absent because CI owns the full suite.
-commands:
-  lint: 'go build ./... && go vet ./...'
-
-test:
-  evidence:
-    store_in_repo: false

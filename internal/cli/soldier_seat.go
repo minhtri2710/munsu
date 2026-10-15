@@ -20,8 +20,8 @@ import (
 // Human words (domain.Words): grantor the Human, channel
 // supervisor-relay:dialog, words=selected, G1086: "Duyệt, có R3 (Recommended):
 // option 1 + 3 PRs with section 1 conditions; R3 worded as an accident guard
-// (not a boundary), error names munsu report <state>; gate record = munsu
-// task-authority gates, no-mistakes gate state a separate fence task."
+// (not a boundary), error names munsu report <state>; [...]" (the elided tail
+// concerns gate state munsu no longer models).
 func refuseInSoldierSeat(command string, run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		if os.Getenv("MUNSU_ROLE") == "soldier" {

@@ -24,7 +24,7 @@ func mustReadWakeQueue(t *testing.T, homeDir string) []WakeRecord {
 func runConsumerCycle(t *testing.T, homeDir string) {
 	t.Helper()
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(homeDir, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(homeDir, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil); err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}
 }

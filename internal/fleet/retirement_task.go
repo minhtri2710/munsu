@@ -708,11 +708,6 @@ func sameRetiredAcquired(a, b *taskauthority.AcquiredEndpoint) bool {
 func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
-	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-	if err := backend.RefuseGate(); err != nil {
-		return nil, fmt.Errorf("teardown refused: %w", err)
-	}
-
 	// Read task meta
 	meta, err := home.ReadMeta(opts.HomeDir, opts.ID)
 	if err != nil {

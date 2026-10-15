@@ -45,13 +45,6 @@ func ClearEnv(t *testing.T) {
 
 // PathInMessage reports whether message names path.
 //
-// A message that renders a path with %q, or carries one inside a JSON
-// document, escapes every separator in it: a Windows home written as
-// C:\Users\x appears in the text as C:\\Users\\x, and a substring search for
-// the path as spelled finds nothing. On Unix there is no separator to escape,
-// so the two renderings are the same string and searching for the raw path
-// worked by coincidence.
-//
 // The verbatim path, its %q rendering, and its JSON-escaped rendering are
 // accepted. The path must still appear in full, so this answers the same
 // question as a raw substring search rather than a weaker one.
@@ -75,22 +68,17 @@ func PathInMessage(message, path string) bool {
 
 // SetUserHome points os.UserHomeDir at dir for the duration of the test.
 //
-// os.UserHomeDir reads $HOME on Unix and %USERPROFILE% on windows, so a
-// fixture that sets HOME directly moves nothing on windows: the product goes
-// on resolving the real user profile and the test compares it against a temp
-// directory it thought it had installed.
-//
-// The postcondition is checked rather than assumed, so a platform whose rule
-// differs from either of these fails here, naming the variable, instead of
-// surfacing as an unrelated path mismatch somewhere downstream.
+// The postcondition is checked rather than assumed, so a platform that reads
+// some other variable fails here instead of surfacing as an unrelated path
+// mismatch somewhere downstream.
 func SetUserHome(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv(userHomeEnv, dir)
+	t.Setenv("HOME", dir)
 	got, err := os.UserHomeDir()
 	if err != nil {
-		t.Fatalf("os.UserHomeDir after setting %s=%s: %v", userHomeEnv, dir, err)
+		t.Fatalf("os.UserHomeDir after setting HOME=%s: %v", dir, err)
 	}
 	if got != dir {
-		t.Fatalf("os.UserHomeDir = %q after setting %s=%q; this platform reads some other variable", got, userHomeEnv, dir)
+		t.Fatalf("os.UserHomeDir = %q after setting HOME=%q; this platform reads some other variable", got, dir)
 	}
 }

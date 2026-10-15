@@ -226,7 +226,7 @@ func scan(root string) ([]site, error) {
 			return nil, err
 		}
 		// ParseComments is off and build constraints are not evaluated on
-		// purpose: a `_windows.go` guard is a guard, and dropping it here would
+		// purpose: a `_darwin.go` guard is a guard, and dropping it here would
 		// put it permanently outside the lane instead of into the baseline with
 		// a reason. Its lookup will find no block on a linux profile, which the
 		// comparison treats as "not proven covered" rather than as absent.
@@ -1104,9 +1104,9 @@ type span struct{ off, end int }
 //
 // go/packages type-checks only the files that build for one GOOS/GOARCH at a
 // time, so a single load cannot see platform-gated siblings. loadTypes unions
-// GOOS=linux, darwin and windows, which between them cover every build-gated
-// file in this tree except one gated to a GOOS the repo never targets; that
-// file stays unloaded and keeps the legacy name heuristic.
+// GOOS=linux and darwin, which between them cover every build-gated file in
+// this tree; a file gated to a GOOS the repo never targets stays unloaded and
+// keeps the legacy name heuristic.
 type resolver struct {
 	byFile      map[string]map[span]types.Type // abs path -> node span -> type
 	objects     map[string]map[span]types.Object
@@ -1114,10 +1114,10 @@ type resolver struct {
 	loaded      map[string]bool          // abs paths type-checked under some GOOS
 }
 
-// The three GOOS values whose union covers this tree's build-gated files.
+// The two GOOS values whose union covers this tree's build-gated files.
 // `.github/build-tags.manifest` is the authority on which files are gated and
 // how; keep these in step with its goos-vet rows.
-var typeCheckGOOS = []string{"linux", "darwin", "windows"}
+var typeCheckGOOS = []string{"linux", "darwin"}
 
 // loadTypes type-checks the tree under root once per GOOS and records, for
 // every loaded file, the resolved type of each identifier and each typed
@@ -1143,8 +1143,8 @@ func loadTypes(root string) (*resolver, error) {
 			// each environment key is used" and gives this exact idiom. An
 			// inherited GOOS earlier in the slice does not win, so this does
 			// not need filtering. Reviewed once on the opposite premise and
-			// measured: with GOOS=darwin exported, the type-not-name fixture
-			// still yields b_windows.go, which only resolves when the windows
+			// measured: with GOOS=linux exported, the type-not-name fixture
+			// still yields b_darwin.go, which only resolves when the darwin
 			// pass type-checks. Do not "fix" this without re-running that.
 			Env: append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0"),
 		}

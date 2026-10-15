@@ -23,12 +23,12 @@ Hard-required tools (doctor exits non-zero if missing):
   one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
-  treehouse, no-mistakes, gh-axi, gh, and GitHub auth.
+  treehouse, gh-axi, gh, and GitHub auth.
 
 Use --role for role-specific integration matrix:
   --role general   Harness adapter, session backend, gh auth, go toolchain, per-project launch readiness
   --role captain   Watcher integration, config, captain homes, converge readiness
-  --role soldier   Worktree state, pipeline readiness, soldier brief`,
+  --role soldier   Worktree state, soldier brief`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkInstructions, _ := cmd.Flags().GetBool("check-instructions")
 			if checkInstructions {

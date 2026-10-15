@@ -976,12 +976,7 @@ func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 // fakeTreehouseOnPath installs a fake treehouse CLI that appends its arguments
 // to logPath, answers `status` with holders and every other call with an
 // existing directory as the acquired worktree, and prepends it to PATH for the
-// duration of the test.
-//
-// Without it the provider finds no treehouse on windows, falls back to real
-// `git worktree`, and the test measures git rather than the fake it installed
-// (#549 group 8); testutil.FakeOnPath owns why a shell script needs a companion
-// to be visible there. PATH is prepended to rather than replaced because the
+// duration of the test. PATH is prepended to rather than replaced because the
 // fallback this test is trying not to reach still needs to find git.
 func fakeTreehouseOnPath(t *testing.T, logPath, holders string) {
 	t.Helper()

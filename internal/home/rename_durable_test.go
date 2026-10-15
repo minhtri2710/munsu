@@ -8,9 +8,7 @@ import (
 
 // TestRenameDurableMovesAndReplaces exercises the durable rename contract
 // behaviorally: the source is gone, the destination holds the content, and an
-// existing destination is replaced. On unix the rename is followed by a
-// parent-directory fsync; on windows the move is issued with
-// MOVEFILE_WRITE_THROUGH. The same test runs on both halves.
+// existing destination is replaced.
 func TestRenameDurableMovesAndReplaces(t *testing.T) {
 	dir := t.TempDir()
 	from := filepath.Join(dir, "from.tmp")

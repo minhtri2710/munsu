@@ -74,7 +74,6 @@ func allowUnfenced(t *testing.T, r *Runner) {
 
 func TestProbeFenceRefusals(t *testing.T) {
 	isolateHuman(t)
-	t.Setenv("NM_HOME", t.TempDir())
 	f := newFenceFixture(t)
 
 	t.Run("bound path is not a git checkout", func(t *testing.T) {
@@ -90,17 +89,6 @@ func TestProbeFenceRefusals(t *testing.T) {
 		err := r.probeFence(BoundWorktree{path: f.worktree})
 		if err == nil || !strings.Contains(err.Error(), "launch fence: resolving the primary checkout") {
 			t.Fatalf("err = %v", err)
-		}
-	})
-	t.Run("no-mistakes primary without its gate remote", func(t *testing.T) {
-		r := f.runner("no-mistakes")
-		err := r.probeFence(BoundWorktree{path: f.worktree})
-		if err == nil || !strings.HasPrefix(err.Error(), "launch fence: ") {
-			t.Fatalf("err = %v", err)
-		}
-		requireGateBlocker(t, err, GateBlockerNotInitialized, "the primary has no no-mistakes remote")
-		if r.fence != nil {
-			t.Fatal("a refused launch must keep no fence")
 		}
 	})
 	t.Run("a fence that cannot be built refuses the launch", func(t *testing.T) {

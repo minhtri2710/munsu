@@ -9,10 +9,8 @@ import (
 )
 
 // TestPathInMessageAcceptsEscapedRenderings proves the predicate answers the
-// same question on both platforms for the three ways munsu renders a path into
-// a message: verbatim, through %q, and inside a JSON document. The path is
-// built with filepath.Join so it carries the host's separator, which is the
-// whole of what differs between the platforms.
+// same question for the three ways munsu renders a path into a message:
+// verbatim, through %q, and inside a JSON document.
 func TestPathInMessageAcceptsEscapedRenderings(t *testing.T) {
 	path := filepath.Join("base", "Users", "x", "AppData", "Temp", "home-&<001")
 
@@ -45,18 +43,16 @@ func TestPathInMessageAcceptsEscapedRenderings(t *testing.T) {
 		t.Fatalf("JSON payload omitted HTML escaping for %q: %s", path, payload)
 	}
 
-	// The host separator is what differs between platforms, so on Unix the
-	// three cases above collapse to one and prove nothing about escaping. A
-	// path spelled with backslashes is escaped by %q and by JSON on every
-	// platform, which is the behaviour this predicate exists for.
-	t.Run("separators are escaped on every platform", func(t *testing.T) {
-		windows := `C:\Users\x\AppData\Temp\home-001`
-		quoted := fmt.Sprintf("in home %q", windows)
-		if strings.Contains(quoted, windows) {
-			t.Fatalf("%%q left %q unescaped; this test no longer proves anything", windows)
+	// A path holding backslashes is escaped by %q, so a raw substring search
+	// for it finds nothing in the quoted rendering.
+	t.Run("backslashes are escaped", func(t *testing.T) {
+		escaped := `base\x\home-001`
+		quoted := fmt.Sprintf("in home %q", escaped)
+		if strings.Contains(quoted, escaped) {
+			t.Fatalf("%%q left %q unescaped; this test no longer proves anything", escaped)
 		}
-		if !PathInMessage(quoted, windows) {
-			t.Errorf("PathInMessage(%q, %q) = false, want true", quoted, windows)
+		if !PathInMessage(quoted, escaped) {
+			t.Errorf("PathInMessage(%q, %q) = false, want true", quoted, escaped)
 		}
 	})
 

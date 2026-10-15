@@ -29,7 +29,7 @@ var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
 // launchPaths is a Launch with every path resolved and validated.
 type launchPaths struct {
 	home, primary, worktree, gitDir, commonDir string
-	stateDir, gateRepo                         string
+	stateDir                                   string
 	files, remoteReflogs                       []string
 	roots                                      []string
 }
@@ -86,14 +86,7 @@ func New(l Launch) (*Fence, error) {
 	// nothing. It sits before the socket denies, which are last-match-wins,
 	// so those denies still decide.
 	b.WriteString("(allow network-outbound (with report))\n")
-	var gateSocket string
-	if p.gateRepo != "" {
-		// The no-mistakes daemon's socket is NM_HOME/socket, and fleet's
-		// projectGate (internal/fleet/spawn_spawn.go) launches with a gate only
-		// when it sits directly under NM_HOME/repos.
-		gateSocket = filepath.Join(filepath.Dir(filepath.Dir(p.gateRepo)), "socket")
-	}
-	denySocketConnects(&b, gateSocket)
+	denySocketConnects(&b, "")
 	// Later rules win in a sandbox profile: broad allows first, then the
 	// protected denies, then the seat's own roots and git carve-outs.
 	var roots []string // every subpath this profile makes writable
@@ -133,60 +126,11 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "subpath", p.home)
 	}
 	allowFiles(&b, p.files...)
-	if p.gateRepo != "" {
-		// objects/ and refs/ are writable in the gate (whole subpaths); under
-		// logs/ the seat may only append to its own branch reflog (allowed
-		// below). The whole gate is refused first, after the temp-root allow, so
-		// this holds wherever the gate lives, and its root cannot be renamed
-		// away. Human words (domain.Words): grantor the Human, channel
-		// supervisor-relay:dialog, words=selected, G1151: "Allowlist
-		// (Recommended): only objects/, refs/, logs/ writable in the
-		// no-mistakes gate repo"; logs/ is narrowed to the branch reflog by
-		// G1168 (quoted below). objects/info (alternates) is refused, and so
-		// are the names objects, refs and logs themselves (rename, removal,
-		// chmod, creating one that is absent), so none can be swapped for a
-		// tree of the seat's own whose info/alternates the next unfenced push
-		// and the daemon read. Human words (domain.Words): grantor the Human,
-		// channel supervisor-relay:dialog, words=selected, G1085: "Quy tắc
-		// chung (Recommended): Seat có fence không bao giờ ghi chương trình hay
-		// cấu hình mà tiến trình ngoài fence sẽ chạy, và không gửi input vào
-		// session ngoài session của nó." The gate's state database is not
-		// allowed: state.sqlite and its -wal, -shm and -journal files stay
-		// under the profile's first deny, so with the daemon stopped the
-		// seat's no-mistakes reads fail to open the database. Human words
-		// (domain.Words): grantor the Human, channel supervisor-relay:dialog,
-		// words=selected, G1154: "Chặn, chấp nhận lỗi khi daemon dừng
-		// (Recommended): deny fenced soldier writes to
-		// state.sqlite(+wal/shm/journal); database-open error when the daemon
-		// is stopped accepted". A temp-root NM_HOME keeps its other files and
-		// state.sqlite writable through the temp-root allow (the fence does
-		// not know the state path); no lane runs this; TestSoldierFenceWritableSet
-		// covers it. Even there the daemon's socket name is refused, and
-		// every directory above it is locked against unlink and rename, so a
-		// seat can neither move another session's socket onto that name nor
-		// swap NM_HOME for a dir holding one: G1085 (quoted above) keeps
-		// G1153's carve-out to the daemon's own socket.
-		g := p.gateRepo
-		obj, refs, logs := filepath.Join(g, "objects"), filepath.Join(g, "refs"), filepath.Join(g, "logs")
-		deny(&b, "subpath", g)
-		allowRoots(obj, refs)
-		deny(&b, "subpath", filepath.Join(obj, "info"))
-		deny(&b, "literal", obj, refs, logs, gateSocket)
-		denyUnlink(&b, ancestors(gateSocket)...)
-		// logs/ is not a root (that let a seat plant a symlink an unfenced push
-		// then appended through: fence-reflog-symlink-deputy). The seat may only
-		// append to its own gate branch reflog, which munsu pre-creates at spawn
-		// (ensureBranchReflog); it cannot create, unlink or rename any reflog,
-		// so it cannot swap one for a link. Human words (domain.Words): grantor
-		// the Human, channel supervisor-relay:dialog, words=selected, G1168: "B1
-		// (Recommended): B on the seat branch reflog, worktree HEAD and gate
-		// reflog; munsu pre-creates the gate branch reflog at spawn (probe first);
-		// logs/refs/remotes residual becomes its own task", building on G1167: "B:
-		// dò trước rồi làm (Recommended): munsu pre-creates the soldier's own
-		// branch reflog files; fence allows data writes to exactly those, refuses
-		// create/unlink/rename elsewhere in logs/".
-		allowData(&b, filepath.Join(logs, "refs", "heads", filepath.FromSlash(branch)))
-	}
+	// No seat writes outside its home, checkouts and temp roots for a review
+	// tool: the gate repository write set (G1151, G1154) is removed. Human words
+	// (domain.Words): grantor the Human, channel Claude Code session with the
+	// Lead (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp
+	// rời nếu user cần thui" (removes the gate repository allowances).
 	if l.Role == RoleSoldier {
 		allowRoots(p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
 			filepath.Join(p.commonDir, "refs", "remotes"))
@@ -279,8 +223,7 @@ func New(l Launch) (*Fence, error) {
 
 	// The probe proves the home refused: a soldier's every home root (G1058,
 	// quoted above), and a reviewer's whole home, which no reviewer writes but
-	// its Files and harness state dir. For a no-mistakes soldier it also
-	// proves the gate's hooks refused (G1085, quoted at the gate denies).
+	// its Files and harness state dir.
 	refuse := []string{p.primary, p.commonDir}
 	if l.Role == RoleReviewer {
 		refuse = append(refuse, p.worktree, p.gitDir)
@@ -289,9 +232,6 @@ func New(l Launch) (*Fence, error) {
 		}
 	} else {
 		refuse = append(refuse, homeRoots(p.home)...)
-		if p.gateRepo != "" {
-			refuse = append(refuse, filepath.Join(p.gateRepo, "hooks"))
-		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return &Fence{
@@ -413,9 +353,6 @@ func resolveLaunch(l Launch) (launchPaths, error) {
 	if err := resolveStateDir(l, &p); err != nil {
 		return p, err
 	}
-	if err := resolveGate(l, &p); err != nil {
-		return p, err
-	}
 	if l.Role == RoleSoldier {
 		if wts := filepath.Join(p.commonDir, "worktrees"); p.gitDir == wts || !within(p.gitDir, wts) {
 			return p, fmt.Errorf("fence: git dir %s is not a linked worktree dir under %s/worktrees", p.gitDir, p.commonDir)
@@ -441,7 +378,7 @@ func resolveWritableRoots(l Launch, p *launchPaths) error {
 	if l.Role != RoleSoldier {
 		return fmt.Errorf("fence: a reviewer launch has no extra writable roots")
 	}
-	checkouts := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir, p.gateRepo}, l.Checkouts...)
+	checkouts := append([]string{p.primary, p.worktree, p.gitDir, p.commonDir}, l.Checkouts...)
 	roots, err := ValidateWritableRoots(l.WritableRoots, RootFacts{Home: p.home, Checkouts: checkouts})
 	if err != nil {
 		return err
@@ -511,8 +448,7 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 	// conditions include "resolveStateDir no symlink": "Duyệt, có R3
 	// (Recommended): option 1 + 3 PRs with section 1 conditions; R3 worded as
 	// an accident guard (not a boundary), error names munsu report <state>;
-	// gate record = munsu task-authority gates, no-mistakes gate state a
-	// separate fence task."
+	// [...]" (the elided tail concerns gate state munsu no longer models).
 	if fi, err := os.Lstat(l.HarnessStateDir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("fence: harness state dir %s is a symlink", l.HarnessStateDir)
 	}
@@ -529,31 +465,6 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 		}
 	}
 	p.stateDir = r
-	return nil
-}
-
-// resolveGate validates a soldier's no-mistakes gate repo: clear of every
-// checkout, git path and home root.
-func resolveGate(l Launch, p *launchPaths) error {
-	if l.GateRepo == "" {
-		return nil
-	}
-	if l.Role != RoleSoldier {
-		return fmt.Errorf("fence: a reviewer launch has no gate write set")
-	}
-	repo, err := resolvePath(l.GateRepo, true)
-	if err != nil {
-		return fmt.Errorf("fence: gate repo: %w", err)
-	}
-	if fi, err := os.Stat(repo); err != nil || !fi.IsDir() {
-		return fmt.Errorf("fence: gate repo %s is not a directory", repo)
-	}
-	for _, o := range append([]string{p.primary, p.worktree, p.gitDir, p.commonDir}, homeRoots(p.home)...) {
-		if overlaps(repo, o) {
-			return fmt.Errorf("fence: gate path %s overlaps %s", repo, o)
-		}
-	}
-	p.gateRepo = repo
 	return nil
 }
 
@@ -659,22 +570,19 @@ func keptSocketDirs() []string {
 }
 
 // denySocketConnects refuses connecting to every unix socket but DNS's
-// (mDNSResponder) and seatSocket: the no-mistakes daemon's socket of a soldier
-// with a gate, which its gate push's pre-receive hook and its no-mistakes
-// commands dial, or a captain's seat socket, through which munsu runs the
-// captain's record and pane commands outside its fence. So a seat cannot
-// inject messages into another claude session, type into a tmux pane, drive
-// any herdr pane (its own included), or reach any
-// other daemon or listener, its own included. The allows are exact paths, and
-// a symlink at one is matched at its target. The daemon serves every lane, so
-// through it a seat can still answer another lane's run; G1153's row accepts
-// that. Human words (domain.Words), each grantor the Human, channel
-// supervisor-relay:dialog, words=selected: G1153, refining G1150 ("Chặn hết
-// trừ DNS (Recommended): deny every unix-socket connect except
-// mDNSResponder"): "Chặn hết trừ DNS + socket no-mistakes
-// (Recommended): deny-all except mDNSResponder, plus <NM_HOME>/socket only for
-// a soldier with a gate". G1148: "Chặn hẳn (Recommended): deny the herdr
-// socket entirely for fenced seats". G1085: "Quy tắc chung (Recommended): Seat
+// (mDNSResponder) and seatSocket: a captain's seat socket, through which munsu
+// runs the captain's record and pane commands outside its fence; a soldier or
+// reviewer passes none. So a seat cannot inject messages into another claude
+// session, type into a tmux pane, drive any herdr pane (its own included), or
+// reach any other daemon or listener, its own included. The allows are exact
+// paths, and a symlink at one is matched at its target. Human words
+// (domain.Words), each grantor the Human, channel supervisor-relay:dialog,
+// words=selected: G1150: "Chặn hết trừ DNS (Recommended): deny every
+// unix-socket connect except mDNSResponder"; G1153's gate-socket carve-out is
+// removed: grantor the Human, channel Claude Code session with the Lead
+// (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu
+// user cần thui" (removes the gate socket allowance). G1148: "Chặn hẳn
+// (Recommended): deny the herdr socket entirely for fenced seats". G1085: "Quy tắc chung (Recommended): Seat
 // có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
 // fence sẽ chạy, và không gửi input vào session ngoài session của nó." The
 // captain's seat socket: grantor the Human, channel direct chat with the Lead,

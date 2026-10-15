@@ -7,15 +7,15 @@
 # runs inside the `invariants` job next to the gofmt and build-tag
 # rules, and those steps are worth trusting precisely because they cannot
 # be affected by anything outside the checkout. A deadline that needed the
-# Actions API to be judged would put a network dependency in the one job that
-# has none. The half that does need the API lives in flake-sweep.sh and runs in
-# its own workflow.
+# Actions API to be judged could fail for a reason outside this repository.
+# The half that does need the API lives in flake-sweep.sh.
 #
 # The division of labour between the two:
 #
-#   flake-sweep.sh   derives which tests are flaky from what CI already ran,
-#                    and reports the diff that adds them here on its run
-#                    summary; a person applies it. Network, main only.
+#   flake-sweep.sh   derives which tests are flaky from what CI already ran.
+#                    Network, post-merge only: flake-ledger.yml runs the sweep
+#                    after CI on main and reports the diff that adds them here
+#                    on its run summary; a person applies it.
 #   flake-ledger.sh  enforces the file. No network, every PR.
 #
 # Why a deadline at all: an entry with no expiry is `t.Skip` with better

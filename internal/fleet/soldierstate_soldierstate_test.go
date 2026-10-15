@@ -235,11 +235,3 @@ func TestRead_CorruptCanonicalFailsClosed(t *testing.T) {
 		t.Errorf("error must carry task and home context, got: %v", err)
 	}
 }
-
-// TestRunStep_BranchMismatch proves runStep ignores a run for another branch.
-func TestRunStep_BranchMismatch(t *testing.T) {
-	r := &RunStatus{Branch: "mu/a", Status: "completed", Outcome: "passed"}
-	if _, _, ok := runStep(r, "other-branch"); ok {
-		t.Error("expected false for branch mismatch, but got ok=true")
-	}
-}

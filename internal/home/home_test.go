@@ -62,9 +62,7 @@ func TestResolveFlagOverridesEnv(t *testing.T) {
 // absTestPath joins name under the filesystem root and makes it absolute.
 // Resolve returns filepath.Abs of its override, so an input that is already
 // absolute is returned unchanged and the assertion stays about which override
-// wins rather than about path shape. A leading separator alone is not enough:
-// on Windows it names the current drive's root and filepath.Abs still rewrites
-// it to a volume-qualified path.
+// wins rather than about path shape.
 func absTestPath(t *testing.T, name ...string) string {
 	t.Helper()
 	abs, err := filepath.Abs(filepath.Join(append([]string{string(os.PathSeparator)}, name...)...))

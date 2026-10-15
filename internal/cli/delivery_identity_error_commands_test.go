@@ -101,10 +101,10 @@ func TestResolveCommandPathRejectsUnregisteredCommand(t *testing.T) {
 		t.Errorf("reported the wrong problem: got %q, want not runnable", problem)
 	}
 
-	if problem, ok := resolveCommandPath(root, []string{"delivery", "pr-check", "<task-id>"}); ok {
-		t.Error("resolveCommandPath accepted the removed pr-check command")
-	} else if !strings.Contains(problem, "unregistered") || !strings.Contains(problem, "pr-check") {
-		t.Errorf("reported the wrong problem: got %q, want unregistered pr-check", problem)
+	if problem, ok := resolveCommandPath(root, []string{"delivery", "no-such-subcommand", "<task-id>"}); ok {
+		t.Error("resolveCommandPath accepted an unregistered subcommand")
+	} else if !strings.Contains(problem, "unregistered") || !strings.Contains(problem, "no-such-subcommand") {
+		t.Errorf("reported the wrong problem: got %q, want unregistered no-such-subcommand", problem)
 	}
 
 	if problem, ok := resolveCommandPath(root, nil); ok {

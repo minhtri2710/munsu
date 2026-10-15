@@ -42,7 +42,7 @@ func installTestPiIntegration(t *testing.T) (string, string) {
 	t.Helper()
 	home := t.TempDir()
 	bin := fakePiToolchain(t)
-	SetMunsuPathResolver(testMunsuResolver{path: testutil.FakeExecutablePath(filepath.Join(bin, "munsu"))})
+	SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(bin, "munsu")})
 	t.Cleanup(ResetMunsuPathResolver)
 	if _, err := Install(home, home, harness.Pi, ScopeProject, false); err != nil {
 		t.Fatal(err)

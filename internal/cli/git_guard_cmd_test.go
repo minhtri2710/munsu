@@ -113,7 +113,7 @@ func TestRunGitGuardRefusesBlockedArgv(t *testing.T) {
 		t.Fatalf("stderr = %q, want [git-fence] %q", stderr, wantReason)
 	}
 }
-func TestRunGitGuardPushesTaskBranchToOriginAndNoMistakes(t *testing.T) {
+func TestRunGitGuardPushesTaskBranchToOrigin(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
@@ -126,17 +126,13 @@ func TestRunGitGuardPushesTaskBranchToOriginAndNoMistakes(t *testing.T) {
 	t.Setenv("MUNSU_TASK_ID", "ship-guard-push")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-guard-push")
 	runGitForSafety(t, worktree, "remote", "add", "origin", remote)
-	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", remote)
 	branch := "refs/heads/mu/ship-guard-push"
-	runGitForSafety(t, worktree, "config", "remote.no-mistakes.push", "HEAD:"+branch)
 	t.Chdir(worktree)
 
 	head := gitOutputForSafety(t, worktree, "rev-parse", "HEAD")
-	for _, remoteName := range []string{"origin", "no-mistakes"} {
-		stdout, stderr, err := runGitGuardPushHelper(t, worktree, remoteName)
-		if err != nil {
-			t.Fatalf("guarded push to %s: %v\nstdout=%s\nstderr=%s", remoteName, err, stdout, stderr)
-		}
+	stdout, stderr, err := runGitGuardPushHelper(t, worktree, "origin")
+	if err != nil {
+		t.Fatalf("guarded push to origin: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
 	}
 	if got := gitOutputForSafety(t, remote, "rev-parse", branch); got != head {
 		t.Fatalf("remote task branch head = %s, want pushed head %s", got, head)

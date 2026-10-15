@@ -9,8 +9,7 @@ import (
 )
 
 // openClosedLockFile swaps openLockFile for one that hands back a closed
-// *os.File. Locking it fails on every GOOS (EBADF, or an invalid handle on
-// windows) with an error that is not busy, which is the state every refusal
+// *os.File. Locking it fails with EBADF, an error that is not busy, which is the state every refusal
 // below exists for.
 func openClosedLockFile(t *testing.T) {
 	t.Helper()

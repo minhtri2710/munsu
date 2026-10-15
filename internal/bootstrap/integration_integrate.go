@@ -66,11 +66,10 @@ type Manifest struct {
 
 // SafetyCheckResult is returned by SafetyCheck.
 type SafetyCheckResult struct {
-	Identity       string `json:"identity"`        // "primary", "worktree", "unrelated", "unknown"
-	GateCapability string `json:"gate_capability"` // "gate-present", "gate-absent", "gate-unknown"
-	CanonicalPath  string `json:"canonical_path,omitempty"`
-	GateRefused    bool   `json:"gate_refused"`
-	Error          string `json:"error,omitempty"`
+	Identity      string `json:"identity"` // "primary", "worktree", "unrelated", "unknown"
+	CanonicalPath string `json:"canonical_path,omitempty"`
+	GateRefused   bool   `json:"gate_refused"`
+	Error         string `json:"error,omitempty"`
 }
 
 // Capability describes a supported integration capability.
@@ -207,8 +206,7 @@ func resolveMunsuPath() (string, error) {
 	// First try: exec.LookPath("munsu") — the intended production path.
 	// Once LookPath succeeds the platform has already confirmed the file is
 	// executable for the current OS, so we accept a regular, non-directory
-	// file without re-checking POSIX mode bits, whose semantics do not encode
-	// executability on Windows.
+	// file without re-checking POSIX mode bits.
 	if munsu, err := lookPath("munsu"); err == nil {
 		if resolved, err := filepath.EvalSymlinks(munsu); err == nil {
 			if info, err := os.Stat(resolved); err == nil && !info.IsDir() && info.Mode().IsRegular() {
@@ -220,7 +218,7 @@ func resolveMunsuPath() (string, error) {
 	// Fallback: os.Executable — only when the current binary is munsu.
 	if exe, err := osExecutable(); err == nil {
 		base := filepath.Base(exe)
-		if base == "munsu" || base == "munsu.exe" || base == "munsu.test" || base == "munsu.test.exe" {
+		if base == "munsu" || base == "munsu.test" {
 			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 				if info, err := os.Stat(resolved); err == nil && !info.IsDir() && info.Mode().IsRegular() {
 					return resolved, nil
@@ -546,27 +544,17 @@ func SafetyCheck(path string) *SafetyCheckResult {
 		result.Identity = "unknown"
 	}
 
-	// Map fleet.GateCap
-	switch scopeResult.GateCap {
-	case fleet.GatePresent:
-		result.GateCapability = "gate-present"
-	case fleet.GateAbsent:
-		result.GateCapability = "gate-absent"
-	default:
-		result.GateCapability = "gate-unknown"
-	}
-
-	// GateRefused: true when classification errored (GateUnknown), gate is present,
-	// identity is Unrelated (fail closed for unknown repos), or the path is a
-	// primary checkout while a munsu task run is active.
+	// GateRefused: true when classification errored, identity is Unrelated
+	// (fail closed for unknown repos), or the path is a primary checkout while
+	// a munsu task run is active. A review tool's gate checkout is no longer
+	// refused for being one. Human words (domain.Words): grantor the Human,
+	// channel Claude Code session with the Lead (typed), 2026-10-15: "xóa
+	// no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
+	// (removes the gate-agent refusal).
 	if scopeResult.Err != nil {
 		result.GateRefused = true
 		result.Error = scopeResult.Err.Error()
-	} else if scopeResult.GateCap == fleet.GatePresent {
-		result.GateRefused = true
-		result.Error = scopeResult.GateSource
 	} else if scopeResult.Identity == fleet.Unrelated {
-		// Unrelated identity with no explicit gate still fails closed
 		result.GateRefused = true
 		result.Error = UnrelatedCheckoutRefusal
 	} else if scopeResult.Identity == fleet.Primary && IsBoundRepository(scopeResult.CommonDir) {

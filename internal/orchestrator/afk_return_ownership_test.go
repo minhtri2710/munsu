@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -103,7 +102,7 @@ func TestReturn_RefusesPIDWhoseIdentityDoesNotMatch(t *testing.T) {
 
 	executable, _, err := home.ProcessIdentity(os.Getpid())
 	if err != nil {
-		t.Skipf("home.ProcessIdentity unsupported on %s: %v", runtime.GOOS, err)
+		t.Fatalf("home.ProcessIdentity: %v", err)
 	}
 	publishAfkIdentity(t, tmp, os.Getpid(), executable, "not-the-token-the-kernel-reports")
 
@@ -113,13 +112,10 @@ func TestReturn_RefusesPIDWhoseIdentityDoesNotMatch(t *testing.T) {
 
 // TestReturn_StopsAVerifiedDaemon is the positive half: a PID whose published
 // identity still matches what the kernel reports is stopped, and the consent
-// flag and the identity artifact are gone afterwards -- the last one because
-// Kill skips the daemon's own deferred cleanup. The lock is not Return's to
+// flag and the identity artifact are gone afterwards -- the last one
+// because the child is not a daemon and has no deferred cleanup of its own. The lock is not Return's to
 // clear: a real daemon's flock goes with its process.
 func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("needs a spawnable long-running child; no lane runs tests on windows anyway")
-	}
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "state"), 0755); err != nil {
 		t.Fatalf("mkdir state: %v", err)
@@ -147,7 +143,7 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 
 	executable, startToken, err := home.ProcessIdentity(pid)
 	if err != nil {
-		t.Skipf("home.ProcessIdentity unsupported on %s: %v", runtime.GOOS, err)
+		t.Fatalf("home.ProcessIdentity: %v", err)
 	}
 	publishAfkIdentity(t, tmp, pid, executable, startToken)
 	holdAFKLockFor(t, tmp, pid)
@@ -155,18 +151,8 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 		t.Fatalf("write flag: %v", err)
 	}
 
-	report, err := Return(tmp)
-	if err != nil {
+	if _, err := Return(tmp); err != nil {
 		t.Fatalf("Return on a verified daemon: %v", err)
-	}
-	// The report must carry the predicate's lossiness answer for this stop:
-	// false on unix (SIGTERM flushes in the daemon's deferred shutdown), true
-	// on windows (Kill skips that flush). This test skips on windows, so the
-	// wired value verified here is the unix answer; the windows value is
-	// asserted by TestStopProcessLossinessMatchesPlatform on the
-	// windows-observation lane.
-	if report.LossyStop != stopProcessIsLossy() {
-		t.Errorf("report.LossyStop = %v, want the predicate answer %v", report.LossyStop, stopProcessIsLossy())
 	}
 	if home.IsProcessAlive(pid) {
 		t.Error("child still alive after Return")
@@ -188,10 +174,6 @@ func TestReturn_StopsAVerifiedDaemon(t *testing.T) {
 // that installs SIG_IGN survives it and waitForDaemonExit polls to its bound and
 // reports the daemon not gone.
 func TestReturn_RefusesWhenDaemonSurvivesStopRequest(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("needs a SIGTERM-ignoring child; no lane runs tests on windows anyway")
-	}
-
 	// Shorten the bounded poll for this test and restore the production values
 	// afterwards -- afkStopWait/afkStopPoll are vars only so a test can do this.
 	origWait, origPoll := afkStopWait, afkStopPoll
@@ -207,7 +189,7 @@ func TestReturn_RefusesWhenDaemonSurvivesStopRequest(t *testing.T) {
 
 	executable, startToken, err := home.ProcessIdentity(pid)
 	if err != nil {
-		t.Skipf("home.ProcessIdentity unsupported on %s: %v", runtime.GOOS, err)
+		t.Fatalf("home.ProcessIdentity: %v", err)
 	}
 	publishAfkIdentity(t, tmp, pid, executable, startToken)
 	holdAFKLockFor(t, tmp, pid)

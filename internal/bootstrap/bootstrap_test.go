@@ -378,7 +378,7 @@ func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
 	setDirMtime(t, dataDir, 48*time.Hour)
 	wrapped := func(taskID string, reclaim func() error) (bool, error) {
 		if err := auth.WriteTaskDataArtifactByID(tid.Value(), func() error {
-			return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "no-mistakes"})
+			return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "direct-PR"})
 		}); err != nil {
 			return false, err
 		}
@@ -442,7 +442,7 @@ func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	setDirMtime(t, dataDir, 48*time.Hour)
-	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "no-mistakes"}); err != nil {
+	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "direct-PR"}); err != nil {
 		t.Fatal(err)
 	}
 	cleaned := gcOrphanDataDirs(homeDir, func(id string, reclaim func() error) (bool, error) {

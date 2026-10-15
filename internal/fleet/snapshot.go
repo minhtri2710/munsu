@@ -45,7 +45,6 @@ type TaskSnapshot struct {
 	// Resolved current-state projection (populated when a resolver is wired).
 	CurrentState        string            `json:"current_state,omitempty"`
 	CurrentDescription  string            `json:"current_description,omitempty"`
-	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
 	StatusLogSuperseded bool              `json:"status_log_superseded"`
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
@@ -56,7 +55,6 @@ type TaskSnapshot struct {
 type CurrentStateInfo struct {
 	State               string            `json:"state"`
 	Description         string            `json:"description"`
-	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
 	StatusLogSuperseded bool              `json:"status_log_superseded"`
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
@@ -181,7 +179,7 @@ func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapsho
 	if err != nil {
 		entries = nil
 		// A missing captains directory means no captains. Decide that from Stat, not
-		// the ReadDir error: on Windows ReadDir of a regular file fails ErrNotExist-shaped.
+		// the ReadDir error.
 		if _, statErr := os.Stat(capRoot); !errors.Is(statErr, fs.ErrNotExist) {
 			snap.Failures = append(snap.Failures, SourceFailure{Source: captainsSource, Home: homeDir, Err: err})
 		}
@@ -303,7 +301,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			Source:              source,
 			CurrentState:        info.State,
 			CurrentDescription:  info.Description,
-			NoMistakesRunStep:   info.NoMistakesRunStep,
 			StatusLogSuperseded: true,
 			OpenActivities:      info.OpenActivities,
 		}

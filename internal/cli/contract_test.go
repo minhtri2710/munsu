@@ -181,8 +181,7 @@ func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	t.Setenv("MUNSU_HOME", home)
 	// session-start acquires state/.lock and, by design, holds it for the
 	// process lifetime -- a real `munsu session-start` is a process, and exit
-	// drops the flock. This test is not a process, and on Windows the still-open
-	// handle also blocks TempDir's RemoveAll, so release it here (#549 group 10).
+	// drops the flock. This test is not a process, so release it here.
 	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
 
 	out, err := runContract(t, []string{"session-start", "--output", "json"})
@@ -330,8 +329,6 @@ func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
 // place of the rune. The documented MS-FSCC general filename exclusions
 // (" \ / : | < > ? * and U+0000-U+001F) do not list U+200B, so unlike a literal
 // backslash this leaf needs no platform branch to be written as well as escaped.
-// Acceptance on the target windows image is a windows-observation question, not
-// something the specification settles.
 //
 // The leaf is not what makes the three home fixtures below catch a %q
 // regression. Two compare the decoded message against a %s-formatted want
@@ -339,17 +336,12 @@ func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
 // absent; all three already fail for a plain path, because %q adds surrounding
 // quote delimiters that the want string lacks and that Quote's own output
 // carries. What the leaf gives is one explicit, platform-uniform statement of the
-// escape-bearing property these tests are about, in place of a runtime.GOOS
-// branch that left windows with no escapable character at all.
+// escape-bearing property these tests are about.
 //
 // encoding/json emits U+200B as raw UTF-8 rather than escaping it, unlike < > &
 // U+2028 U+2029. That is an observation about the encoder, not a requirement: an
 // escaped \u200b would decode back to the same rune, so the contract
 // encode/decode round trip these tests read the message through holds either way.
-//
-// Creatability under U+200B is verified here on darwin only. Whether the
-// windows-latest image accepts it through MkdirAll and home.Init is pinned by the
-// windows-observation run on merged main, not by anything this tree executes.
 func quoteEscapedLeaf(name string) string {
 	return name + "\u200b"
 }
@@ -398,7 +390,7 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 				homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 				initCLITestHome(t, homeDir)
 				t.Setenv("MUNSU_HOME", homeDir)
-				const taskID = "windows-path"
+				const taskID = "escaped-path"
 
 				switch state {
 				case "corrupt":
@@ -444,7 +436,7 @@ func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
 	homeDir := filepath.Join(t.TempDir(), quoteEscapedLeaf(".munsu"))
 	initCLITestHome(t, homeDir)
 	t.Setenv("MUNSU_HOME", homeDir)
-	const taskID = "windows-path"
+	const taskID = "escaped-path"
 	if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("kind=ship\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -483,13 +475,13 @@ func TestCaptainSpawnContractErrorPreservesProvenancePaths(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"spawn", "windows-path", "project"})
+	root.SetArgs([]string{"spawn", "escaped-path", "project"})
 	err := root.Execute()
 	if err == nil {
 		t.Fatal("spawn with mismatched captain provenance unexpectedly succeeded")
 	}
 	out.Reset()
-	WriteContractError(&out, err, []string{"spawn", "windows-path", "project", "--output", "json"})
+	WriteContractError(&out, err, []string{"spawn", "escaped-path", "project", "--output", "json"})
 	var response ErrorResponse
 	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
 		t.Fatalf("decode spawn output: %v\n%s", err, out.String())
@@ -938,9 +930,6 @@ func TestSafetyCheckContractJSON(t *testing.T) {
 	}
 	if resp.Data.Identity == "" {
 		t.Error("identity must be non-empty even for temp dirs")
-	}
-	if resp.Data.GateCapability == "" {
-		t.Error("gate_capability must be non-empty even for temp dirs")
 	}
 
 	// Verify raw JSON key presence — structural unmarshal alone cannot distinguish

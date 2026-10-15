@@ -76,7 +76,7 @@ func (w *seatWorld) silentFor(d time.Duration) {
 func (w *seatWorld) cycle() {
 	w.t.Helper()
 	resetRecovery()
-	_, w.err = RunCycleWithProbeAndSender(w.home, aliveTaskProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, testTaskStatePort{})
+	_, w.err = RunCycleWithProbeAndSender(w.home, aliveTaskProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil)
 	records, err := DrainWakes(w.home)
 	if err != nil {
 		w.t.Fatal(err)
@@ -237,7 +237,7 @@ func TestSeatLivenessIgnoresRepeatsOfAReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	resetRecovery()
-	if _, err := RunCycleWithProbeAndSender(generalHome, aliveTaskProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, testTaskStatePort{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(generalHome, aliveTaskProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	signals, err := mhome.DrainWakesOfKind(generalHome, "signal")

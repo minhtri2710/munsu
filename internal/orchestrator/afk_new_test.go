@@ -182,13 +182,6 @@ func waitForFile(child *afkDaemonChild, path string, timeout time.Duration) erro
 	return fmt.Errorf("%s was not created within %s\n%s", path, timeout, child.output())
 }
 
-func assertFileExists(t *testing.T, path string) {
-	t.Helper()
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("%s does not exist after lossy daemon stop: %v", path, err)
-	}
-}
-
 func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	tmp := t.TempDir()
 	child := startAFKDaemonChild(t, tmp, true)
@@ -206,11 +199,6 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	}
 	stopAFKDaemonChild(t, child)
 
-	if stopProcessIsLossy() {
-		assertFileExists(t, flagPath)
-		assertFileExists(t, lockPath)
-		return
-	}
 	if _, err := os.Stat(flagPath); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
@@ -233,10 +221,6 @@ func TestDaemonCatchesSignalAtEarliestReadiness(t *testing.T) {
 	}
 	stopAFKDaemonChild(t, child)
 
-	if stopProcessIsLossy() {
-		// The child may be stopped before either startup artifact is written.
-		return
-	}
 	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
 		t.Error("consent flag still exists after daemon stop")
 	}
@@ -257,10 +241,6 @@ func TestDaemonSignalSafeWhenLockIsTheProbe(t *testing.T) {
 	}
 	stopAFKDaemonChild(t, child)
 
-	if stopProcessIsLossy() {
-		assertFileExists(t, lockPath)
-		return
-	}
 	assertAFKLockFree(t, tmp)
 }
 

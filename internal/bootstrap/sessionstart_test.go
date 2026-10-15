@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -55,71 +53,6 @@ func seedCanonicalTask(t *testing.T, homeDir, id, kind string) {
 	}
 	if _, err := c.Create(op, req); err != nil {
 		t.Fatalf("Create(%s): %v", id, err)
-	}
-}
-
-// TestCheckSessionScope pins the two ways a session start is barred as a
-// no-mistakes gate agent, and the nearest session it admits: no marker and an
-// ordinary registered checkout.
-func TestCheckSessionScope(t *testing.T) {
-	registered := func(gate bool) func(t *testing.T) string {
-		return func(t *testing.T) string {
-			home := t.TempDir()
-			projectDir := t.TempDir()
-			if gate {
-				commonDir := filepath.Join(t.TempDir(), ".no-mistakes", "repos", "gate.git")
-				if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
-					t.Fatal(err)
-				}
-				if out, err := exec.Command("git", "init", "--bare", commonDir).CombinedOutput(); err != nil {
-					t.Fatalf("git init --bare: %v: %s", err, out)
-				}
-				if err := os.WriteFile(filepath.Join(projectDir, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("NM_HOME", filepath.Dir(filepath.Dir(commonDir)))
-			} else if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
-				t.Fatalf("git init: %v: %s", err, out)
-			}
-			if err := fleet.Add(home, "demo", projectDir, false); err != nil {
-				t.Fatal(err)
-			}
-			return home
-		}
-	}
-	cases := []struct {
-		name    string
-		gateEnv bool
-		home    func(t *testing.T) string
-		want    string
-	}{
-		{"gate marker with no registered project", true, func(t *testing.T) string { return t.TempDir() }, "no-mistakes gate agent must not drive the fleet"},
-		{"registered project that is a gate checkout", false, registered(true), "project demo: gate agent refused"},
-		{"registered project that is an ordinary checkout", false, registered(false), ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("NO_MISTAKES_GATE", "")
-			if !tc.gateEnv {
-				if err := os.Unsetenv("NO_MISTAKES_GATE"); err != nil {
-					t.Fatal(err)
-				}
-			}
-			home := tc.home(t)
-			if got := CheckSessionScope(home).IsGateAgent; got != tc.gateEnv {
-				t.Fatalf("CheckSessionScope IsGateAgent = %v, want %v", got, tc.gateEnv)
-			}
-			err := checkSessionScope(home)
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("checkSessionScope error = %v, want nil", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("checkSessionScope error = %v, want refusal containing %q", err, tc.want)
-			}
-		})
 	}
 }
 
@@ -469,58 +402,11 @@ func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
 	}
 }
 
-func TestRunSessionStartReportsRuntimeIdentityBeforeScopeRefusal(t *testing.T) {
-	home := t.TempDir()
-	running := writeExecutable(t, home, "bin/munsu", "current")
-	shadow := writeExecutable(t, home, "shadow/munsu", "shadow")
-	saved := defaultRuntimeIdentityProbe
-	defaultRuntimeIdentityProbe = func() runtimeIdentityProbe {
-		p := saved()
-		p.executable = func() (string, error) { return running, nil }
-		p.lookPath = func(string) (string, error) { return shadow, nil }
-		p.buildInfo = cleanBuildInfo
-		p.integrationStatus = func(string, string, string, Scope) (*IntegrationResult, error) {
-			return &IntegrationResult{Harness: "pi", Scope: ScopeProject, State: "absent"}, nil
-		}
-		return p
-	}
-	defer func() { defaultRuntimeIdentityProbe = saved }()
-	t.Setenv("NO_MISTAKES_GATE", "1")
-
-	var buf bytes.Buffer
-	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
-		t.Fatal("watcher ensure must not run after scope refusal")
-		return WatchEnsureResult{}
-	}, nil, reclaimEvery)
-	if err == nil {
-		t.Fatal("expected scope refusal")
-	}
-	if res.RuntimeIdentity == nil || findSkew(res.RuntimeIdentity.Skew, SkewPathShadowing) == nil {
-		t.Fatalf("refused session missing typed path_shadowing skew: %+v", res.RuntimeIdentity)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "--- Runtime Identity ---") || !strings.Contains(out, "skew: path_shadowing") {
-		t.Fatalf("refused session did not print runtime identity before returning: %s", out)
-	}
-	if _, statErr := os.Stat(filepath.Join(home, "state", ".lock")); !os.IsNotExist(statErr) {
-		t.Fatalf("session lock should not be acquired before diagnostics/scope refusal: %v", statErr)
-	}
-}
-
 func TestRunSessionStartBootstrapFailureReleasesSessionLock(t *testing.T) {
 	home := t.TempDir()
 	if _, err := mhome.Init(home); err != nil {
 		t.Fatal(err)
 	}
-	savedGate, hadGate := os.LookupEnv("NO_MISTAKES_GATE")
-	_ = os.Unsetenv("NO_MISTAKES_GATE")
-	defer func() {
-		if hadGate {
-			_ = os.Setenv("NO_MISTAKES_GATE", savedGate)
-		} else {
-			_ = os.Unsetenv("NO_MISTAKES_GATE")
-		}
-	}()
 	bootstrapErr := errors.New("bootstrap failed")
 	savedBootstrap := sessionStartBootstrap
 	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
@@ -554,15 +440,6 @@ func TestRunSessionStartBootstrapFailureSurfacesReleaseError(t *testing.T) {
 	if _, err := mhome.Init(home); err != nil {
 		t.Fatal(err)
 	}
-	savedGate, hadGate := os.LookupEnv("NO_MISTAKES_GATE")
-	_ = os.Unsetenv("NO_MISTAKES_GATE")
-	defer func() {
-		if hadGate {
-			_ = os.Setenv("NO_MISTAKES_GATE", savedGate)
-		} else {
-			_ = os.Unsetenv("NO_MISTAKES_GATE")
-		}
-	}()
 	bootstrapErr := errors.New("bootstrap failed")
 	releaseErr := errors.New("release failed")
 	savedBootstrap := sessionStartBootstrap
@@ -601,8 +478,7 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) 
 	seedCanonicalTask(t, home, "task-1", "scout")
 	// session-start acquires state/.lock and, by design, holds it for the
 	// process lifetime -- a real `munsu session-start` is a process, and exit
-	// drops the flock. This test is not a process, and on Windows the still-open
-	// handle also blocks TempDir's RemoveAll, so release it here (#549 group 10).
+	// drops the flock. This test is not a process, so release it here.
 	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
 	running := writeExecutable(t, home, "bin/munsu", "current")
 	shadow := writeExecutable(t, home, "shadow/munsu", "shadow")
@@ -619,16 +495,6 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) 
 		return p
 	}
 	defer func() { defaultRuntimeIdentityProbe = saved }()
-
-	savedGate, hadGate := os.LookupEnv("NO_MISTAKES_GATE")
-	_ = os.Unsetenv("NO_MISTAKES_GATE")
-	t.Cleanup(func() {
-		if hadGate {
-			_ = os.Setenv("NO_MISTAKES_GATE", savedGate)
-		} else {
-			_ = os.Unsetenv("NO_MISTAKES_GATE")
-		}
-	})
 	var buf bytes.Buffer
 	ensured := false
 	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
@@ -755,8 +621,6 @@ func generalSession(t *testing.T, herdrPane string) string {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NO_MISTAKES_GATE", "")
-	_ = os.Unsetenv("NO_MISTAKES_GATE")
 	t.Setenv("MUNSU_ROLE", "")
 	t.Setenv("TMUX_PANE", "")
 	t.Setenv("HERDR_ENV", "")

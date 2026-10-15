@@ -1,3 +1,0 @@
-package home
-
-func ReadEnvelope() {}

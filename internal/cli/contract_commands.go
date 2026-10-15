@@ -94,7 +94,7 @@ func newTaskObserveCmd() *cobra.Command {
 		Short: "Observe one task using the orchestration contract",
 		Args:  contractArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			fields, err := contractFields(cmd, []string{"description", "branch", "pane_alive", "no_mistakes_step"})
+			fields, err := contractFields(cmd, []string{"description", "branch", "pane_alive"})
 			if err != nil {
 				return err
 			}
@@ -146,9 +146,6 @@ func newTaskObserveCmd() *cobra.Command {
 			if fields["branch"] && hasMeta {
 				result.Branch = branchFor(meta["worktree"])
 			}
-			if fields["no_mistakes_step"] {
-				result.NoMistakesStep = state.NoMistakesRunStep
-			}
 			help := []string{"Run `munsu task observe " + args[0] + " --fields description,branch` for expanded fields"}
 			return writeContract(cmd, Response[TaskObserve]{
 				SchemaVersion: SchemaVersion,
@@ -160,7 +157,7 @@ func newTaskObserveCmd() *cobra.Command {
 		}),
 	}
 	configureContractCommand(cmd)
-	cmd.Flags().String("fields", "", "Optional fields: description,branch,pane_alive,no_mistakes_step")
+	cmd.Flags().String("fields", "", "Optional fields: description,branch,pane_alive")
 	cmd.Flags().Bool("full", false, "Include full truncated content when available")
 	return cmd
 }

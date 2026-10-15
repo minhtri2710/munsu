@@ -267,7 +267,6 @@ type recordingTeardown struct {
 	returnErr  error
 }
 
-func (r *recordingTeardown) RefuseGate() error { return nil }
 func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
 	if r.onProbe != nil {
 		r.onProbe()

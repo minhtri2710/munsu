@@ -73,8 +73,7 @@ type ProjectReadiness struct {
 }
 
 // ProbeProjectReadiness runs the preflights a General-direct spawn of project
-// would run, in spawn's order: the no-mistakes gate, the delivery mode, and the
-// harness. The dispatch profile is selected with no task, so no profile matches
+// would run, in spawn's order: the delivery mode and the harness. The dispatch profile is selected with no task, so no profile matches
 // on the project's name. It reads project configuration and probes tools; it
 // mutates nothing.
 func ProbeProjectReadiness(homeDir, project string) (ProjectReadiness, error) {
@@ -91,9 +90,6 @@ func ProbeProjectReadiness(homeDir, project string) (ProjectReadiness, error) {
 }
 
 func defaultLaunchError(homeDir string, cfg SpawnProjectConfig) error {
-	if err := reviewPreflight(cfg.Soldier.Mode, cfg.ProjectPath, cfg.ReviewStep, defaultNoMistakesPreflight); err != nil {
-		return err
-	}
 	if err := deliveryPreflight(cfg.Soldier.Mode, cfg.ProjectPath, cfg.ForgeStep); err != nil {
 		return err
 	}

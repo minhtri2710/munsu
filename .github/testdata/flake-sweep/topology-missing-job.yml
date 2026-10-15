@@ -1,5 +1,0 @@
-jobs:
-  other:
-    name: Repo invariants
-    permissions: {contents: read, actions: read}
-    steps: [{run: .github/scripts/flake-sweep.sh applied}]

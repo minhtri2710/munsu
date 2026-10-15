@@ -1,4 +1,0 @@
-::error::.github/testdata/citations/resolved-still-waived/waiver entries that now resolve, or that no document makes any more:
-  README.md: symbol WriteEnvelope
-  Each was either corrected or removed -- both are good news. Drop the line.
-exit 1

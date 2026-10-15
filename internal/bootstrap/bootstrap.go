@@ -216,9 +216,6 @@ func installTool(tool string) error {
 	case "treehouse":
 		cmd := exec.Command("go", "install", "github.com/kunchenguid/treehouse@latest")
 		return cmd.Run()
-	case "no-mistakes":
-		cmd := exec.Command("go", "install", "github.com/kunchenguid/no-mistakes@latest")
-		return cmd.Run()
 	default:
 		return fmt.Errorf("no automatic install for %s", tool)
 	}

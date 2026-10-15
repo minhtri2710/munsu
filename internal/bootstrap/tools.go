@@ -11,7 +11,6 @@ var checkedTools = []ToolSpec{
 	{"git", true},
 	{"tmux", true},
 	{"treehouse", false},
-	{"no-mistakes", false},
 	{"gh-axi", false},
 	{"gh", false},
 	{"fuser", false},

@@ -11,7 +11,7 @@ import (
 // the fixed user and system denylist.
 type RootFacts struct {
 	Home      string   // the whole munsu home
-	Checkouts []string // every checkout, worktree and git path, and the gate paths
+	Checkouts []string // every checkout, worktree and git path
 }
 
 // ValidateWritableRoots checks a project's fence-writable-roots and returns

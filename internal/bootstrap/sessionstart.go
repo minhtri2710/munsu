@@ -204,14 +204,10 @@ func currentWorkingDirOrHome(home string) string {
 
 type ScopeCheckResult struct {
 	IsPrimary    bool
-	IsGateAgent  bool
 	ErrorMessage string
 }
 
 func CheckSessionScope(home string) ScopeCheckResult {
-	if fleet.GateAgentEnvSet() {
-		return ScopeCheckResult{IsGateAgent: true}
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ScopeCheckResult{ErrorMessage: err.Error()}
@@ -221,26 +217,6 @@ func CheckSessionScope(home string) ScopeCheckResult {
 		return ScopeCheckResult{}
 	}
 	return ScopeCheckResult{IsPrimary: true}
-}
-
-func checkSessionScope(home string) error {
-	if fleet.GateAgentEnvSet() {
-		return fmt.Errorf("no-mistakes gate agent must not drive the fleet")
-	}
-	projects, err := fleet.List(home)
-	if err != nil {
-		return fmt.Errorf("scope projects: %w", err)
-	}
-	for _, registered := range projects {
-		path, err := fleet.ResolveRepoPath(home, registered.Name)
-		if err != nil {
-			return fmt.Errorf("scope project %s: %w", registered.Name, err)
-		}
-		if err := fleet.GateRefusalError(path); err != nil {
-			return fmt.Errorf("project %s: %w", registered.Name, err)
-		}
-	}
-	return nil
 }
 
 // printIntegrationMatrix prints the role-aware integration summary for the
@@ -317,6 +293,13 @@ func recordGeneralDelivery(w io.Writer, home string) {
 	}
 }
 
+// RunSessionStartWithWatcher refuses no session by its checkout's gate role.
+// Human words (domain.Words): grantor the Human, channel Claude Code session
+// with the Lead (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin
+// tích hợp rời nếu user cần thui" (removes the gate-agent refusal). The
+// project-registry read that check made goes with it, so session-start no
+// longer refuses on an unresolvable registered project path; spawn still
+// classifies the project path before any launch.
 func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc, reclaim ReclaimTaskDataDir) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	runtimeIdentity := CollectRuntimeIdentity(home, currentWorkingDirOrHome(home), "")
@@ -326,10 +309,6 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "  "+line)
 	}
 	fmt.Fprintln(w, "")
-
-	if err := checkSessionScope(home); err != nil {
-		return res, fmt.Errorf("session-start refused: %w", err)
-	}
 
 	acquired, err := orchestrator.AcquireSession(home)
 	if err != nil {

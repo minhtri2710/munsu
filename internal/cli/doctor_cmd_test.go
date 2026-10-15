@@ -14,7 +14,7 @@ func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmp)
 
 	// Provide git and tmux stubs so the hard-required scan does not
-	// short-circuit before the config-driven no-mistakes check runs.
+	// short-circuit before the config read.
 	bin := filepath.Join(tmp, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestDoctor_CorruptBaseConfigFails(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"git", "tmux", "treehouse", "no-mistakes", "gh-axi", "gh", "fuser"} {
+	for _, name := range []string{"git", "tmux", "treehouse", "gh-axi", "gh", "fuser"} {
 		testutil.WriteFakeExecutable(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
 	}
 	t.Setenv("PATH", bin)

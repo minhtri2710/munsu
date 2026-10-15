@@ -100,11 +100,10 @@ func runSafetyCheckWithStdin(t *testing.T, payload []byte, closeBeforeRead bool)
 	return exitCode, stderr
 }
 
-// TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens pins the command-token
-// verdicts: bounded watcher operations and help pass, bare `munsu watch` and
-// unknown subcommands are refused, and the guard/doctor exemption for
-// no-mistakes directories needs a real `munsu guard|doctor` command.
-func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
+// TestSafetyCheckWatchVerdictsParseTokens pins the command-token verdicts:
+// bounded watcher operations and help pass, bare `munsu watch` and unknown
+// subcommands are refused.
+func TestSafetyCheckWatchVerdictsParseTokens(t *testing.T) {
 	t.Setenv("MUNSU_HOME", t.TempDir())
 	gitDir := initGitRepoForSafety(t, t.TempDir())
 	oldExit := exitWithCode
@@ -128,28 +127,7 @@ func TestSafetyCheckWatchAndNoMistakesVerdictsParseTokens(t *testing.T) {
 		{"munsu watch bogus", true},
 		{"munsu watch bogus run", true},
 		{"munsu watch --running", true},
-		{"cd ~/.no-mistakes && munsu doctor", false},
-		{"rm -rf ~/.no-mistakes/repos/x # doctor", true},
-		{`rm -rf ~/.no-mistakes/repos/x "doctor"`, true},
-		{"rm -rf ~/.no-mistakes/repos/x guard", true},
-		{"munsu doctor; rm -rf ~/.no-mistakes/x", true},
-		{"munsu doctor && rm -rf ~/.no-mistakes/x", true},
-		{`bash -c "munsu guard; rm -rf ~/.no-mistakes/x"`, true},
-		{"munsu guard ~/.no-mistakes/repos/x", false},
-		{"rm -rf ~/.no-mistakes", true},
-		{"rm -rf $HOME/.no-mistakes", true},
-		{"rm -rf ${HOME}/.no-mistakes/", true},
-		{"rm -rf /Users/x/.no-mistakes", true},
-		{"cd .no-mistakes", true},
 		{"munsu doctor", false},
-		{"ls .no-mistakes-notes", false},
-		{"rm -rf ~/.No-Mistakes", true},
-		{"rm -rf ~/.no-mistake*", true},
-		{"rm -rf ~/.no-mis?akes", true},
-		{"rm -rf ~/.[n]o-mistakes", true},
-		{"rm -rf ~/.NO-MIS?AKES/x", true},
-		{"tar --directory=.no-mistakes -xf a.tar", true},
-		{"rsync --backup-dir=~/.no-mistakes/x a b", true},
 		{"ls *", false},
 	} {
 		var exitCode int

@@ -105,133 +105,6 @@ func assertShapes(t *testing.T, wantBlocked bool, checkPath, command, filePath s
 	}
 }
 
-// TestShellWriteRefusedByAbsoluteTargetIntoBoundPrimary is the direction
-// this exists for: the session stands in its own valid worktree, so the cwd ladder
-// has nothing to refuse, and the target is the shared checkout.
-func TestShellWriteRefusedByVolumeLessRootedWindowsTargetIntoBoundPrimary(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("volume-less rooted paths are Windows-specific")
-	}
-	primary, worktree := boundTaskFixture(t, "ship-shell-volume-less-root")
-	target := filepath.Join(primary, "README.md")
-	rooted := strings.TrimPrefix(target, filepath.VolumeName(target))
-
-	assertShapes(t, true, worktree, "echo pwned > "+rooted, "")
-	forwardSlashRooted := strings.ReplaceAll(rooted, `\`, "/")
-	assertShapes(t, true, worktree, "echo pwned > "+forwardSlashRooted, "")
-
-	unrelated := filepath.Join(t.TempDir(), "README.md")
-	unrelatedRooted := strings.TrimPrefix(unrelated, filepath.VolumeName(unrelated))
-	assertShapes(t, false, worktree, "echo ok > "+unrelatedRooted, "")
-	forwardSlashUnrelatedRooted := strings.ReplaceAll(unrelatedRooted, `\`, "/")
-	assertShapes(t, false, worktree, "echo ok > "+forwardSlashUnrelatedRooted, "")
-}
-
-// TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary
-// covers the same-volume drive-relative spelling (C:foo): it is relative to the
-// current directory on that drive, which is the session's cwd (the base), so it
-// must reach the bound primary and be refused (#664 v2).
-func TestShellWriteRefusedByDriveRelativeSameVolumeWindowsTargetIntoBoundPrimary(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("drive-relative paths are Windows-specific")
-	}
-	primary, worktree := boundTaskFixture(t, "ship-shell-drv-same")
-	target := filepath.Join(primary, "README.md")
-	rel, err := filepath.Rel(worktree, target)
-	if err != nil {
-		t.Fatalf("Rel: %v", err)
-	}
-	// C: + the relative path from the cwd (worktree) to the target.
-	driveRelative := filepath.VolumeName(worktree) + rel
-
-	assertShapes(t, true, worktree, "echo pwned > "+driveRelative, "")
-	caseVariant := strings.ToLower(filepath.VolumeName(worktree)) + rel
-	if strings.ToLower(filepath.VolumeName(worktree)) == filepath.VolumeName(worktree) {
-		caseVariant = strings.ToUpper(filepath.VolumeName(worktree)) + rel
-	}
-	assertShapes(t, true, worktree, "echo pwned > "+caseVariant, "")
-}
-
-// TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows pins refusal for
-// a drive-relative path whose volume differs from the cwd (#664 v2).
-func TestShellWriteDriveRelativeDifferentVolumeFailClosedWindows(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("drive-relative paths are Windows-specific")
-	}
-	_, worktree := boundTaskFixture(t, "ship-shell-drv-amb")
-	volume := filepath.VolumeName(worktree)
-	otherVolume := "D:"
-	if strings.EqualFold(volume, otherVolume) {
-		otherVolume = "E:"
-	}
-	command := "echo pwned > " + otherVolume + "shared\\README.md"
-
-	assertShapes(t, true, worktree, command, "")
-}
-
-// TestResolveShellWritePathWindows is the unit-level pin of the shell-specific
-// resolver across every Windows spelling it must classify: volume-less rooted,
-// same-volume drive-relative, different-volume drive-relative (fail closed),
-// absolute, UNC and plain relative (#664 v2).
-func TestResolveShellWritePathWindows(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows path semantics required")
-	}
-	const base = `C:\worktree`
-	cases := []struct {
-		path      string
-		want      string
-		ambiguous bool
-	}{
-		{`\rooted`, `C:\rooted`, false},
-		{`/rooted`, `C:\rooted`, false},
-		{`C:rel`, `C:\worktree\rel`, false},
-		{`C:rel\sub`, `C:\worktree\rel\sub`, false},
-		{`C:\abs`, `C:\abs`, false},
-		{`\\server\share`, `\\server\share`, false},
-		{`rel`, `C:\worktree\rel`, false},
-	}
-	for _, tc := range cases {
-		if got, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), tc.path); got != tc.want || ambiguous != tc.ambiguous {
-			t.Errorf("resolveShellWritePath(%q,%q) = %q, %v, want %q, %v", base, tc.path, got, ambiguous, tc.want, tc.ambiguous)
-		}
-	}
-	if got, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), `D:ambiguous`); got != "" || !ambiguous {
-		t.Errorf("resolveShellWritePath(%q,%q) = %q, %v, want ambiguous", base, `D:ambiguous`, got, ambiguous)
-	}
-	if got, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), `c:rel`); got != `C:\worktree\rel` || ambiguous {
-		t.Errorf("case-insensitive same-volume resolution = %q, %v", got, ambiguous)
-	}
-	if got, ambiguous := resolveShellWritePath(base, `D:`, `\shared`); got != `D:\shared` || ambiguous {
-		t.Errorf("active-volume rooted resolution = %q, %v", got, ambiguous)
-	}
-}
-
-func TestShellWriteTargetsAfterAmbiguousWindowsCd(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows path semantics required")
-	}
-	const base = `C:\worktree`
-
-	targets, ambiguous := shellWriteTargets(base, `cd D:docs && echo ok > \scratch\out.txt`)
-	if ambiguous {
-		t.Fatalf("rooted target remained ambiguous: %v", targets)
-	}
-	if !slices.Contains(targets, `D:\scratch\out.txt`) {
-		t.Errorf("rooted target = %v, want D volume candidate", targets)
-	}
-
-	if _, ambiguous := shellWriteTargets(base, `CD /D D:docs && echo pwned > relative.txt`); !ambiguous {
-		t.Error("/d drive-relative cd did not preserve ambiguous cwd")
-	}
-	if _, ambiguous := shellWriteTargets(base, `cd D:docs && echo x \> D:secret`); !ambiguous {
-		t.Error("escaped redirect ambiguity was cancelled by the other reading")
-	}
-	if targets, ambiguous := shellWriteTargets(base, `echo ok > "C:\\scratch\\out.txt"`); ambiguous || !slices.Contains(targets, `C:\\scratch\\out.txt`) {
-		t.Errorf("quoted Windows target = %v, ambiguous=%v", targets, ambiguous)
-	}
-}
-
 // TestShellWriteTrailingBackslashExtendsSpan pins the root-cause span fix (#664):
 // the POSIX backslash reading must touch the trailing backslash position so the
 // word span covers the whole `\foo\`. Without it the span ends one short and the
@@ -249,27 +122,6 @@ func TestShellWriteTrailingBackslashExtendsSpan(t *testing.T) {
 	}
 	if tok.start != 0 || tok.end != 5 {
 		t.Errorf("word span = {%d,%d}, want {0,5}", tok.start, tok.end)
-	}
-}
-
-// TestShellWriteTrailingBackslashRootedTargetAfterAmbiguousCd pins the span
-// alignment fix (#664): a volume-less rooted target with a trailing separator
-// such as `\foo\` must be classified as a resolvable D:\\foo write even after
-// an ambiguous drive-relative cd. The POSIX reading drops the trailing backslash
-// and would otherwise yield a short span that the literal candidate never joins,
-// defeating the dual-reading grouping and over-refusing a legitimate write.
-func TestShellWriteTrailingBackslashRootedTargetAfterAmbiguousCd(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows path semantics required")
-	}
-	const base = `C:\worktree`
-
-	targets, ambiguous := shellWriteTargets(base, `cd D:docs && echo ok > \foo\`)
-	if ambiguous {
-		t.Fatalf("trailing-separator rooted target remained ambiguous: %v", targets)
-	}
-	if !slices.Contains(targets, `D:\foo`) {
-		t.Errorf("trailing-separator rooted target = %v, want D volume candidate", targets)
 	}
 }
 
@@ -309,96 +161,6 @@ func TestShellWriteRefusedAfterCdIntoBoundPrimary(t *testing.T) {
 	}
 }
 
-func TestShellWriteComputedCdDoesNotBecomeLiteralPath(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("computed Windows cwd semantics are Windows-specific")
-	}
-	_, worktree := boundTaskFixture(t, "ship-shell-computed-cd")
-	targets, ambiguous := shellWriteTargets(worktree, `cd "$PRIMARY" && echo pwned > README.md`)
-	if !ambiguous {
-		t.Fatal("computed cd did not make dependent relative write ambiguous")
-	}
-	for _, target := range targets {
-		if strings.Contains(target, "$PRIMARY") {
-			t.Fatalf("computed cd produced a literal synthetic target: %v", targets)
-		}
-	}
-}
-
-func windowsAmbiguousCdVolumes(t *testing.T, worktree string) (string, string) {
-	t.Helper()
-	known := filepath.VolumeName(worktree)
-	if known == "" {
-		t.Fatal("worktree has no Windows volume")
-	}
-	unknown := "D:"
-	if strings.EqualFold(known, unknown) {
-		unknown = "E:"
-	}
-	return known, unknown
-}
-
-func TestShellWriteAmbiguousCdOnlyBlocksDependentRelativeWrites(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("ambiguous drive-relative cwd is Windows-specific")
-	}
-	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-cd")
-	known, unknown := windowsAmbiguousCdVolumes(t, worktree)
-	cd := "cd " + unknown + "docs"
-
-	// Reads are never targets, so they are unaffected by the unknown cwd.
-	assertShapes(t, false, worktree, cd+" && cat file", "")
-	// Absolute write to an unrelated path does not resolve against the unknown
-	// volume's cwd, so it is allowed (#664).
-	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"\\scratch\\out.txt", "")
-	// Same-volume drive-relative resolves against the known cwd, so it is allowed.
-	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"logs\\out.txt", "")
-	// Volume-less rooted anchors to the active (unknown-cwd) volume's root, which
-	// is known independently of its cwd, so it is allowed (#664).
-	assertShapes(t, false, worktree, cd+" && echo ok > \\scratch\\out.txt", "")
-	// Dependent relative write resolves against the unknown cwd: refused.
-	assertShapes(t, true, worktree, cd+" && echo pwned > relative.txt", "")
-	// A dependent relative cd after the ambiguous drive-relative cd must keep
-	// the unknown active drive state: the plain relative write still resolves
-	// against the unknowable cwd and is refused (it must not be resolved against
-	// the stale cwd of the prior volume, nor may unknownCwd be cleared) (#664).
-	assertShapes(t, true, worktree, cd+" && cd .. && echo pwned > relative.txt", "")
-	assertShapes(t, true, worktree, "cd /d "+unknown+"docs && cd .. && echo pwned > relative.txt", "")
-	// A dependent relative cd by a plain subdir after the ambiguous drive-relative
-	// cd keeps the unknown active drive state too: the dependent relative write
-	// still resolves against the unknowable cwd and is refused (#664 v8).
-	assertShapes(t, true, worktree, cd+" && cd subdir && echo pwned > relative.txt", "")
-	assertShapes(t, true, worktree, "cd /d "+unknown+"docs && cd subdir && echo pwned > relative.txt", "")
-	// Different-volume drive-relative also resolves against the unknown cwd: refused.
-	assertShapes(t, true, worktree, cd+" && echo pwned > "+unknown+"rel\\out.txt", "")
-}
-
-// TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites pins the
-// Windows shell-aware refusal boundary after an ambiguous drive-relative cd: an
-// absolute write (C:\\scratch\\out.txt) and a same-volume drive-relative write
-// (C:logs\\out.txt) must be classified because neither resolves against the
-// unknown D: cwd, while a dependent relative write and a different-volume
-// drive-relative write must be refused. The shell-aware check replaces the old
-// global "cwd unknown" flag, which over-refused the C: spellings (#664).
-func TestShellWriteAmbiguousCdAllowsUnrelatedAbsoluteAndSameVolumeWrites(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("ambiguous drive-relative cwd is Windows-specific")
-	}
-	_, worktree := boundTaskFixture(t, "ship-shell-ambiguous-rooted")
-	known, unknown := windowsAmbiguousCdVolumes(t, worktree)
-	cd := "cd " + unknown + "docs"
-
-	// Absolute write to an unrelated path does not resolve against the unknown
-	// volume's cwd, so it is allowed.
-	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"\\scratch\\out.txt", "")
-	// Same-volume drive-relative resolves against the known cwd, so it is allowed.
-	assertShapes(t, false, worktree, cd+" && echo ok > "+known+"logs\\out.txt", "")
-	// Dependent relative write resolves against the unknown cwd: refused.
-	assertShapes(t, true, worktree, cd+" && echo pwned > relative.txt", "")
-	// Different-volume drive-relative also resolves against the unknown cwd: refused.
-	assertShapes(t, true, worktree, cd+" && echo pwned > "+unknown+"rel\\out.txt", "")
-}
-
 // TestShellWriteHeredocDoubleQuotedDelimiterRefusesProtectedWrite pins the
 // quoted-delimiter fix: a double-quoted heredoc delimiter applies POSIX quote
 // removal, so `<<"TAIL\\END"` ends the body at `TAIL\END` (the doubled
@@ -431,10 +193,7 @@ func TestShellWriteHeredocDoubleQuotedDelimiterRefusesProtectedWrite(t *testing.
 // single-backslash terminator, so the body ends there and a protected write
 // after it is still classified instead of being swallowed (#664).
 func TestShellWriteHeredocDoubleQuotedDelimiterParsing(t *testing.T) {
-	// Use a platform-native base and a relative post-terminator target so the
-	// expectation resolves under both POSIX and Windows path semantics instead of
-	// hard-coding Unix spellings the Windows resolver never produces (#664 v8).
-	// The relative target still proves the double-quoted delimiter collapses
+	// The relative post-terminator target proves the double-quoted delimiter collapses
 	// `TAIL\\END` to `TAIL\END`, ending the body there and leaving the second
 	// write classified rather than swallowed.
 	base := "/worktree"
@@ -676,62 +435,26 @@ func TestTargetDirectoryFlagRefused(t *testing.T) {
 // without a git fixture: what counts as a write target and what deliberately
 // does not.
 func TestShellWriteTargetExtraction(t *testing.T) {
-	// A leading separator is an absolute path on Unix but only a
-	// current-drive-relative one on Windows, where filepath.IsAbs wants a
-	// volume. These stand in for absolute paths, so they have to be absolute
-	// on both platforms or the resolution under test never happens.
 	base := mustAbsTestPath(t, "base")
 	abs := filepath.Join(mustAbsTestPath(t, "shared"), "README.md")
 	elsewhere := mustAbsTestPath(t, "elsewhere")
-
-	// On Windows, absolute paths like D:\shared\README.md contain backslashes and
-	// are classified under both interpretations (#664):
-	// - POSIX-escape reading dissolves `\`, yielding D:\base\sharedREADME.md
-	// - Windows-literal reading treats `\` as path separator, yielding D:\shared\README.md
-	// On Unix, absolute paths use forward slashes and both readings produce the same path.
-	absTargets := func() []string {
-		if runtime.GOOS == "windows" {
-			return []string{filepath.Join(base, "sharedREADME.md"), abs}
-		}
-		return []string{abs}
-	}
-	absWithPrefix := func(prefix ...string) []string {
-		var out []string
-		out = append(out, prefix...)
-		if runtime.GOOS == "windows" {
-			out = append(out, filepath.Join(base, "sharedREADME.md"))
-		}
-		out = append(out, abs)
-		return out
-	}
-	dirTargets := func() []string {
-		if runtime.GOOS == "windows" {
-			return []string{filepath.Join(base, "shared"), filepath.Dir(abs)}
-		}
-		return []string{filepath.Dir(abs)}
-	}
-	cdElsewhereTargets := func() []string {
-		if runtime.GOOS == "windows" {
-			return []string{filepath.Join(base, "elsewhere", "out.txt"), filepath.Join(elsewhere, "out.txt")}
-		}
-		return []string{filepath.Join(elsewhere, "out.txt")}
-	}
+	absWithPrefix := func(prefix ...string) []string { return append(prefix, abs) }
 
 	for _, tc := range []struct {
 		command string
 		want    []string
 	}{
-		{"echo x > " + abs, absTargets()},
-		{"echo x >> " + abs, absTargets()},
-		{"echo x 2> " + abs, absTargets()},
-		{"echo x | tee " + abs, absTargets()},
-		{"rm -rf " + abs, absTargets()},
-		{"cp a.txt " + abs, absTargets()},
+		{"echo x > " + abs, []string{abs}},
+		{"echo x >> " + abs, []string{abs}},
+		{"echo x 2> " + abs, []string{abs}},
+		{"echo x | tee " + abs, []string{abs}},
+		{"rm -rf " + abs, []string{abs}},
+		{"cp a.txt " + abs, []string{abs}},
 		{"sed -i '' s/a/b/ " + abs, absWithPrefix(base, filepath.Join(base, "s/a/b/"))},
 		{"perl -pi -e s/a/b/ " + abs, absWithPrefix(filepath.Join(base, "s/a/b/"))},
-		{"dd if=/dev/zero of=" + abs, absTargets()},
+		{"dd if=/dev/zero of=" + abs, []string{abs}},
 		{"echo x > out.txt", []string{filepath.Join(base, "out.txt")}},
-		{"cd " + elsewhere + " && echo x > out.txt", cdElsewhereTargets()},
+		{"cd " + elsewhere + " && echo x > out.txt", []string{filepath.Join(elsewhere, "out.txt")}},
 
 		// Deliberately not claimed.
 		{"cat " + abs, nil},
@@ -743,19 +466,19 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"python3 -c open('" + abs + "','w')", nil},
 
 		// `>|` is one clobber operator: splitting at the pipe dropped the target.
-		{"echo x >| " + abs, absTargets()},
-		{"echo x >|" + abs, absTargets()},
+		{"echo x >| " + abs, []string{abs}},
+		{"echo x >|" + abs, []string{abs}},
 
 		// `-t DIR` moves the destination out of the last position.
-		{"cp -t " + filepath.Dir(abs) + " ./x.md", dirTargets()},
-		{"cp --target-directory=" + filepath.Dir(abs) + " ./x.md", dirTargets()},
-		{"install -t" + filepath.Dir(abs) + " ./x.md", dirTargets()},
+		{"cp -t " + filepath.Dir(abs) + " ./x.md", []string{filepath.Dir(abs)}},
+		{"cp --target-directory=" + filepath.Dir(abs) + " ./x.md", []string{filepath.Dir(abs)}},
+		{"install -t" + filepath.Dir(abs) + " ./x.md", []string{filepath.Dir(abs)}},
 		// rsync's `-t` is `--times`: it takes no operand, so the destination is
 		// still the last one and the source stays a source.
 		{"rsync -t " + abs + " ./x.md", []string{filepath.Join(base, "x.md")}},
 		{"rsync -tv " + abs + " ./x.md", []string{filepath.Join(base, "x.md")}},
-		{"rsync -t /etc/hosts " + abs, absTargets()},
-		{"rsync -tv /etc/hosts " + abs, absTargets()},
+		{"rsync -t /etc/hosts " + abs, []string{abs}},
+		{"rsync -tv /etc/hosts " + abs, []string{abs}},
 
 		// A heredoc body is content, not a command line.
 		{"cat <<'EOF' > notes.md\nrm -rf " + abs + "\nEOF", []string{filepath.Join(base, "notes.md")}},
@@ -765,7 +488,7 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"cat <<A > one.md\nrm -rf " + abs + "\nA\ncat <<B > two.md\nrm -rf " + abs + "\nB",
 			[]string{filepath.Join(base, "one.md"), filepath.Join(base, "two.md")}},
 		// A here-string has no body; the words after it are still a command.
-		{"tee " + abs + " <<< text", absTargets()},
+		{"tee " + abs + " <<< text", []string{abs}},
 		// `\` quotes the delimiter word, so the body still ends at `EOF` and the
 		// command after the terminator is still read.
 		{"cat <<\\EOF > notes.md\nrm -rf " + abs + "\nEOF\nrm -rf " + abs,
@@ -779,16 +502,15 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		// yielding one on a platform whose shell would not. Both appear here on
 		// every OS, which is the whole of the guarantee: whichever shell runs
 		// the command, the path it actually opens was classified.
-		// The Windows reading resolves a volume-less rooted target to the base
-		// volume's root; the POSIX reading dissolves the backslashes. Both are
-		// asserted through the resolver so the row holds on every OS (#664 v2).
+		// The literal reading keeps the backslashes as a relative path; the
+		// POSIX reading dissolves them (#664 v2).
 		{"echo x > " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
-			mustResolveShellWritePath(base, `\shared\README.md`),
+			resolveSafetyPath(base, `\shared\README.md`),
 		}},
 		{"rm -rf " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
-			mustResolveShellWritePath(base, `\shared\README.md`),
+			resolveSafetyPath(base, `\shared\README.md`),
 		}},
 		// The two readings collapse when there is no backslash to read, so a
 		// command that never mentions one produces exactly one target and no
@@ -853,34 +575,14 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 			t.Errorf("%q unexpectedly ambiguous", command)
 		}
 		// The POSIX reading dissolves backslashes, so it sees the mangled target.
-		if !slices.Contains(escapeTargets, mustResolveShellWritePath(base, "sharedREADME.md")) {
+		if !slices.Contains(escapeTargets, resolveSafetyPath(base, "sharedREADME.md")) {
 			t.Errorf("escape reading dropped post-heredoc write: %q → %v", command, escapeTargets)
 		}
 		// The Windows reading keeps the backslash as a separator and must end
 		// the body at EOF/END, so it sees the real Windows path.
-		if !slices.Contains(literalTargets, mustResolveShellWritePath(base, target)) {
+		if !slices.Contains(literalTargets, resolveSafetyPath(base, target)) {
 			t.Errorf("literal reading swallowed post-heredoc write: %q → %v", command, literalTargets)
 		}
-	}
-}
-
-// TestShellWriteHeredocBackslashDelimiterRefusesProtectedWindowsWrite exercises
-// the full decision flow: a protected Windows-path write named after a <<\EOF or
-// <<-\END terminator is refused on every harness shape, because heredoc bodies
-// are stripped once with POSIX rules before the dual readings tokenize (#664 v3).
-func TestShellWriteHeredocBackslashDelimiterRefusesProtectedWindowsWrite(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("protected Windows paths require Windows filepath semantics")
-	}
-	primary, worktree := boundTaskFixture(t, "ship-shell-heredoc-win")
-	target := filepath.Join(primary, "README.md") // C:\...\primary\README.md
-
-	cases := []string{
-		"cat <<\\EOF > notes.md\nharmless\nEOF\necho pwned > " + target,
-		"cat <<-\\END > notes.md\n\tharmless\n\tEND\necho pwned > " + target,
-	}
-	for _, command := range cases {
-		assertShapes(t, true, worktree, command, "")
 	}
 }
 
@@ -904,21 +606,6 @@ func TestShellWriteRefusedIfEitherCandidateIsProtected(t *testing.T) {
 
 	// Behavioral assertShapes check from worktree:
 	assertShapes(t, true, worktree, "echo pwned > "+primaryTarget, "")
-
-	if runtime.GOOS == "windows" {
-		winCommand := "echo pwned > " + primaryTarget
-		targets, ambiguous := shellWriteTargets(worktree, winCommand)
-		if ambiguous {
-			t.Fatalf("shellWriteTargets(%q) unexpectedly ambiguous", winCommand)
-		}
-		if len(targets) != 2 {
-			t.Fatalf("shellWriteTargets(%q) returned %d candidates, want 2: %v", winCommand, len(targets), targets)
-		}
-		if targets[1] != primaryTarget {
-			t.Errorf("targets[1] = %q, want %q", targets[1], primaryTarget)
-		}
-		assertShapes(t, true, worktree, winCommand, "")
-	}
 }
 
 // TestShellWriteUnrelatedAllowedOnlyWhenBothCandidatesUnrelated asserts that a
@@ -953,54 +640,6 @@ func TestShellWriteUnrelatedAllowedOnlyWhenBothCandidatesUnrelated(t *testing.T)
 	// [protected, safe] -> refused
 	if block, _ := evaluateWriteTargets([]string{primaryTarget, safeTarget}); !block {
 		t.Errorf("evaluateWriteTargets([protected, safe]) = false, want true")
-	}
-}
-
-// TestShellWriteNoMalformedEmbeddedVolumeCandidates verifies that resolving
-// drive-relative or volume-less paths never emits malformed embedded volume
-// prefixes like `\D:` or `C:\base\D:\...` (#664 v4).
-func TestShellWriteNoMalformedEmbeddedVolumeCandidates(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows volume resolution semantics required")
-	}
-	const base = `C:\worktree\base`
-	paths := []string{
-		`C:rel`,
-		`C:rel\sub`,
-		`c:rel\sub`,
-		`\rooted\path`,
-		`/rooted/path`,
-		`C:\abs\path`,
-		`\\server\share\file`,
-	}
-	for _, p := range paths {
-		resolved, _ := resolveShellWritePath(base, filepath.VolumeName(base), p)
-		if resolved == "" {
-			continue
-		}
-		if idx := strings.LastIndex(resolved, ":"); idx > 1 {
-			t.Errorf("resolveShellWritePath(%q, %q) produced malformed embedded volume: %q", base, p, resolved)
-		}
-		for _, invalid := range []string{`\C:`, `/C:`, `\c:`, `/c:`, `\D:`, `/D:`, `\d:`, `/d:`} {
-			if strings.Contains(resolved, invalid) {
-				t.Errorf("resolveShellWritePath(%q, %q) contained invalid substring %q: %q", base, p, invalid, resolved)
-			}
-		}
-	}
-
-	targets, ambiguous := shellWriteTargets(base, `echo x > C:rel\nested\file.txt`)
-	if ambiguous {
-		t.Errorf("unexpected ambiguous target for same-drive path")
-	}
-	for _, target := range targets {
-		if idx := strings.LastIndex(target, ":"); idx > 1 {
-			t.Errorf("shellWriteTargets produced malformed target: %q", target)
-		}
-		for _, invalid := range []string{`\C:`, `/C:`, `\c:`, `/c:`} {
-			if strings.Contains(target, invalid) {
-				t.Errorf("shellWriteTargets produced target with %q: %q", invalid, target)
-			}
-		}
 	}
 }
 
@@ -1045,15 +684,7 @@ func TestShellWriteTargetExactDeduplication(t *testing.T) {
 }
 
 // mustAbsTestPath returns name as an absolute path rooted at the filesystem
-// root on Unix and at the current volume's root on Windows.
-func mustResolveShellWritePath(base, path string) string {
-	resolved, ambiguous := resolveShellWritePath(base, filepath.VolumeName(base), path)
-	if ambiguous {
-		panic("unexpected ambiguous shell path")
-	}
-	return resolved
-}
-
+// root.
 func mustAbsTestPath(t *testing.T, name string) string {
 	t.Helper()
 	abs, err := filepath.Abs(string(os.PathSeparator) + name)
@@ -1330,12 +961,9 @@ func TestTokenizeSegmentsLineContinuationAndANSICQuoting(t *testing.T) {
 		t.Errorf("munsuInvocations of an undecodable word = %+v, want the watch invocation", got)
 	}
 	// An empty quoted word is the --home value, so the bare watch after it
-	// is the invocation, and it is not a guard or doctor call.
+	// is the invocation.
 	if got, _ := munsuInvocations("munsu --home '' watch", 0); len(got) != 1 || got[0].subcommand != "watch" || len(got[0].following) != 0 {
 		t.Errorf("munsuInvocations(munsu --home '' watch) = %+v, want a bare watch", got)
-	}
-	if onlyGuardOrDoctor("munsu '' guard .no-mistakes") {
-		t.Errorf("onlyGuardOrDoctor(munsu '' guard) = true, want false")
 	}
 }
 

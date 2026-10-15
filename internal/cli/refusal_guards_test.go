@@ -857,10 +857,9 @@ func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 		t.Fatalf("session-start: %v", err)
 	}
 	// Session-start holds the session lock (state/.lock) for the process
-	// lifetime by design (internal/home/watcher_lock.go); on Windows the open
-	// handle pins the home directory and t.TempDir teardown cannot remove it
-	// (#549). This test process outlives the session, so release the lock on
-	// the path the test actually takes.
+	// lifetime by design (internal/home/watcher_lock.go). This test process
+	// outlives the session, so release the lock on the path the test actually
+	// takes.
 	if err := mhome.ReleaseSessionLock(homeDir); err != nil {
 		t.Fatalf("release session lock: %v", err)
 	}
@@ -933,7 +932,7 @@ func TestGuardBriefScoutRefusesATaskWithNoCanonicalRecord(t *testing.T) {
 
 // seedGuardDeliveryContract records a durable delivery contract on an existing
 // canonical task at its current generation/revision, the way first spawn does.
-// The steps are the ones the mode derives from; the forge is the given step.
+// The forge is the given step for direct-PR and the baseline for local-only.
 func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, taskID, mode string, forge taskauthority.DeliveryStep) {
 	t.Helper()
 	tid, err := domain.NewTaskID(taskID)
@@ -944,13 +943,8 @@ func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, task
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline := taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"}
-	review, forgeStep := baseline, baseline
-	switch mode {
-	case "no-mistakes":
-		review = taskauthority.DeliveryStep{Adapter: "no-mistakes", Path: "/opt/no-mistakes/bin/no-mistakes", ProbeState: "ready"}
-		forgeStep = forge
-	case "direct-PR":
+	forgeStep := taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"}
+	if mode == "direct-PR" {
 		forgeStep = forge
 	}
 	req := taskauthority.CanonicalRecordDeliveryContractRequest{
@@ -958,7 +952,6 @@ func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, task
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Mode:         mode,
-		Review:       review,
 		Forge:        forgeStep,
 	}
 	if _, err := auth.RecordDeliveryContract(mustCanonicalOp(t, "op-contract-"+taskID+"-"+mode, req), req); err != nil {
@@ -991,22 +984,6 @@ func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
 		return homeDir
 	}
 
-	t.Run("contract mode wins over the project's current tools", func(t *testing.T) {
-		// Contract says no-mistakes; the project configures no tools, so its
-		// snapshot derives local-only. brief must resolve the contract's mode.
-		homeDir := setup(t, "no-mistakes")
-		out, err := runRoot(t, "brief", "t1", "demo-repo", "--home", homeDir)
-		if err != nil {
-			t.Fatalf("brief: %v", err)
-		}
-		if !strings.Contains(out, "no-mistakes") {
-			t.Fatalf("brief did not resolve the contract mode; output: %s", out)
-		}
-		if strings.Contains(out, "local-only") {
-			t.Fatalf("brief resolved the snapshot mode instead of the contract; output: %s", out)
-		}
-	})
-
 	t.Run("contracted brief validates the snapshot without re-deriving the mode", func(t *testing.T) {
 		// The contract is direct-PR and the project snapshot derives local-only.
 		// A brief that re-derives from the snapshot would print local-only.
@@ -1023,7 +1000,7 @@ func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
 	t.Run("contracted brief still fails closed on an unknown project", func(t *testing.T) {
 		// The contract owns the mode, but the project snapshot still gates
 		// existence: a contracted brief for an unregistered repo must refuse.
-		homeDir := setup(t, "no-mistakes")
+		homeDir := setup(t, "direct-PR")
 		_, err := runRoot(t, "brief", "t1", "typo-repo", "--home", homeDir)
 		wantErrContains(t, err, "register project", "contracted brief for an unregistered project")
 	})

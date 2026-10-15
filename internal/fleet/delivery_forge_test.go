@@ -30,7 +30,6 @@ func TestForgeRefusals(t *testing.T) {
 			setup: notReady,
 			calls: []func() error{
 				func() error { _, err := forgeClientFor(githubForgeStep); return err },
-				func() error { _, err := Preflight("no-mistakes", "", githubForgeStep); return err },
 				func() error { _, err := Preflight("direct-PR", "", githubForgeStep); return err },
 			},
 			want: "forge adapter github probe absent: configured forge is not Ready",
@@ -63,7 +62,6 @@ func TestForgeRefusals(t *testing.T) {
 					}
 					return err
 				},
-				func() error { _, err := Preflight("no-mistakes", "", githubForgeStep); return err },
 				func() error { _, err := Preflight("direct-PR", "", githubForgeStep); return err },
 			},
 		},

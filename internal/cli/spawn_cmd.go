@@ -122,11 +122,6 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("error: uplink use munsu report; send is downlink only")
 			}
 
-			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-			if err := fleet.GateRefuseFromCWD(); err != nil {
-				return fmt.Errorf("send refused: %w", err)
-			}
-
 			// Read meta to determine kind and resolve captain info.
 			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
@@ -278,13 +273,9 @@ func newSoldierStateCmd() *cobra.Command {
 					Status:              state.Status,
 					Description:         state.Description,
 					PaneAlive:           &state.PaneAlive,
-					NoMistakesStep:      state.NoMistakesRunStep,
 					StatusLines:         state.StatusLines,
 					StatusLogSuperseded: state.StatusLogSuperseded,
-					PRState:             state.PR.State,
 					PR:                  state.PR.URL,
-					PRHead:              state.PR.Head,
-					PRUnverifiedReason:  state.PR.Reason,
 				},
 				Help: []string{"Run `munsu task observe " + id + " --fields description,branch` for expanded fields"},
 			})
@@ -403,11 +394,6 @@ generation must pass its explicit generation here.
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
-
-			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-			if err := fleet.GateRefuseFromCWD(); err != nil {
-				return fmt.Errorf("teardown refused: %w", err)
-			}
 
 			opts := fleet.Options{
 				HomeDir: ctx.Home,

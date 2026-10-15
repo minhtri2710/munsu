@@ -338,9 +338,9 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 
 // TestYoloDoesNotRelaxConfiguredReviewTool pins the accepted +yolo contract:
 // yolo is a Fleet lifecycle flag (pre-flight tangle bypass) and never lowers
-// a configured review tool, which resolves solely from the fleet base document
+// a configured forge tool, which resolves solely from the fleet base document
 // and project overlay.
-func TestYoloDoesNotRelaxConfiguredReviewTool(t *testing.T) {
+func TestYoloDoesNotRelaxConfiguredForgeTool(t *testing.T) {
 	home := t.TempDir()
 	if _, err := homepkg.Init(home); err != nil {
 		t.Fatal(err)
@@ -355,15 +355,14 @@ func TestYoloDoesNotRelaxConfiguredReviewTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := fleetconfig.StoreProjectOverlay(home, "alpha", fleetconfig.ProjectOverlay{
-		Review: &fleetconfig.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(home, "no-mistakes")},
-		Forge:  &fleetconfig.ToolEntry{Adapter: "github"},
+		Forge: &fleetconfig.ToolEntry{Adapter: "gitlab", Path: filepath.Join(home, "glab")},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err := ResolveProjectSnapshot(home, "alpha")
-	if err == nil || !strings.Contains(err.Error(), "review adapter no-mistakes") {
-		t.Fatalf("+yolo project resolved a not-Ready configured review tool: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "forge adapter gitlab") {
+		t.Fatalf("+yolo project resolved a not-Ready configured forge tool: %v", err)
 	}
 }
 

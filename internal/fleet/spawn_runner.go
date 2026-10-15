@@ -38,7 +38,6 @@ type Runner struct {
 	homeDir       string
 	effectiveMode string
 	projPath      string
-	reviewStep    taskauthority.DeliveryStep
 	forgeStep     taskauthority.DeliveryStep
 	contractMode  string
 	// kind is the task's kind, read once from the canonical definition by
@@ -250,15 +249,9 @@ func (r *Runner) Run() (windowID string, runErr error) {
 	// contracted for it.
 	reviewing := r.kind == taskauthority.KindReview
 	if !reviewing {
-		if err := r.preflightNoMistakes(); err != nil {
-			return "", err
-		}
 		if err := r.preflightDelivery(); err != nil {
 			return "", err
 		}
-	}
-	if err := r.checkScopeGate(); err != nil {
-		return "", err
 	}
 	if err := r.preflightHarness(); err != nil {
 		return "", err
@@ -708,11 +701,9 @@ func (r *Runner) resolveMode() error {
 	}
 	r.projectConfig = resolved
 	r.projectConfigLoaded = true
-	r.reviewStep = resolved.ReviewStep
 	r.forgeStep = resolved.ForgeStep
 	r.effectiveMode = resolved.Soldier.Mode
 	r.contractMode = r.effectiveMode
-	fmt.Printf("review tool: %s\n", formatDeliveryStep(r.reviewStep))
 	fmt.Printf("forge tool: %s\n", formatDeliveryStep(r.forgeStep))
 	return nil
 }
@@ -878,32 +869,6 @@ func (r *Runner) checkTangle() error {
 		return nil
 	}
 	return backend.AssertNotTangled(r.projPath, r.args.ProjectName)
-}
-
-// checkScopeGate refuses no-mistakes gate agents before worktree allocation.
-func (r *Runner) checkScopeGate() error {
-	if err := GateRefusalError(r.projPath); err != nil {
-		return fmt.Errorf("scope gate: %w", err)
-	}
-	return nil
-}
-
-func (r *Runner) preflightNoMistakes() error {
-	preflight := r.args.NoMistakesPreflight
-	if preflight == nil {
-		preflight = defaultNoMistakesPreflight
-	}
-	return reviewPreflight(r.effectiveMode, r.projPath, r.reviewStep, preflight)
-}
-
-func reviewPreflight(mode, projPath string, review taskauthority.DeliveryStep, preflight func(string, taskauthority.DeliveryStep) error) error {
-	if mode != "no-mistakes" {
-		return nil
-	}
-	if err := preflight(projPath, review); err != nil {
-		return fmt.Errorf("review adapter %s probe/preflight failed: %w", review.Adapter, err)
-	}
-	return nil
 }
 
 // Phase 8: acquireWorktree acquires the worktree owned by the launch
@@ -1200,7 +1165,7 @@ func (r *Runner) recordDeliveryContract() error {
 	// Recovery re-entry under the recorded contract records nothing: the op's
 	// intent carries the generation's current precondition, so a repeat would be
 	// refused as reused with different intent.
-	if agg.DeliveryContract != nil && agg.DeliveryContract.Matches(r.contractMode, r.reviewStep, r.forgeStep) {
+	if agg.DeliveryContract != nil && agg.DeliveryContract.Matches(r.contractMode, r.forgeStep) {
 		return nil
 	}
 	req := taskauthority.CanonicalRecordDeliveryContractRequest{
@@ -1208,7 +1173,6 @@ func (r *Runner) recordDeliveryContract() error {
 		TaskID:       taskID,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		Mode:         r.contractMode,
-		Review:       r.reviewStep,
 		Forge:        r.forgeStep,
 	}
 
@@ -1504,21 +1468,9 @@ func (r *Runner) taskDescription() string {
 
 // createAttestation creates a capability attestation snapshot after the harness
 // and launch config are resolved. It captures the current state of all delivery
-// capabilities and binds them to the project, home, harness, gate agent, and modes.
+// capabilities and binds them to the project, home, harness, and mode.
 func (r *Runner) createAttestation() error {
-	gateAgent := r.harness
-	if r.harness == "" {
-		gateAgent = "unknown"
-	}
-
-	r.attestation = CreateCapabilityAttestation(
-		r.args.ProjectName,
-		r.homeDir,
-		r.harness,
-		gateAgent,
-		r.reviewStep,
-		r.forgeStep,
-	)
+	r.attestation = CreateCapabilityAttestation(r.args.ProjectName, r.homeDir, r.harness, r.forgeStep)
 
 	return nil
 }
@@ -1948,7 +1900,6 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 		{Name: "captain-provisioning", Role: "captain"},
 		{Name: "munsu-ops", Role: "soldier"}, // explicitly denied in denylist
 		{Name: "stuck-soldier-recovery", Role: "captain"},
-		{Name: "no-mistakes", Role: "captain"},
 		{Name: "bootstrap-diagnostics", Role: "general"},
 		{Name: "harness-adapters", Role: "captain"},
 	}
@@ -1970,11 +1921,6 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 		// ship tasks: github required.
 		requiredNames = []string{shipRequiredSkill}
 		optionalNames = []string{"chrome-devtools-axi"}
-	}
-
-	// Apply no-mistakes mode policy: no-mistakes requires shipRequiredSkill always.
-	if r.effectiveMode == "no-mistakes" && r.kind != taskauthority.KindReview {
-		requiredNames = append(requiredNames, shipRequiredSkill)
 	}
 
 	required, optional, diags = CollectSkills(catalog, requiredNames, optionalNames)
@@ -2059,14 +2005,6 @@ func (r *Runner) probeFence(bound BoundWorktree) error {
 		// remote mới fail cho tới khi reflog được tạo sẵn".
 		if launch.RemoteReflogs, err = ensureRemoteReflogs(commonDir); err != nil {
 			return fmt.Errorf("launch fence: %w", err)
-		}
-		if r.effectiveMode == "no-mistakes" {
-			if launch.GateRepo, err = projectGate(primary); err != nil {
-				return fmt.Errorf("launch fence: %w", err)
-			}
-			if err := ensureBranchReflog(launch.GateRepo, launch.Branch); err != nil {
-				return fmt.Errorf("launch fence: %w", err)
-			}
 		}
 	}
 	f, err := fence.New(launch)

@@ -35,8 +35,8 @@
 # and do not delete it or file it as accepted debt -- deleting it converts a live
 # bug into a tidy diff. A (c) entry carries a reason that starts with OPEN-BUG;
 # `announce_open_bugs` reprints every such reason as a ::warning on every run, so
-# the entry stays visible until its issue closes. uncovered-guards.sh and
-# citations.sh read the same marker.
+# the entry stays visible until its issue closes. uncovered-guards.sh reads
+# the same marker.
 #
 # Usage:
 #   deadcode.sh list    current unreachable set, in allow-file key format

@@ -30,8 +30,8 @@ func TestToolDiagnostic_String_InstallFailed(t *testing.T) {
 }
 
 func TestToolDiagnostic_String_Installed(t *testing.T) {
-	d := ToolDiagnostic{Tool: "no-mistakes", Status: ToolInstalled}
-	want := "INSTALLED: no-mistakes"
+	d := ToolDiagnostic{Tool: "treehouse", Status: ToolInstalled}
+	want := "INSTALLED: treehouse"
 	if got := d.String(); got != want {
 		t.Errorf("ToolDiagnostic.String() = %q, want %q", got, want)
 	}
