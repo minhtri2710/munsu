@@ -312,7 +312,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath, TaskKind: r.kind,
-		SeatEnv: testSeatEnv(),
+		HomeID: f.auth.HomeID().Value(), SeatEnv: testSeatEnv(),
 	})
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)

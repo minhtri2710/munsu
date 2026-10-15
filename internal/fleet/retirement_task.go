@@ -542,25 +542,27 @@ func retirementMetaForEvidence(meta map[string]string, ev *taskauthority.Retirem
 			delete(out, "launch_manifest_sha256")
 		}
 	}
-	var endpoint *taskauthority.EndpointBinding
-	if ev.Endpoint != nil {
-		endpoint = ev.Endpoint
-	} else if ev.Acquired != nil {
-		endpoint = &taskauthority.EndpointBinding{
-			Backend: ev.Acquired.Backend, Handle: ev.Acquired.Handle,
-			LeaseID: ev.Acquired.LeaseID, FenceToken: ev.Acquired.FenceToken,
-			SessionOwner: ev.Acquired.SessionOwner, WorkspaceID: ev.Acquired.WorkspaceID,
-			TabID: ev.Acquired.TabID, Incarnation: ev.Acquired.Incarnation,
-		}
-	}
-	if endpoint != nil {
-		out["backend"] = endpoint.Backend
-		out["window"] = endpoint.Handle
-		out[backend.MetaSessionOwner] = endpoint.SessionOwner
-		out[backend.MetaWorkspaceID] = endpoint.WorkspaceID
-		out[backend.MetaTabID] = endpoint.TabID
-	}
+	overlayEndpointMeta(out, ev.Endpoint, ev.Acquired)
 	return out
+}
+
+// overlayEndpointMeta writes the backend identity of the bound endpoint, else
+// of the acquired one, into meta.
+func overlayEndpointMeta(meta map[string]string, bound *taskauthority.EndpointBinding, acquired *taskauthority.AcquiredEndpoint) {
+	switch {
+	case bound != nil:
+		putEndpointMeta(meta, bound.Backend, bound.Handle, bound.SessionOwner, bound.WorkspaceID, bound.TabID)
+	case acquired != nil:
+		putEndpointMeta(meta, acquired.Backend, acquired.Handle, acquired.SessionOwner, acquired.WorkspaceID, acquired.TabID)
+	}
+}
+
+func putEndpointMeta(meta map[string]string, backendName, handle, sessionOwner, workspaceID, tabID string) {
+	meta["backend"] = backendName
+	meta["window"] = handle
+	meta[backend.MetaSessionOwner] = sessionOwner
+	meta[backend.MetaWorkspaceID] = workspaceID
+	meta[backend.MetaTabID] = tabID
 }
 
 func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthority.RetirementEvidence) error {
@@ -708,10 +710,9 @@ func sameRetiredAcquired(a, b *taskauthority.AcquiredEndpoint) bool {
 func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
-	// Read task meta
-	meta, err := home.ReadMeta(opts.HomeDir, opts.ID)
-	if err != nil {
-		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, err)
+	meta, metaErr := home.ReadMeta(opts.HomeDir, opts.ID)
+	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, metaErr)
 	}
 
 	// Resolve the task identity and the safety-check generation up front: the
@@ -729,6 +730,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	current, err := authority.Get(taskID)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: resolving task kind: %w", opts.ID, err)
+	}
+	// A launch that never bound wrote no meta and retires from canonical
+	// evidence alone; any other task without meta is refused.
+	if metaErr != nil {
+		if !launchedUnbound(current) {
+			return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, metaErr)
+		}
+		meta = map[string]string{}
 	}
 	kind := current.Definition.Kind
 	if kind == "" {
@@ -823,14 +832,15 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	if err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: resolving current state for cleanup claim: %w", opts.ID, err))
 	}
-	claim := curForClaim.CleanupClaim
+	retired := curForClaim
 	if curForClaim.Generation != claimGen {
 		historical, historyErr := authority.GetGeneration(taskID, claimGen)
 		if historyErr != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: resolving historical cleanup claim: %w", opts.ID, historyErr))
 		}
-		claim = historical.CleanupClaim
+		retired = historical
 	}
+	claim := retired.CleanupClaim
 	if claim != nil && claim.Generation == claimGen {
 		switch claim.Status {
 		case taskauthority.CleanupCompleted:
@@ -845,7 +855,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return result, nil
 	}
 	if claimCompleted {
-		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, meta, kind, result) })
+		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error {
+			return finalizeCompletedProjectionCleanup(opts, authority.HomeID().Value(), retired.Launch, claimGen, kind, result)
+		})
 		if err != nil {
 			return result, &RetirementProjectionError{TaskID: opts.ID, Err: err}
 		}
@@ -1133,7 +1145,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return err
 		}
 		projectionCleanup := func() error {
-			if err := finalizeCompletedProjectionCleanup(opts, meta, kind, result); err != nil {
+			if err := finalizeCompletedProjectionCleanup(opts, authority.HomeID().Value(), retired.Launch, claimGen, kind, result); err != nil {
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
 			}
 			return nil
@@ -1165,9 +1177,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 // finalizeCompletedProjectionCleanup is the one projection cleanup of a
 // completed retirement claim, run by teardown and by the completed-claim
 // retry. Residual artifacts go first, then the retired wake state, and the
-// .meta last, so a failed step leaves the retry identity in place.
-func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, kind string, result *TeardownResult) error {
-	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, kind, meta)
+// .meta last, so a failed step leaves the retry identity in place. launch is
+// the retired generation's launch intent, nil when it never launched.
+func finalizeCompletedProjectionCleanup(opts Options, homeID string, launch *taskauthority.LaunchIntent, gen taskauthority.Generation, kind string, result *TeardownResult) error {
+	harnessName := ""
+	if launch != nil {
+		harnessName = launch.Harness
+	}
+	residualPaths, err := cleanupResidualArtifactPaths(opts.HomeDir, opts.ID, kind, harnessName)
 	if err != nil {
 		return err
 	}
@@ -1176,6 +1193,13 @@ func finalizeCompletedProjectionCleanup(opts Options, meta map[string]string, ki
 			return fmt.Errorf("remove residual %s: %w", filepath.Base(p), err)
 		}
 		result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
+	}
+	if launch != nil {
+		dir := seatTempDir(launch.SeatEnv.TempDir, homeID, opts.ID, gen.String())
+		if err := removeSeatTemp(dir); err != nil {
+			return fmt.Errorf("remove seat temp %s: %w", dir, err)
+		}
+		result.Steps = append(result.Steps, fmt.Sprintf("seat temp %s removed", dir))
 	}
 	if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
 		return err
@@ -1250,6 +1274,15 @@ func retirementSafetyEvidenceForGeneration(authority *taskauthority.Canonical, t
 		return &binding, partialLaunchRetirement(agg), nil
 	}
 	return nil, false, nil
+}
+
+// launchedUnbound reports a generation that began a launch but never bound an
+// endpoint, retired or not.
+func launchedUnbound(agg taskauthority.Aggregate) bool {
+	if agg.Launch == nil && agg.AcquiredEndpoint == nil {
+		return false
+	}
+	return agg.Endpoint == nil && (agg.Retirement == nil || agg.Retirement.Endpoint == nil)
 }
 
 func partialLaunchRetirement(agg taskauthority.Aggregate) bool {
@@ -1640,7 +1673,7 @@ func taskMetaFilePath(homeDir, id string) (string, error) {
 // cleanupResidualArtifactPaths lists the task's residual state paths: files and,
 // for a pi soldier, the per-task agent dir, which the callers remove with
 // os.RemoveAll (it unlinks the dir's symlinks and never follows them).
-func cleanupResidualArtifactPaths(homeDir, id, kind string, meta map[string]string) ([]string, error) {
+func cleanupResidualArtifactPaths(homeDir, id, kind, harnessName string) ([]string, error) {
 	statusPath, err := home.StatusFilePath(homeDir, id)
 	if err != nil {
 		return nil, err
@@ -1657,7 +1690,7 @@ func cleanupResidualArtifactPaths(homeDir, id, kind string, meta map[string]stri
 		}
 		paths = append(paths, p)
 	}
-	for _, suffix := range harness.StateArtifactsForHarness(meta["harness"]) {
+	for _, suffix := range harness.StateArtifactsForHarness(harnessName) {
 		p, err := home.DurableFilePath(stateDir, id, "."+suffix)
 		if err != nil {
 			return nil, err
@@ -1665,6 +1698,52 @@ func cleanupResidualArtifactPaths(homeDir, id, kind string, meta map[string]stri
 		paths = append(paths, p)
 	}
 	return paths, nil
+}
+
+// removeSeatTemp removes a seat temp dir. Go writes its module cache
+// read-only, so each directory is opened to its owner first. Every step runs
+// through an os.Root, so no path resolves outside the dir.
+func removeSeatTemp(dir string) error {
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(dir)
+	info, err := parent.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		root, err := parent.OpenRoot(name)
+		if err != nil {
+			return err
+		}
+		err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			if perm := info.Mode().Perm(); perm&0o700 != 0o700 {
+				return root.Chmod(p, perm|0o700)
+			}
+			return nil
+		})
+		root.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return parent.RemoveAll(name)
 }
 
 // worktreeHolderPIDs lists the processes with wtPath open through fuser(1).

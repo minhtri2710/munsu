@@ -577,7 +577,7 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			for _, want := range []string{
 				taskID, "backend tmux endpoint pane-1", "may still be running",
 				"fix the cause", rerun, "refuses with its own reason", "re-adopts the pane only while the pane is live",
-				"stop pane pane-1 on backend tmux by hand",
+				"munsu teardown " + taskID, "munsu task reopen " + taskID,
 			} {
 				if !strings.Contains(msg, want) {
 					t.Fatalf("error %q does not contain %q", msg, want)
@@ -1017,11 +1017,11 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1101,11 +1101,11 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1162,11 +1162,11 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1325,11 +1325,11 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	}
 	agg := f.aggregate()
 	in := LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,

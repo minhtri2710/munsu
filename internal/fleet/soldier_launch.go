@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -310,6 +312,9 @@ type LaunchArtifactInput struct {
 	// SeatEnv is the seat's launch environment, read once and committed with
 	// the intent: the seat temp is built from its TempDir.
 	SeatEnv taskauthority.SeatEnv
+	// HomeID is the canonical identity of the dispatching home; it keys the
+	// seat temp with the task and generation.
+	HomeID string
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
@@ -428,7 +433,7 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không bao
 	// giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và không
 	// gửi input vào session ngoài session của nó."
-	seatTemp := filepath.Join(in.SeatEnv.TempDir, "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
+	seatTemp := seatTempDir(in.SeatEnv.TempDir, in.HomeID, in.TaskID, in.Generation)
 	caches := []struct{ name, dir string }{
 		{"npm_config_cache", "npm-cache"}, {"npm_config_store_dir", "npm-store"},
 		{"PIP_CACHE_DIR", "pip-cache"}, {"UV_CACHE_DIR", "uv-cache"}, {"XDG_CACHE_HOME", "xdg-cache"},
@@ -485,6 +490,14 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		artifact: LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture},
 		bytes:    content,
 	}, nil
+}
+
+// seatTempDir is the seat's tool-cache root under its launch TMPDIR, one per
+// home, exact task ID and generation; retirement removes it. The label is for
+// reading only: the digest keys it.
+func seatTempDir(tempDir, homeID, taskID, generation string) string {
+	sum := sha256.Sum256([]byte(homeID + "\x00" + taskID))
+	return filepath.Join(tempDir, "munsu-seat-"+labelComponent(taskID)+"-"+hex.EncodeToString(sum[:16])+"-"+generation)
 }
 
 func publishPreparedFile(path string, want []byte, perm os.FileMode) error {

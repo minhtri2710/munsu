@@ -413,14 +413,44 @@ func TestScoutSafetyCheckRejectsPriorGenerationReport(t *testing.T) {
 	}
 }
 
+// TestRun_NoMeta admits a task without .meta only when its generation began a
+// launch that never bound; --force does not widen that.
 func TestRun_NoMeta(t *testing.T) {
-	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
-
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{}, canonicalMergeTestAuth(t, tmp, "nonexistent"))
-	if err == nil {
-		t.Fatal("should fail for nonexistent task")
+	for _, tc := range []struct {
+		name    string
+		launch  bool
+		refused bool
+	}{
+		{name: "never-launched task is refused", refused: true},
+		{name: "launched but unbound task retires", launch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				homeDir, id string
+				auth        *taskauthority.Canonical
+			)
+			if tc.launch {
+				f := newLaunchFixture(t, "no-meta-launched")
+				if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+					t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
+				}
+				homeDir, id, auth = f.homeDir, f.taskID, f.auth
+			} else {
+				homeDir, id = t.TempDir(), "no-meta-queued"
+				auth = canonicalMergeTestAuth(t, homeDir, id)
+			}
+			_, err := RetireTask(Options{HomeDir: homeDir, ID: id, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+			if refused := err != nil && strings.Contains(err.Error(), "reading meta"); refused != tc.refused {
+				t.Fatalf("RetireTask error = %v, want refused=%v", err, tc.refused)
+			}
+			agg, gerr := auth.Get(mustTaskID(t, id))
+			if gerr != nil {
+				t.Fatal(gerr)
+			}
+			if retired := agg.Phase == taskauthority.PhaseRetired; retired == tc.refused {
+				t.Fatalf("phase = %q, want retired=%v", agg.Phase, !tc.refused)
+			}
+		})
 	}
 }
 
@@ -625,12 +655,23 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	defer os.Unsetenv("MUNSU_HOME")
 
 	auth := canonicalScoutTestAuth(t, tmp, "test-residual")
+	// The canonical launch names the pi harness, so its adapter artifacts are
+	// included; the meta names none.
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "test-residual"), Precondition: domain.Of(1, 1),
+		SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: harness.Pi, Kind: taskauthority.KindScout,
+		Project: "proj", LaunchID: "launch-test-residual", WorktreeReservationID: "wt-res-1", WorktreeFenceToken: "wt-fence-1",
+		EndpointReservationID: "ep-res-1", EndpointFenceToken: "ep-fence-1", SeatPathDirs: []string{"/usr/bin"},
+		EndpointIncarnation: "inc-test-residual", SeatEnv: taskauthority.SeatEnv{TempDir: t.TempDir(), UserHome: tmp}, Reason: "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-test-residual", begin), begin); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Create meta file with harness=pi so adapter-driven artifacts are included
-	metaContent := "backend=tmux\nwindow=@1\nharness=pi\n"
+	metaContent := "backend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
 	// Create residual artifacts: munsu-native + pi adapter artifacts, the
@@ -682,31 +723,31 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := mhome.StateDir(tmp)
 	for _, tc := range []struct {
-		name string
-		kind string
-		meta map[string]string
-		want []string
+		name        string
+		kind        string
+		harnessName string
+		want        []string
 	}{
-		{"ship with pi", taskauthority.KindShip, map[string]string{"harness": "pi"}, []string{
+		{"ship with pi", taskauthority.KindShip, harness.Pi, []string{
 			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
-		{"review also removes its launch home", taskauthority.KindReview, map[string]string{"harness": "pi"}, []string{
+		{"review also removes its launch home", taskauthority.KindReview, harness.Pi, []string{
 			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
-		{"unknown harness has only the native artifacts", taskauthority.KindShip, map[string]string{}, []string{
+		{"unknown harness has only the native artifacts", taskauthority.KindShip, "", []string{
 			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.kind, tc.meta)
+			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.kind, tc.harnessName)
 			if err != nil || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("cleanupResidualArtifactPaths = %v, %v; want %v", got, err, tc.want)
 			}
 		})
 	}
-	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", taskauthority.KindShip, map[string]string{}); err == nil {
+	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", taskauthority.KindShip, ""); err == nil {
 		t.Fatal("cleanupResidualArtifactPaths accepted an id that escapes the state dir")
 	}
 }
