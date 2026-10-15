@@ -113,11 +113,7 @@ type shellToken struct {
 // Widening the grammar needs evidence of a miss the fence cannot cover and the
 // Human's words. A file write on a shape outside the claim is allowed unless the
 // target is ambiguous, which the caller refuses; git mutation fails closed.
-// Drive-relative cwd tracking (and its refusal of a path that depends on an
-// unknown per-drive cwd) is removed with Windows support. Human words
-// (domain.Words): grantor the Human, channel Claude Code session with the Lead
-// (typed), 2026-10-15: "tạm thời xóa bỏ windows đi, vì hiện tại không có máy
-// window để chạy thử".
+// Words: Human, typed, 2026-10-15: "tạm thời xóa bỏ windows đi, vì hiện tại không có máy window để chạy thử"
 func shellWriteTargets(checkPath, command string) ([]string, bool) {
 	interpretations := []shellTargetResolution{
 		{mode: backslashEscapes},

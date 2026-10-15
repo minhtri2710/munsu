@@ -321,10 +321,8 @@ jobs:
             exit 1
           fi
           echo "gofmt: clean"
-      # The scripts under .github/scripts are the gate itself, and no lane read
-      # them: a `${got:-$?}` fallback in one of them printed echo's status
-      # rather than the command's in 18 places. The file list is derived from
-      # git, so a new script joins by existing; git's `*` crosses `/`, so
+      # The scripts under .github/scripts are the gate itself. The file list is
+      # derived from git, so a new script joins by existing; git's `*` crosses `/`, so
       # nested directories are covered too. The `run:` blocks of every workflow
       # are shell too, and actionlint hands each one to the same shellcheck
       # binary (it also checks the workflow syntax and expressions). Default
@@ -506,9 +504,8 @@ jobs:
       # while every existing lane stayed green.
       #
       # The directory list is derived from tracked `.go` files, never
-      # declared: a declared list of tool modules was already stale before
-      # this step existed, and deriving also keeps the
-      # `.github/testdata` fixture module out by construction. `go vet` is in
+      # declared, which also keeps the `.github/testdata` fixture module out
+      # by construction. `go vet` is in
       # the contract because these tools are the only Go in the repository no
       # vet lane reaches. A directory with no running test is a failure, not
       # a pass: `[no test files]` is what test rot looks like on its way out.

@@ -544,13 +544,7 @@ func SafetyCheck(path string) *SafetyCheckResult {
 		result.Identity = "unknown"
 	}
 
-	// GateRefused: true when classification errored, identity is Unrelated
-	// (fail closed for unknown repos), or the path is a primary checkout while
-	// a munsu task run is active. A review tool's gate checkout is no longer
-	// refused for being one. Human words (domain.Words): grantor the Human,
-	// channel Claude Code session with the Lead (typed), 2026-10-15: "xóa
-	// no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
-	// (removes the gate-agent refusal).
+	// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 	if scopeResult.Err != nil {
 		result.GateRefused = true
 		result.Error = scopeResult.Err.Error()

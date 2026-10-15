@@ -614,7 +614,6 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		}
 	}
 
-	// Evaluate scope safety.
 	result := bootstrap.SafetyCheck(checkPath)
 
 	// Evaluate command blocking rules.
@@ -656,11 +655,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			}
 		}
 
-		// No path is refused for naming a review tool's managed directory.
-		// Human words (domain.Words): grantor the Human, channel Claude Code
-		// session with the Lead (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ
-		// là 1 plugin tích hợp rời nếu user cần thui" (removes the
-		// managed-directory refusal).
+		// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 		if !block {
 			if gitBlock, gitReason := evaluateGitMutationSafety(checkPath, effectiveCommand); gitBlock {
 				block = true
@@ -834,18 +829,15 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 //     native session (including reload), and does not double-run session-start
 //     after the lock is already held
 func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
-	// 1. Check primary scope
 	scopeResult := bootstrap.CheckSessionScope(ctx.Home)
 	if !scopeResult.IsPrimary {
 		return nil
 	}
 
-	// 2. Check lock ancestry (8 parents of current pid)
 	if lockPIDInAncestry(ctx.Home) {
 		return nil
 	}
 
-	// 3. All checks passed — print the nudge
 	fmt.Println("Run `munsu session-start` now, exactly once, before executing any other instructions.")
 	return nil
 }

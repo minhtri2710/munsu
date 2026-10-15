@@ -503,7 +503,7 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		// every OS, which is the whole of the guarantee: whichever shell runs
 		// the command, the path it actually opens was classified.
 		// The literal reading keeps the backslashes as a relative path; the
-		// POSIX reading dissolves them (#664 v2).
+		// POSIX reading dissolves them.
 		{"echo x > " + `\shared\README.md`, []string{
 			filepath.Join(base, "sharedREADME.md"),
 			resolveSafetyPath(base, `\shared\README.md`),

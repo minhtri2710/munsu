@@ -40,8 +40,6 @@ func TestResolveMunsuPath_TrustsLookPathWithoutPosixExecBit(t *testing.T) {
 	t.Logf("resolved %q after injected LookPath success; mode=%#o", got, info.Mode().Perm())
 }
 
-// TestResolveMunsuPath_AcceptsMunsuTest pins that the os.Executable fallback
-// recognizes a munsu.test build.
 func TestResolveMunsuPath_AcceptsMunsuTest(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "munsu.test")

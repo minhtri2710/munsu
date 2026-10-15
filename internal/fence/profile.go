@@ -126,11 +126,7 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "subpath", p.home)
 	}
 	allowFiles(&b, p.files...)
-	// No seat writes outside its home, checkouts and temp roots for a review
-	// tool: the gate repository write set (G1151, G1154) is removed. Human words
-	// (domain.Words): grantor the Human, channel Claude Code session with the
-	// Lead (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp
-	// rời nếu user cần thui" (removes the gate repository allowances).
+	// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 	if l.Role == RoleSoldier {
 		allowRoots(p.worktree, p.gitDir, filepath.Join(p.commonDir, "objects"),
 			filepath.Join(p.commonDir, "refs", "remotes"))
@@ -448,7 +444,7 @@ func resolveStateDir(l Launch, p *launchPaths) error {
 	// conditions include "resolveStateDir no symlink": "Duyệt, có R3
 	// (Recommended): option 1 + 3 PRs with section 1 conditions; R3 worded as
 	// an accident guard (not a boundary), error names munsu report <state>;
-	// [...]" (the elided tail concerns gate state munsu no longer models).
+	// [...]"
 	if fi, err := os.Lstat(l.HarnessStateDir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("fence: harness state dir %s is a symlink", l.HarnessStateDir)
 	}
@@ -578,10 +574,7 @@ func keptSocketDirs() []string {
 // paths, and a symlink at one is matched at its target. Human words
 // (domain.Words), each grantor the Human, channel supervisor-relay:dialog,
 // words=selected: G1150: "Chặn hết trừ DNS (Recommended): deny every
-// unix-socket connect except mDNSResponder"; G1153's gate-socket carve-out is
-// removed: grantor the Human, channel Claude Code session with the Lead
-// (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu
-// user cần thui" (removes the gate socket allowance). G1148: "Chặn hẳn
+// unix-socket connect except mDNSResponder"; G1148: "Chặn hẳn
 // (Recommended): deny the herdr socket entirely for fenced seats". G1085: "Quy tắc chung (Recommended): Seat
 // có fence không bao giờ ghi chương trình hay cấu hình mà tiến trình ngoài
 // fence sẽ chạy, và không gửi input vào session ngoài session của nó." The
@@ -590,6 +583,7 @@ func keptSocketDirs() []string {
 // đi" (ratifies the "tự quyết đi" record, scope: the captain-fence design);
 // 2A, words=selected: "Captain được gửi input vào session của chính soldier
 // của nó qua munsu".
+// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 func denySocketConnects(b *strings.Builder, seatSocket string) {
 	b.WriteString("(deny network-outbound (remote unix-socket))\n")
 	for _, s := range []string{"/private/var/run/mDNSResponder", seatSocket} {
