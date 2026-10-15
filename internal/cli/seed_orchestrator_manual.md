@@ -175,7 +175,7 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 | Mode | Description | Ready signal |
 |------|-------------|-------------|
 | `direct-PR` | Push + open PR without pipeline | `done: PR <url>` |
-| `local-only` | Clean branch ready for local merge | ready for local merge |
+| `local-only` | Clean branch ready for local merge | `done: committed <sha>` |
 
 Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (never bare `gh pr merge` when task meta lives in a captain home). A landed merge marks the task done and tears the soldier down; if the teardown fails, fix the cause and re-run the same command, which resumes the teardown only. `munsu delivery merge-status <id>` answers whether a delivery landed. Meta resolves primary then captain homes.
 
