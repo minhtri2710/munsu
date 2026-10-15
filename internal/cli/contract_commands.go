@@ -226,7 +226,7 @@ func newContractGuardCmd() *cobra.Command {
 			if !beatStatus.Exists {
 				allConditions = append(allConditions, orchestrator.ConditionInfo{
 					Code:    orchestrator.ConditionWatcherAbsent,
-					Message: "WATCHER NEVER STARTED - no liveness beacon",
+					Message: "WATCHER STOPPED - no liveness beacon",
 				})
 			} else if beatStatus.Stale {
 				allConditions = append(allConditions, orchestrator.ConditionInfo{

@@ -97,7 +97,7 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 	}
 
 	// Poll until beat + identity ownership land, or timeout. A single short sleep
-	// races the child process and caused false "started"/NEVER STARTED reports.
+	// races the child process and caused false "started"/stopped reports.
 	afterStatus, validated := waitForWatcherBeacon(homeDir, pid, watcherBeaconTimeout)
 
 	if !validated {

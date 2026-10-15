@@ -243,7 +243,7 @@ func TestGuardContractOutput_StableCodes(t *testing.T) {
 		if !strings.Contains(out, "watcher_absent") {
 			t.Errorf("expected 'watcher_absent' code in output, got: %s", out)
 		}
-		if !strings.Contains(out, "WATCHER NEVER STARTED") {
+		if !strings.Contains(out, "WATCHER STOPPED - no liveness beacon") {
 			t.Errorf("expected human-readable message in output, got: %s", out)
 		}
 	})
