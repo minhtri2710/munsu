@@ -639,7 +639,6 @@ type runFixture struct {
 func newRunFixture(t *testing.T, taskID string) *runFixture {
 	t.Helper()
 	isolateHuman(t)
-	t.Setenv("OPENAI_API_KEY", "test")
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir()) // not a linked worktree, so spawn authority passes
 	homeDir := t.TempDir()
@@ -659,7 +658,7 @@ func newRunFixture(t *testing.T, taskID string) *runFixture {
 	}
 	counter := filepath.Join(t.TempDir(), "harness-launches.log")
 	harnessDir := t.TempDir()
-	testutil.WriteFakeExecutable(t, filepath.Join(harnessDir, "pi"), fmt.Sprintf("#!/bin/sh\n[ \"$1\" = --version ] || echo launch >> %q\n", counter))
+	testutil.WriteFakeExecutable(t, filepath.Join(harnessDir, "pi"), fmt.Sprintf("#!/bin/sh\ncase \"$1\" in --version|--list-models) exit 0;; esac\necho launch >> %q\n", counter))
 	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 
 	endpoints := newReentrantEndpoints()
@@ -1196,11 +1195,12 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 
 // fakeHarnessDir creates a fake harness binary (binName) that appends a
 // marker line to counterPath, so tests can count actual Soldier process
-// launches of the real production artifact.
+// launches of the real production artifact. The preflight's readiness command
+// is not a launch.
 func fakeHarnessDir(t *testing.T, binName, counterPath string) string {
 	t.Helper()
 	dir := t.TempDir()
-	content := fmt.Sprintf("#!/bin/sh\necho launch >> %q\n", counterPath)
+	content := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in --list-models|auth) exit 0;; esac\necho launch >> %q\n", counterPath)
 	testutil.WriteFakeExecutable(t, filepath.Join(dir, binName), content)
 	return dir
 }

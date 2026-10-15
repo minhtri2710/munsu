@@ -145,11 +145,9 @@ func workflowInitRepo(t *testing.T) string {
 	return abs
 }
 
-// workflowHarnessOnPath puts an executable stub for the named harness on PATH
-// and supplies its credential env var, so harness.Preflight passes for the
-// real reason (binary present, auth configured) rather than being skipped. The
-// stub answers `claude auth status` with exit 0, which is how claude reports
-// configured auth; the other harnesses read their credential env var.
+// workflowHarnessOnPath puts an executable stub for the named harness on PATH,
+// so harness.Preflight passes for the real reason (binary present, its
+// readiness command exits 0 with no not-ready output) rather than being skipped.
 func workflowHarnessOnPath(t *testing.T, name string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -159,8 +157,6 @@ func workflowHarnessOnPath(t *testing.T, name string) {
 		t.Fatalf("git on PATH: %v", err)
 	}
 	testutil.SetPath(t, append([]string{dir, filepath.Dir(gitBin)}, testutil.BashShellDirs(t)...)...)
-	t.Setenv("ANTHROPIC_API_KEY", "workflow-e2e-stub")
-	t.Setenv("OPENAI_API_KEY", "workflow-e2e-stub")
 }
 
 func workflowCanonical(t *testing.T, homeDir string) *taskauthority.Canonical {

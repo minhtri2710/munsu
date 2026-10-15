@@ -125,9 +125,9 @@ func TestRetireSuccessInvokesEndpointBeforeCleanup(t *testing.T) {
 }
 
 func TestLaunchEndpointFailureWritesNoMetadata(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "failed-launch")
 	writeCanonicalPiIntegration(t, home)

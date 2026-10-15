@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,12 +18,15 @@ const (
 	PreflightUnknown PreflightLevel = "unknown"
 )
 
-// PreflightResult holds the readiness check results for a harness.
+// PreflightResult holds the readiness check results for a harness. Ready is
+// the answer of the harness CLI's own readiness command; ReadyDetail is what
+// it printed when it is not ready.
 type PreflightResult struct {
-	AdapterKnown   PreflightLevel
-	BinaryOnPath   PreflightLevel
-	AuthConfigured PreflightLevel
-	ModelValid     PreflightLevel
+	AdapterKnown PreflightLevel
+	BinaryOnPath PreflightLevel
+	Ready        PreflightLevel
+	ReadyDetail  string
+	ModelValid   PreflightLevel
 }
 
 // preflightBinaryNames maps harness names to their CLI binary names for PATH checks.
@@ -36,102 +39,91 @@ var preflightBinaryNames = map[string]string{
 	Agy:      "agy",
 }
 
-// preflightAuthEnv maps harness names to environment variables that hold
-// their API authentication credentials.
-var preflightAuthEnv = map[string][]string{
-	Codex:    {"OPENAI_API_KEY"},
-	Opencode: {"OPENAI_API_KEY"},
-	Pi:       piAuthEnvVars(),
-	Grok:     {"GROK_API_KEY", "XAI_API_KEY"},
-	Agy:      {"ANTHROPIC_API_KEY"},
+// readinessProbeTimeout bounds a harness's readiness command so a hung CLI
+// cannot stall `munsu spawn`. It is a variable so tests can shorten it.
+var readinessProbeTimeout = 10 * time.Second
+
+// readinessProbe is the harness's own command that says whether it can run: a
+// non-zero exit, or output containing notReady, means it cannot.
+type readinessProbe struct {
+	args     []string
+	notReady string
 }
 
-// claudeAuthProbeTimeout bounds `claude auth status`. The probe measured about
-// 0.2s on claude 2.1.289; the bound leaves room for a slow keychain unlock while
-// keeping a hung claude from stalling `munsu spawn`. It is a variable so tests
-// can shorten it.
-var claudeAuthProbeTimeout = 10 * time.Second
+var readinessProbes = map[string]readinessProbe{
+	// claude 2.1.300 with no login exits 1: "Not logged in. Run claude auth login to authenticate."
+	Claude: {args: []string{"auth", "status", "--text"}},
+	// pi 1.2.0 with no credentials exits 0: "No models available. Use /login to log into a provider via OAuth or API key."
+	// Words: Human, typed, 2026-10-15: "sao lại phải dùng env?? chạy cli của harness agent là được rồi, nếu harness đó không chạy được thì báo lại"
+	Pi: {args: []string{"--list-models"}, notReady: "No models available"},
+}
 
-// claudeAuthConfigured asks claude itself whether it holds credentials: the
-// answer is the exit status of `claude auth status`, and nothing else. A
-// non-zero exit, a probe that cannot start, and a probe that outlives
-// claudeAuthProbeTimeout all read as not configured. The exit status is enough:
-// it already covers claude.ai logins and API keys, so no output field is needed.
-// Security: the probe's output is discarded, never read, printed, or logged.
-//
-// With seat set it asks as a fenced seat logs in: CLAUDE_CONFIG_DIR is a
-// config dir other than the Human's and CLAUDE_SECURESTORAGE_CONFIG_DIR names
-// the Human's keychain item, so a claude that stops honoring the variable fails
-// the spawn here rather than at a login screen. The dir is a fresh empty one in
-// the seat build dir, never a seat's and never under a temp root: an unfenced
+// runReadinessProbe runs the harness's readiness command and returns "" when
+// the harness is ready, else what the CLI printed. A ready claude prints the
+// account, so output is kept only on failure. With seat set it asks as a fenced
+// claude seat logs in: CLAUDE_CONFIG_DIR is a fresh empty dir in the seat build
+// dir and CLAUDE_SECURESTORAGE_CONFIG_DIR names the Human's keychain item, so a
+// claude that stops honoring the variable fails here rather than at a login
+// screen. The dir is never a seat's and never under a temp root: an unfenced
 // claude must not load settings a seat can write.
-func claudeAuthConfigured(seat *ClaudeSeat) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), claudeAuthProbeTimeout)
+func runReadinessProbe(binary string, probe readinessProbe, seat *ClaudeSeat) string {
+	command := strings.Join(append([]string{binary}, probe.args...), " ")
+	ctx, cancel := context.WithTimeout(context.Background(), readinessProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "claude", "auth", "status")
+	cmd := exec.CommandContext(ctx, binary, probe.args...)
+	cmd.WaitDelay = time.Second
 	if seat != nil {
 		if err := prepareSeatBuildDir(seat.BuildDir); err != nil {
-			return false
+			return fmt.Sprintf("preparing the seat build dir for `%s`: %v", command, err)
 		}
 		dir, err := os.MkdirTemp(seat.BuildDir, "claude-auth-")
 		if err != nil {
-			return false
+			return fmt.Sprintf("preparing the seat config dir for `%s`: %v", command, err)
 		}
 		defer os.RemoveAll(dir)
 		cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir, "CLAUDE_SECURESTORAGE_CONFIG_DIR="+seat.Config.SecureStorage)
 	}
-	return cmd.Run() == nil
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Sprintf("`%s` did not finish within %s", command, readinessProbeTimeout)
+	case err != nil:
+		if text == "" {
+			text = err.Error()
+		}
+		return fmt.Sprintf("`%s` failed: %s", command, text)
+	case probe.notReady != "" && strings.Contains(text, probe.notReady):
+		return fmt.Sprintf("`%s` reported: %s", command, text)
+	}
+	return ""
 }
 
-// ClaudeSeat is how a fenced claude seat logs in, for the auth preflight: the
+// CheckReady runs the readiness command of harnessName with the binary at
+// path. It returns nil when the harness has none or reports ready.
+func CheckReady(harnessName, path string) error {
+	probe, ok := readinessProbes[harnessName]
+	if !ok {
+		return nil
+	}
+	if detail := runReadinessProbe(path, probe, nil); detail != "" {
+		return &PreflightError{Harness: harnessName, Reason: "not-ready", Detail: detail}
+	}
+	return nil
+}
+
+// ClaudeSeat is how a fenced claude seat logs in, for the readiness probe: the
 // Human's configuration, and the munsu home's SeatBuildDir.
 type ClaudeSeat struct {
 	Config   ClaudeConfig
 	BuildDir string
 }
 
-// piCredentialFile is a function that reports whether a Pi credential store file
-// exists as a regular user-readable file. It is a variable so tests can inject
-// a custom checker that uses temp directories instead of the real Pi config.
-// The callback receives the path that would be checked; return true when the
-// path exists, is a regular file, and is readable.
-// Security: never read, print, parse, or log the file contents.
-var piCredentialFile = func(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if !info.Mode().IsRegular() {
-		return false
-	}
-	// Verify the file is actually readable (stat succeeds but file may be
-	// permission-denied on open). Security: never read the content.
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	return true
-}
-
-// piConfigDir returns the Pi agent config directory.
-// Respects PI_CODING_AGENT_DIR; falls back to ~/.pi/agent.
-// It is a variable so tests can inject a custom config dir seam.
-var piConfigDir = func() string {
-	if d := os.Getenv("PI_CODING_AGENT_DIR"); d != "" {
-		return d
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".pi", "agent")
-}
-
 // Preflight checks the readiness of a harness before spawning.
-// Checks in order: adapter known → binary on PATH → auth credentials → model valid.
-// Each level returns ok/absent/unknown honestly. claudeSeat, when set, is the
-// configuration a fenced claude seat logs in with (see claudeAuthConfigured).
+// Checks in order: adapter known → binary on PATH → the harness CLI's own
+// readiness command → model valid. Each level returns ok/absent/unknown
+// honestly. claudeSeat, when set, is the configuration a fenced claude seat
+// logs in with (see runReadinessProbe).
 func Preflight(harnessName string, claudeSeat *ClaudeSeat) (*PreflightResult, error) {
 	result := &PreflightResult{}
 
@@ -155,36 +147,13 @@ func Preflight(harnessName string, claudeSeat *ClaudeSeat) (*PreflightResult, er
 		result.BinaryOnPath = PreflightOK
 	}
 
-	// 3. Auth credentials
-	if harnessName == Claude {
-		result.AuthConfigured = PreflightAbsent
-		if claudeAuthConfigured(claudeSeat) {
-			result.AuthConfigured = PreflightOK
-		}
-	} else if envVars, ok := preflightAuthEnv[harnessName]; !ok {
-		result.AuthConfigured = PreflightUnknown
-	} else {
-		found := false
-		for _, env := range envVars {
-			if os.Getenv(env) != "" {
-				found = true
-				break
-			}
-		}
-		if !found && harnessName == Pi {
-			// Pi additionally supports auth via its credential store file (~/.pi/agent/auth.json).
-			configDir := piConfigDir()
-			if configDir != "" {
-				credPath := filepath.Join(configDir, "auth.json")
-				if piCredentialFile(credPath) {
-					found = true
-				}
-			}
-		}
-		if !found {
-			result.AuthConfigured = PreflightAbsent
-		} else {
-			result.AuthConfigured = PreflightOK
+	// 3. The harness CLI's own readiness command
+	result.Ready = PreflightUnknown
+	if probe, ok := readinessProbes[harnessName]; ok && result.BinaryOnPath == PreflightOK {
+		result.Ready = PreflightOK
+		if detail := runReadinessProbe(binary, probe, claudeSeat); detail != "" {
+			result.Ready = PreflightAbsent
+			result.ReadyDetail = detail
 		}
 	}
 
@@ -200,6 +169,7 @@ func Preflight(harnessName string, claudeSeat *ClaudeSeat) (*PreflightResult, er
 type PreflightError struct {
 	Harness string
 	Reason  string
+	Detail  string
 }
 
 func (e *PreflightError) Error() string {
@@ -208,62 +178,9 @@ func (e *PreflightError) Error() string {
 		return fmt.Sprintf("harness %q is not a known adapter; must be one of %v", e.Harness, KnownHarnesses)
 	case "binary-absent":
 		return fmt.Sprintf("harness %q binary not found on PATH; install the %s CLI to use it", e.Harness, e.Harness)
-	case "auth-absent":
-		return authHint(e.Harness)
+	case "not-ready":
+		return fmt.Sprintf("harness %q cannot run: %s", e.Harness, e.Detail)
 	default:
 		return fmt.Sprintf("harness %q preflight failed: %s", e.Harness, e.Reason)
 	}
-}
-
-// piAuthEnvVars returns all environment variables that Pi accepts as API keys.
-// Pi reads --api-key from any of these provider-specific env vars.
-// Never read, print, parse, or log the actual values of these environment variables.
-func piAuthEnvVars() []string {
-	return []string{
-		"ANTHROPIC_API_KEY",
-		"ANTHROPIC_OAUTH_TOKEN",
-		"ANT_LING_API_KEY",
-		"OPENAI_API_KEY",
-		"AZURE_OPENAI_API_KEY",
-		"DEEPSEEK_API_KEY",
-		"NVIDIA_API_KEY",
-		"GEMINI_API_KEY",
-		"GROQ_API_KEY",
-		"CEREBRAS_API_KEY",
-		"XAI_API_KEY",
-		"FIREWORKS_API_KEY",
-		"TOGETHER_API_KEY",
-		"OPENROUTER_API_KEY",
-		"AI_GATEWAY_API_KEY",
-		"ZAI_API_KEY",
-		"ZAI_CODING_CN_API_KEY",
-		"MISTRAL_API_KEY",
-		"MINIMAX_API_KEY",
-		"MOONSHOT_API_KEY",
-		"OPENCODE_API_KEY",
-		"KIMI_API_KEY",
-		"CLOUDFLARE_API_KEY",
-		"XIAOMI_API_KEY",
-		"XIAOMI_TOKEN_PLAN_CN_API_KEY",
-		"XIAOMI_TOKEN_PLAN_AMS_API_KEY",
-		"XIAOMI_TOKEN_PLAN_SGP_API_KEY",
-		"AWS_BEARER_TOKEN_BEDROCK",
-		"AWS_ACCESS_KEY_ID",
-		"AWS_SECRET_ACCESS_KEY",
-	}
-}
-
-// authHint returns an actionable error message for missing auth configuration.
-func authHint(harness string) string {
-	if harness == Claude {
-		return fmt.Sprintf("harness %q auth not configured; run `claude auth login`, or set ANTHROPIC_API_KEY, so that `claude auth status` succeeds", harness)
-	}
-	envVars, ok := preflightAuthEnv[harness]
-	if !ok || len(envVars) == 0 {
-		return fmt.Sprintf("harness %q auth not configured (unknown auth method)", harness)
-	}
-	if harness == Pi {
-		return fmt.Sprintf("harness %q auth not configured; set any Pi-supported API key environment variable or set up Pi's credential store (`pi --help` for details)", harness)
-	}
-	return fmt.Sprintf("harness %q auth not configured; set %s environment variable", harness, envVars[0])
 }

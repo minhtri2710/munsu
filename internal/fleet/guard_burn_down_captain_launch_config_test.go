@@ -27,9 +27,9 @@ func quoteEscapedLeaf(name string) string {
 }
 
 func TestGuardBurnDownLaunchRefusesNilEndpoint(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	parentHome := t.TempDir()
 	captainHome := seedCaptainForTest(t, parentHome, "launch-endpoint")

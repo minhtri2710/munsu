@@ -14,15 +14,15 @@ import (
 
 // init supplies a deterministic Pi harness lookup for every recovery test.
 // Recovery paths that relaunch a captain resolve the "pi" binary through the
-// package-level captainLookPath seam; CI runners do not have pi on PATH, so
+// package-level captainHarnessPath seam; CI runners do not have pi on PATH, so
 // without a fixture the launch never reaches the endpoint under test. Only
 // "pi" is intercepted — every other binary delegates to the real lookup — so
 // tests asserting absence failures for other harnesses are unaffected, and
 // production lookup behavior is never touched. Per-test overrides of
-// captainLookPath save/restore this wrapper and keep working unchanged.
+// captainHarnessPath save/restore this wrapper and keep working unchanged.
 func init() {
-	lookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) {
+	lookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) {
 		if name == "pi" {
 			return "/test/bin/pi", nil
 		}
@@ -114,9 +114,9 @@ func TestRecoverIntegrationStatus_MissingCanonicalIntegrationFailsClosed(t *test
 }
 
 func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "healthy-integration")
@@ -215,9 +215,9 @@ func TestRecoverTransaction_RelaunchesOnlyUnderConvergeLock(t *testing.T) {
 }
 
 func TestRecoverRelaunchFailsWhenPostLaunchLivenessIsUnproven(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "post-launch-dead")
@@ -364,9 +364,9 @@ func writeRelaunchGuard(t *testing.T, parent, id, untilRaw string) {
 }
 
 func TestRecoverRelaunchSlowBootProvesLivenessBeyondOldWindow(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "slow-boot")
@@ -410,9 +410,9 @@ func TestRecoverRelaunchSlowBootProvesLivenessBeyondOldWindow(t *testing.T) {
 }
 
 func TestRecoverRelaunchExpiredGuardAllowsOneFreshAttempt(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	fixed := time.Unix(1_700_000_000, 0)
 	parent := t.TempDir()
@@ -463,9 +463,9 @@ func TestRecoverRelaunchExpiredGuardAllowsOneFreshAttempt(t *testing.T) {
 }
 
 func TestRecoverRelaunchMalformedGuardDeadlineIsNormalizedAndBounded(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	fixed := time.Unix(1_700_000_000, 0)
 	for _, tc := range []struct {
@@ -522,9 +522,9 @@ func TestRecoverRelaunchMalformedGuardDeadlineIsNormalizedAndBounded(t *testing.
 }
 
 func TestRecoverRelaunchAliveEndpointClearsGuard(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "alive-clears-guard")
