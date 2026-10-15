@@ -164,6 +164,39 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: published snapshot)")
 }
 
+func TestCheckSessionBackendReadsConfiguredBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name, backend, onPath string
+		want                  SubsystemStatus
+		detail                string
+	}{
+		{"configured and on PATH", "herdr", "herdr", StatusCurrent, "backend herdr configured, found on PATH"},
+		{"configured, missing from PATH", "herdr", "tmux", StatusAbsent, "backend herdr configured, herdr not found on PATH"},
+		{"not configured", "", "tmux", StatusAbsent, "no session backend configured"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.backend != "" {
+				if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+					SchemaVersion: config.FleetBaseSchemaVersion,
+					Config:        config.FleetBaseConfig{Backend: tc.backend},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bin := t.TempDir()
+			testutil.WriteFakeExecutable(t, filepath.Join(bin, tc.onPath), "#!/bin/sh\nexit 0")
+			t.Setenv("PATH", bin)
+			t.Setenv("HERDR_ENV", "1")
+
+			got := checkSessionBackend(home)
+			if got.Status != tc.want || !strings.Contains(got.Detail, tc.detail) {
+				t.Fatalf("checkSessionBackend = %s (%s), want %s (%s)", got.Status, got.Detail, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
 func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	// Verify that other Configs entries (like SOLDIER_HARNESS, SOLDIER_DISPATCH)
 	// are not broken by the backend changes.
