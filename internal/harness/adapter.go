@@ -107,11 +107,12 @@ var Adapters = map[string]Adapter{
 		// No trust patterns: the folder-trust dialog defaults to "No, exit",
 		// so an Enter would exit claude.
 		TrustPatterns: nil,
-		// Measured on claude 2.1.300: the folder-trust dialog of an untrusted
-		// project repository, short enough to fit one line at 38 columns, and
-		// the footer printed beside the ready footer with no login.
+		// Measured on claude 2.1.300: the option line of the folder-trust dialog
+		// of an untrusted project, one line at 38 columns, which an echoed
+		// prompt does not carry; and the footer printed beside the ready footer
+		// with no login.
 		// Words: Human, typed, 2026-10-15: "sao lại phải dùng env?? chạy cli của harness agent là được rồi, nếu harness đó không chạy được thì báo lại"
-		FailurePatterns: []string{"Quick safety check", "Not logged in · Run /login"},
+		FailurePatterns: []string{"Yes, I trust this folder", "Not logged in · Run /login"},
 		LaunchTemplate: Template{
 			ModelFlag: "--model",
 		},

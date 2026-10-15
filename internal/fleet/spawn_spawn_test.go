@@ -612,6 +612,7 @@ func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
 		{"folder-trust dialog", "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder", "Quick safety check"},
 		{"not logged in", "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort", "Not logged in"},
 		{"logged in", "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
+		{"brief quotes the dialog title", "❯ Reword the Quick safety check dialog.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
 		{"brief quotes the phrase", "❯ Fix the banner that says Not logged in after login.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

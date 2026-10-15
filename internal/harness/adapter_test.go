@@ -73,13 +73,15 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 	// the soldier posture (bypassPermissions).
 	const (
 		untrusted = "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel"
-		narrow    = "Quick safety check: Is this a"
-		busy      = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
-		idle      = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle)"
+		// Lines of the dialog measured on claude 2.1.300 at 38 columns.
+		narrow = " Quick safety check: Is this a\n project you created or one you\n trust? (Like your own code, a\n Security guide\n ❯ No, exit\n Yes, I trust this folder\n Enter to confirm · Esc to cancel"
+		busy   = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+		idle   = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle)"
 		// Measured on claude 2.1.300 with no login.
-		loggedOut = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort"
-		loggedIn  = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
-		quoted    = "❯ Fix the banner that says Not logged in after login.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
+		loggedOut    = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort"
+		loggedIn     = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
+		quoted       = "❯ Fix the banner that says Not logged in after login.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
+		quotedDialog = "❯ Reword the Quick safety check dialog.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
 	)
 	for _, c := range []struct {
 		name, capture         string
@@ -92,6 +94,7 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 		{"not logged in", loggedOut, false, true, true},
 		{"logged in", loggedIn, false, false, true},
 		{"brief quotes the phrase", quoted, false, false, true},
+		{"brief quotes the dialog title", quotedDialog, false, false, true},
 	} {
 		if got := IsTrustPrompt(c.capture, Claude); got != c.trust {
 			t.Errorf("%s: IsTrustPrompt = %v, want %v (Enter answers \"No, exit\")", c.name, got, c.trust)
