@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -53,8 +55,12 @@ func TestListAndAdd(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, ".munsu")
 
-	// Add by registering (no URL clone)
-	if err := Add(homeDir, "test-proj", "/tmp/test-path", true); err != nil {
+	t.Chdir(tmp)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(homeDir, "test-proj", "./sub/../test-path", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,8 +78,34 @@ func TestListAndAdd(t *testing.T) {
 	if !p.Yolo {
 		t.Error("Yolo = false, want true")
 	}
-	if p.Path != "/tmp/test-path" {
-		t.Errorf("Path = %q, want %q", p.Path, "/tmp/test-path")
+	if want := filepath.Join(wd, "test-path"); p.Path != want {
+		t.Errorf("Path = %q, want %q", p.Path, want)
+	}
+}
+
+func TestListReturnsRegistrationDate(t *testing.T) {
+	homeDir := t.TempDir()
+	r, err := openRegistry(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.now = func() time.Time { return time.Date(2026, 1, 2, 12, 0, 0, 0, time.Local) }
+	projectID, err := domain.NewProjectID("dated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RegisterProjectRequest{HomeID: r.HomeID(), ProjectID: projectID, Name: "dated", Path: "/p/dated", Precondition: preconditionOf(0), Reason: "register"}
+	if _, err := r.RegisterProject(opFor(req), req); err != nil {
+		t.Fatal(err)
+	}
+	for read := 1; read <= 2; read++ {
+		projects, err := List(homeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(projects) != 1 || projects[0].Added != "2026-01-02" {
+			t.Fatalf("read %d: projects = %+v, want one project added 2026-01-02", read, projects)
+		}
 	}
 }
 

@@ -76,6 +76,12 @@ func Add(homeDir, name, pathOrURL string, yolo bool) error {
 			}
 			return fmt.Errorf("cloning %s: %w", pathOrURL, err)
 		}
+	} else {
+		abs, err := filepath.Abs(pathOrURL)
+		if err != nil {
+			return fmt.Errorf("resolving project path %s: %w", pathOrURL, err)
+		}
+		pathOrURL = abs
 	}
 
 	r, err := openRegistry(homeDir)
@@ -143,7 +149,7 @@ func List(homeDir string) ([]*Project, error) {
 			Name:  p.Name,
 			Yolo:  p.Yolo,
 			Path:  p.Path,
-			Added: today(),
+			Added: time.Unix(p.RegisteredAt, 0).Format("2006-01-02"),
 		})
 	}
 	return result, nil
