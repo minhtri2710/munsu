@@ -2,10 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 // These tests are byte-for-byte characterization (golden) tests for the root
@@ -100,5 +104,90 @@ func TestRootSummaryGoldenPopulated(t *testing.T) {
 	}
 	if got != string(golden) {
 		t.Errorf("populated summary mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, string(golden))
+	}
+}
+
+func TestStyledOutputStripsToPlain(t *testing.T) {
+	view := rootSummaryView{homeDir: "/h", totalTasks: 3, inFlight: 2, watcher: "stale", tasks: []rootSummaryTask{
+		{id: "t1", phase: "working", project: "p", status: "working"},
+		{id: "t2", phase: "blocked", project: "p", status: "waiting on t1"},
+		{id: "t3", phase: "mystery", project: "-", status: "mystery"},
+	}}
+	snap := &fleet.FleetSnapshot{Time: "now", Tasks: []fleet.TaskSnapshot{
+		{ID: "t1", Project: "p", Kind: "ship", Mode: "pr", Yolo: "false", Window: "@1", CurrentState: "done"},
+		{ID: "t2", Project: "p", Kind: "ship", Mode: "pr", Yolo: "false", Window: "@2"},
+	}}
+	render := func(mode markMode) string {
+		old := outputMarks
+		defer func() { outputMarks = old }()
+		outputMarks = func(io.Writer) markMode { return mode }
+		var b bytes.Buffer
+		renderRootSummary(&b, view)
+		renderFleetView(&b, snap)
+		b.WriteString(mode.markLead("MISSING: tmux (install instructions vary)") + "\n")
+		b.WriteString(mode.markLead("SOLDIER_HARNESS: pi") + "\n")
+		b.WriteString(mode.markAfter("  hooks: absent (no file)", ": ", "absent") + "\n")
+		return b.String()
+	}
+	color, icons, plain := render(markColor), render(markIcons), render(markPlain)
+	if !strings.Contains(color, "\x1b[") {
+		t.Fatalf("styled output carries no ANSI:\n%s", color)
+	}
+	if got := ansi.Strip(color); got != icons {
+		t.Errorf("stripped styled output differs from NO_COLOR output:\n--- stripped ---\n%s\n--- no color ---\n%s", got, icons)
+	}
+	want := `munsu @ /h
+
+fleet: 3 tasks (2 in-flight) | watcher: ! stale | holds: --
+
+  t1                   [● working   ] p
+  t2                   [! blocked   ] p
+                        waiting on t1
+  t3                   [? mystery   ] -
+
+Next: munsu fleet view | munsu peek <id> | munsu --help
+# Fleet View — now
+
+Tasks: 2
+
+- **t1** (repo: p) [primary]
+  kind: ship | mode: pr | yolo: false
+  pane: @1 (✓ done)
+
+- **t2** (repo: p) [primary]
+  kind: ship | mode: pr | yolo: false
+  pane: @2 (✗ dead)
+
+✗ MISSING: tmux (install instructions vary)
+SOLDIER_HARNESS: pi
+  hooks: ✗ absent (no file)
+`
+	if icons != want {
+		t.Errorf("NO_COLOR output:\n%s\nwant:\n%s", icons, want)
+	}
+	if got := strings.NewReplacer("● ", "", "! ", "", "? ", "", "✓ ", "", "✗ ", "").Replace(icons); got != plain {
+		t.Errorf("plain output is not the icon-free text:\n%s\nwant:\n%s", plain, got)
+	}
+}
+
+func TestFleetViewShowsCanonicalQueuedPhase(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", homeDir)
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"init"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	cliSeedCanonicalTask(t, homeDir, "pre-spawn-task", "ship")
+	buf.Reset()
+	root.SetArgs([]string{"fleet", "view"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("fleet view: %v", err)
+	}
+	if !strings.Contains(buf.String(), "pane:  (queued)") {
+		t.Errorf("fleet view lacks the canonical queued phase:\n%s", buf.String())
 	}
 }

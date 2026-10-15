@@ -83,13 +83,18 @@ func loadRootSummary(homeDir string) (rootSummaryView, error) {
 
 // renderRootSummary prints the compact fleet/orientation snapshot.
 func renderRootSummary(w io.Writer, v rootSummaryView) {
+	m := outputMarks(w)
+	watcher := v.watcher
+	if watcher != "--" {
+		watcher = m.mark(watcher, watcher)
+	}
 	fmt.Fprintf(w, "munsu @ %s\n\n", v.homeDir)
-	fmt.Fprintf(w, "fleet: %d tasks (%d in-flight) | watcher: %s | holds: --\n", v.totalTasks, v.inFlight, v.watcher)
+	fmt.Fprintf(w, "fleet: %d tasks (%d in-flight) | watcher: %s | holds: --\n", v.totalTasks, v.inFlight, watcher)
 
 	if len(v.tasks) > 0 {
 		fmt.Fprintln(w)
 		for _, ts := range v.tasks {
-			fmt.Fprintf(w, "  %-20s [%-10s] %s\n", ts.id, ts.phase, ts.project)
+			fmt.Fprintf(w, "  %-20s [%s] %s\n", ts.id, m.mark(ts.phase, fmt.Sprintf("%-10s", ts.phase)), ts.project)
 			if ts.status != "" && ts.status != ts.phase {
 				fmt.Fprintf(w, "  %-20s  %s\n", "", ts.status)
 			}

@@ -5,14 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
-
-// dashboardTerminals reports whether stdin and stdout are terminals. Tests
-// replace it.
-var dashboardTerminals = func() (stdin, stdout bool) {
-	return isStdinTerminal(), term.IsTerminal(int(os.Stdout.Fd()))
-}
 
 func newDashboardCmd() *cobra.Command {
 	return &cobra.Command{
@@ -27,7 +20,7 @@ own refusals decide. Needs an interactive terminal on stdin and stdout; use
 'munsu fleet view' otherwise.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if stdin, stdout := dashboardTerminals(); !stdin || !stdout {
+			if stdin, stdout := terminals(); !stdin || !stdout {
 				return usageError("not_a_terminal",
 					"Run `munsu fleet view` for a non-interactive fleet view",
 					"dashboard needs an interactive terminal on stdin and stdout")

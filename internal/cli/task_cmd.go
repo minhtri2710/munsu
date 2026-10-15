@@ -60,8 +60,12 @@ description in place of {TASK}. The project is --repo, else the reviewed task's
 project for a review, else the registered project at the current repository
 root; it must be registered. Fill {TEST_IMPACT} in a ship brief before spawn.
 task reopen and task retry rewrite the brief for the new generation.`,
-		Args: ExactArgs(2),
+		Args: exactArgsOrPrompt(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			args, err := promptArgs(args, "Task id", "Description")
+			if err != nil {
+				return err
+			}
 			id := args[0]
 			desc := args[1]
 			kind, _ := cmd.Flags().GetString("kind")
@@ -114,11 +118,12 @@ task reopen and task retry rewrite the brief for the new generation.`,
 			}
 			if repo == "" {
 				p, err := fleet.ResolveFromCwd(ctx.Home)
-				if err != nil {
+				if err == nil {
+					repo = p.Name
+				} else if repo, err = promptProject(ctx.Home, err); err != nil {
 					// Words: Human, typed, 2026-10-15: "oki làm theo khuyến nghị"
 					return fmt.Errorf("task %s has no project: pass --repo <project> or run from a project repository: %w", id, err)
 				}
-				repo = p.Name
 			}
 			pid, err := domain.NewProjectID(repo)
 			if err != nil {
