@@ -54,7 +54,7 @@ case "$1" in
   has-session|list-windows) exit 0 ;;
   new-window) printf '@1\n' ;;
   list-panes) printf '%%1\n' ;;
-  display-message) printf 'pi\n' ;;
+  display-message) printf '99999999 pi\n' ;;
   capture-pane) printf '> ready\n' ;;
   send-keys)
     if [ "$4" = "-l" ]; then eval "$6"; fi

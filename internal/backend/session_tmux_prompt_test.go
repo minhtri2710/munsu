@@ -26,7 +26,7 @@ list-panes)
     *) echo "$3: 1" ;;
   esac ;;
 display-message)
-  case "$4" in shell) echo zsh ;; *) echo claude ;; esac ;;
+  case "$4" in shell) echo 99999999 zsh ;; *) echo 99999999 claude ;; esac ;;
 capture-pane) cat "$D/screen.$3" 2>/dev/null ;;
 set-buffer) printf '%s' "$5" > "$D/buf" ;;
 paste-buffer) cat "$D/buf" >> "$D/screen.$8"; rm -f "$D/buf" ;;
