@@ -1,6 +1,6 @@
 schema_version: "munsu.orchestration/v1"
 kind: project.list
 status: success
-data[2]{name,mode,description,added,directory}:
-  munsu,auto,Fleet orchestrator,2026-01-01,/home/munsu
-  site,manual,Website,2026-06-15,/home/site
+data[2]{name,yolo,path,added,directory}:
+  munsu,true,/src/munsu,2026-01-01,/home/munsu
+  site,true,"https://example.com/site.git",2026-06-15,/home/site

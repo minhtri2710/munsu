@@ -166,7 +166,7 @@ func newSessionStartCmd() *cobra.Command {
 					Lock:            lockState,
 					Watcher:         watcherState,
 					BootstrapOK:     result.Bootstrap != nil,
-					FleetSyncOK:     result.FleetSync != nil,
+					FleetSyncOK:     result.FleetSync != nil && len(result.FleetSync.Stuck) == 0,
 					RuntimeIdentity: sessionRuntimeIdentityContract(result.RuntimeIdentity),
 					Message:         "Session started. Lock: " + lockState + ". Watcher: " + watcherState + ".",
 				},

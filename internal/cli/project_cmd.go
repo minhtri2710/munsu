@@ -53,10 +53,10 @@ the repository is cloned into the projects directory first.`,
 			entries := make([]ProjectEntry, len(projects))
 			for i, p := range projects {
 				entries[i] = ProjectEntry{
-					Name:        p.Name,
-					Yolo:        p.Yolo,
-					Description: p.Description,
-					Added:       p.Added,
+					Name:  p.Name,
+					Yolo:  p.Yolo,
+					Path:  p.Path,
+					Added: p.Added,
 				}
 			}
 			return writeContract(cmd, Response[[]ProjectEntry]{
@@ -80,10 +80,10 @@ the repository is cloned into the projects directory first.`,
 				return err
 			}
 			entry := ProjectEntry{
-				Name:        p.Name,
-				Yolo:        p.Yolo,
-				Description: p.Description,
-				Added:       p.Added,
+				Name:  p.Name,
+				Yolo:  p.Yolo,
+				Path:  p.Path,
+				Added: p.Added,
 			}
 			// Show project dir if it exists
 			projDir := filepath.Join(fleet.ProjectsDir(ctx.Home), p.Name)
