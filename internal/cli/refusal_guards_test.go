@@ -528,7 +528,7 @@ func TestGuardConfigDispatchAddRequiresItsIdentifyingFlags(t *testing.T) {
 	}{
 		{"no --name", []string{"--harness", "claude", "--match", "*"}, "add: --name is required"},
 		{"no --harness", []string{"--name", "p1", "--match", "*"}, "add: --harness is required"},
-		{"neither --match nor --when", []string{"--name", "p1", "--harness", "claude"}, "add: at least one --match or --when is required"},
+		{"no --match", []string{"--name", "p1", "--harness", "claude"}, "add: at least one --match is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := runRoot(t, append([]string{"config", "dispatch", "add", "--home", homeDir}, tc.args...)...)
