@@ -196,7 +196,7 @@ Never force teardown without explicit discard authority.
 A completed scout must leave a self-contained report before teardown.
 Before marking complete, run `munsu skill show decision-hold-lifecycle` to ensure
 unresolved decisions for the Human are durably tracked.
-When implementation is separately authorized, promote: `munsu promote <id>`.
+When implementation is separately authorized, promote: `munsu promote <id>`, then `munsu task reopen <id>`; each rewrites the brief.
 
 ---
 

@@ -17,6 +17,35 @@ var writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write fu
 	return auth.WriteTaskDataArtifactByID(id, write)
 }
 
+// writeTaskBrief renders data/<id>/brief.md from the task's current canonical
+// generation and its project's configuration.
+func writeTaskBrief(homeDir string, auth *taskauthority.Canonical, tid domain.TaskID) error {
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return err
+	}
+	def := agg.Definition
+	mode, tamperCheck, err := fleet.ResolveBriefProject(homeDir, def.Project, true)
+	if err != nil {
+		return err
+	}
+	yolo := false
+	if p, err := fleet.Find(homeDir, def.Project); err == nil {
+		yolo = p.Yolo
+	}
+	id := tid.Value()
+	brief := fleet.ScaffoldOptions{
+		HomeDir: homeDir, ID: id, Repo: def.Project, Task: def.Description,
+		Scout: def.Kind == taskauthority.KindScout, Review: def.Kind == taskauthority.KindReview,
+		ReviewTask: def.ReviewTaskID, ReviewHead: def.ReviewHead, ScoutScope: def.ScoutScope,
+		Mode: mode, Yolo: yolo, Generation: agg.Generation, TamperCheck: tamperCheck,
+	}
+	if err := recoverBriefHandoffs(homeDir); err != nil {
+		return err
+	}
+	return writeBriefArtifact(auth, id, func() error { return fleet.Scaffold(brief) })
+}
+
 func newTaskCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
@@ -29,8 +58,8 @@ func newTaskCmd() *cobra.Command {
 		Long: `Add a queued task and write its brief to data/<id>/brief.md, with the
 description in place of {TASK}. The project is --repo, else the reviewed task's
 project for a review, else the registered project at the current repository
-root, else that root's directory name. The project must be registered. Fill
-{TEST_IMPACT} in a ship brief before spawn.`,
+root; it must be registered. Fill {TEST_IMPACT} in a ship brief before spawn.
+task reopen and task retry rewrite the brief for the new generation.`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -96,32 +125,17 @@ root, else that root's directory name. The project must be registered. Fill
 				return err
 			}
 			req.Project = pid
-			mode, tamperCheck, err := fleet.ResolveBriefProject(ctx.Home, repo, true)
-			if err != nil {
+			if _, _, err := fleet.ResolveBriefProject(ctx.Home, repo, true); err != nil {
 				return err
-			}
-			yolo := false
-			if p, err := fleet.Find(ctx.Home, repo); err == nil {
-				yolo = p.Yolo
 			}
 			op, err := newCanonicalOperation("task-add", req)
 			if err != nil {
 				return err
 			}
-			created, err := auth.Create(op, req)
-			if err != nil {
+			if _, err := auth.Create(op, req); err != nil {
 				return err
 			}
-			brief := fleet.ScaffoldOptions{
-				HomeDir: ctx.Home, ID: id, Repo: repo, Task: desc,
-				Scout: kind == taskauthority.KindScout, Review: kind == taskauthority.KindReview,
-				ReviewTask: reviews, ReviewHead: req.ReviewHead, ScoutScope: scope,
-				Mode: mode, Yolo: yolo, Generation: created.Generation, TamperCheck: tamperCheck,
-			}
-			if err := recoverBriefHandoffs(ctx.Home); err != nil {
-				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
-			}
-			if err := writeBriefArtifact(auth, id, func() error { return fleet.Scaffold(brief) }); err != nil {
+			if err := writeTaskBrief(ctx.Home, auth, tid); err != nil {
 				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
 			}
 			// .status is a post-commit projection: a projection failure must
@@ -461,8 +475,13 @@ func newTaskReopenCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				_, err = auth.Reopen(op, req)
-				return err
+				if _, err := auth.Reopen(op, req); err != nil {
+					return err
+				}
+				if err := writeTaskBrief(ctx.Home, auth, tid); err != nil {
+					return &LifecyclePartialError{TaskID: tid.Value(), State: "queued", Cause: err}
+				}
+				return nil
 			})
 		}),
 	}
@@ -489,8 +508,13 @@ func newTaskRetryCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				_, err = auth.Reopen(op, req)
-				return err
+				if _, err := auth.Reopen(op, req); err != nil {
+					return err
+				}
+				if err := writeTaskBrief(ctx.Home, auth, tid); err != nil {
+					return &LifecyclePartialError{TaskID: tid.Value(), State: "queued", Cause: err}
+				}
+				return nil
 			})
 		}),
 	}

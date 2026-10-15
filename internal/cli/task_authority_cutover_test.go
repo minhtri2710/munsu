@@ -264,6 +264,7 @@ func seedAuthorityTask(t *testing.T, auth *taskauthority.Canonical, id string) {
 		Owner:       "owner",
 		Description: "work",
 		Kind:        "ship",
+		Project:     mustProjectID(t, "munsu"),
 		Reason:      "test seed",
 	}
 	op := mustCanonicalOp(t, "op-create-seed-"+id, req)
@@ -290,4 +291,13 @@ func mustTaskIDFor(t *testing.T, value string) domain.TaskID {
 		t.Fatal(err)
 	}
 	return tid
+}
+
+func mustProjectID(t *testing.T, name string) domain.ProjectID {
+	t.Helper()
+	pid, err := domain.NewProjectID(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pid
 }

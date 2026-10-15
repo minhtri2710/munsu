@@ -66,11 +66,8 @@ func (r *MergeAndRetireResult) IsError() bool {
 //
 // Phase 2 - Retirement: the authoritative retired phase transition commits via
 // the composed canonical Task Authority FIRST (durable receipt); RetireTask
-// then performs the saga-side cleanup strictly after the receipt. When the
-// delivery was already completed (resume after partial cleanup), Force=true
-// skips worktree-based safety checks — the canonical completed outcome is
-// sufficient proof. When delivery was performed by this call, Force=false so
-// the normal safety checks still run.
+// then performs the saga-side cleanup strictly after the receipt. A resume
+// runs the same safety checks as the first attempt.
 //
 // req is the delivery intent pr-merge built, Human's words included; it is the
 // one source of the delivery identity, never the .meta projection.
@@ -170,13 +167,9 @@ func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardow
 		}
 	}
 
-	// Phase 2: RetireTask. When the delivery was already done (resume after
-	// partial cleanup), Force=true skips worktree-based safety checks — the
-	// canonical completed outcome is sufficient proof that work is landed.
 	retireOpts := Options{
 		HomeDir:            homeDir,
 		ID:                 id,
-		Force:              alreadyMerged,
 		ExpectedGeneration: targetGen,
 	}
 	teardownResult, retireErr := RetireTask(retireOpts, backend, journals, authority)

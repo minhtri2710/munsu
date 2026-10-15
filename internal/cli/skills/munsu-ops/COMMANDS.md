@@ -85,9 +85,9 @@ for the complete registered set.
 | `munsu task block <id>` | Block a task on a dependency. |
 | `munsu task unblock <id>` | Mark a blocked task queued again. |
 | `munsu task done <id>` | Mark a task as done. |
-| `munsu task reopen <id>` | Reopen a terminal task as a new generation. |
+| `munsu task reopen <id>` | Reopen a terminal task as a new generation and rewrite its brief. |
 | `munsu task observe <task-id> [--fields description,branch,pane_alive]` | Observe one task using the orchestration contract. |
-| `munsu promote <id>` | Promote a scout task to ship. |
+| `munsu promote <id>` | Promote a scout task to ship and rewrite its brief as a ship brief. |
 | `munsu teardown <id> [--force]` | Tear down a soldier by its task ID. |
 
 ## Delivery

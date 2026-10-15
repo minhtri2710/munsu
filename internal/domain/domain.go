@@ -3,19 +3,8 @@ package domain
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
-
-// MetaKeys returns the task meta keys used to persist this identity.
-func (id *DeliveryIdentity) MetaKeys() []string {
-	return []string{
-		"pr_provider", "pr_owner", "pr_repo",
-		"pr_number", "pr_url",
-		"pr_base_ref", "pr_head_ref", "pr_head_sha",
-		"pr_timestamp",
-	}
-}
 
 // ParseProviderURL parses a GitHub PR URL or GitLab MR URL.
 func ParseProviderURL(rawURL string) (provider, owner, repo string, num int, host string, err error) {
@@ -34,72 +23,6 @@ func ParseProviderURL(rawURL string) (provider, owner, repo string, num int, hos
 		return "gitlab", glURL.Owner, glURL.Project, glURL.IID, glURL.Host, nil
 	}
 	return "", "", "", 0, "", fmt.Errorf("unsupported provider URL %q", rawURL)
-}
-
-// IdentityFromMeta reconstructs a DeliveryIdentity from task meta.
-func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
-	prURL := meta["pr_url"]
-	if prURL == "" {
-		for _, key := range (&DeliveryIdentity{}).MetaKeys() {
-			if meta[key] != "" {
-				return nil, fmt.Errorf("delivery identity has %s but no pr_url", key)
-			}
-		}
-		return nil, nil
-	}
-
-	numStr := meta["pr_number"]
-	num := 0
-	if numStr != "" {
-		n, err := strconv.Atoi(numStr)
-		if err != nil || n <= 0 {
-			return nil, fmt.Errorf("invalid pr_number %q", numStr)
-		}
-		num = n
-	}
-
-	urlProvider, parsedOwner, parsedRepo, parsedNum, _, err := ParseProviderURL(prURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid pr_url %q: %w", prURL, err)
-	}
-	owner := meta["pr_owner"]
-	repo := meta["pr_repo"]
-
-	if metaProvider := meta["pr_provider"]; metaProvider != "" && metaProvider != urlProvider {
-		return nil, fmt.Errorf("provider mismatch: pr_provider=%q but URL provider=%q", metaProvider, urlProvider)
-	}
-	if owner != "" && owner != parsedOwner {
-		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsedOwner)
-	}
-	if repo != "" && repo != parsedRepo {
-		return nil, fmt.Errorf("pr_repo %q does not match pr_url repo %q", repo, parsedRepo)
-	}
-	if num > 0 && num != parsedNum {
-		return nil, fmt.Errorf("pr_number %d does not match pr_url number %d", num, parsedNum)
-	}
-	if owner == "" {
-		owner = parsedOwner
-	}
-	if repo == "" {
-		repo = parsedRepo
-	}
-	if num <= 0 {
-		num = parsedNum
-	}
-
-	id := &DeliveryIdentity{
-		Provider:   meta["pr_provider"],
-		Owner:      owner,
-		Repo:       repo,
-		Number:     num,
-		URL:        prURL,
-		BaseRef:    meta["pr_base_ref"],
-		HeadRef:    meta["pr_head_ref"],
-		HeadSHA:    meta["pr_head_sha"],
-		CapturedAt: meta["pr_timestamp"],
-	}
-
-	return id, nil
 }
 
 type PRStatus string
@@ -214,5 +137,3 @@ type PRMergeStatus struct {
 	ClosedAt  string `json:"closedAt,omitempty"`
 	HeadSHA   string `json:"headRefOid,omitempty"`
 }
-
-// MetaKeys returns the task meta keys used to persist this identity.

@@ -374,6 +374,7 @@ func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *tas
 func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "proj-x")
 	auth := seedDoneScoutForPromote(t, homeDir, "scout-a", "proj-x")
 
 	if out, err := runTaskCommand(t, []string{"promote", "scout-a", "--home", homeDir}); err != nil {

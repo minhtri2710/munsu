@@ -16,7 +16,7 @@ var canonicalCommands = []string{
 	"send", "report", "peek", "promote", "teardown", "delivery",
 	"fleet", "herdr", "watch", "event", "wake", "guard", "doctor", "stow", "ensure-agents-md",
 	"update", "captain", "decision-hold", "afk", "integrate", "manual", "inbox",
-	"turnend", "consume-ready", "context", "dashboard",
+	"turnend", "soldier-flush", "consume-ready", "context", "dashboard",
 }
 
 // TestCanonicalCommandsRegistered fails when a canonical command is missing,

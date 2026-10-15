@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -60,6 +61,7 @@ func TestTaskStartAndUnblockUseDistinctLifecycleOperations(t *testing.T) {
 func TestTaskReopenSynchronizesAggregateAndProjection(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	completeReq := taskauthority.CanonicalCompleteRequest{
@@ -180,6 +182,7 @@ func TestTaskLifecycleProjectionFailureReturnsTypedPartialWithoutReplay(t *testi
 func TestTaskRetrySupersedesTerminalGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	completeReq := taskauthority.CanonicalCompleteRequest{
@@ -260,6 +263,7 @@ func TestTaskRetryRefusesLiveGeneration(t *testing.T) {
 func TestTaskCleanupAbortReleasesClaimForReopen(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 
@@ -313,5 +317,78 @@ func TestTaskCleanupAbortReleasesClaimForReopen(t *testing.T) {
 	agg, err = auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Generation != 2 || agg.Phase != taskauthority.PhaseQueued {
 		t.Fatalf("aggregate after reopen = %+v err=%v", agg, err)
+	}
+}
+
+func completeTaskForTest(t *testing.T, auth *taskauthority.Canonical, id string) {
+	t.Helper()
+	tid := mustTaskIDFor(t, id)
+	agg, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCompleteRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), To: taskauthority.PhaseDone, Reason: "test"}
+	if _, err := auth.Complete(mustCanonicalOp(t, "op-done-"+id+"-"+agg.Generation.String(), req), req); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTaskBriefFollowsTheCanonicalGeneration: reopen rewrites a scout brief for
+// the new generation's report, and promote rewrites it as a ship brief.
+func TestTaskBriefFollowsTheCanonicalGeneration(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
+	auth := testAuthorityFor(t, homeDir)
+	if out, err := runTaskCommand(t, []string{"task", "add", "s1", "explore", "--kind", "scout", "--scope", "the question", "--repo", "munsu", "--home", homeDir}); err != nil {
+		t.Fatalf("task add: %v\n%s", err, out)
+	}
+	completeTaskForTest(t, auth, "s1")
+	if out, err := runTaskCommand(t, []string{"task", "reopen", "s1", "--home", homeDir}); err != nil {
+		t.Fatalf("reopen: %v\n%s", err, out)
+	}
+	brief := readFileForTest(t, fleet.Path(homeDir, "s1"))
+	if !strings.Contains(brief, fleet.ReportName(2)) || strings.Contains(brief, fleet.ReportName(1)) {
+		t.Fatalf("reopened scout brief does not name the generation 2 report:\n%s", brief)
+	}
+	completeTaskForTest(t, auth, "s1")
+	if err := os.WriteFile(fleet.ReportPath(homeDir, "s1", 2), []byte("# findings"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runTaskCommand(t, []string{"promote", "s1", "--home", homeDir}); err != nil {
+		t.Fatalf("promote: %v\n%s", err, out)
+	}
+	if err := fleet.LintBrief(homeDir, "s1", taskauthority.KindShip); err != nil {
+		t.Fatalf("promoted brief: %v", err)
+	}
+}
+
+// TestTaskReopenWritesABriefTaskAddFailedToWrite: a task left queued without
+// a brief gets one from task done and task reopen.
+func TestTaskReopenWritesABriefTaskAddFailedToWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
+	oldWrite := writeBriefArtifact
+	writeBriefArtifact = func(*taskauthority.Canonical, string, func() error) error { return errors.New("disk full") }
+	_, err := runTaskCommand(t, []string{"task", "add", "t1", "work", "--repo", "munsu", "--home", homeDir})
+	writeBriefArtifact = oldWrite
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("task add error = %v, want the brief write failure", err)
+	}
+	if fleet.Exists(homeDir, "t1") {
+		t.Fatal("brief exists after a failed write")
+	}
+	if out, err := runTaskCommand(t, []string{"task", "done", "t1", "--home", homeDir}); err != nil {
+		t.Fatalf("task done: %v\n%s", err, out)
+	}
+	if out, err := runTaskCommand(t, []string{"task", "reopen", "t1", "--home", homeDir}); err != nil {
+		t.Fatalf("task reopen: %v\n%s", err, out)
+	}
+	if err := fleet.LintBrief(homeDir, "t1", taskauthority.KindShip); err != nil {
+		t.Fatalf("brief after reopen: %v", err)
+	}
+	if !strings.Contains(readFileForTest(t, fleet.Path(homeDir, "t1")), "work") {
+		t.Fatal("brief after reopen lacks the description")
 	}
 }

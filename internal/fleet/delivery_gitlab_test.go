@@ -508,29 +508,6 @@ func TestParseProviderURL_SelfHostedGitLab(t *testing.T) {
 	}
 }
 
-// --- IdentityFromMeta provider/URL consistency ---
-
-func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
-	meta := map[string]string{
-		"pr_provider":  "github",
-		"pr_url":       "https://gitlab.com/owner/project/-/merge_requests/42",
-		"pr_number":    "42",
-		"pr_owner":     "owner",
-		"pr_repo":      "project",
-		"pr_base_ref":  "main",
-		"pr_head_ref":  "feature/test",
-		"pr_head_sha":  sampleSHA,
-		"pr_timestamp": "2026-07-18T12:00:00Z",
-	}
-	_, err := domain.IdentityFromMeta(meta)
-	if err == nil {
-		t.Fatal("expected error for provider/URL mismatch")
-	}
-	if !strings.Contains(err.Error(), "provider mismatch") {
-		t.Errorf("expected 'provider mismatch' error, got: %v", err)
-	}
-}
-
 // --- GitLab capability chain tests ---
 
 // --- CaptureIdentity provider routing (dispatcher removed with the legacy

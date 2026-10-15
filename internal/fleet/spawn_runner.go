@@ -807,7 +807,7 @@ func (r *Runner) preflightBrief() error {
 		return err
 	}
 	if !Exists(r.homeDir, r.args.ID) {
-		return fmt.Errorf("no brief found for task %s at %s: munsu task add writes it", r.args.ID, Path(r.homeDir, r.args.ID))
+		return fmt.Errorf("no brief found for task %s at %s: 'munsu task done %s' then 'munsu task reopen %s' writes the next generation's brief", r.args.ID, Path(r.homeDir, r.args.ID), r.args.ID, r.args.ID)
 	}
 	return LintBrief(r.homeDir, r.args.ID, r.kind)
 }

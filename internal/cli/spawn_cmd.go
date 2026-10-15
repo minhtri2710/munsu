@@ -284,12 +284,15 @@ func newPromoteCmd() *cobra.Command {
 			if _, err := auth.Promote(op, req); err != nil {
 				return err
 			}
+			if err := writeTaskBrief(ctx.Home, auth, tid); err != nil {
+				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
+			}
 
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "promote",
 				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship; ship brief at %s", id, fleet.Path(ctx.Home, id))},
 			})
 		}),
 	}
@@ -394,5 +397,71 @@ generation must pass its explicit generation here.
 	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")
 	cmd.Flags().UintVar(&targetGen, "generation", 0, "Bind this teardown to the exact generation it intends to retire; a delayed retry never retires a newer generation")
 
+	return cmd
+}
+
+func newSoldierFlushCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "soldier-flush <id>",
+		Short: "Flush one pending command to a soldier",
+		Long: `Read the captain's pending outbox for the given soldier and
+send the oldest pending command via SubmitPrompt, but only if the soldier
+is not busy. Nothing runs it automatically: the dispatcher runs it, or
+'munsu consume-ready <id>', by hand.
+
+Idempotent: calling when no pending exists is a no-op.
+Calling when the soldier is busy returns with "still busy".
+`,
+		Args: ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			id := args[0]
+
+			// Derive sender identity from the captain/general home.
+			senderIdentity, _, identErr := home.ReadHomeIdentity(ctx.Home)
+			if identErr != nil {
+				return fmt.Errorf("soldier-flush: deriving sender identity: %w", identErr)
+			}
+
+			result := fleet.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity, newSessionSoldierEndpoints())
+			if result.Err != nil {
+				return fmt.Errorf("soldier %s flush: %w", id, result.Err)
+			}
+
+			if result.Queued {
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
+					Kind:          "soldier-flush",
+					Status:        "success",
+					Data:          MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
+				})
+			}
+
+			if result.MessageID == "" {
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
+					Kind:          "soldier-flush",
+					Status:        "success",
+					Data:          MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
+				})
+			}
+
+			if result.Sent {
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
+					Kind:          "soldier-flush",
+					Status:        "success",
+					Data:          MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
+				})
+			}
+
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "soldier-flush",
+				Status:        "success",
+				Data:          MessageResult{Message: fmt.Sprintf("%s: cleared already-acked pending command (message=%s)", id, result.MessageID)},
+			})
+		}),
+	}
+	configureContractCommand(cmd)
 	return cmd
 }
