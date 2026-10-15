@@ -31,6 +31,7 @@ func TestRetirementRules(t *testing.T) {
 		{"stale teardown never retires a reopened generation", staleRetryBlock, explicitGenerationAllow},
 		{"terminal cleanup claim is never resumed", terminalCleanupClaimBlock, activeCleanupClaimAllow},
 		{"ship worktree is clean", dirtyTreeBlock, dirtyTreeAllow},
+		{"local-only ship branch is merged locally, no origin needed", localOnlyUnlandedBlock, localOnlyLandedAllow},
 		{"ship PR is not closed unmerged", closedUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship PR is not open unmerged", openUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship merged PR head matches the identity", wrongPRHeadBlock, mergedMatchingHeadAllow},

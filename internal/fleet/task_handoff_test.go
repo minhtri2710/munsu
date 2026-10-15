@@ -273,7 +273,7 @@ func TestHandoffCarriesDeliveryContractToDestination(t *testing.T) {
 	}
 }
 
-// seedSourceContract records a direct-PR contract with a github forge on a
+// seedSourceContract records the contract of forge, with its derived mode, on a
 // queued task, leaving the task's canonical contract for the handoff to carry.
 func seedSourceContract(t *testing.T, c *taskauthority.Canonical, taskID string, forge taskauthority.DeliveryStep) {
 	t.Helper()
@@ -286,7 +286,7 @@ func seedSourceContract(t *testing.T, c *taskauthority.Canonical, taskID string,
 		HomeID:       c.HomeID(),
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Mode:         "direct-PR",
+		Mode:         taskauthority.DeliveryModeForForge(forge),
 		Forge:        forge,
 	}
 	if _, err := c.RecordDeliveryContract(mustTransferOp(t, "seed-contract-"+taskID, contractReq), contractReq); err != nil {

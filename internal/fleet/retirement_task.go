@@ -1498,6 +1498,13 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 	if partialLaunch {
 		return []string{"partial launch artifacts and worktree cleanliness verified"}, nil
 	}
+	if forge, err := taskForgeStep(opts.HomeDir, opts.ID); err == nil && taskauthority.DeliveryModeForForge(forge) == "local-only" {
+		proof, err := checkLocalLanded(wtPath)
+		if err != nil {
+			return nil, err
+		}
+		return []string{proof}, nil
+	}
 	if err := checkRemoteBranch(wtPath); err != nil {
 		return nil, err
 	}
@@ -1576,6 +1583,21 @@ func topologyAwareMergeCheck(opts Options, wtPath string, ident *domain.Delivery
 		}
 	}
 	return proof, nil
+}
+
+// checkLocalLanded proves a local-only task landed: the worktree head is an
+// ancestor of the repository's default branch.
+func checkLocalLanded(wtPath string) (string, error) {
+	def, err := backend.DefaultBranch(wtPath)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve the local-only landing branch: %w (use --force to override)", err)
+	}
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", "HEAD", def.Ref)
+	cmd.Dir = wtPath
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("worktree head is not merged into %s: a local-only task lands by merging its branch into %s locally (use --force to override)", def.Ref, def.Ref)
+	}
+	return "local-only: worktree head merged into " + def.Ref, nil
 }
 
 // checkRemoteBranch proves the worktree's task branch head is on origin: the
