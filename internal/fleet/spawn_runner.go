@@ -388,8 +388,8 @@ func (r *Runner) liveLaunchError(cause error) error {
 	if errors.Is(cause, errLaunchProofLost) {
 		return r.launchProofLostError(cause)
 	}
-	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or stop pane %s on backend %s by hand",
-		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ProjectName, r.endpoint.Handle, r.endpoint.Backend)
+	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or run 'munsu teardown %s' to close the pane and retire this launch, then 'munsu task reopen %s' to spawn it again",
+		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ProjectName, r.args.ID, r.args.ID)
 }
 
 // errLaunchProofLost marks a launch that was delivered and receipted but whose
@@ -1557,7 +1557,7 @@ func (r *Runner) createSession() error {
 		// unresponsive/dead reading — recovery fails closed (no replacement
 		// and no dispose) and ownership is preserved.
 		if !authorized.Live() {
-			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, authorized.State(), ep.Backend)
+			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement): run 'munsu teardown %s' to retire this launch, then 'munsu task reopen %s'", ep.Handle, authorized.State(), ep.Backend, r.args.ID, r.args.ID)
 		}
 		r.endpoint, r.windowID = ep, ep.Handle
 		return nil

@@ -41,8 +41,8 @@ func cloneRetirementMeta(meta map[string]string) map[string]string {
 }
 
 // TestRetirePartialLaunchUsesCanonicalResourceEvidence proves an unbound
-// launch can retire from canonical path, endpoint, and manifest evidence while
-// .meta has no resource projections.
+// launch, which wrote no .meta, retires from canonical path, endpoint, and
+// manifest evidence.
 func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	f := newLaunchFixture(t, "partial-launch-retirement")
 	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
@@ -54,8 +54,8 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 		agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil || agg.Endpoint != nil {
 		t.Fatalf("fixture is not an unbound partial launch: %+v", agg)
 	}
-	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{}); err != nil {
-		t.Fatal(err)
+	if _, err := home.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial launch meta read = %v, want none written", err)
 	}
 	wtPath := agg.Worktree.Path
 	teardown := &partialLaunchTeardown{recordingTeardown: &recordingTeardown{alive: true}}
@@ -92,14 +92,8 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	if after.Phase != taskauthority.PhaseRetired || after.CleanupClaim == nil || after.CleanupClaim.Status != taskauthority.CleanupActive {
 		t.Fatalf("aggregate after incomplete cleanup = phase %q claim %+v, want retired with active claim", after.Phase, after.CleanupClaim)
 	}
-	meta, err := home.ReadMeta(f.homeDir, f.taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"worktree", "launch_manifest_sha256", "backend", "window"} {
-		if _, ok := meta[key]; ok {
-			t.Errorf("retirement rewrote missing projection field %q into .meta: %v", key, meta)
-		}
+	if meta, err := home.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retirement wrote a .meta for the unbound launch: %v, %v", meta, err)
 	}
 }
 

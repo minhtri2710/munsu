@@ -428,7 +428,7 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không bao
 	// giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và không
 	// gửi input vào session ngoài session của nó."
-	seatTemp := filepath.Join(in.SeatEnv.TempDir, "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
+	seatTemp := seatTempDir(in.SeatEnv.TempDir, in.TaskID, in.Generation)
 	caches := []struct{ name, dir string }{
 		{"npm_config_cache", "npm-cache"}, {"npm_config_store_dir", "npm-store"},
 		{"PIP_CACHE_DIR", "pip-cache"}, {"UV_CACHE_DIR", "uv-cache"}, {"XDG_CACHE_HOME", "xdg-cache"},
@@ -485,6 +485,12 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		artifact: LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture},
 		bytes:    content,
 	}, nil
+}
+
+// seatTempDir is the seat's tool-cache root under its launch TMPDIR, one per
+// task generation; retirement removes it.
+func seatTempDir(tempDir, taskID, generation string) string {
+	return filepath.Join(tempDir, "munsu-seat-"+labelComponent(taskID)+"-"+generation)
 }
 
 func publishPreparedFile(path string, want []byte, perm os.FileMode) error {

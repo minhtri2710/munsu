@@ -103,8 +103,17 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	// always superseded display, never state truth.
 	s.StatusLogSuperseded = true
 
-	// .meta provides operational/display data (diagnostic only).
+	// .meta provides operational/display data (diagnostic only). The endpoint
+	// identity is the canonical one, bound or only acquired: a launch whose
+	// handshake failed holds a live pane but wrote no .meta.
 	meta, _ := home.ReadMeta(homeDir, id)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	overlayEndpointMeta(meta, agg.Endpoint, agg.AcquiredEndpoint)
+	if agg.Launch != nil {
+		meta["harness"] = agg.Launch.Harness
+	}
 
 	// .status contributes diagnostic evidence only (never lifecycle state).
 	statusLines, _ := home.ReadStatus(homeDir, id)

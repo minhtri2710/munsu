@@ -625,12 +625,23 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	defer os.Unsetenv("MUNSU_HOME")
 
 	auth := canonicalScoutTestAuth(t, tmp, "test-residual")
+	// The canonical launch names the pi harness, so its adapter artifacts are
+	// included; the meta names none.
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "test-residual"), Precondition: domain.Of(1, 1),
+		SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: harness.Pi, Kind: taskauthority.KindScout,
+		Project: "proj", LaunchID: "launch-test-residual", WorktreeReservationID: "wt-res-1", WorktreeFenceToken: "wt-fence-1",
+		EndpointReservationID: "ep-res-1", EndpointFenceToken: "ep-fence-1", SeatPathDirs: []string{"/usr/bin"},
+		EndpointIncarnation: "inc-test-residual", SeatEnv: taskauthority.SeatEnv{TempDir: t.TempDir(), UserHome: tmp}, Reason: "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-test-residual", begin), begin); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Create meta file with harness=pi so adapter-driven artifacts are included
-	metaContent := "backend=tmux\nwindow=@1\nharness=pi\n"
+	metaContent := "backend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
 	// Create residual artifacts: munsu-native + pi adapter artifacts, the
@@ -678,35 +689,84 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 }
 
+// TestFinalizeCleanupRemovesSeatTemp removes the retired generation's seat temp,
+// read-only module cache included, without following a link out of it, and
+// leaves another generation's seat temp in place.
+func TestFinalizeCleanupRemovesSeatTemp(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := mhome.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	seat := seatTempDir(tmp, "T-1", "2")
+	other := seatTempDir(tmp, "T-1", "3")
+	outside := t.TempDir()
+	modDir := filepath.Join(seat, "go-mod", "example.com", "m@v1")
+	for _, d := range []string{modDir, other} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module m\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(seat, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{modDir, filepath.Dir(modDir)} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(outside, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(outside, 0o755) })
+
+	launch := &taskauthority.LaunchIntent{SeatEnv: taskauthority.SeatEnv{TempDir: tmp}}
+	if err := finalizeCompletedProjectionCleanup(Options{HomeDir: homeDir, ID: "T-1"}, launch, 2, taskauthority.KindShip, &TeardownResult{}); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	if _, err := os.Lstat(seat); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("seat temp still present: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("another generation's seat temp removed: %v", err)
+	}
+	if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o555 {
+		t.Fatalf("link target touched: %v, %v", fi, err)
+	}
+}
+
 func TestCleanupResidualArtifactPaths(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := mhome.StateDir(tmp)
 	for _, tc := range []struct {
-		name string
-		kind string
-		meta map[string]string
-		want []string
+		name        string
+		kind        string
+		harnessName string
+		want        []string
 	}{
-		{"ship with pi", taskauthority.KindShip, map[string]string{"harness": "pi"}, []string{
+		{"ship with pi", taskauthority.KindShip, harness.Pi, []string{
 			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
-		{"review also removes its launch home", taskauthority.KindReview, map[string]string{"harness": "pi"}, []string{
+		{"review also removes its launch home", taskauthority.KindReview, harness.Pi, []string{
 			filepath.Join(stateDir, "T-1.status"), reviewHomeDir(tmp, "T-1"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 			filepath.Join(stateDir, "T-1.pi-ext.ts"), filepath.Join(stateDir, "T-1."+harness.PiAgentDirSuffix),
 		}},
-		{"unknown harness has only the native artifacts", taskauthority.KindShip, map[string]string{}, []string{
+		{"unknown harness has only the native artifacts", taskauthority.KindShip, "", []string{
 			filepath.Join(stateDir, "T-1.status"), filepath.Join(stateDir, "T-1.turnend"), filepath.Join(stateDir, "T-1.report-cursor"),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.kind, tc.meta)
+			got, err := cleanupResidualArtifactPaths(tmp, "T-1", tc.kind, tc.harnessName)
 			if err != nil || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("cleanupResidualArtifactPaths = %v, %v; want %v", got, err, tc.want)
 			}
 		})
 	}
-	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", taskauthority.KindShip, map[string]string{}); err == nil {
+	if _, err := cleanupResidualArtifactPaths(tmp, "../escape", taskauthority.KindShip, ""); err == nil {
 		t.Fatal("cleanupResidualArtifactPaths accepted an id that escapes the state dir")
 	}
 }

@@ -56,6 +56,30 @@ func TestReadWithProbePreservesBoundMetadata(t *testing.T) {
 	}
 }
 
+// TestReadWithProbeProbesUnboundAcquiredEndpoint probes the pane a launch
+// acquired but never bound, which wrote no .meta.
+func TestReadWithProbeProbesUnboundAcquiredEndpoint(t *testing.T) {
+	f := newLaunchFixture(t, "unbound-probe")
+	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
+	}
+	acquired := f.aggregate().AcquiredEndpoint
+	if acquired == nil {
+		t.Fatal("fixture holds no acquired endpoint")
+	}
+	if _, err := mhome.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fixture meta read = %v, want none", err)
+	}
+	probe := &stateProbe{alive: true}
+	state, err := ReadWithProbe(f.homeDir, f.taskID, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.PaneAlive || probe.meta["window"] != acquired.Handle || probe.meta["backend"] != acquired.Backend || probe.meta["harness"] != f.aggregate().Launch.Harness {
+		t.Fatalf("pane_alive=%v probed meta=%v, want the acquired endpoint %+v", state.PaneAlive, probe.meta, acquired)
+	}
+}
+
 func TestReadWithProbeFailsClosedOnProbeError(t *testing.T) {
 	h := t.TempDir()
 	setupProbeHome(t, h, "window=pane-1\nbackend=herdr\n")
