@@ -50,6 +50,8 @@ type dashRead struct {
 	at       time.Time
 	snap     *fleet.DisplaySnapshot
 	snapErr  error
+	holds    map[dashHoldKey][]dashHold
+	holdsErr error
 	latest   bool // events came from LatestEvents (replace) rather than EventsAfter (append)
 	events   []orchestrator.Record
 	skipped  int
@@ -96,6 +98,7 @@ type dashboardModel struct {
 	width, height int
 
 	readFleet func() (*fleet.DisplaySnapshot, error)
+	readHolds func(primary string, snap *fleet.DisplaySnapshot) (map[dashHoldKey][]dashHold, error)
 	latest    func(n int) ([]orchestrator.Record, int, error)
 	after     func(cursor uint64, n int) ([]orchestrator.Record, int, error)
 	// run starts the action subprocess. Tests replace it; nothing else execs.
@@ -114,6 +117,8 @@ type dashboardModel struct {
 	readErr    error
 	rows       []fleet.TaskSnapshot
 	failures   []fleet.SourceFailure
+	holds      map[dashHoldKey][]dashHold
+	holdsErr   error
 	beat       home.WatcherBeatStatus
 	unacked    int
 	unackedErr error
@@ -134,8 +139,9 @@ type dashboardModel struct {
 	feed viewport.Model
 	argv viewport.Model
 	// Section heights set by resize: the lines of the list section (title
-	// included), of the detail pane and of the feed section (title included).
-	listH, detailH, feedH int
+	// included), of NEEDS YOU, of the detail pane and of the feed section
+	// (title included).
+	listH, needsH, detailH, feedH int
 
 	mode     dashMode
 	pending  *dashPending
@@ -189,7 +195,8 @@ func newDashboardModel(home, exe string) dashboardModel {
 		readFleet: func() (*fleet.DisplaySnapshot, error) {
 			return fleet.SnapshotDisplay(home, snapshotDeps())
 		},
-		latest: func(n int) ([]orchestrator.Record, int, error) { return orchestrator.LatestEvents(home, n) },
+		readHolds: dashHolds,
+		latest:    func(n int) ([]orchestrator.Record, int, error) { return orchestrator.LatestEvents(home, n) },
 		after: func(c uint64, n int) ([]orchestrator.Record, int, error) {
 			return orchestrator.EventsAfter(home, c, n)
 		},
@@ -236,6 +243,9 @@ func dashboardExec(exe string, args []string) tea.Cmd {
 func (m dashboardModel) read() dashRead {
 	r := dashRead{at: m.now(), latest: !m.feedLoaded}
 	r.snap, r.snapErr = m.readFleet()
+	if r.snapErr == nil {
+		r.holds, r.holdsErr = m.readHolds(m.home, r.snap)
+	}
 	r.beat = m.watcher(r.at)
 	r.unacked, r.unackedErr = m.wakes(r.at)
 	if r.latest {
@@ -318,6 +328,7 @@ func (m *dashboardModel) applyRead(r dashRead) {
 		m.lastGood = r.at
 		m.rows = r.snap.Tasks
 		m.failures = r.snap.Failures
+		m.holds, m.holdsErr = r.holds, r.holdsErr
 		m.reselect()
 	}
 	if r.eventErr != nil {

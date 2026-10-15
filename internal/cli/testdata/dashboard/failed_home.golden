@@ -1,6 +1,7 @@
 munsu dashboard PARTIAL refreshed 0s ago  watcher absent  captains 1  working 1  unacked 0  /h
 unresolved 2  Human-needed 0  failed sources 1
-Nothing needs you.
+NEEDS YOU 1
+  failed   captain:beta         reading canonical task authority state for /h/captains/beta: home: …
 Failed sources and tasks
     GROUP        NAME                 STATE            ROLE   HARNESS MODEL          STATUS
 > x captain:beta  reading canonical task authority state for /h/captains/beta: home: not initialized

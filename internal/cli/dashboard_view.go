@@ -82,22 +82,37 @@ func (m dashboardModel) feedMax() int {
 }
 
 // resize sizes every component from the terminal size and the lines the
-// header, notes, NEEDS YOU and footer take. The confirm viewport gets its rows
-// first, so the command the Human approves is never what gives way; then the
-// feed, then the detail pane when the list keeps its title and two rows, then
-// the list. A section with no rows left is not drawn.
+// header, notes and footer take. The confirm viewport gets its rows first, so
+// the command the Human approves is never what gives way; then the list's
+// title with one row (when both fit), then the feed's title, then NEEDS YOU (fewer items, then
+// its count line alone), then the rest of the feed, then the detail pane when
+// the list keeps its title and two rows, then the list. A section with no rows
+// left is not drawn.
 func (m *dashboardModel) resize() {
 	w := m.width
 	m.argv.SetWidth(w)
 	m.feed.SetWidth(w)
-	avail := max(0, m.height-len(m.header())-len(m.notes())-len(m.needsSection())-len(m.footer()))
+	avail := max(0, m.height-len(m.header())-len(m.notes())-len(m.footer()))
 	if m.mode == modeConfirm {
 		rows := min(m.argv.TotalLineCount(), avail)
 		m.argv.SetHeight(rows)
 		m.argv.SetYOffset(m.argv.YOffset()) // the setters never clamp the offset
 		avail -= rows
 	}
-	m.feedH = min(m.feedMax(), avail/2)
+	listMin := min(avail, 1)
+	if len(m.list.Items()) > 0 {
+		listMin = 0
+		if avail >= 2 {
+			listMin = 2
+		}
+	}
+	feedMin := 0
+	if listMin > 0 && avail > listMin {
+		feedMin = 1
+	}
+	m.needsH = min(len(m.needsLines(dashNeedsMax+1)), avail-listMin-feedMin)
+	avail -= m.needsH
+	m.feedH = max(feedMin, min(m.feedMax(), avail/2, avail-listMin))
 	rest := avail - m.feedH
 	m.detailH = 0
 	if d := len(m.detail()); rest >= d+3 {
@@ -561,7 +576,7 @@ func (m dashboardModel) helpLines() []string {
 	decide := dashDecide
 	held := false
 	if it, ok := m.list.SelectedItem().(dashItem); ok && it.row != nil {
-		_, _, held = heldDecision(*it.row)
+		held = len(m.holdsOf(*it.row)) > 0
 	}
 	decide.SetEnabled(held)
 	return m.keyLines(append(entries, decide, dashQuit)...)
