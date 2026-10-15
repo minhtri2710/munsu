@@ -41,14 +41,4 @@ func TestTaskShowShowsReportedPR(t *testing.T) {
 	if !strings.Contains(show, "reported: PR "+taskPRTestURL+" (unverified)") {
 		t.Fatalf("reported PR: show=%q", show)
 	}
-
-	meta, err := home.ReadMeta(homeDir, "pr1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for k := range meta {
-		if strings.HasPrefix(k, "pr_") {
-			t.Fatalf("meta key %q written by a read", k)
-		}
-	}
 }

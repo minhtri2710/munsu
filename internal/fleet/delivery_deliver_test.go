@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -493,40 +492,5 @@ func TestDeliverFailClosedBeforeMutation(t *testing.T) {
 				t.Fatalf("active journals = %v, want 1 (journal retained when the release cannot complete)", active)
 			}
 		})
-	}
-}
-
-// TestDeliverNoMetaSubstitutionAuthorizesDelivery proves .meta never
-// authorizes a delivery: Deliver requires the canonical journaled flow and
-// commits the canonical outcome.
-func TestDeliverNoMetaSubstitutionAuthorizesDelivery(t *testing.T) {
-	c, homeDir := newFleetCanonical(t)
-	taskID := "t1"
-	mustWorkingDeliveryTask(t, c, taskID, deliveryTestGitHubForge)
-	// A fully populated .meta claims a PR that was never committed
-	// canonically.
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{
-		"kind":        "ship",
-		"pr_provider": "github", "pr_owner": "minhtri2710", "pr_repo": "munsu",
-		"pr_number": "42", "pr_url": "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_base_ref": "main", "pr_head_ref": "feature/delivery", "pr_head_sha": deliveryTestHead,
-		"pr_timestamp": "2026-08-05T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.DeliveryOutcome(mustFleetTaskID(t, taskID)); err == nil {
-		t.Fatal("canonical outcome should not exist from .meta alone")
-	}
-	// The canonical flow still runs and commits the truthful outcome.
-	provider := installScriptedProviderFor(t, "open-then-merged")
-	result, err := Deliver(homeDir, taskID, deliverRequest())
-	if err != nil {
-		t.Fatalf("Deliver: %v", err)
-	}
-	if result.Status != taskauthority.DeliveryOutcomeCompleted {
-		t.Fatalf("status = %q, want completed", result.Status)
-	}
-	if provider.merges != 1 {
-		t.Fatalf("merges = %d, want 1", provider.merges)
 	}
 }

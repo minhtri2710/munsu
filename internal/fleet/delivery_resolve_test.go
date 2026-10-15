@@ -41,7 +41,6 @@ func TestResolveTaskHome_CaptainHome(t *testing.T) {
 	if err := mhome.WriteMeta(capHome, "handed-ship", map[string]string{
 		"kind":    "ship",
 		"project": "munsu",
-		"pr_url":  "https://github.com/o/r/pull/1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +62,7 @@ func TestResolveTaskHome_CaptainHome(t *testing.T) {
 	if gotHome != capHome {
 		t.Fatalf("home = %q, want captain %q", gotHome, capHome)
 	}
-	if meta["kind"] != "ship" || meta["pr_url"] == "" {
+	if meta["kind"] != "ship" || meta["project"] != "munsu" {
 		t.Fatalf("meta = %#v", meta)
 	}
 }

@@ -55,6 +55,13 @@ func Scaffold(opts ScaffoldOptions) error {
 	}
 	content = strings.ReplaceAll(content, "{TASK}", opts.Task)
 	path := filepath.Join(dir, "brief.md")
+	if old, err := os.ReadFile(path); err == nil {
+		if filled := testImpactSection(string(old)); filled != "" && !strings.Contains(filled, "{TEST_IMPACT}") {
+			if fresh := testImpactSection(content); fresh != "" {
+				content = strings.Replace(content, fresh, filled, 1)
+			}
+		}
+	}
 	// A fenced captain writes its briefs, so it can leave a link here; the
 	// rename replaces the link and never writes through it.
 	if err := home.AtomicWrite(path, []byte(content), 0o644); err != nil {
@@ -65,6 +72,21 @@ func Scaffold(opts ScaffoldOptions) error {
 		return fmt.Errorf("refreshing brief directory: %w", err)
 	}
 	return nil
+}
+
+// testImpactSection returns the ship brief's Test-impact map section, from its
+// heading up to the next heading, or "" when the brief has none.
+func testImpactSection(brief string) string {
+	const heading = "## Test-impact map\n"
+	start := strings.Index(brief, heading)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(brief[start+len(heading):], "\n## ")
+	if end < 0 {
+		return brief[start:]
+	}
+	return brief[start : start+len(heading)+end+1]
 }
 
 // buildBrief assembles the brief markdown template.

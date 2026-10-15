@@ -392,3 +392,41 @@ func TestTaskReopenWritesABriefTaskAddFailedToWrite(t *testing.T) {
 		t.Fatal("brief after reopen lacks the description")
 	}
 }
+
+// TestTaskReopenCarriesTheTestImpactMap: reopen keeps a filled test-impact map
+// and leaves an unfilled one as the placeholder.
+func TestTaskReopenCarriesTheTestImpactMap(t *testing.T) {
+	for _, tc := range []struct {
+		name, fill, want string
+	}{
+		{"keeps a filled map", "- internal/x.go: TestX", "- internal/x.go: TestX"},
+		{"keeps an unfilled placeholder", "{TEST_IMPACT}", "{TEST_IMPACT}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			registerCLITestProject(t, homeDir, "munsu")
+			if out, err := runTaskCommand(t, []string{"task", "add", "t1", "work", "--repo", "munsu", "--home", homeDir}); err != nil {
+				t.Fatalf("task add: %v\n%s", err, out)
+			}
+			path := fleet.Path(homeDir, "t1")
+			filled := strings.Replace(readFileForTest(t, path), "{TEST_IMPACT}", tc.fill, 1)
+			if err := os.WriteFile(path, []byte(filled), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := runTaskCommand(t, []string{"task", "done", "t1", "--home", homeDir}); err != nil {
+				t.Fatalf("task done: %v\n%s", err, out)
+			}
+			if out, err := runTaskCommand(t, []string{"task", "reopen", "t1", "--home", homeDir}); err != nil {
+				t.Fatalf("task reopen: %v\n%s", err, out)
+			}
+			brief := readFileForTest(t, path)
+			if !strings.Contains(brief, "## Test-impact map\n") || !strings.Contains(brief, tc.want) {
+				t.Fatalf("brief after reopen lacks %q:\n%s", tc.want, brief)
+			}
+			if err := fleet.LintBrief(homeDir, "t1", taskauthority.KindShip); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

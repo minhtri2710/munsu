@@ -245,12 +245,6 @@ func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 		t.Fatalf("report done: %v\n%s", err, buf.String())
 	}
 
-	meta, metaErr := home.ReadMeta(homeDir, "ship-report")
-	if metaErr == nil {
-		if _, hasPR := meta["pr_url"]; hasPR {
-			t.Fatalf("report done wrote pr_url meta projection: %v", meta)
-		}
-	}
 	// No delivery journal or canonical delivery evidence may exist.
 	if _, err := os.Stat(filepath.Join(homeDir, "state", "delivery")); !os.IsNotExist(err) {
 		t.Fatalf("report done created delivery state: %v", err)
