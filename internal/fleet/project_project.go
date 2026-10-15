@@ -18,10 +18,10 @@ var cloneTimeout = 10 * time.Minute
 
 // Project represents a registered or ad-hoc project entry.
 type Project struct {
-	Name        string
-	Yolo        bool
-	Description string
-	Added       string // date string
+	Name  string
+	Yolo  bool
+	Path  string
+	Added string // date string
 }
 
 // ProjectsDir returns the path where cloned project repos live.
@@ -140,10 +140,10 @@ func List(homeDir string) ([]*Project, error) {
 	var result []*Project
 	for _, p := range projects {
 		result = append(result, &Project{
-			Name:        p.Name,
-			Yolo:        p.Yolo,
-			Description: p.Path,
-			Added:       today(),
+			Name:  p.Name,
+			Yolo:  p.Yolo,
+			Path:  p.Path,
+			Added: today(),
 		})
 	}
 	return result, nil
@@ -209,9 +209,9 @@ func ResolveRepoPath(homeDir, name string) (string, error) {
 	}
 
 	// 1. Check if Path is an absolute existing path
-	if filepath.IsAbs(p.Description) {
-		if fi, statErr := os.Stat(p.Description); statErr == nil && fi.IsDir() {
-			return p.Description, nil
+	if filepath.IsAbs(p.Path) {
+		if fi, statErr := os.Stat(p.Path); statErr == nil && fi.IsDir() {
+			return p.Path, nil
 		}
 	}
 
@@ -221,7 +221,7 @@ func ResolveRepoPath(homeDir, name string) (string, error) {
 		return projDir, nil
 	}
 
-	return "", fmt.Errorf("project %q not resolvable: no local path or cloned repo found for %q", name, p.Description)
+	return "", fmt.Errorf("project %q not resolvable: no local path or cloned repo found for %q", name, p.Path)
 }
 
 // gitRoot returns the absolute path to the git repository root from cwd.
@@ -244,9 +244,9 @@ func ResolveAdhoc() (*Project, error) {
 	}
 	name := filepath.Base(repoRoot)
 	return &Project{
-		Name:        name,
-		Description: repoRoot,
-		Added:       today(),
+		Name:  name,
+		Path:  repoRoot,
+		Added: today(),
 	}, nil
 }
 
@@ -270,12 +270,12 @@ func ResolveFromCwd(homeDir string) (*Project, error) {
 	}
 
 	for _, p := range projects {
-		if !filepath.IsAbs(p.Description) {
+		if !filepath.IsAbs(p.Path) {
 			continue
 		}
-		cleanDesc, err := filepath.EvalSymlinks(p.Description)
+		cleanDesc, err := filepath.EvalSymlinks(p.Path)
 		if err != nil {
-			cleanDesc = filepath.Clean(p.Description)
+			cleanDesc = filepath.Clean(p.Path)
 		}
 		if cleanDesc == cleanRoot {
 			return p, nil

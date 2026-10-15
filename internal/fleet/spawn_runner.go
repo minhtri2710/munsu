@@ -388,8 +388,8 @@ func (r *Runner) liveLaunchError(cause error) error {
 	if errors.Is(cause, errLaunchProofLost) {
 		return r.launchProofLostError(cause)
 	}
-	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or run 'munsu teardown %s' to close the pane and retire this launch, then 'munsu task reopen %s' to spawn it again",
-		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ProjectName, r.args.ID, r.args.ID)
+	return fmt.Errorf("%w\nthe soldier process of task %s may still be running on backend %s endpoint %s; fix the cause above, then re-run 'munsu spawn %s' (spawn re-checks the task before it resumes, refuses with its own reason if it cannot, and re-adopts the pane only while the pane is live), or run 'munsu teardown %s' to close the pane and retire this launch, then 'munsu task reopen %s' to spawn it again",
+		cause, r.args.ID, r.endpoint.Backend, r.endpoint.Handle, r.args.ID, r.args.ID, r.args.ID)
 }
 
 // errLaunchProofLost marks a launch that was delivered and receipted but whose
@@ -807,8 +807,7 @@ func (r *Runner) preflightBrief() error {
 		return err
 	}
 	if !Exists(r.homeDir, r.args.ID) {
-		return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning",
-			r.args.ID, r.args.ID, r.args.ProjectName)
+		return fmt.Errorf("no brief found for task %s at %s: 'munsu task done %s' then 'munsu task reopen %s' writes the next generation's brief", r.args.ID, Path(r.homeDir, r.args.ID), r.args.ID, r.args.ID)
 	}
 	return LintBrief(r.homeDir, r.args.ID, r.kind)
 }
@@ -2623,9 +2622,9 @@ func (r *Runner) printEndpointInfo() {
 	fmt.Printf("  yolo:     %s\n", yoloVal)
 }
 
-// Phase 17: armWatcher arms the watcher if requested.
+// Phase 17: armWatcher ensures the home's watcher.
 func (r *Runner) armWatcher() {
-	if !r.args.Arm || r.args.ArmFunc == nil {
+	if r.args.ArmFunc == nil {
 		return
 	}
 	if armErr := r.args.ArmFunc(r.homeDir); armErr != nil {

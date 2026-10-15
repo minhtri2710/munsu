@@ -21,8 +21,12 @@ func newProjectCmd() *cobra.Command {
 
 If path-or-url is a git URL (http://, https://, git@, ssh://),
 the repository is cloned into the projects directory first.`,
-		Args: ExactArgs(2),
+		Args: exactArgsOrPrompt(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			args, err := promptArgs(args, "Project name", "Path or git URL")
+			if err != nil {
+				return err
+			}
 			yolo, _ := cmd.Flags().GetBool("yolo")
 			return fleet.Add(ctx.Home, args[0], args[1], yolo)
 		}),
@@ -49,10 +53,10 @@ the repository is cloned into the projects directory first.`,
 			entries := make([]ProjectEntry, len(projects))
 			for i, p := range projects {
 				entries[i] = ProjectEntry{
-					Name:        p.Name,
-					Yolo:        p.Yolo,
-					Description: p.Description,
-					Added:       p.Added,
+					Name:  p.Name,
+					Yolo:  p.Yolo,
+					Path:  p.Path,
+					Added: p.Added,
 				}
 			}
 			return writeContract(cmd, Response[[]ProjectEntry]{
@@ -76,10 +80,10 @@ the repository is cloned into the projects directory first.`,
 				return err
 			}
 			entry := ProjectEntry{
-				Name:        p.Name,
-				Yolo:        p.Yolo,
-				Description: p.Description,
-				Added:       p.Added,
+				Name:  p.Name,
+				Yolo:  p.Yolo,
+				Path:  p.Path,
+				Added: p.Added,
 			}
 			// Show project dir if it exists
 			projDir := filepath.Join(fleet.ProjectsDir(ctx.Home), p.Name)

@@ -19,6 +19,7 @@ type ScaffoldOptions struct {
 	Repo        string // project/repo name
 	Scout       bool   // generate scout brief instead of ship brief
 	Review      bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
+	Task        string // the task description, written in place of {TASK}
 	Mode        string // delivery mode (direct-PR / local-only)
 	Yolo        bool   // yolo mode
 	ScoutScope  string
@@ -52,7 +53,15 @@ func Scaffold(opts ScaffoldOptions) error {
 	if err != nil {
 		return err
 	}
+	content = strings.ReplaceAll(content, "{TASK}", opts.Task)
 	path := filepath.Join(dir, "brief.md")
+	if old, err := os.ReadFile(path); err == nil {
+		if filled := testImpactSection(string(old)); filled != "" && !strings.Contains(filled, "{TEST_IMPACT}") {
+			if fresh := testImpactSection(content); fresh != "" {
+				content = strings.Replace(content, fresh, filled, 1)
+			}
+		}
+	}
 	// A fenced captain writes its briefs, so it can leave a link here; the
 	// rename replaces the link and never writes through it.
 	if err := home.AtomicWrite(path, []byte(content), 0o644); err != nil {
@@ -63,6 +72,22 @@ func Scaffold(opts ScaffoldOptions) error {
 		return fmt.Errorf("refreshing brief directory: %w", err)
 	}
 	return nil
+}
+
+// testImpactSection returns the ship brief's Test-impact map section, from its
+// heading up to the Definition of done heading or the end, or "" when the
+// brief has none.
+func testImpactSection(brief string) string {
+	const heading = "## Test-impact map\n"
+	start := strings.Index(brief, heading)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(brief[start+len(heading):], "\n## Definition of done\n")
+	if end < 0 {
+		return brief[start:]
+	}
+	return brief[start : start+len(heading)+end+1]
 }
 
 // buildBrief assembles the brief markdown template.
@@ -148,7 +173,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
    would act on and the needs-decision/blocked/paused/done/failed states.
 5. If you hit the same obstacle twice, run `+"`"+`munsu report blocked "{why}"`+"`"+` and stop; munsu will help.
 6. If a decision belongs to a human, run `+"`"+`munsu report needs-decision "{summary of options}"`+"`"+` and stop.
-7. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
+7. To close an open wake key, append the line `+"`"+`resolved [key=<slug>]: {summary}`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
 
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
@@ -209,7 +234,7 @@ that answers for this generation; never read or reuse another generation's.
 2. Stay inside this worktree; modify nothing outside it.
 3. Report status via `+"`"+`munsu report`+"`"+`:
    `+"`"+`munsu report <state> "<msg>" [--key <slug>]`+"`"+`
-4. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
+4. To close an open wake key, append the line `+"`"+`resolved [key=<slug>]: {summary}`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
 `, id, scope, repo, id, ReportName(gen), modeLine), nil
@@ -304,7 +329,7 @@ func LintBrief(homeDir, id, kind string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; re-scaffold it with 'munsu brief' before spawning", id, strings.Join(missing, ", "))
+		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; restore the sections munsu task add wrote before spawning", id, strings.Join(missing, ", "))
 	}
 	return nil
 }

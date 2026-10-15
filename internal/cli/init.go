@@ -36,7 +36,8 @@ func newInitCmd() *cobra.Command {
 		Long: `Initialize the munsu home directory tree.
 
 Creates the directory structure: {state, data, config, projects}.
-Auto-detects and persists the soldier harness.
+Auto-detects and persists the soldier harness. It does not set the session
+backend, which spawning requires: set one with munsu config set backend herdr|tmux.
 Writes starter configuration files and the orchestrator operating manual (AGENTS.md).
 With --skill global|local (or MUNSU_INIT_SKILL), installs the munsu-ops skill so
 coding-agent harnesses can discover it, replacing any copy already there.

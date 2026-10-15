@@ -14,7 +14,7 @@ func TestFixCommand(t *testing.T) {
 		{"gh", "Install GitHub CLI: brew install gh  |  https://cli.github.com/"},
 		{"tmux", "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
 		{"fuser", "Install psmisc: apt install psmisc  |  dnf install psmisc (macOS ships fuser)"},
-		{"herdr", "Install herdr from the herdr repository, or set HERDR_ENV=1 if already installed"},
+		{"herdr", "Install herdr from the herdr repository"},
 	}
 
 	for _, tt := range tests {

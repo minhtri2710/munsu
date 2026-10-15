@@ -322,11 +322,6 @@ func TestE2E_TerminalReportHasExactKey(t *testing.T) {
 	if !strings.Contains(prompt, expected) {
 		t.Errorf("prompt must contain exact terminal report:\nwant: %s", expected)
 	}
-
-	// Must NOT have brackets around --key.
-	if strings.Contains(prompt, "[--key") {
-		t.Error("prompt must NOT contain literal brackets around --key")
-	}
 }
 
 // TestE2E_FullProductionFlow simulates the entire production launch sequence:

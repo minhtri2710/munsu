@@ -125,7 +125,7 @@ the Captain registry (`state/fleet-registry/captains.json`). Home directory is r
 Before retiring a live captain, verify:
 
 - **Captain fleet state** — `munsu captain list` shows the captain is registered.
-- **Soldier-state** — `munsu soldier-state <id>` confirms no in-flight soldiers.
+- **Task state** — `munsu task show <id>` confirms no in-flight soldiers.
 - **Pane liveness** — Confirm the captain's session pane is not actively processing.
 - **Backlog truth** — Check `munsu captain list` and `state/` for pending work.
 

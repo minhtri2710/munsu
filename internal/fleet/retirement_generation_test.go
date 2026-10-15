@@ -136,7 +136,13 @@ func seedMergedDelivery(t *testing.T, auth *taskauthority.Canonical, homeDir, ta
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-merged", "fence-wt-merged")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-merged", "fence-ep-merged")
+	seedCompletedDeliveryOutcome(t, auth, taskID)
+}
 
+// seedCompletedDeliveryOutcome records an approving verdict, a provider-merge
+// authorization and its committed completed outcome for a working task.
+func seedCompletedDeliveryOutcome(t *testing.T, auth *taskauthority.Canonical, taskID string) {
+	t.Helper()
 	ident := deliveryFixtureIdentity()
 	mustRecordApprovingVerdict(t, auth, taskID, ident.HeadSHA)
 	agg, err := auth.Get(mustTaskID(t, taskID))

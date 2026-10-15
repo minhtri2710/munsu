@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -41,11 +42,15 @@ func TestSyncSeparatesSyncedAndStuck(t *testing.T) {
 	if err := os.MkdirAll(stuck, 0755); err != nil {
 		t.Fatal(err)
 	}
+	local := filepath.Join(root, "checkout-dir")
+	if err := os.MkdirAll(local, 0755); err != nil {
+		t.Fatal(err)
+	}
 	r, err := openRegistry(fleetHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"synced", "stuck"} {
+	for name, path := range map[string]string{"synced": "remote:synced", "stuck": "remote:stuck", "registered-name": local} {
 		id, err := domain.NewProjectID(name)
 		if err != nil {
 			t.Fatal(err)
@@ -55,7 +60,7 @@ func TestSyncSeparatesSyncedAndStuck(t *testing.T) {
 			t.Fatal(err)
 		}
 		req := RegisterProjectRequest{
-			HomeID: r.HomeID(), ProjectID: id, Name: name, Path: "remote:" + name,
+			HomeID: r.HomeID(), ProjectID: id, Name: name, Path: path,
 			Precondition: preconditionOf(rev), Reason: "sync test",
 		}
 		if _, err := r.RegisterProject(opFor(req), req); err != nil {
@@ -70,11 +75,21 @@ func TestSyncSeparatesSyncedAndStuck(t *testing.T) {
 	if len(result.Synced) != 1 || result.Synced[0] != "synced" {
 		t.Fatalf("Sync result = %+v, want Synced=[synced]", result)
 	}
-	if len(result.Stuck) != 1 || !strings.HasPrefix(result.Stuck[0], "stuck:") {
-		t.Fatalf("Stuck = %v, want one stuck project", result.Stuck)
+	sort.Strings(result.Stuck)
+	if len(result.Stuck) != 2 || !strings.HasPrefix(result.Stuck[0], "registered-name: not a git repository") || !strings.HasPrefix(result.Stuck[1], "stuck:") {
+		t.Fatalf("Stuck = %v, want the stuck project and the local one labelled by its registered name", result.Stuck)
 	}
 	if len(result.Errors) != 0 {
 		t.Fatalf("Errors = %v, want none for per-project outcomes", result.Errors)
+	}
+
+	byName, err := Sync(fleetHome, "registered-name")
+	if err != nil || len(byName.Stuck) != 1 || !strings.HasPrefix(byName.Stuck[0], "registered-name:") {
+		t.Fatalf("Sync(registered-name) = %+v, %v, want the local project", byName, err)
+	}
+	byDir, err := Sync(fleetHome, "checkout-dir")
+	if err != nil || len(byDir.Stuck)+len(byDir.Synced) != 0 {
+		t.Fatalf("Sync(checkout-dir) = %+v, %v, want no project: the filter is the registered name", byDir, err)
 	}
 }
 

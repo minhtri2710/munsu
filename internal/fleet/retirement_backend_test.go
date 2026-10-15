@@ -19,6 +19,7 @@ type fakeTeardown struct {
 	returnWorktreeErr    error
 	returnWorktreeFn     func(worktreePath string) error
 	alive                bool
+	mergeStatus          *domain.PRMergeStatus
 }
 
 func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
@@ -30,6 +31,9 @@ func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus
 }
 func (f fakeTeardown) Dispose(string, map[string]string, DisposeRequest) error { return f.disposeErr }
 func (f fakeTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	if f.mergeStatus != nil {
+		return f.mergeStatus, nil
+	}
 	return QueryDeliveryMergeStatus(forge, ident)
 }
 func (f fakeTeardown) ReturnWorktree(_, _, worktreePath string) error {

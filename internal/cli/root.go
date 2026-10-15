@@ -57,18 +57,6 @@ func MinimumNArgs(n int) cobra.PositionalArgs {
 	}
 }
 
-// MaximumNArgs returns a cobra.PositionalArgs validator that requires at most n args.
-func MaximumNArgs(n int) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		if len(args) > n {
-			return usageError("invalid_argument",
-				fmt.Sprintf("Run `%s --help`", commandPath(cmd)),
-				fmt.Sprintf("%s accepts at most %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use))
-		}
-		return nil
-	}
-}
-
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
@@ -115,16 +103,14 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newTaskCmd())
 	root.AddCommand(newCapabilitiesCmd())
 	root.AddCommand(newBackendCmd())
-	root.AddCommand(newBriefCmd())
 	root.AddCommand(newSpawnCmd())
 	root.AddCommand(newSendCmd())
 	root.AddCommand(newReportCmd())
+	root.AddCommand(newSoldierFlushCmd())
 	root.AddCommand(newConsumeReadyCmd())
 	root.AddCommand(newPeekCmd())
-	root.AddCommand(newSoldierStateCmd())
 	root.AddCommand(newPromoteCmd())
 	root.AddCommand(newTeardownCmd())
-	root.AddCommand(newSoldierFlushCmd())
 	root.AddCommand(newDeliveryCmd())
 	root.AddCommand(newFleetCmd())
 	root.AddCommand(newHerdrCmd())

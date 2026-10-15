@@ -50,13 +50,14 @@ Use --role for role-specific integration matrix:
 				for _, line := range bootstrap.RuntimeIdentityLines(&runtimeIdentity) {
 					fmt.Println("  " + line)
 				}
+				m := outputMarks(os.Stdout)
 				r, err := bootstrap.Doctor(ctx.Home, bootstrap.Role(role))
 				if err != nil {
 					return fmt.Errorf("doctor: %w", err)
 				}
 				fmt.Printf("Integration matrix for role: %s\n", r.Role)
 				for _, e := range r.Entries {
-					fmt.Println(e.String())
+					fmt.Println(m.markAfter(e.String(), ": ", string(e.Status)))
 					if e.RepairCmd != "" {
 						fmt.Println("    Fix: " + e.RepairCmd)
 					}
@@ -70,6 +71,7 @@ Use --role for role-specific integration matrix:
 			}
 
 			exitCode := 0
+			m := outputMarks(os.Stdout)
 
 			if result.RuntimeIdentity != nil {
 				result.RuntimeIdentity.Build.CLIVersion = Version
@@ -80,13 +82,13 @@ Use --role for role-specific integration matrix:
 			}
 
 			for _, d := range result.Tools {
-				fmt.Println(d.String())
+				fmt.Println(m.markLead(d.String()))
 				if fix := d.Fix(); fix != "" {
 					fmt.Println("    Fix: " + fix)
 				}
 			}
 			if result.Auth != nil {
-				fmt.Println(result.Auth.String())
+				fmt.Println(m.markLead(result.Auth.String()))
 				if fix := result.Auth.Fix(); fix != "" {
 					fmt.Println("    Fix: " + fix)
 				}
@@ -98,7 +100,7 @@ Use --role for role-specific integration matrix:
 				fmt.Println(result.WriteFence.String())
 			}
 			if result.BaseConfigErr != nil {
-				fmt.Printf("BASE_CONFIG_INVALID: %v\n", result.BaseConfigErr)
+				fmt.Println(m.markLead(fmt.Sprintf("BASE_CONFIG_INVALID: %v", result.BaseConfigErr)))
 				exitCode = 1
 			}
 			if result.GC != nil {
@@ -114,7 +116,7 @@ Use --role for role-specific integration matrix:
 			if len(capResult.Integrations) > 0 {
 				fmt.Println("\nIntegration status:")
 				for _, d := range capResult.Integrations {
-					fmt.Println(d.String())
+					fmt.Println(m.markAfter(d.String(), "integration: ", d.State))
 					if fix := d.Fix(); fix != "" {
 						fmt.Println("    Fix: " + fix)
 					}
@@ -241,7 +243,7 @@ func runCheckInstructions(homeDir string) error {
 }
 
 // buildCommandIndex walks the cobra command tree and returns a set of known
-// command paths excluding the root (e.g., "doctor", "fleet snapshot", "fleet bearings").
+// command paths excluding the root (e.g., "doctor", "fleet snapshot", "fleet view").
 func buildCommandIndex(cmd *cobra.Command) map[string]bool {
 	index := make(map[string]bool)
 	index["help"] = true // implicit cobra command

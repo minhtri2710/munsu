@@ -1,6 +1,7 @@
 munsu dashboard REFRESHED 0s ago  watcher absent  captains 0  working 30  unacked 0  /h
 unresolved 30  Human-needed 0  failed sources 0
-Tasks - Showing 13 of 30 (page 1 of 3)
+Nothing needs you.
+Tasks - Showing 8 of 30 (page 1 of 4)
 >   general      t-00                 working          ship   -       -              implementing
                  t-01                 working          ship   -       -              implementing
                  t-02                 working          ship   -       -              implementing
@@ -9,11 +10,9 @@ Tasks - Showing 13 of 30 (page 1 of 3)
                  t-05                 working          ship   -       -              implementing
                  t-06                 working          ship   -       -              implementing
                  t-07                 working          ship   -       -              implementing
-                 t-08                 working          ship   -       -              implementing
-                 t-09                 working          ship   -       -              implementing
-                 t-10                 working          ship   -       -              implementing
-                 t-11                 working          ship   -       -              implementing
-                 t-12                 working          ship   -       -              implementing
+t-00  ship  project munsu  working  general
+seat - -  mode -  window -  pane -  worktree -
+last -
 Events - Showing 5 of the last 40 read
 12:00:36 task.status t k working: step 36
 12:00:37 task.status t k working: step 37
@@ -21,4 +20,5 @@ Events - Showing 5 of the last 40 read
 12:00:39 task.status t k working: step 39
 12:00:40 task.status t k working: step 40
 j/k move  b block  u unblock  d done  t retry  o reopen  x teardown  p promote  s send  h hold
-e resolve  c complete  C converge  v record-verdict  m pr-merge  q quit
+e resolve  c complete  R retire  V recover  C converge  v record-verdict  m pr-merge  enter decide
+q quit

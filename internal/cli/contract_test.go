@@ -183,6 +183,9 @@ func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	// process lifetime -- a real `munsu session-start` is a process, and exit
 	// drops the flock. This test is not a process, so release it here.
 	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
+	if err := fleet.Add(home, "not-a-repo", t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
 
 	out, err := runContract(t, []string{"session-start", "--output", "json"})
 	if err != nil {
@@ -190,12 +193,37 @@ func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	}
 	var envelope struct {
 		Kind string `json:"kind"`
+		Data struct {
+			FleetSyncOK bool `json:"fleet_sync_ok"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
 	if envelope.Kind != "session.start" {
 		t.Fatalf("kind=%q want session.start", envelope.Kind)
+	}
+	if envelope.Data.FleetSyncOK {
+		t.Fatalf("fleet_sync_ok = true with a stuck project:\n%s", out)
+	}
+}
+
+func TestProjectListAndShowLabelPath(t *testing.T) {
+	home := t.TempDir()
+	initCLITestHome(t, home)
+	t.Setenv("MUNSU_HOME", home)
+	dir := t.TempDir()
+	if err := fleet.Add(home, "demo", dir, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"project", "show", "demo"}, {"project", "list"}} {
+		out, err := runContract(t, append(args, "--output", "json"))
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(out, `"path": "`+dir+`"`) || strings.Contains(out, `"description"`) {
+			t.Fatalf("%v does not label the path as path:\n%s", args, out)
+		}
 	}
 }
 
@@ -383,7 +411,6 @@ func TestContractErrorHomePathIsNotPreQuoted(t *testing.T) {
 		args []string
 	}{
 		{name: "task observe", args: []string{"task", "observe"}},
-		{name: "soldier state", args: []string{"soldier-state"}},
 	} {
 		for _, state := range []string{"missing", "corrupt"} {
 			t.Run(command.name+"/"+state, func(t *testing.T) {
@@ -466,6 +493,15 @@ func TestCaptainSpawnContractErrorPreservesProvenancePaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homeDir, mhome.CaptainProvenanceMarkerName), []byte(marker), 0600); err != nil {
 		t.Fatal(err)
 	}
+	auth := cliCanonicalForHome(t, homeDir)
+	pid, err := domain.NewProjectID("munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: mustTaskIDFor(t, "escaped-path"), Owner: "owner", Description: "work", Kind: "ship", Project: pid, Reason: "test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "op-create-escaped-path", req), req); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_ROLE", "captain")
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
@@ -475,13 +511,13 @@ func TestCaptainSpawnContractErrorPreservesProvenancePaths(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"spawn", "escaped-path", "project"})
-	err := root.Execute()
+	root.SetArgs([]string{"spawn", "escaped-path"})
+	err = root.Execute()
 	if err == nil {
 		t.Fatal("spawn with mismatched captain provenance unexpectedly succeeded")
 	}
 	out.Reset()
-	WriteContractError(&out, err, []string{"spawn", "escaped-path", "project", "--output", "json"})
+	WriteContractError(&out, err, []string{"spawn", "escaped-path", "--output", "json"})
 	var response ErrorResponse
 	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
 		t.Fatalf("decode spawn output: %v\n%s", err, out.String())
@@ -856,7 +892,8 @@ func TestTaskListShowsAggregateCount(t *testing.T) {
 
 	// Add one task through the CLI so canonical Authority state exists
 	root := NewRootCommand()
-	root.SetArgs([]string{"task", "add", "beta", "beta task"})
+	registerCLITestProject(t, home, "munsu")
+	root.SetArgs([]string{"task", "add", "beta", "beta task", "--repo", "munsu"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}

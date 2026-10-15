@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -13,12 +14,11 @@ func newFleetCmd() *cobra.Command {
 		Use:   "fleet",
 		Short: "Manage fleet operations",
 		Long: `Manage fleet operations: sync project clones, emit snapshots,
-render fleet views, and print compact resume reports.`,
+and render fleet views.`,
 	}
 	cmd.AddCommand(newFleetSyncCmd())
 	cmd.AddCommand(newFleetSnapshotCmd())
 	cmd.AddCommand(newFleetViewCmd())
-	cmd.AddCommand(newFleetBearingsCmd())
 	return cmd
 }
 
@@ -36,11 +36,17 @@ func newFleetSyncCmd() *cobra.Command {
 				return err
 			}
 			if len(result.Synced) == 0 && len(result.Stuck) == 0 && len(result.Errors) == 0 {
+				message := "No projects to sync."
+				if projectName != "" {
+					if _, findErr := fleet.Find(ctx.Home, projectName); findErr != nil {
+						message = fmt.Sprintf("no registered project named %q", projectName)
+					}
+				}
 				return writeContract(cmd, Response[MessageResult]{
 					SchemaVersion: SchemaVersion,
 					Kind:          "fleet.sync",
 					Status:        "success",
-					Data:          MessageResult{Message: "No projects to sync."},
+					Data:          MessageResult{Message: message},
 				})
 			}
 			var b strings.Builder
@@ -83,27 +89,50 @@ func newFleetViewCmd() *cobra.Command {
 		Use:   "view",
 		Short: "Render fleet view from snapshot",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.View(ctx.Home, snapshotDeps())
+			snap, err := fleet.Snapshot(ctx.Home, snapshotDeps())
+			if err != nil {
+				return err
+			}
+			renderFleetView(cmd.OutOrStdout(), snap)
+			return nil
 		}),
 	}
 }
 
-func newFleetBearingsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "bearings [<project-dir>]",
-		Short: "Compact resume report",
-		Long: `Print a compact resume report for the fleet or a single project.
+// renderFleetView renders the fleet snapshot as Markdown.
+func renderFleetView(w io.Writer, snap *fleet.FleetSnapshot) {
+	m := outputMarks(w)
+	fmt.Fprintf(w, "# Fleet View — %s\n\n", snap.Time)
+	fmt.Fprintf(w, "Tasks: %d\n\n", len(snap.Tasks))
 
-The report shows the aggregate health of all registered projects, listing
-in-flight tasks with their project, phase, and last known status.
-When a project directory argument is given, only that project is shown.`,
-		Args: MaximumNArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			projectDir := ""
-			if len(args) > 0 {
-				projectDir = args[0]
-			}
-			return fleet.Bearings(ctx.Home, projectDir, snapshotDeps())
-		}),
+	for _, ts := range snap.Tasks {
+		phase := fleet.PhaseFromProjection(ts)
+
+		src := ts.Source
+		if src == "" {
+			src = "primary"
+		}
+		fmt.Fprintf(w, "- **%s** (repo: %s) [%s]\n", ts.ID, ts.Project, src)
+		fmt.Fprintf(w, "  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
+		var modelEffortParts []string
+		if ts.Harness != "" {
+			modelEffortParts = append(modelEffortParts, fmt.Sprintf("harness: %s", ts.Harness))
+		}
+		if ts.Model != "" {
+			modelEffortParts = append(modelEffortParts, fmt.Sprintf("model: %s", ts.Model))
+		}
+		if len(modelEffortParts) > 0 {
+			fmt.Fprintf(w, "  %s\n", strings.Join(modelEffortParts, " | "))
+		}
+
+		displayStatus := ts.CurrentDescription
+		if displayStatus == "" {
+			displayStatus = ts.LastStatus
+		}
+		fmt.Fprintf(w, "  pane: %s (%s)\n", ts.Window, m.mark(phase, phase))
+		if displayStatus != "" {
+			fmt.Fprintf(w, "  status: %s\n", displayStatus)
+		}
+		fmt.Fprintln(w)
 	}
 }

@@ -579,15 +579,17 @@ func TestGuardAllowsASoldierSeatToStop(t *testing.T) {
 		harness, role string
 		wantExit      int
 		wantOut       string
+		noBeat        bool
 	}{
-		{"claude", "soldier", 0, ""},
-		{"claude", "general", 2, "TURN WOULD END BLIND"},
-		{"claude", "captain", 2, "TURN WOULD END BLIND"},
-		{"codex", "soldier", 0, ""},
-		{"opencode", "soldier", 0, ""},
-		{"grok", "soldier", 0, ""},
-		{"agy", "soldier", 0, `{"decision":"allow"}`},
-		{"agy", "general", 0, `"decision":"continue"`},
+		{"claude", "soldier", 0, "", false},
+		{"claude", "general", 2, "TURN WOULD END BLIND", false},
+		{"claude", "general", 2, "TURN WOULD END BLIND: WATCHER STOPPED - no liveness beacon", true},
+		{"claude", "captain", 2, "TURN WOULD END BLIND", false},
+		{"codex", "soldier", 0, "", false},
+		{"opencode", "soldier", 0, "", false},
+		{"grok", "soldier", 0, "", false},
+		{"agy", "soldier", 0, `{"decision":"allow"}`, false},
+		{"agy", "general", 0, `"decision":"continue"`, false},
 	} {
 		t.Run(tc.harness+"/"+tc.role, func(t *testing.T) {
 			tmpDir := t.TempDir()
@@ -596,9 +598,11 @@ func TestGuardAllowsASoldierSeatToStop(t *testing.T) {
 			}
 			runGit(t, tmpDir, "init")
 			writeTaskMeta(t, tmpDir, "test-task", "ship")
-			beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
-			if err := os.WriteFile(filepath.Join(tmpDir, "state", ".last-watcher-beat"), []byte(beat), 0644); err != nil {
-				t.Fatal(err)
+			if !tc.noBeat {
+				beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
+				if err := os.WriteFile(filepath.Join(tmpDir, "state", ".last-watcher-beat"), []byte(beat), 0644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			t.Setenv("MUNSU_HOME", tmpDir)
 			t.Setenv("MUNSU_ROLE", tc.role)

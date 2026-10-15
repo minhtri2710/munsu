@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -18,9 +17,10 @@ import (
 
 // TestTaskAddReviewReadsTheReviewedHeadFromTheWorktree: the reviewed head on a
 // review task is what git reads at the reviewed task's bound worktree, never
-// something the caller names.
+// something the caller names, and its project is the reviewed task's.
 func TestTaskAddReviewReadsTheReviewedHeadFromTheWorktree(t *testing.T) {
 	homeDir := deliveryGuardShip(t, "t-ship")
+	registerCLITestProject(t, homeDir, "munsu")
 	if out, err := runTaskCommand(t, []string{"task", "add", "r1", "review it", "--kind", "review", "--reviews", "t-ship", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
@@ -29,7 +29,7 @@ func TestTaskAddReviewReadsTheReviewedHeadFromTheWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	def := agg.Definition
-	if def.Kind != taskauthority.KindReview || def.ReviewTaskID != "t-ship" || def.ReviewHead != deliveryGuardHead {
+	if def.Kind != taskauthority.KindReview || def.ReviewTaskID != "t-ship" || def.ReviewHead != deliveryGuardHead || def.Project != "munsu" {
 		t.Fatalf("definition = %+v, want a review of t-ship at %s", def, deliveryGuardHead)
 	}
 }
@@ -241,32 +241,16 @@ func TestGuardTaskCountsWarnsOnlyForWorkingSoldiers(t *testing.T) {
 	}
 }
 
-// TestBriefScaffoldsAReviewTaskFromItsDefinition: brief reads the reviewed
-// task and head from the review task's canonical definition and scaffolds the
-// review brief, reporting the review kind.
-func TestBriefScaffoldsAReviewTaskFromItsDefinition(t *testing.T) {
+// TestTaskAddWritesTheReviewBrief: task add writes the review brief naming the
+// reviewed task and head and the project's tamper check.
+func TestTaskAddWritesTheReviewBrief(t *testing.T) {
 	homeDir := deliveryGuardShip(t, "t-ship")
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.FleetBaseConfig{Backend: "tmux"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-		t.Fatalf("project add: %v\n%s", err, out)
+	registerCLITestProject(t, homeDir, "munsu")
+	if out, err := runRoot(t, "project", "config", "set", "munsu", "tamper-check", "floor --base <base>", "--home", homeDir); err != nil {
+		t.Fatalf("project config set: %v\n%s", err, out)
 	}
 	if out, err := runTaskCommand(t, []string{"task", "add", "r1", "review it", "--kind", "review", "--reviews", "t-ship", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
-	}
-	if out, err := runRoot(t, "project", "config", "set", "demo-repo", "tamper-check", "floor --base <base>", "--home", homeDir); err != nil {
-		t.Fatalf("project config set: %v\n%s", err, out)
-	}
-	out, err := runRoot(t, "brief", "r1", "demo-repo", "--home", homeDir)
-	if err != nil {
-		t.Fatalf("brief: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "kind:  review") {
-		t.Fatalf("brief output = %s, want kind review", out)
 	}
 	brief, err := os.ReadFile(fleet.Path(homeDir, "r1"))
 	if err != nil {

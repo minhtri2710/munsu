@@ -15,7 +15,7 @@ func FixCommand(tool string) string {
 	case "fuser":
 		return "Install psmisc: apt install psmisc  |  dnf install psmisc (macOS ships fuser)"
 	case "herdr":
-		return "Install herdr from the herdr repository, or set HERDR_ENV=1 if already installed"
+		return "Install herdr from the herdr repository"
 	default:
 		return ""
 	}

@@ -14,7 +14,7 @@ The user is the **Human**. Your job:
 1. Accept work from the Human.
 2. Dispatch work to **soldiers** (autonomous sub-agents in isolated
    git worktrees) using `munsu spawn` / `munsu send`.
-3. Supervise soldiers via `munsu peek` / `munsu soldier-state` / the watcher
+3. Supervise soldiers via `munsu peek` / `munsu task show` / the watcher
    (`munsu watch ensure`).
 4. Deliver finished work as a PR (`munsu delivery pr-merge`) or report
    (`munsu teardown`).
@@ -62,7 +62,7 @@ projects/         cloned repos (read-only to you)
 ```
 
 A `state/<id>.status` line is a wake event, not current-state truth.
-Use `munsu soldier-state <id>` for current-state reconciliation.
+Use `munsu task show <id>` for current-state reconciliation.
 
 Treat `data/general.md` as the canonical record of General preferences
 and `data/learnings.md` as curated fleet-local knowledge.
@@ -95,7 +95,7 @@ Never dispatch on a harness without a known adapter.
 Run `munsu integrate status [harness]` to check integration state before relying on turn-end guards.
 
 Run `munsu backend capabilities` to inspect session backend support.
-Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
+Use `munsu spawn <id> --harness <name>` to override soldier harness.
 The supervision loop is in §8.
 
 ---
@@ -105,7 +105,7 @@ The supervision loop is in §8.
 After the session-start digest, reconcile reality with durable records before taking new work.
 Honor lock-refused read-only mode.
 
-Treat digest status tails as wake-event history; use `munsu soldier-state <id>`
+Treat digest status tails as wake-event history; use `munsu task show <id>`
 when current state matters.
 
 For a soldier with a dead endpoint or missing metadata, run `munsu skill show
@@ -149,20 +149,22 @@ or queued and blocked when it touches the same project subsystem.
 ### Dispatch
 
 ```
-munsu task add <id> "<desc>" --kind ship --repo <name>
-munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
-munsu brief <id> <repo>
-# Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
-munsu spawn <id> <project>
+munsu task add <id> "<desc>" --kind ship [--repo <name>]
+munsu task add <id> "<desc>" --kind review --reviews <ship-id>
+# For a ship brief, fill {TEST_IMPACT} in data/<id>/brief.md
+munsu spawn <id>
 ```
-`munsu spawn` takes the queued task to working; do not run `munsu task start` first.
+`munsu task add` writes the brief with the description in place of `{TASK}`; the
+project is `--repo`, the reviewed task's project, or the registered project of the
+current checkout. `munsu spawn` takes the queued task to working in that project
+and ensures the watcher; do not run `munsu task start` first.
 
-Check the spawned soldier: `munsu soldier-state <id>`.
+Check the spawned soldier: `munsu task show <id>`.
 
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: see section 8 for how it reaches you, then `munsu soldier-state <id>` as ground truth.
+On wake: see section 8 for how it reaches you, then `munsu task show <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -173,9 +175,9 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 | Mode | Description | Ready signal |
 |------|-------------|-------------|
 | `direct-PR` | Push + open PR without pipeline | `done: PR <url>` |
-| `local-only` | Clean branch ready for local merge | ready for local merge |
+| `local-only` | Clean branch ready for local merge | `done: committed <sha>` |
 
-Merge when instructed: `munsu delivery pr-merge <id> <pr-url>`; use standalone teardown after `munsu task done` for the normal lifecycle (never bare `gh pr merge` when task meta lives in a captain home). The optional `--teardown` form is a combined path that intentionally retires without marking the task done. Meta resolves primary then captain homes.
+Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (never bare `gh pr merge` when task meta lives in a captain home). A landed merge marks the task done and tears the soldier down; if the teardown fails, fix the cause and re-run the same command, which resumes the teardown only. `munsu delivery merge-status <id>` answers whether a delivery landed. Meta resolves primary then captain homes.
 
 ### Teardown
 
@@ -185,7 +187,7 @@ Only run when the task is fully landed:
 munsu teardown <id> [--force]
 ```
 
-For standalone teardown, deliver first, then record completion with `munsu task done <id>` before `munsu teardown <id>`, because retirement is terminal for the generation. The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase, so the task is never marked done.
+A direct-PR task is torn down by `munsu delivery pr-merge`. For a local-only task or a scout, record completion with `munsu task done <id>` before `munsu teardown <id>`, because retirement is terminal for the generation.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result.
 Never force teardown without explicit discard authority.
 
@@ -194,7 +196,7 @@ Never force teardown without explicit discard authority.
 A completed scout must leave a self-contained report before teardown.
 Before marking complete, run `munsu skill show decision-hold-lifecycle` to ensure
 unresolved decisions for the Human are durably tracked.
-When implementation is separately authorized, promote: `munsu promote <id>`.
+When implementation is separately authorized, promote: `munsu promote <id>`, then `munsu task reopen <id>`; each rewrites the brief.
 
 ---
 
@@ -309,9 +311,9 @@ their mandatory lifecycle. See `munsu skill show decision-hold-lifecycle`.
 
 ## 12. Soldier briefs
 
-`munsu brief <id> <repo>` scaffolds the task brief. Replace every `{TASK}`
-placeholder with clear description, acceptance criteria, constraints, and
-necessary context before dispatch.
+`munsu task add` writes the task brief with the description in place of
+`{TASK}`. Give a description with acceptance criteria, constraints, and
+necessary context, or extend the brief before dispatch.
 
 For a ship brief, also replace the `{TEST_IMPACT}` placeholder with the
 test-impact map: for each path the task will change, the existing tests that
@@ -368,17 +370,13 @@ SUPERVISION.md). It reads the embed, so it works even when skills were not insta
 ```
 1. munsu init                        # ensure home exists (one-time)
 2. munsu session-start               # lock, bootstrap, digest
-3. munsu task add <id> ...           # register task
-4. munsu brief <id> <repo>           # scaffold soldier brief
-   # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
-5. munsu spawn <id> <project>        # launch soldier in worktree+herdr/tmux window
-6. munsu watch ensure                # ensure persistent supervision
-7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake resolve ...; munsu soldier-state <id>  # on a delivered wake prompt (else: munsu wake claim --consumer <id> first)
-9. munsu delivery pr-merge <id> <url> # merge while the task is working
-10. munsu task done <id>              # record completion before standalone retirement
-11. munsu captain converge           # reconcile captains after lifecycle changes
-12. munsu teardown <id>              # clean up after standalone merge
+3. munsu task add <id> ...           # register task and write its brief
+   # For a ship brief, fill {TEST_IMPACT} in data/<id>/brief.md
+4. munsu spawn <id>                  # launch soldier in worktree+herdr/tmux window; ensures the watcher
+5. munsu send <id> "<msg>"           # steer as needed
+6. munsu wake resolve ...; munsu task show <id>  # on a delivered wake prompt (else: munsu wake claim --consumer <id> first)
+7. munsu delivery pr-merge <id> <url> # merge; a landed merge marks the task done and tears it down
+8. munsu captain converge           # reconcile captains after lifecycle changes
 ```
 
 ---

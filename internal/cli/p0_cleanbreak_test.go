@@ -334,10 +334,10 @@ func mustOpIDFor(t *testing.T, value string) domain.OperationID {
 	return id
 }
 
-// TestSoldierStateRefusalsStateThatMunsuCannotRepair proves soldier-state
+// TestTaskObserveRefusalsStateThatMunsuCannotRepair proves task observe
 // reports a meta-only task as not found and a corrupt task as invalid state
 // without pointing at a command that repairs it.
-func TestSoldierStateRefusalsStateThatMunsuCannotRepair(t *testing.T) {
+func TestTaskObserveRefusalsStateThatMunsuCannotRepair(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
@@ -358,13 +358,13 @@ func TestSoldierStateRefusalsStateThatMunsuCannotRepair(t *testing.T) {
 		"meta-only": {"not_found", "Run `munsu task list` to find a task ID"},
 		"corrupt":   {"invalid_state", "munsu cannot repair an unreadable canonical record"},
 	} {
-		out, err := runContract(t, []string{"soldier-state", id, "--output=json"})
+		out, err := runContract(t, []string{"task", "observe", id, "--output=json"})
 		if err == nil {
-			t.Fatalf("soldier-state %s = nil error; output:\n%s", id, out)
+			t.Fatalf("task observe %s = nil error; output:\n%s", id, out)
 		}
 		got := decodeContractError(t, out).Error
 		if got.ErrorCode != want[0] || !strings.Contains(got.Action, want[1]) {
-			t.Errorf("soldier-state %s = (%q, %q), want (%q, %q)", id, got.ErrorCode, got.Action, want[0], want[1])
+			t.Errorf("task observe %s = (%q, %q), want (%q, %q)", id, got.ErrorCode, got.Action, want[0], want[1])
 		}
 	}
 }

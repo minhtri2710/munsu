@@ -72,7 +72,7 @@ type FleetSnapshot struct {
 	UnresolvedHolds int             `json:"unresolved_holds,omitempty"`
 }
 
-// CaptainGuidance is return-channel action note for renderers and bearings
+// CaptainGuidance is return-channel action note for renderers
 // (munsu captain_guidance analog).
 type CaptainGuidance struct {
 	Note              string `json:"note"`
@@ -81,10 +81,10 @@ type CaptainGuidance struct {
 	ReturnChannelNote string `json:"return_channel_note,omitempty"`
 }
 
-// DefaultCaptainGuidance returns the static General bearings note for captains.
+// DefaultCaptainGuidance returns the static General note for captains.
 func DefaultCaptainGuidance() CaptainGuidance {
 	return CaptainGuidance{
-		Note:              "For kind=captain, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority.",
+		Note:              "For kind=captain, the fleet view selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority.",
 		Watch:             "read status/doc return channel; do not routinely munsu peek a captain for answers",
 		Send:              "munsu send captain:<id> '<request>'",
 		ReturnChannelNote: "Captain answers come back through parent state/captain:<id>.status (and optional docs) after a marked munsu send request.",
@@ -441,11 +441,11 @@ type TaskEntry struct {
 
 // ProjectEntry is one row in a project list.
 type ProjectEntry struct {
-	Name        string `json:"name"`
-	Yolo        bool   `json:"yolo,omitempty"`
-	Description string `json:"description,omitempty"`
-	Added       string `json:"added,omitempty"`
-	Directory   string `json:"directory,omitempty"`
+	Name      string `json:"name"`
+	Yolo      bool   `json:"yolo,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Added     string `json:"added,omitempty"`
+	Directory string `json:"directory,omitempty"`
 }
 
 // SafetyCheckData is the structured safety assessment result.

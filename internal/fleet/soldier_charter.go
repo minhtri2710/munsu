@@ -63,12 +63,7 @@ func DefaultCharter(taskID, taskKind, deliveryMode, scaffold string) string {
 		planScaffold = guidedPlanScaffold
 	}
 	bt := "`"
-	doneMessage := "PR {url}"
-	doneDescription := "committed, pushed, and PR open (no merge)"
-	if taskKind == taskauthority.KindScout {
-		doneMessage = "summary of findings location"
-		doneDescription = "scout report complete"
-	}
+	doneMessage, doneDescription := doneReport(taskKind, deliveryMode)
 	return fmt.Sprintf(`# Soldier Charter
 
 **Version: %[1]s**
@@ -147,7 +142,7 @@ A test you add or change follows these rules:
 - Your task ID is %[5]s$MUNSU_TASK_ID%[5]s.
 - Your home is at %[5]s$MUNSU_HOME%[5]s.
 - After any context compaction, re-read %[5]s.soldier-charter.md%[5]s before your next action.
-- Terminal reporting: %[5]smunsu report <state> "<msg>" --key <slug>%[5]s
+- Terminal reporting: %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s
   - Report material phases with --key <slug> so later done/failed/resolved supersede them.
   - States: working, needs-decision, blocked, paused, done, failed, resolved.
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
@@ -202,6 +197,18 @@ The task is complete only when:
 Do not merge the PR.
 
 `, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules, planScaffold)
+}
+
+// doneReport returns the message a soldier's terminal done report carries and
+// what it means, by task kind and delivery mode.
+func doneReport(taskKind, deliveryMode string) (message, meaning string) {
+	switch {
+	case taskKind == taskauthority.KindScout:
+		return "summary of findings location", "scout report complete"
+	case deliveryMode == "local-only":
+		return "committed {sha}", "committed on your branch, not pushed (the orchestrator merges it)"
+	}
+	return "PR {url}", "committed, pushed, and PR open (no merge)"
 }
 
 // reviewerCharter returns the charter of the read-only reviewer seat. The

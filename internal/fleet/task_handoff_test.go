@@ -214,9 +214,18 @@ func TestRecoverTransferJournalsPropagatesCanonicalHomeOpenError(t *testing.T) {
 func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
+	if err := os.MkdirAll(filepath.Dir(Path(parent, "TASK-1")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(parent, "TASK-1"), []byte("brief with test impact"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Handoff(parent, captain, []string{"TASK-1"}); err != nil {
 		t.Fatalf("Handoff: %v", err)
+	}
+	if got, err := os.ReadFile(Path(captain, "TASK-1")); err != nil || string(got) != "brief with test impact" {
+		t.Fatalf("captain brief = %q (%v), want the source brief", got, err)
 	}
 
 	// The destination owns the re-created generation; the source is superseded.
@@ -264,7 +273,7 @@ func TestHandoffCarriesDeliveryContractToDestination(t *testing.T) {
 	}
 }
 
-// seedSourceContract records a direct-PR contract with a github forge on a
+// seedSourceContract records the contract of forge, with its derived mode, on a
 // queued task, leaving the task's canonical contract for the handoff to carry.
 func seedSourceContract(t *testing.T, c *taskauthority.Canonical, taskID string, forge taskauthority.DeliveryStep) {
 	t.Helper()
@@ -277,7 +286,7 @@ func seedSourceContract(t *testing.T, c *taskauthority.Canonical, taskID string,
 		HomeID:       c.HomeID(),
 		TaskID:       tid,
 		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Mode:         "direct-PR",
+		Mode:         taskauthority.DeliveryModeForForge(forge),
 		Forge:        forge,
 	}
 	if _, err := c.RecordDeliveryContract(mustTransferOp(t, "seed-contract-"+taskID, contractReq), contractReq); err != nil {

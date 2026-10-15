@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 )
 
 // dashTarget is the row identity captured when an action starts. Rows reorder
@@ -90,7 +91,7 @@ func wordsArgs(v map[string]string) []string {
 
 // dashActions is the approved action set (plan sets A and B). The wake actions
 // are absent: no existing read exposes a claimed wake's lease and event IDs.
-// Offered nowhere: --force, --teardown, --generation.
+// Offered nowhere: --force, --generation.
 var dashActions = withBindings([]dashAction{
 	{key: "b", name: "task block", binding: bindTask,
 		fields: []dashField{{"by", "blocked by (empty for none)", false}},
@@ -160,12 +161,34 @@ var dashActions = withBindings([]dashAction{
 		}},
 })
 
-// dashQuit and dashMove are the quit and movement bindings. The list's own key
-// map does the moving; dashMove is only its footer entry.
+// The dashboard's other bindings. The list's own key map does the moving;
+// dashMove is only its footer entry.
 var (
-	dashQuit = key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit"))
-	dashMove = key.NewBinding(key.WithKeys("up", "k", "down", "j"), key.WithHelp("j/k", "move"))
+	dashQuit       = key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit"))
+	dashMove       = key.NewBinding(key.WithKeys("up", "k", "down", "j"), key.WithHelp("j/k", "move"))
+	dashDecide     = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "decide"))
+	dashFormNext   = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "next/submit"))
+	dashFormCancel = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"))
+	dashRun        = key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "run"))
+	dashRunCancel  = key.NewBinding(key.WithKeys("esc", "n"), key.WithHelp("esc", "cancel"))
 )
+
+// dashDecideOptions are a held decision's options: each value names the
+// action that carries the choice.
+var dashDecideOptions = []huh.Option[string]{
+	huh.NewOption("resolve: record an answer", "decision-hold resolve"),
+	huh.NewOption("complete: note it without an answer", "decision-hold complete"),
+}
+
+// actionNamed is the action of the table with the given name.
+func actionNamed(name string) *dashAction {
+	for i := range dashActions {
+		if dashActions[i].name == name {
+			return &dashActions[i]
+		}
+	}
+	return nil
+}
 
 // withBindings declares each action's key binding; its help text is the last
 // word of the action name.
