@@ -11,10 +11,8 @@ import (
 // keys use slash separators and reject traversal, empty/current components,
 // native backslashes, absolute aliases, and volume-qualified forms before
 // native-path conversion. The join is purely lexical and does not follow
-// symlinks. Windows device names (CON, NUL, COM1, ...) are no longer refused:
-// munsu runs on darwin and linux only. Human words (domain.Words): grantor the
-// Human, channel Claude Code session with the Lead (typed), 2026-10-15: "tạm
-// thời xóa bỏ windows đi, vì hiện tại không có máy window để chạy thử".
+// symlinks.
+// Words: Human, typed, 2026-10-15: "tạm thời xóa bỏ windows đi, vì hiện tại không có máy window để chạy thử"
 func joinContained(root, key string) (string, error) {
 	if key == "" {
 		return "", ErrEmptyKey

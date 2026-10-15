@@ -36,11 +36,8 @@ func (i Identity) String() string {
 	}
 }
 
-// Result is a path's checkout identity. Classify no longer refuses gate
-// agents: Human words (domain.Words): grantor the Human, channel Claude Code
-// session with the Lead (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1
-// plugin tích hợp rời nếu user cần thui" (removes the gate-agent refusal from
-// spawn, send and teardown).
+// Result is a path's checkout identity.
+// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 type Result struct {
 	Identity      Identity `json:"identity"`
 	CommonDir     string   `json:"common_dir,omitempty"`

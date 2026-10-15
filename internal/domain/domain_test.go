@@ -38,9 +38,6 @@ func TestPRCanMerge(t *testing.T) {
 	}
 }
 
-// TestToMetaEmitsExactlyMetaKeys pins that ToMeta writes every key MetaKeys
-// advertises and no other, so persisted identity and the keys readers clear or
-// check cannot drift apart.
 func TestToMetaEmitsExactlyMetaKeys(t *testing.T) {
 	id := &domain.DeliveryIdentity{
 		Provider:   "github",

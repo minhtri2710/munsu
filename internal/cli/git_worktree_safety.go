@@ -681,13 +681,9 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	return ""
 }
 
-// pushTargetAllowed reads a push argv: origin and one refspec naming the task
-// branch, with only the flags pushFlagAllowed names. Push options, --no-verify
-// and any other remote are refused; they were the review gate's, which munsu
-// no longer models. Human words (domain.Words): grantor the Human, channel
-// Claude Code session with the Lead (typed), 2026-10-15: "xóa no-mistake đi,
-// nó chỉ là 1 plugin tích hợp rời nếu user cần thui" (removes the gate remote,
-// its push-mapping check and its push options).
+// pushTargetAllowed allows only origin, one refspec naming the task branch, and
+// the flags pushFlagAllowed names.
+// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 func pushTargetAllowed(taskBranch string, args []string) bool {
 	remote := ""
 	refspec := ""
