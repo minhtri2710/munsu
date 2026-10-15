@@ -619,7 +619,7 @@ func newAfkCmd() *cobra.Command {
 		Long: `Start the away-mode sub-supervisor daemon.
 
 The daemon sets the AFK consent flag, acquires an identity lock,
-and runs one wake-triage cycle. It then blocks until SIGTERM/SIGINT.
+and runs a wake-triage cycle every 30s until SIGTERM/SIGINT.
 The flag and lock are cleaned up on stop.
 
 Subcommands:
