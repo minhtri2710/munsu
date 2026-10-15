@@ -10,17 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 const (
@@ -51,6 +50,8 @@ type dashRead struct {
 	at       time.Time
 	snap     *fleet.DisplaySnapshot
 	snapErr  error
+	holds    map[dashHoldKey][]dashHold
+	holdsErr error
 	latest   bool // events came from LatestEvents (replace) rather than EventsAfter (append)
 	events   []orchestrator.Record
 	skipped  int
@@ -97,10 +98,13 @@ type dashboardModel struct {
 	width, height int
 
 	readFleet func() (*fleet.DisplaySnapshot, error)
+	readHolds func(primary string, snap *fleet.DisplaySnapshot) (map[dashHoldKey][]dashHold, error)
 	latest    func(n int) ([]orchestrator.Record, int, error)
 	after     func(cursor uint64, n int) ([]orchestrator.Record, int, error)
 	// run starts the action subprocess. Tests replace it; nothing else execs.
 	run func(exe string, args []string) tea.Cmd
+	// ask runs a decision form. Tests replace it.
+	ask func(*huh.Form) tea.Cmd
 	// captains lists the registered captains of the primary home.
 	captains func() ([]fleet.Info, error)
 	// watcher and wakes feed the header chips.
@@ -113,6 +117,8 @@ type dashboardModel struct {
 	readErr    error
 	rows       []fleet.TaskSnapshot
 	failures   []fleet.SourceFailure
+	holds      map[dashHoldKey][]dashHold
+	holdsErr   error
 	beat       home.WatcherBeatStatus
 	unacked    int
 	unackedErr error
@@ -132,15 +138,16 @@ type dashboardModel struct {
 	// the confirm command as loadArgv wrapped it.
 	feed viewport.Model
 	argv viewport.Model
-	help help.Model
 	// Section heights set by resize: the lines of the list section (title
-	// included) and of the feed section (title included).
-	listH, feedH int
+	// included), of NEEDS YOU, of the detail pane and of the feed section
+	// (title included).
+	listH, needsH, detailH, feedH int
 
-	mode    dashMode
-	pending *dashPending
-	notice  string // one-line message for the footer
-	result  *dashExecDone
+	mode     dashMode
+	pending  *dashPending
+	deciding *dashDecision
+	notice   string // one-line message for the footer
+	result   *dashExecDone
 }
 
 // dashListKeys is the list's whole key map. Every other binding is absent, so
@@ -175,10 +182,6 @@ func newDashboardModel(home, exe string) dashboardModel {
 	argv.KeyMap.Left.Unbind()
 	argv.KeyMap.Right.Unbind()
 
-	h := help.New()
-	h.ShortSeparator = "  "
-	h.Styles = help.Styles{Ellipsis: styleMuted, ShortKey: styleMuted, ShortDesc: styleMuted, ShortSeparator: styleMuted}
-
 	return dashboardModel{
 		home:    home,
 		exe:     exe,
@@ -188,16 +191,17 @@ func newDashboardModel(home, exe string) dashboardModel {
 		list:    l,
 		feed:    feed,
 		argv:    argv,
-		help:    h,
 		reading: true,
 		readFleet: func() (*fleet.DisplaySnapshot, error) {
 			return fleet.SnapshotDisplay(home, snapshotDeps())
 		},
-		latest: func(n int) ([]orchestrator.Record, int, error) { return orchestrator.LatestEvents(home, n) },
+		readHolds: dashHolds,
+		latest:    func(n int) ([]orchestrator.Record, int, error) { return orchestrator.LatestEvents(home, n) },
 		after: func(c uint64, n int) ([]orchestrator.Record, int, error) {
 			return orchestrator.EventsAfter(home, c, n)
 		},
 		run:      dashboardExec,
+		ask:      dashAsk,
 		captains: func() ([]fleet.Info, error) { return fleet.ListCaptains(home) },
 		watcher:  dashBeat(home),
 		wakes:    dashUnacked(home),
@@ -239,6 +243,9 @@ func dashboardExec(exe string, args []string) tea.Cmd {
 func (m dashboardModel) read() dashRead {
 	r := dashRead{at: m.now(), latest: !m.feedLoaded}
 	r.snap, r.snapErr = m.readFleet()
+	if r.snapErr == nil {
+		r.holds, r.holdsErr = m.readHolds(m.home, r.snap)
+	}
 	r.beat = m.watcher(r.at)
 	r.unacked, r.unackedErr = m.wakes(r.at)
 	if r.latest {
@@ -293,6 +300,9 @@ func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 	case dashRead:
 		m.reading = false
 		m.applyRead(msg)
+	case dashAsked:
+		m.decided(msg)
+		return m, nil
 	case dashExecDone:
 		m.mode, m.pending = modeBrowse, nil
 		m.result = &msg
@@ -318,6 +328,7 @@ func (m *dashboardModel) applyRead(r dashRead) {
 		m.lastGood = r.at
 		m.rows = r.snap.Tasks
 		m.failures = r.snap.Failures
+		m.holds, m.holdsErr = r.holds, r.holdsErr
 		m.reselect()
 	}
 	if r.eventErr != nil {
@@ -436,6 +447,9 @@ func (m dashboardModel) onKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	if a := actionFor(k); a != nil {
 		return m.begin(a), nil
 	}
+	if key.Matches(k, dashDecide) {
+		return m.decide()
+	}
 	m.list, _ = m.list.Update(k)
 	m.syncSel()
 	return m, nil
@@ -468,7 +482,7 @@ func (m dashboardModel) begin(a *dashAction) dashboardModel {
 	}
 	m.pending.focus(0)
 	if len(a.fields) == 0 {
-		m.confirm()
+		m.confirm(nil)
 	} else {
 		m.mode = modeForm
 	}
@@ -505,14 +519,10 @@ func (m dashboardModel) captainIDOf(rowHome string) (string, error) {
 	return "", fmt.Errorf("no registered captain has home %s", canon)
 }
 
-// confirm builds the argv and loads it, as the exact command line, into the
-// confirm viewport at its top.
-func (m *dashboardModel) confirm() {
+// confirm builds the argv from the field values and loads it, as the exact
+// command line, into the confirm viewport at its top.
+func (m *dashboardModel) confirm(v map[string]string) {
 	p := m.pending
-	v := make(map[string]string, len(p.inputs))
-	for i, f := range p.action.fields {
-		v[f.name] = p.inputs[i].Value()
-	}
 	p.argv = p.action.buildArgv(p.home, p.target, v)
 	m.loadArgv()
 	m.argv.SetYOffset(0)
@@ -529,10 +539,10 @@ func (m *dashboardModel) loadArgv() {
 
 func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	p := m.pending
-	switch k.String() {
-	case "esc":
+	switch {
+	case key.Matches(k, dashFormCancel):
 		m.mode, m.pending = modeBrowse, nil
-	case "enter":
+	case key.Matches(k, dashFormNext):
 		if p.field < len(p.action.fields)-1 {
 			p.focus(p.field + 1)
 			return m, nil
@@ -545,7 +555,11 @@ func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 			}
 		}
 		m.notice = ""
-		m.confirm()
+		v := make(map[string]string, len(p.inputs))
+		for i, f := range p.action.fields {
+			v[f.name] = p.inputs[i].Value()
+		}
+		m.confirm(v)
 	default:
 		p.inputs[p.field], _ = p.inputs[p.field].Update(k)
 	}
@@ -553,14 +567,14 @@ func (m dashboardModel) onFormKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 }
 
 func (m dashboardModel) onConfirmKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
-	switch k.String() {
-	case "y":
+	switch {
+	case key.Matches(k, dashRun):
 		if !m.onScreen() {
 			return m, nil
 		}
 		m.mode, m.result = modeRunning, nil
 		return m, m.run(m.exe, m.pending.argv)
-	case "esc", "n":
+	case key.Matches(k, dashRunCancel):
 		m.mode, m.pending = modeBrowse, nil
 	default:
 		if m.argvDrawn() {
@@ -599,9 +613,7 @@ func (d dashExecDone) outputTail() []string {
 func (m dashboardModel) unresolved() int {
 	n := len(m.failures)
 	for _, ts := range m.rows {
-		switch taskauthority.Phase(ts.CurrentState) {
-		case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
-		default:
+		if !dashFinished(ts) {
 			n++
 		}
 	}

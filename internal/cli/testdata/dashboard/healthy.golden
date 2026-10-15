@@ -1,13 +1,19 @@
 munsu dashboard REFRESHED 3s ago  watcher absent  captains 1  working 2  unacked 0  /h
 unresolved 3  Human-needed 1  failed sources 0
+NEEDS YOU 1
+  stuck    t-human              needs a decision
 Tasks
     GROUP        NAME                 STATE            ROLE   HARNESS MODEL          STATUS
 > ! general      t-human              blocked          ship   -       -              needs a decisi…
                  t-work               working          ship   -       -              implementing
                  t-done               done             ship   -       -              merged
     alpha        t-cap                working          ship   -       -              in captain home
+t-human  ship  project munsu  blocked  general
+seat - -  mode -  window -  pane -  worktree -
+last -
 Events (2 malformed lines skipped)
 12:00:01 task.status t-work k1 working: started
 12:00:02 task.status t-human k2 blocked: needs a decision
 j/k move  b block  u unblock  d done  t retry  o reopen  x teardown  p promote  s send  h hold
-e resolve  c complete  C converge  v record-verdict  m pr-merge  q quit
+e resolve  c complete  R retire  V recover  C converge  v record-verdict  m pr-merge  enter decide
+q quit
