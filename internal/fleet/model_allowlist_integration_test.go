@@ -258,9 +258,9 @@ func TestRecoverLaunchReadiness_DeniedModelFailsClosed(t *testing.T) {
 	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
-	oldLookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { captainLookPath = oldLookPath }()
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	defer func() { captainHarnessPath = oldLookPath }()
 
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi, Model: "claude-sonnet-4-20250515"})
 	tx := &RecoverTransaction{}
@@ -280,9 +280,9 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
-	oldLookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { captainLookPath = oldLookPath }()
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	defer func() { captainHarnessPath = oldLookPath }()
 
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi, Model: "opencode-go/deepseek-v4-flash"})
 	tx := &RecoverTransaction{}
@@ -361,9 +361,9 @@ func TestRecoverLaunchReadiness_NoModelWithPolicyFailsClosed(t *testing.T) {
 	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
-	oldLookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { captainLookPath = oldLookPath }()
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	defer func() { captainHarnessPath = oldLookPath }()
 
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi})
 	tx := &RecoverTransaction{}

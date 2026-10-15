@@ -54,6 +54,7 @@ var readinessProbes = map[string]readinessProbe{
 	// claude 2.1.300 with no login exits 1: "Not logged in. Run claude auth login to authenticate."
 	Claude: {args: []string{"auth", "status", "--text"}},
 	// pi 1.2.0 with no credentials exits 0: "No models available. Use /login to log into a provider via OAuth or API key."
+	// Words: Human, typed, 2026-10-15: "sao lại phải dùng env?? chạy cli của harness agent là được rồi, nếu harness đó không chạy được thì báo lại"
 	Pi: {args: []string{"--list-models"}, notReady: "No models available"},
 }
 
@@ -96,6 +97,19 @@ func runReadinessProbe(binary string, probe readinessProbe, seat *ClaudeSeat) st
 		return fmt.Sprintf("`%s` reported: %s", command, text)
 	}
 	return ""
+}
+
+// CheckReady runs the readiness command of harnessName with the binary at
+// path. It returns nil when the harness has none or reports ready.
+func CheckReady(harnessName, path string) error {
+	probe, ok := readinessProbes[harnessName]
+	if !ok {
+		return nil
+	}
+	if detail := runReadinessProbe(path, probe, nil); detail != "" {
+		return &PreflightError{Harness: harnessName, Reason: "not-ready", Detail: detail}
+	}
+	return nil
 }
 
 // ClaudeSeat is how a fenced claude seat logs in, for the readiness probe: the

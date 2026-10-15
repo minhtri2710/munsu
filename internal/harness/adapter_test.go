@@ -79,6 +79,7 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 		// Measured on claude 2.1.300 with no login.
 		loggedOut = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort"
 		loggedIn  = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
+		quoted    = "❯ Fix the banner that says Not logged in after login.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
 	)
 	for _, c := range []struct {
 		name, capture         string
@@ -90,6 +91,7 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 		{"idle", idle, false, false, true},
 		{"not logged in", loggedOut, false, true, true},
 		{"logged in", loggedIn, false, false, true},
+		{"brief quotes the phrase", quoted, false, false, true},
 	} {
 		if got := IsTrustPrompt(c.capture, Claude); got != c.trust {
 			t.Errorf("%s: IsTrustPrompt = %v, want %v (Enter answers \"No, exit\")", c.name, got, c.trust)

@@ -11,9 +11,9 @@ import (
 
 func seedPiWorktreeCaptain(t *testing.T, repo string) (string, string) {
 	t.Helper()
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 	t.Setenv("MUNSU_ROLE", "")
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {

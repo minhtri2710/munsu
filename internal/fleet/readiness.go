@@ -12,9 +12,8 @@ import (
 
 // SoldierHarnessPreflight is the harness half of a soldier launch's readiness:
 // the binary check and the harness CLI's own readiness command, asked the way a
-// fenced claude seat logs in. Spawn refuses
-// on the same result before any worktree, endpoint, or process exists; doctor
-// asks the same question without spawning.
+// fenced claude seat logs in. Spawn refuses on the same result before any
+// worktree, endpoint, or process exists; doctor asks without spawning.
 func SoldierHarnessPreflight(homeDir, harnessName string) error {
 	var claudeSeat *harness.ClaudeSeat
 	if harnessName == harness.Claude && fence.Supported() == nil {

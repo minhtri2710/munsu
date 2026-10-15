@@ -161,7 +161,18 @@ func CaptainIDFromTask(taskID string, meta map[string]string) string {
 
 // --- Injectable seams for testing ---
 
-var captainLookPath = exec.LookPath
+var captainHarnessPath = readyHarnessPath
+
+// readyHarnessPath resolves a captain's harness binary and runs the harness's
+// own readiness command.
+// Words: Human, typed, 2026-10-15: "sao lại phải dùng env?? chạy cli của harness agent là được rồi, nếu harness đó không chạy được thì báo lại"
+func readyHarnessPath(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("%s harness not found on PATH: %w", name, err)
+	}
+	return path, harness.CheckReady(name, path)
+}
 
 // proveSleep is the pause between post-launch liveness probes in the
 // package-level Recover/Converge paths; overridden in tests.
@@ -937,9 +948,9 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("canonicalizing captain home: %w", err)
 	}
 
-	binPath, err := captainLookPath(binName)
+	binPath, err := captainHarnessPath(binName)
 	if err != nil {
-		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
+		return fmt.Errorf("captain launch: %w", err)
 	}
 	seat, err := prepareCaptainSeat(canonicalCaptainHome, parentHome, markerID, h)
 	if err != nil {

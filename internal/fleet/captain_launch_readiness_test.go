@@ -8,9 +8,9 @@ import (
 )
 
 func TestLaunchReadinessUsesSnapshotCaptainProfileModel(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 	parent := t.TempDir()
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: "pi", Model: "cline-pass/deepseek-v4-flash", Effort: "medium"})
 

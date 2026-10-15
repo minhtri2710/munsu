@@ -109,9 +109,9 @@ var Adapters = map[string]Adapter{
 		TrustPatterns: nil,
 		// Measured on claude 2.1.300: the folder-trust dialog of an untrusted
 		// project repository, short enough to fit one line at 38 columns, and
-		// the footer "Not logged in · Run /login" printed beside the ready footer.
+		// the footer printed beside the ready footer with no login.
 		// Words: Human, typed, 2026-10-15: "sao lại phải dùng env?? chạy cli của harness agent là được rồi, nếu harness đó không chạy được thì báo lại"
-		FailurePatterns: []string{"Quick safety check", "Not logged in"},
+		FailurePatterns: []string{"Quick safety check", "Not logged in · Run /login"},
 		LaunchTemplate: Template{
 			ModelFlag: "--model",
 		},
