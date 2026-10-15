@@ -710,13 +710,9 @@ func sameRetiredAcquired(a, b *taskauthority.AcquiredEndpoint) bool {
 func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
-	// A launch that never bound wrote no meta; its resources are retired from
-	// the canonical evidence alone.
-	meta, err := home.ReadMeta(opts.HomeDir, opts.ID)
-	if errors.Is(err, os.ErrNotExist) {
-		meta = map[string]string{}
-	} else if err != nil {
-		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, err)
+	meta, metaErr := home.ReadMeta(opts.HomeDir, opts.ID)
+	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, metaErr)
 	}
 
 	// Resolve the task identity and the safety-check generation up front: the
@@ -734,6 +730,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	current, err := authority.Get(taskID)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: resolving task kind: %w", opts.ID, err)
+	}
+	// A launch that never bound wrote no meta and retires from canonical
+	// evidence alone; any other task without meta is refused.
+	if metaErr != nil {
+		if !launchedUnbound(current) {
+			return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, metaErr)
+		}
+		meta = map[string]string{}
 	}
 	kind := current.Definition.Kind
 	if kind == "" {
@@ -851,7 +855,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return result, nil
 	}
 	if claimCompleted {
-		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error { return finalizeCompletedProjectionCleanup(opts, retired.Launch, claimGen, kind, result) })
+		reconcileResult, err := authority.ReconcileCompletedCleanup(taskID, claimGen, func() error {
+			return finalizeCompletedProjectionCleanup(opts, authority.HomeID().Value(), retired.Launch, claimGen, kind, result)
+		})
 		if err != nil {
 			return result, &RetirementProjectionError{TaskID: opts.ID, Err: err}
 		}
@@ -1139,7 +1145,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return err
 		}
 		projectionCleanup := func() error {
-			if err := finalizeCompletedProjectionCleanup(opts, retired.Launch, claimGen, kind, result); err != nil {
+			if err := finalizeCompletedProjectionCleanup(opts, authority.HomeID().Value(), retired.Launch, claimGen, kind, result); err != nil {
 				return &RetirementProjectionError{TaskID: opts.ID, Err: err}
 			}
 			return nil
@@ -1173,7 +1179,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 // retry. Residual artifacts go first, then the retired wake state, and the
 // .meta last, so a failed step leaves the retry identity in place. launch is
 // the retired generation's launch intent, nil when it never launched.
-func finalizeCompletedProjectionCleanup(opts Options, launch *taskauthority.LaunchIntent, gen taskauthority.Generation, kind string, result *TeardownResult) error {
+func finalizeCompletedProjectionCleanup(opts Options, homeID string, launch *taskauthority.LaunchIntent, gen taskauthority.Generation, kind string, result *TeardownResult) error {
 	harnessName := ""
 	if launch != nil {
 		harnessName = launch.Harness
@@ -1189,7 +1195,7 @@ func finalizeCompletedProjectionCleanup(opts Options, launch *taskauthority.Laun
 		result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", filepath.Base(p)))
 	}
 	if launch != nil {
-		dir := seatTempDir(launch.SeatEnv.TempDir, opts.ID, gen.String())
+		dir := seatTempDir(launch.SeatEnv.TempDir, homeID, opts.ID, gen.String())
 		if err := removeSeatTemp(dir); err != nil {
 			return fmt.Errorf("remove seat temp %s: %w", dir, err)
 		}
@@ -1268,6 +1274,15 @@ func retirementSafetyEvidenceForGeneration(authority *taskauthority.Canonical, t
 		return &binding, partialLaunchRetirement(agg), nil
 	}
 	return nil, false, nil
+}
+
+// launchedUnbound reports a generation that began a launch but never bound an
+// endpoint, retired or not.
+func launchedUnbound(agg taskauthority.Aggregate) bool {
+	if agg.Launch == nil && agg.AcquiredEndpoint == nil {
+		return false
+	}
+	return agg.Endpoint == nil && (agg.Retirement == nil || agg.Retirement.Endpoint == nil)
 }
 
 func partialLaunchRetirement(agg taskauthority.Aggregate) bool {
@@ -1686,29 +1701,49 @@ func cleanupResidualArtifactPaths(homeDir, id, kind, harnessName string) ([]stri
 }
 
 // removeSeatTemp removes a seat temp dir. Go writes its module cache
-// read-only, so each directory is opened to its owner first; links are never
-// followed.
+// read-only, so each directory is opened to its owner first. Every step runs
+// through an os.Root, so no path resolves outside the dir.
 func removeSeatTemp(dir string) error {
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if perm := info.Mode().Perm(); perm&0o700 != 0o700 {
-			return os.Chmod(p, perm|0o700)
-		}
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil
-	})
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	}
+	if err != nil {
 		return err
 	}
-	return os.RemoveAll(dir)
+	defer parent.Close()
+	name := filepath.Base(dir)
+	info, err := parent.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		root, err := parent.OpenRoot(name)
+		if err != nil {
+			return err
+		}
+		err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			if perm := info.Mode().Perm(); perm&0o700 != 0o700 {
+				return root.Chmod(p, perm|0o700)
+			}
+			return nil
+		})
+		root.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return parent.RemoveAll(name)
 }
 
 // worktreeHolderPIDs lists the processes with wtPath open through fuser(1).

@@ -2124,7 +2124,7 @@ func (r *Runner) submitLaunch() error {
 			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
 			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
-			SeatEnv: r.seatEnv,
+			SeatEnv: r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
 		return fmt.Errorf("submitting launch: canonical launch artifacts were not prepared")
@@ -2242,7 +2242,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath,
-		SeatEnv:  r.seatEnv,
+		SeatEnv:  r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 	})
 	if err != nil {
 		return fmt.Errorf("preparing launch manifest: %w", err)

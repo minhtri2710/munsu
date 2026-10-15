@@ -105,14 +105,17 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 
 	// .meta provides operational/display data (diagnostic only). The endpoint
 	// identity is the canonical one, bound or only acquired: a launch whose
-	// handshake failed holds a live pane but wrote no .meta.
+	// handshake failed holds a live pane but wrote no .meta. A retired task's
+	// acquired endpoint is no longer its pane.
 	meta, _ := home.ReadMeta(homeDir, id)
 	if meta == nil {
 		meta = map[string]string{}
 	}
-	overlayEndpointMeta(meta, agg.Endpoint, agg.AcquiredEndpoint)
-	if agg.Launch != nil {
-		meta["harness"] = agg.Launch.Harness
+	if agg.Phase != tauth.PhaseRetired {
+		overlayEndpointMeta(meta, agg.Endpoint, agg.AcquiredEndpoint)
+		if agg.Launch != nil {
+			meta["harness"] = agg.Launch.Harness
+		}
 	}
 
 	// .status contributes diagnostic evidence only (never lifecycle state).

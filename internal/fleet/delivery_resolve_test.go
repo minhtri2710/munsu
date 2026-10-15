@@ -38,6 +38,30 @@ func TestResolveTaskHome(t *testing.T) {
 			t.Fatalf("ResolveTaskHome = %q, %v, %v; want captain %q with its meta", gotHome, meta, err, capHome)
 		}
 	})
+	t.Run("handed-off task resolves to the captain over its source home", func(t *testing.T) {
+		parent := t.TempDir()
+		if _, err := mhome.Init(parent); err != nil {
+			t.Fatal(err)
+		}
+		capHome := filepath.Join(parent, "captains", "test-sm")
+		if _, err := mhome.Init(capHome); err != nil {
+			t.Fatal(err)
+		}
+		if err := mhome.SeedCaptainProvenance(capHome, "test-sm"); err != nil {
+			t.Fatal(err)
+		}
+		seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
+		if err := mhome.WriteMeta(parent, "TASK-1", map[string]string{"window": "stale"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := Handoff(parent, capHome, []string{"TASK-1"}); err != nil {
+			t.Fatalf("Handoff: %v", err)
+		}
+		gotHome, _, err := ResolveTaskHome(parent, "TASK-1")
+		if err != nil || gotHome != capHome {
+			t.Fatalf("ResolveTaskHome = %q, %v; want captain %q", gotHome, err, capHome)
+		}
+	})
 	t.Run("meta without a canonical record is not found", func(t *testing.T) {
 		parent := t.TempDir()
 		seedTaskInHome(t, parent, "other", taskauthority.KindShip)

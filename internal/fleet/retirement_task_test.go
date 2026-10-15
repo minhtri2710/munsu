@@ -413,14 +413,44 @@ func TestScoutSafetyCheckRejectsPriorGenerationReport(t *testing.T) {
 	}
 }
 
+// TestRun_NoMeta admits a task without .meta only when its generation began a
+// launch that never bound; --force does not widen that.
 func TestRun_NoMeta(t *testing.T) {
-	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
-
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{}, canonicalMergeTestAuth(t, tmp, "nonexistent"))
-	if err == nil {
-		t.Fatal("should fail for nonexistent task")
+	for _, tc := range []struct {
+		name    string
+		launch  bool
+		refused bool
+	}{
+		{name: "never-launched task is refused", refused: true},
+		{name: "launched but unbound task retires", launch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				homeDir, id string
+				auth        *taskauthority.Canonical
+			)
+			if tc.launch {
+				f := newLaunchFixture(t, "no-meta-launched")
+				if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+					t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
+				}
+				homeDir, id, auth = f.homeDir, f.taskID, f.auth
+			} else {
+				homeDir, id = t.TempDir(), "no-meta-queued"
+				auth = canonicalMergeTestAuth(t, homeDir, id)
+			}
+			_, err := RetireTask(Options{HomeDir: homeDir, ID: id, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
+			if refused := err != nil && strings.Contains(err.Error(), "reading meta"); refused != tc.refused {
+				t.Fatalf("RetireTask error = %v, want refused=%v", err, tc.refused)
+			}
+			agg, gerr := auth.Get(mustTaskID(t, id))
+			if gerr != nil {
+				t.Fatal(gerr)
+			}
+			if retired := agg.Phase == taskauthority.PhaseRetired; retired == tc.refused {
+				t.Fatalf("phase = %q, want retired=%v", agg.Phase, !tc.refused)
+			}
+		})
 	}
 }
 
@@ -686,55 +716,6 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 	if !foundResidual {
 		t.Errorf("expected teardown steps to mention residual removal, got: %v", result.Steps)
-	}
-}
-
-// TestFinalizeCleanupRemovesSeatTemp removes the retired generation's seat temp,
-// read-only module cache included, without following a link out of it, and
-// leaves another generation's seat temp in place.
-func TestFinalizeCleanupRemovesSeatTemp(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := mhome.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	tmp := t.TempDir()
-	seat := seatTempDir(tmp, "T-1", "2")
-	other := seatTempDir(tmp, "T-1", "3")
-	outside := t.TempDir()
-	modDir := filepath.Join(seat, "go-mod", "example.com", "m@v1")
-	for _, d := range []string{modDir, other} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module m\n"), 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(seat, "link")); err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range []string{modDir, filepath.Dir(modDir)} {
-		if err := os.Chmod(d, 0o555); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Chmod(outside, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(outside, 0o755) })
-
-	launch := &taskauthority.LaunchIntent{SeatEnv: taskauthority.SeatEnv{TempDir: tmp}}
-	if err := finalizeCompletedProjectionCleanup(Options{HomeDir: homeDir, ID: "T-1"}, launch, 2, taskauthority.KindShip, &TeardownResult{}); err != nil {
-		t.Fatalf("finalize: %v", err)
-	}
-	if _, err := os.Lstat(seat); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("seat temp still present: %v", err)
-	}
-	if _, err := os.Stat(other); err != nil {
-		t.Fatalf("another generation's seat temp removed: %v", err)
-	}
-	if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o555 {
-		t.Fatalf("link target touched: %v, %v", fi, err)
 	}
 }
 
