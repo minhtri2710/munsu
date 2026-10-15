@@ -797,41 +797,31 @@ func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 	}
 }
 
+// TestWorktreeReclaimReturnsCleanUnownedOrphan reclaims a treehouse project's
+// clean orphan through its configured provider, named or found by walking the
+// home's projects.
 func TestWorktreeReclaimReturnsCleanUnownedOrphan(t *testing.T) {
-	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
-	root := NewRootCommand()
-	root.SetOut(new(strings.Builder))
-	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim", "--project", treehouseProject})
-	stdout, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldStdout := os.Stdout
-	os.Stdout = writer
-	outputDone := make(chan string, 1)
-	go func() {
-		output, readErr := io.ReadAll(stdout)
-		if readErr != nil {
-			outputDone <- "read stdout: " + readErr.Error()
-			return
-		}
-		outputDone <- string(output)
-	}()
-	err = root.Execute()
-	writer.Close()
-	os.Stdout = oldStdout
-	output := <-outputDone
-	stdout.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output, "returning orphaned worktree: "+worktreePath) || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
-		t.Fatalf("clean orphan reclaim output = %q", output)
-	}
-	trace, err := os.ReadFile(tracePath)
-	if err != nil || !strings.Contains(string(trace), worktreePath) {
-		t.Fatalf("provider return trace = %q, err=%v", trace, err)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"with --project", []string{"--project", treehouseProject}},
+		{"without --project", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+			output, err := runWorktreeReclaim(t, tc.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output, "returning orphaned worktree: "+worktreePath) || !strings.Contains(output, "Reclaimed 1 orphaned worktrees") {
+				t.Fatalf("clean orphan reclaim output = %q", output)
+			}
+			trace, err := os.ReadFile(tracePath)
+			if err != nil || !strings.Contains(string(trace), worktreePath) {
+				t.Fatalf("provider return trace = %q, err=%v", trace, err)
+			}
+		})
 	}
 }
 

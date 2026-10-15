@@ -235,6 +235,7 @@ type LaunchIntent struct {
 	WindowLabel           string `json:"window_label,omitempty"`
 	WorktreeReservationID string `json:"worktree_reservation_id"`
 	WorktreeFenceToken    string `json:"worktree_fence_token"`
+	WorktreeTool          string `json:"worktree_tool,omitempty"`
 	EndpointReservationID string `json:"endpoint_reservation_id"`
 	EndpointFenceToken    string `json:"endpoint_fence_token"`
 	EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`

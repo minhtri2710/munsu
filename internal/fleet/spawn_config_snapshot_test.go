@@ -376,6 +376,7 @@ func TestWorktreeToolResolution(t *testing.T) {
 		configure bool
 		ready     bool
 		policy    DispatchPolicy
+		project   string // set: resolve through ProjectWorktreeTool for this project
 		wantErr   string
 	}{
 		{name: "configured treehouse not Ready is refused", configure: true, policy: DispatchPolicyGeneralDirect, wantErr: "resolved worktree adapter treehouse probe missing"},
@@ -383,6 +384,9 @@ func TestWorktreeToolResolution(t *testing.T) {
 		{name: "published treehouse no longer Ready is refused", configure: true, policy: DispatchPolicyCaptainMediated, wantErr: "configured worktree tool is not Ready"},
 		{name: "published Ready treehouse is allowed", configure: true, ready: true, policy: DispatchPolicyCaptainMediated},
 		{name: "unconfigured uses git worktree with treehouse on PATH", policy: DispatchPolicyGeneralDirect},
+		{name: "published snapshot of another project refuses the project tool", configure: true, ready: true, policy: DispatchPolicyCaptainMediated, project: "beta", wantErr: `does not match project "beta"`},
+		{name: "published snapshot of the project allows the project tool", configure: true, ready: true, policy: DispatchPolicyCaptainMediated, project: "alpha"},
+		{name: "published treehouse no longer Ready refuses the project tool", configure: true, policy: DispatchPolicyCaptainMediated, project: "alpha", wantErr: "configured worktree tool is not Ready"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -427,7 +431,13 @@ func TestWorktreeToolResolution(t *testing.T) {
 				}
 			}
 
-			got, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, tc.policy, nil)
+			var got SpawnProjectConfig
+			var err error
+			if tc.project != "" {
+				got.WorktreeTool, err = ProjectWorktreeTool(home, tc.project)
+			} else {
+				got, err = ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, tc.policy, nil)
+			}
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)

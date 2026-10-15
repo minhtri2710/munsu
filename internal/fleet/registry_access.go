@@ -3,6 +3,7 @@ package fleet
 import (
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -165,6 +166,7 @@ func ProjectWorktreeTool(homeDir, project string) (string, error) {
 	)
 	if config.PublishedSnapshotAvailable(homeDir) {
 		snap, err = config.LoadPublishedSnapshot(homeDir)
+		// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
 		if err == nil && snap.Config().Project != project {
 			err = fmt.Errorf("published snapshot project %q does not match project %q", snap.Config().Project, project)
 		}
@@ -179,6 +181,43 @@ func ProjectWorktreeTool(homeDir, project string) (string, error) {
 		return "", err
 	}
 	return step.Path, nil
+}
+
+// HomeWorktreeTools lists the worktree providers homeDir's projects use: git
+// worktree, then each distinct Ready treehouse a registered project configures.
+func HomeWorktreeTools(homeDir string) ([]string, error) {
+	var steps []config.ResolvedStep
+	if config.PublishedSnapshotAvailable(homeDir) {
+		snap, err := config.LoadPublishedSnapshot(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, snap.Config().WorktreeStep)
+	} else {
+		projects, err := List(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		overlays, err := config.LoadProjectOverlays(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range projects {
+			if entry := overlays[p.Name].Worktree; entry != nil {
+				steps = append(steps, config.ResolvedStep{Adapter: entry.Adapter, Path: entry.Path})
+			}
+		}
+	}
+	tools := []string{""}
+	for _, step := range steps {
+		if err := requireReadyWorktree(step); err != nil {
+			return nil, err
+		}
+		if !slices.Contains(tools, step.Path) {
+			tools = append(tools, step.Path)
+		}
+	}
+	return tools, nil
 }
 
 // requireReadyWorktree re-probes a configured worktree step and refuses unless
