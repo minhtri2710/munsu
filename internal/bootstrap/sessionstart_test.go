@@ -409,7 +409,7 @@ func TestRunSessionStartBootstrapFailureReleasesSessionLock(t *testing.T) {
 	}
 	bootstrapErr := errors.New("bootstrap failed")
 	savedBootstrap := sessionStartBootstrap
-	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
+	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
 		return nil, bootstrapErr
 	}
 	defer func() { sessionStartBootstrap = savedBootstrap }()
@@ -444,7 +444,7 @@ func TestRunSessionStartBootstrapFailureSurfacesReleaseError(t *testing.T) {
 	releaseErr := errors.New("release failed")
 	savedBootstrap := sessionStartBootstrap
 	savedRelease := sessionStartRelease
-	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
+	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
 		return nil, bootstrapErr
 	}
 	sessionStartRelease = func(string) error { return releaseErr }
@@ -632,7 +632,7 @@ func generalSession(t *testing.T, herdrPane string) string {
 		t.Setenv("HERDR_SESSION", "lab")
 	}
 	savedBootstrap := sessionStartBootstrap
-	sessionStartBootstrap = func(string, bool, []string, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
+	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
 		return &Result{}, nil
 	}
 	t.Cleanup(func() {

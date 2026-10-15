@@ -58,7 +58,7 @@ func TestBuildTaskWorktreeBinding_RefusesNonWorktree(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			binding, err := buildTaskWorktreeBinding(primary, tc.path, "lease-1", "fence-1")
+			binding, err := buildTaskWorktreeBinding(primary, tc.path, "lease-1", "fence-1", "")
 			if err == nil {
 				t.Fatalf("buildTaskWorktreeBinding(%s) = %+v, want refusal", tc.path, binding)
 			}
@@ -84,7 +84,7 @@ func TestBuildTaskWorktreeBinding_AdmitsLinkedWorktree(t *testing.T) {
 	worktree := filepath.Join(t.TempDir(), "wt")
 	bindingGit(t, primary, "worktree", "add", "--detach", worktree)
 
-	binding, err := buildTaskWorktreeBinding(primary, worktree, "lease-1", "fence-1")
+	binding, err := buildTaskWorktreeBinding(primary, worktree, "lease-1", "fence-1", "")
 	if err != nil {
 		t.Fatalf("buildTaskWorktreeBinding(%s) = %v, want a binding", worktree, err)
 	}

@@ -49,8 +49,8 @@ func TestWorktreeGuards(t *testing.T) {
 		}},
 		{"treehouse", "return", func(t *testing.T) (func(string) error, func(string) bool) {
 			trace := filepath.Join(t.TempDir(), "treehouse-invoked")
-			testutil.FakeOnPath(t, "treehouse", fmt.Sprintf("#!/bin/sh\n: > %q\nexit 0\n", trace))
-			return (&treehouseProvider{}).Return, func(string) bool { _, err := os.Stat(trace); return err == nil }
+			bin := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), fmt.Sprintf("#!/bin/sh\n: > %q\nexit 0\n", trace))
+			return (&treehouseProvider{bin: bin}).Return, func(string) bool { _, err := os.Stat(trace); return err == nil }
 		}},
 	}
 	type returnCase struct {
@@ -129,8 +129,8 @@ func TestWorktreeGuards(t *testing.T) {
 		{"treehouse/recovery of a reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, "/pool/wt"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\nif [ \"$1\" = status ]; then printf '%s\\n' '"+tc.holders+"'; exit 0; fi\nprintf '%s\\n' /pool/wt\n")
-			got, err := (&treehouseProvider{}).GetReserved(t.TempDir(), false, "reservation", true)
+			bin := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), "#!/bin/sh\nif [ \"$1\" = status ]; then printf '%s\\n' '"+tc.holders+"'; exit 0; fi\nprintf '%s\\n' /pool/wt\n")
+			got, err := (&treehouseProvider{bin: bin}).GetReserved(t.TempDir(), false, "reservation", true)
 			if tc.want == "" {
 				if !errors.Is(err, ErrWorktreeReservationRecoveryUnsupported) || got != "" {
 					t.Fatalf("GetReserved = %q, %v; want unsupported-recovery refusal", got, err)
@@ -143,8 +143,8 @@ func TestWorktreeGuards(t *testing.T) {
 		})
 	}
 	t.Run("treehouse/first acquisition", func(t *testing.T) {
-		testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\nprintf '%s\\n' /pool/wt\nexit 0\n")
-		got, err := (&treehouseProvider{}).GetReserved(t.TempDir(), false, "reservation", false)
+		bin := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), "#!/bin/sh\nprintf '%s\\n' /pool/wt\nexit 0\n")
+		got, err := (&treehouseProvider{bin: bin}).GetReserved(t.TempDir(), false, "reservation", false)
 		if err != nil || got != "/pool/wt" {
 			t.Fatalf("GetReserved = %q, %v; want the pool worktree", got, err)
 		}

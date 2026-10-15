@@ -25,7 +25,9 @@ type SpawnProjectConfig struct {
 	ProjectName      string
 	ProjectPath      string
 	ForgeStep        taskauthority.DeliveryStep
-	Soldier          SpawnSoldierConfig
+	// WorktreeTool is the configured treehouse executable, or "" for git worktree.
+	WorktreeTool string
+	Soldier      SpawnSoldierConfig
 }
 
 func deliveryStep(step fleetconfig.ResolvedStep) taskauthority.DeliveryStep {
@@ -97,6 +99,9 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 			fmt.Errorf("published snapshot project %q does not match requested project %q", resolved.Project, args.ProjectName),
 		)
 	}
+	if err := requireReadyWorktree(resolved.WorktreeStep); err != nil {
+		return SpawnProjectConfig{}, err
+	}
 	if err := validateResolvedDispatchProfiles(resolved.DispatchProfiles); err != nil {
 		return SpawnProjectConfig{}, err
 	}
@@ -131,6 +136,7 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		ProjectName:      resolved.Project,
 		ProjectPath:      resolved.ProjectPath,
 		ForgeStep:        deliveryStep(resolved.ForgeStep),
+		WorktreeTool:     resolved.WorktreeStep.Path,
 		Soldier: SpawnSoldierConfig{
 			Harness:  selection.Harness,
 			Model:    selection.Model,

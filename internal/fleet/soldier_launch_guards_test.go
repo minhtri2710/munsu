@@ -131,11 +131,11 @@ func launchArtifactInputForGuards(t *testing.T) LaunchArtifactInput {
 	t.Helper()
 	wtDir, homeDir := t.TempDir(), t.TempDir()
 	return LaunchArtifactInput{
-		WorktreePath:   wtDir,
-		LaunchDir:      wtDir,
-		HomeDir:        homeDir,
-		PathDirs:       seatPathDirs(homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: wtDir,
+		LaunchDir:    wtDir,
+		HomeDir:      homeDir,
+		PathDirs:     seatPathDirs(homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         "guard-task",
 		SnapshotDigest: "sha256:snapshot",
 		LaunchBin:      "pi",

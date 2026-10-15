@@ -23,7 +23,7 @@ Hard-required tools (doctor exits non-zero if missing):
   one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
-  treehouse, gh-axi, gh, and GitHub auth.
+  gh-axi, gh, and GitHub auth.
 
 Use --role for role-specific integration matrix:
   --role general   Harness adapter, session backend, gh auth, go toolchain, per-project launch readiness
@@ -65,7 +65,7 @@ Use --role for role-specific integration matrix:
 				return nil
 			}
 
-			result, err := bootstrap.Run(ctx.Home, false, nil, nil)
+			result, err := bootstrap.Run(ctx.Home, false, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap: %w", err)
 			}

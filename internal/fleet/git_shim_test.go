@@ -67,11 +67,11 @@ func TestSoldierLaunchScriptPrependsGitShim(t *testing.T) {
 	home := t.TempDir()
 	wt := t.TempDir()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   wt,
-		LaunchDir:      wt,
-		HomeDir:        home,
-		PathDirs:       seatPathDirs(home),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: wt,
+		LaunchDir:    wt,
+		HomeDir:      home,
+		PathDirs:     seatPathDirs(home),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         "ship-shim",
 		SnapshotDigest: "digest",
 		LaunchBin:      "/bin/true",
@@ -106,7 +106,7 @@ func TestSoldierLaunchScriptExportsExactlyTheSeatPathDirs(t *testing.T) {
 	t.Setenv("PATH", strings.Join([]string{"/munsu/a", ".", "", "rel/bin", "/munsu/b/"}, ":"))
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath: wt, LaunchDir: wt, HomeDir: home, PathDirs: seatPathDirs(home), TaskID: "ship-shim", SnapshotDigest: "digest",
-		SeatEnv:   testSeatEnv(),
+		HomeID: "test-home", SeatEnv: testSeatEnv(),
 		LaunchBin: "/bin/true", LaunchArgs: []string{"--go"}, LaunchID: "lid", Generation: "1", EndpointFence: "fence",
 	})
 	if err != nil {

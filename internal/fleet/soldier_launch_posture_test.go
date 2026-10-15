@@ -383,7 +383,7 @@ func TestLaunchScriptRedirectsToolCachesIntoTheSeatTemp(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "env")
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
 		WorktreePath: wt, LaunchDir: wt, HomeDir: human, PathDirs: seatPathDirs(human), TaskID: "ship-cache", SnapshotDigest: "digest",
-		SeatEnv:   testSeatEnv(),
+		HomeID: "test-home", SeatEnv: testSeatEnv(),
 		LaunchBin: "/bin/sh", LaunchArgs: []string{"-c", "env > " + out}, LaunchID: "lid", Generation: "1", EndpointFence: "fence",
 	})
 	if err != nil {
@@ -402,7 +402,7 @@ func TestLaunchScriptRedirectsToolCachesIntoTheSeatTemp(t *testing.T) {
 			env[k] = v
 		}
 	}
-	seat := filepath.Join(tmp, "munsu-seat-"+labelComponent("ship-cache")+"-1")
+	seat := seatTempDir(tmp, "test-home", "ship-cache", "1")
 	want := map[string]string{
 		"npm_config_cache": "npm-cache", "npm_config_store_dir": "npm-store",
 		"PIP_CACHE_DIR": "pip-cache", "UV_CACHE_DIR": "uv-cache", "XDG_CACHE_HOME": "xdg-cache",

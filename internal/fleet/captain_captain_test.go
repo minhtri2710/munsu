@@ -1719,9 +1719,9 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 // snapshot that Launch accepts, and returns its parent and captain homes.
 func launchableCaptain(t *testing.T) (parent, captainHome string) {
 	t.Helper()
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 	parent = t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
@@ -1756,6 +1756,37 @@ func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
 	}
 }
 
+// Captain launch asks the harness's own CLI whether it can run and quotes it.
+func TestLaunch_HarnessReadiness(t *testing.T) {
+	for _, tc := range []struct {
+		name, pi, wantErr string
+	}{
+		{"pi has no models", "echo 'No models available. Use /login to log into a provider via OAuth or API key.'\n", "No models available"},
+		{"pi lists models", "echo 'anthropic claude-fable-5'\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent, captainHome := launchableCaptain(t)
+			captainHarnessPath = readyHarnessPath
+			bin := t.TempDir()
+			testutil.WriteFakeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\n[ \"$1\" = --list-models ] || exit 2\n"+tc.pi)
+			testutil.PrependPath(t, bin)
+			err := Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Launch: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), `harness "pi" cannot run`) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Launch error = %v, want pi not-ready quoting %q", err, tc.wantErr)
+			}
+			if _, err := home.ReadMeta(parent, taskIDForCaptain("registered-id")); err == nil {
+				t.Fatal("metadata written on refused launch")
+			}
+		})
+	}
+}
+
 type launchCaptureEndpoint struct {
 	launch func(LaunchRequest)
 }
@@ -1769,9 +1800,9 @@ func (e launchCaptureEndpoint) Launch(_ string, req LaunchRequest) (LaunchResult
 func (launchCaptureEndpoint) Cleanup(string, LaunchResult) error { return nil }
 
 func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "no-profile")
 	writeCanonicalPiIntegration(t, captainHome)
@@ -1789,9 +1820,9 @@ func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
 }
 
 func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *testing.T) {
-	oldLookPath := captainLookPath
-	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
-	t.Cleanup(func() { captainLookPath = oldLookPath })
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainHarnessPath = oldLookPath })
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "flat-only")
 	writeCanonicalPiIntegration(t, captainHome)
@@ -3637,6 +3668,13 @@ func TestSeedCaptain_InvokesIntegrationOnce(t *testing.T) {
 	err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: filepath.Join(parent, "captains/test-captain"), Repo: repo, ParentHome: parent, Integration: port})
 	if err != nil || port.calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, port.calls)
+	}
+	snapshot, err := config.LoadPublishedSnapshot(filepath.Join(parent, "captains/test-captain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Config().Backend; got != "herdr" {
+		t.Fatalf("seeded captain backend = %q, want herdr", got)
 	}
 }
 

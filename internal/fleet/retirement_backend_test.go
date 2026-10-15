@@ -36,7 +36,7 @@ func (f fakeTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *
 	}
 	return QueryDeliveryMergeStatus(forge, ident)
 }
-func (f fakeTeardown) ReturnWorktree(_, worktreePath string) error {
+func (f fakeTeardown) ReturnWorktree(_, _, worktreePath string) error {
 	if f.returnWorktreeFn != nil {
 		return f.returnWorktreeFn(worktreePath)
 	}

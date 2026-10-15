@@ -1,6 +1,5 @@
-// When treehouse is on PATH, all operations delegate to the treehouse CLI for pooled
-// worktree management. When treehouse is absent, a bare git worktree fallback is used
-// with a one-time stderr note.
+// The worktree provider is git worktree unless the project configures the
+// treehouse tool; callers pass the resolved treehouse executable, or "" for git.
 //
 // Lease hygiene: worktree returns are permitted only after the owning
 // authority proves release and the worktree is clean. The backend provider is
@@ -10,9 +9,7 @@
 // interactive prompt, so callers must complete dirty/unlisted-content checks
 // before invoking it. Provider force is never data-loss authority.
 //
-// The git worktree fallback uses stable hashed paths under <homeDir>/.worktrees.
-// homeDir must be non-empty when treehouse is absent; it is passed by callers
-// that have already resolved the munsu home (e.g. via home.Resolve).
+// The git worktree provider uses stable hashed paths under <homeDir>/.worktrees.
 
 package backend
 
@@ -27,7 +24,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // Provider is the interface for acquiring, returning, and querying worktrees.
@@ -36,7 +32,6 @@ import (
 type Provider interface {
 	Get(repoPath string, lease bool) (string, error)
 	GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error)
-	ReservedPath(repoPath, reservationID string) (path string, ok bool)
 	Return(path string) error
 	Status() (string, error)
 	StatusWorktrees() ([]WorktreeEntry, error)
@@ -45,7 +40,7 @@ type Provider interface {
 // WorktreeEntry is one pooled worktree, with the launch reservation that holds
 // it when one does. LeaseHolder is the treehouse lease holder — the
 // reservationID munsu passes on `get --lease --lease-holder` — and is empty for
-// the git fallback (which owns no holder record and derives paths from the
+// git worktree (which owns no holder record and derives paths from the
 // reservation instead). Path is absolute so reclaim can compare it against the
 // absolute paths in task meta and task authority bindings.
 type WorktreeEntry struct {
@@ -65,29 +60,23 @@ func IsWorktreeReservationRecoveryUnsupported(err error) bool {
 	return errors.Is(err, ErrWorktreeReservationRecoveryUnsupported)
 }
 
-var printFallbackNote sync.Once
-
-// selectProvider chooses treehouseProvider when treehouse is on PATH,
-// otherwise falls back to gitWorktreeProvider using the given homeDir.
-// homeDir must be non-empty when treehouse is absent.
-func selectProvider(homeDir string) (Provider, error) {
-	if _, err := exec.LookPath("treehouse"); err == nil {
-		return &treehouseProvider{}, nil
+// selectProvider returns the treehouse provider when treehouse names the
+// configured executable, otherwise git worktree under homeDir.
+func selectProvider(homeDir, treehouse string) (Provider, error) {
+	if treehouse != "" {
+		return &treehouseProvider{bin: treehouse}, nil
 	}
 	if homeDir == "" {
-		return nil, fmt.Errorf("worktree: homeDir is required for git worktree fallback (resolve munsu home before calling)")
+		return nil, fmt.Errorf("worktree: homeDir is required for git worktree (resolve munsu home before calling)")
 	}
-	printFallbackNote.Do(func() {
-		fmt.Fprintf(os.Stderr, "munsu: treehouse not found, using git worktree fallback (not pooled)\n")
-	})
 	return &gitWorktreeProvider{homeDir: homeDir}, nil
 }
 
 // GetWorktree acquires a worktree for the given repo path within the given munsu home.
 // If lease is true and treehouse is the active provider, the --lease flag is
 // passed for a durable hold.
-func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
-	p, err := selectProvider(homeDir)
+func GetWorktree(homeDir, treehouse, repoPath string, lease bool) (string, error) {
+	p, err := selectProvider(homeDir, treehouse)
 	if err != nil {
 		return "", err
 	}
@@ -102,7 +91,7 @@ func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
 // ErrWorktreeReservationRecoveryUnsupported — it never allocates a
 // replacement for an already-attempted reservation.
 //
-// git fallback: the worktree path is derived deterministically from the
+// git worktree: the path is derived deterministically from the
 // reservation (stableHash(repoPath + reservation)), so the same reservation
 // always returns/recreates the SAME worktree — recovery is idempotent and
 // never duplicates a lease or path.
@@ -117,43 +106,42 @@ func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
 // owner-clean alternative is operator reconciliation of the orphan lease
 // before re-running the launch). `worktree reclaim` reads the same holders to
 // spare a reserved-but-unbound treehouse worktree.
-func GetWorktreeReserved(homeDir, repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
+func GetWorktreeReserved(homeDir, treehouse, repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
 	if strings.TrimSpace(reservationID) == "" {
 		return "", fmt.Errorf("worktree: reservation-aware acquisition requires a reservation identity")
 	}
-	p, err := selectProvider(homeDir)
+	p, err := selectProvider(homeDir, treehouse)
 	if err != nil {
 		return "", err
 	}
 	return p.GetReserved(repoPath, lease, reservationID, recovery)
 }
 
-// ReservedWorktreePath returns the path reserved for a launch reservation when
-// the active provider can derive it without querying or creating anything.
-func ReservedWorktreePath(homeDir, repoPath, reservationID string) (path string, ok bool, err error) {
-	p, err := selectProvider(homeDir)
-	if err != nil {
-		return "", false, err
+// ReservedGitWorktreePath returns the path git worktree derives for a launch
+// reservation, without creating anything. Treehouse allocates pool paths, so
+// it has no such derivation; reclaim spares those through the lease holder.
+func ReservedGitWorktreePath(homeDir, repoPath, reservationID string) (string, bool) {
+	if homeDir == "" || reservationID == "" {
+		return "", false
 	}
-	path, ok = p.ReservedPath(repoPath, reservationID)
-	return path, ok, nil
+	return (&gitWorktreeProvider{homeDir: homeDir}).reservedPath(repoPath, reservationID), true
 }
 
-// Return returns a worktree path within the given munsu home.
+// ReturnWorktree returns a worktree path within the given munsu home.
 // When treehouse is active, --force is always passed to prevent interactive prompts.
-func ReturnWorktree(homeDir, path string) error {
-	p, err := selectProvider(homeDir)
+func ReturnWorktree(homeDir, treehouse, path string) error {
+	p, err := selectProvider(homeDir, treehouse)
 	if err != nil {
 		return err
 	}
 	return p.Return(path)
 }
 
-// Status returns worktree status within the given munsu home.
-// With treehouse, this shows pool status. With the git fallback, it lists
+// WorktreeStatus returns worktree status within the given munsu home.
+// With treehouse, this shows pool status. With git worktree, it lists
 // managed worktree directories.
-func WorktreeStatus(homeDir string) (string, error) {
-	p, err := selectProvider(homeDir)
+func WorktreeStatus(homeDir, treehouse string) (string, error) {
+	p, err := selectProvider(homeDir, treehouse)
 	if err != nil {
 		return "", err
 	}
@@ -163,8 +151,8 @@ func WorktreeStatus(homeDir string) (string, error) {
 // StatusWorktrees returns the pooled worktrees with their lease holders, the
 // structured form `worktree reclaim` needs to compare absolute paths and to
 // spare a treehouse worktree still held by a live launch reservation.
-func StatusWorktrees(homeDir string) ([]WorktreeEntry, error) {
-	p, err := selectProvider(homeDir)
+func StatusWorktrees(homeDir, treehouse string) ([]WorktreeEntry, error) {
+	p, err := selectProvider(homeDir, treehouse)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +161,9 @@ func StatusWorktrees(homeDir string) ([]WorktreeEntry, error) {
 
 // --- treehouse provider ---
 
-type treehouseProvider struct{}
+type treehouseProvider struct {
+	bin string
+}
 
 func runWorktreeCommand(bin, dir string, args ...string) ([]byte, []byte, error) {
 	return runBackendCommand(bin, args, dir, nil)
@@ -181,16 +171,6 @@ func runWorktreeCommand(bin, dir string, args ...string) ([]byte, []byte, error)
 
 func runWorktreeMutationCommand(bin, dir string, args ...string) ([]byte, []byte, error) {
 	return runBackendCommandClass(context.Background(), backendCommandWorktree, bin, args, dir, nil)
-}
-
-// ReservedPath cannot derive a treehouse worktree path from a reservation
-// without I/O: treehouse allocates pool paths, they are not a pure function of
-// the reservation the way the git fallback's are. The reverse mapping —
-// worktree path to its lease holder — does exist, via StatusWorktrees
-// (`treehouse status --json` lease_holder), which is how reclaim spares a
-// reserved-but-unbound treehouse worktree.
-func (p *treehouseProvider) ReservedPath(repoPath, reservationID string) (string, bool) {
-	return "", false
 }
 
 // GetReserved acquires a worktree owned by one launch reservation. The
@@ -215,10 +195,6 @@ func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservation
 			}
 		}
 	}
-	bin, err := treehouseBin()
-	if err != nil {
-		return "", err
-	}
 	absRepo, absErr := filepath.Abs(repoPath)
 	if absErr != nil {
 		return "", fmt.Errorf("resolving repo path: %w", absErr)
@@ -228,7 +204,7 @@ func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservation
 		args = append(args, "--lease")
 	}
 	args = append(args, "--lease-holder", reservationID)
-	out, stderr, err := runWorktreeMutationCommand(bin, absRepo, args...)
+	out, stderr, err := runWorktreeMutationCommand(p.bin, absRepo, args...)
 	if err != nil {
 		return "", wrapBackendCommandError("treehouse get", out, stderr, err)
 	}
@@ -240,10 +216,6 @@ func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservation
 }
 
 func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
-	bin, err := treehouseBin()
-	if err != nil {
-		return "", err
-	}
 	absRepo, absErr := filepath.Abs(repoPath)
 	if absErr != nil {
 		return "", fmt.Errorf("resolving repo path: %w", absErr)
@@ -252,7 +224,7 @@ func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
 	if lease {
 		args = append(args, "--lease")
 	}
-	out, stderr, err := runWorktreeMutationCommand(bin, absRepo, args...)
+	out, stderr, err := runWorktreeMutationCommand(p.bin, absRepo, args...)
 	if err != nil {
 		return "", wrapBackendCommandError("treehouse get", out, stderr, err)
 	}
@@ -264,14 +236,10 @@ func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
 }
 
 func (p *treehouseProvider) Return(path string) error {
-	bin, err := treehouseBin()
-	if err != nil {
-		return err
-	}
 	if _, err := assertReturnable(path, "return"); err != nil {
 		return err
 	}
-	stdout, stderr, err := runWorktreeMutationCommand(bin, "", "return", "--force", path)
+	stdout, stderr, err := runWorktreeMutationCommand(p.bin, "", "return", "--force", path)
 	output := commandOutput(stdout, stderr)
 	// Even if exit code is 0, check for "Aborted" which means treehouse
 	// prompted interactively and was aborted (e.g. stdin closed).
@@ -286,11 +254,7 @@ func (p *treehouseProvider) Return(path string) error {
 }
 
 func (p *treehouseProvider) Status() (string, error) {
-	bin, err := treehouseBin()
-	if err != nil {
-		return "", err
-	}
-	out, stderr, err := runBackendCommand(bin, []string{"status"}, "", nil)
+	out, stderr, err := runBackendCommand(p.bin, []string{"status"}, "", nil)
 	if err != nil {
 		return "", wrapBackendCommandError("treehouse status", out, stderr, err)
 	}
@@ -303,11 +267,7 @@ func (p *treehouseProvider) Status() (string, error) {
 // ~ and appends "(held by <holder>)" to leased lines, so a field-split lands on
 // the holder token rather than the path.
 func (p *treehouseProvider) StatusWorktrees() ([]WorktreeEntry, error) {
-	bin, err := treehouseBin()
-	if err != nil {
-		return nil, err
-	}
-	out, stderr, err := runBackendCommand(bin, []string{"status", "--json"}, "", nil)
+	out, stderr, err := runBackendCommand(p.bin, []string{"status", "--json"}, "", nil)
 	if err != nil {
 		return nil, wrapBackendCommandError("treehouse status --json", out, stderr, err)
 	}
@@ -325,16 +285,7 @@ func (p *treehouseProvider) StatusWorktrees() ([]WorktreeEntry, error) {
 	return entries, nil
 }
 
-// treehouseBin returns the path to the treehouse binary, or an error if not found.
-func treehouseBin() (string, error) {
-	path, err := exec.LookPath("treehouse")
-	if err != nil {
-		return "", fmt.Errorf("treehouse: not found on PATH — install treehouse or verify your PATH")
-	}
-	return path, nil
-}
-
-// --- git worktree fallback provider ---
+// --- git worktree provider ---
 
 type gitWorktreeProvider struct {
 	homeDir string
@@ -346,13 +297,8 @@ func (p *gitWorktreeProvider) getWorktreeBase() string {
 	return filepath.Join(p.homeDir, ".worktrees")
 }
 
-// ReservedPath returns the deterministic path for a launch reservation without
-// creating directories or invoking git.
-func (p *gitWorktreeProvider) ReservedPath(repoPath, reservationID string) (string, bool) {
-	if reservationID == "" {
-		return "", false
-	}
-	return filepath.Join(p.getWorktreeBase(), stableHash(repoPath+"\x00"+reservationID)), true
+func (p *gitWorktreeProvider) reservedPath(repoPath, reservationID string) string {
+	return filepath.Join(p.getWorktreeBase(), stableHash(repoPath+"\x00"+reservationID))
 }
 
 // GetReserved acquires the worktree owned by one launch reservation. The
@@ -362,9 +308,8 @@ func (p *gitWorktreeProvider) ReservedPath(repoPath, reservationID string) (stri
 // recovery re-adopts the identical path — never a duplicate lease or path.
 // recovery is therefore idempotent and needs no provider-side distinction.
 func (p *gitWorktreeProvider) GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
-	hash := stableHash(repoPath + "\x00" + reservationID)
 	base := p.getWorktreeBase()
-	wtDir := filepath.Join(base, hash)
+	wtDir := p.reservedPath(repoPath, reservationID)
 
 	// Ensure base directory exists.
 	if err := os.MkdirAll(base, 0755); err != nil {
@@ -485,10 +430,10 @@ func (p *gitWorktreeProvider) Status() (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-// StatusWorktrees lists the fallback worktree directories. The git fallback owns
-// no lease holder record — it derives worktree paths from the reservation, so
-// reclaim spares reserved-but-unbound git worktrees via ReservedPath, not the
-// holder — so every entry's LeaseHolder is empty.
+// StatusWorktrees lists the git worktree directories. Git worktree owns no
+// lease holder record — it derives worktree paths from the reservation, so
+// reclaim spares reserved-but-unbound git worktrees via ReservedGitWorktreePath,
+// not the holder — so every entry's LeaseHolder is empty.
 func (p *gitWorktreeProvider) StatusWorktrees() ([]WorktreeEntry, error) {
 	base := p.getWorktreeBase()
 	dirents, err := os.ReadDir(base)
@@ -511,7 +456,7 @@ func (p *gitWorktreeProvider) StatusWorktrees() ([]WorktreeEntry, error) {
 }
 
 // stableHash returns a deterministic short hex string from a path, used
-// as the directory name for git fallback worktrees.
+// as the directory name for git worktrees.
 func stableHash(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])[:16]

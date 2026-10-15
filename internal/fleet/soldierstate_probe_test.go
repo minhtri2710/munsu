@@ -56,6 +56,52 @@ func TestReadWithProbePreservesBoundMetadata(t *testing.T) {
 	}
 }
 
+// TestReadWithProbeProbesUnboundAcquiredEndpoint probes the pane a launch
+// acquired but never bound, which wrote no .meta, until the task retires.
+func TestReadWithProbeProbesUnboundAcquiredEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		retire bool
+	}{
+		{name: "queued unbound launch is probed"},
+		{name: "retired unbound launch is not probed", retire: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchFixture(t, "unbound-probe")
+			if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+				t.Fatalf("launch phases = %v, want simulated pre-projection crash", err)
+			}
+			acquired := f.aggregate().AcquiredEndpoint
+			if acquired == nil {
+				t.Fatal("fixture holds no acquired endpoint")
+			}
+			if tc.retire {
+				RetireTask(Options{HomeDir: f.homeDir, ID: f.taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, f.auth)
+				if agg := f.aggregate(); agg.Phase != taskauthority.PhaseRetired || agg.AcquiredEndpoint == nil {
+					t.Fatalf("fixture phase %q acquired %v, want retired still naming the acquired endpoint", agg.Phase, agg.AcquiredEndpoint)
+				}
+			}
+			if _, err := mhome.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("fixture meta read = %v, want none", err)
+			}
+			probe := &stateProbe{alive: true}
+			state, err := ReadWithProbe(f.homeDir, f.taskID, probe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.retire {
+				if probe.meta != nil || state.PaneAlive {
+					t.Fatalf("retired task probed: pane_alive=%v meta=%v", state.PaneAlive, probe.meta)
+				}
+				return
+			}
+			if !state.PaneAlive || probe.meta["window"] != acquired.Handle || probe.meta["backend"] != acquired.Backend || probe.meta["harness"] != f.aggregate().Launch.Harness {
+				t.Fatalf("pane_alive=%v probed meta=%v, want the acquired endpoint %+v", state.PaneAlive, probe.meta, acquired)
+			}
+		})
+	}
+}
+
 func TestReadWithProbeFailsClosedOnProbeError(t *testing.T) {
 	h := t.TempDir()
 	setupProbeHome(t, h, "window=pane-1\nbackend=herdr\n")

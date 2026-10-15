@@ -152,6 +152,7 @@ type WorktreeBinding struct {
 	BaseHead           string                  `json:"base_head"`
 	LeaseID            string                  `json:"lease_id"`
 	FenceToken         string                  `json:"fence_token"`
+	Treehouse          string                  `json:"treehouse,omitempty"`
 	BoundAtUnix        int64                   `json:"bound_at_unix"`
 	LaunchManifest     *LaunchManifestEvidence `json:"launch_manifest,omitempty"`
 }
@@ -234,6 +235,7 @@ type LaunchIntent struct {
 	WindowLabel           string `json:"window_label,omitempty"`
 	WorktreeReservationID string `json:"worktree_reservation_id"`
 	WorktreeFenceToken    string `json:"worktree_fence_token"`
+	WorktreeTool          string `json:"worktree_tool,omitempty"`
 	EndpointReservationID string `json:"endpoint_reservation_id"`
 	EndpointFenceToken    string `json:"endpoint_fence_token"`
 	EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`

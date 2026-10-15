@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"fmt"
+	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -81,7 +83,7 @@ func resolveCapturedProjectSnapshot(homeDir, projectName string, forge config.Re
 	if err != nil {
 		return config.ResolvedSnapshot{}, err
 	}
-	return config.NewResolvedSnapshotWithCapturedSteps(base, facts, forge)
+	return config.NewResolvedSnapshotWithCapturedSteps(base, facts, forge, configuredToolProbe)
 }
 
 func loadProjectFacts(homeDir, projectName string) (config.FleetBaseDocument, config.ProjectFacts, error) {
@@ -144,7 +146,130 @@ func configuredToolProbe(entry config.ToolEntry) config.ResolvedStep {
 		path, _ := ghAxiLookPath()
 		reason := fmt.Sprintf("gh-axi and gh probe state: %s", state)
 		return config.ResolvedStep{Path: path, ProbeState: strings.ToLower(state.String()), Reason: reason}
+	case "treehouse":
+		path, err := exec.LookPath(entry.Path)
+		if err != nil {
+			return config.ResolvedStep{Path: entry.Path, ProbeState: "missing", Reason: fmt.Sprintf("treehouse executable: %v", err)}
+		}
+		return config.ResolvedStep{Path: path, ProbeState: "ready", Reason: "treehouse executable is Ready"}
 	default:
 		return config.ResolvedStep{ProbeState: "failed", Reason: "unsupported configured tool"}
 	}
+}
+
+// ProjectWorktreeTool resolves the treehouse executable project configures in
+// homeDir, or "" for git worktree. A captain home reads its published snapshot.
+func ProjectWorktreeTool(homeDir, project string) (string, error) {
+	var (
+		snap config.ResolvedSnapshot
+		err  error
+	)
+	if config.PublishedSnapshotAvailable(homeDir) {
+		snap, err = config.LoadPublishedSnapshot(homeDir)
+		// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
+		if err == nil && snap.Config().Project != project {
+			err = fmt.Errorf("published snapshot project %q does not match project %q", snap.Config().Project, project)
+		}
+	} else {
+		snap, err = ResolveProjectSnapshot(homeDir, project)
+	}
+	if err != nil {
+		return "", err
+	}
+	step := snap.Config().WorktreeStep
+	if err := requireReadyWorktree(step); err != nil {
+		return "", err
+	}
+	return step.Path, nil
+}
+
+// HomeWorktreeTools lists the worktree providers homeDir uses: git worktree,
+// then each distinct treehouse a registered project configures or a task in
+// the home recorded and has not released. Every one must be Ready.
+func HomeWorktreeTools(homeDir string) ([]string, error) {
+	type owned struct {
+		owner string
+		step  config.ResolvedStep
+		hint  string
+	}
+	var steps []owned
+	if config.PublishedSnapshotAvailable(homeDir) {
+		snap, err := config.LoadPublishedSnapshot(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, owned{"project " + snap.Config().Project, snap.Config().WorktreeStep, ""})
+	} else {
+		projects, err := List(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		overlays, err := config.LoadProjectOverlays(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range projects {
+			if entry := overlays[p.Name].Worktree; entry != nil {
+				steps = append(steps, owned{"project " + p.Name, config.ResolvedStep{Adapter: entry.Adapter, Path: entry.Path}, ""})
+			}
+		}
+	}
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening task authority home %s: %w", homeDir, err)
+	}
+	c, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		return nil, fmt.Errorf("composing task authority: %w", err)
+	}
+	aggs, err := c.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, agg := range aggs {
+		if agg.Phase == taskauthority.PhaseRetired && agg.CleanupClaim != nil && agg.CleanupClaim.Status == taskauthority.CleanupCompleted {
+			continue
+		}
+		recorded := []string{}
+		if agg.Launch != nil {
+			recorded = append(recorded, agg.Launch.WorktreeTool)
+		}
+		if agg.Worktree != nil {
+			recorded = append(recorded, agg.Worktree.Treehouse)
+		}
+		if agg.Retirement != nil && agg.Retirement.Worktree != nil {
+			recorded = append(recorded, agg.Retirement.Worktree.Treehouse)
+		}
+		for _, path := range recorded {
+			if path != "" {
+				hint := fmt.Sprintf("; reinstall treehouse at %s to retire task %s, or reclaim one project with --project <name>", path, agg.TaskID)
+				steps = append(steps, owned{"task " + agg.TaskID, config.ResolvedStep{Adapter: "treehouse", Path: path}, hint})
+			}
+		}
+	}
+	tools := []string{""}
+	for _, s := range steps {
+		// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
+		if err := requireReadyWorktree(s.step); err != nil {
+			return nil, fmt.Errorf("%s: %w%s", s.owner, err, s.hint)
+		}
+		if !slices.Contains(tools, s.step.Path) {
+			tools = append(tools, s.step.Path)
+		}
+	}
+	return tools, nil
+}
+
+// requireReadyWorktree re-probes a configured worktree step and refuses unless
+// it is Ready, so a published snapshot's treehouse is checked before any task
+// mutation the same way its forge is.
+func requireReadyWorktree(step config.ResolvedStep) error {
+	if step.Baseline {
+		return nil
+	}
+	// Human words: quoted at config.ResolveProjectWithSteps.
+	if probed := configuredToolProbe(config.ToolEntry{Adapter: step.Adapter, Path: step.Path}); probed.ProbeState != "ready" {
+		return fmt.Errorf("worktree adapter %s probe %s: configured worktree tool is not Ready: %s", step.Adapter, probed.ProbeState, probed.Reason)
+	}
+	return nil
 }

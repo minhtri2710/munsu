@@ -66,6 +66,6 @@ func (s sessionBoundTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep,
 	return fleet.QueryDeliveryMergeStatus(forge, ident)
 }
 
-func (s sessionBoundTeardown) ReturnWorktree(homeDir, worktreePath string) error {
-	return backend.ReturnWorktree(homeDir, worktreePath)
+func (s sessionBoundTeardown) ReturnWorktree(homeDir, treehouse, worktreePath string) error {
+	return backend.ReturnWorktree(homeDir, treehouse, worktreePath)
 }

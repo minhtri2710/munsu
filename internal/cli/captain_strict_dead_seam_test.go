@@ -122,11 +122,29 @@ func seamProbeEndpoint(bk backend.Backend) sessionProbeEndpoint {
 	}}
 }
 
-// seedSeamCaptain seeds a canonical parent home and a managed-worktree
-// captain home through fleet.SeedCaptain (Pi harness, herdr backend, the
-// canonical Pi integration), then records launch meta so fleet recovery
-// reaches the probe/launch decision.
+// seedSeamCaptain seeds a captain through seedUnlaunchedCaptain, then records
+// launch meta so fleet recovery reaches the probe/launch decision.
 func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
+	t.Helper()
+	parent, captainHome, _ = seedUnlaunchedCaptain(t, id)
+	canon, err := home.CanonicalCaptainHome(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := home.WriteMeta(parent, "captain:"+id, map[string]string{
+		"kind": "captain", "sm_id": id, "home": canon, "window": "dead-window",
+		"backend": "herdr", "session_owner": "owned",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return parent, captainHome
+}
+
+// seedUnlaunchedCaptain seeds a canonical parent home and a managed-worktree
+// captain home of repo through fleet.SeedCaptain (Pi harness, herdr backend,
+// the canonical Pi integration). No launch meta is written, so no fleet path
+// resolves a session backend for it.
+func seedUnlaunchedCaptain(t *testing.T, id string) (parent, captainHome, repo string) {
 	t.Helper()
 	putFakePiOnPath(t)
 	t.Setenv("MUNSU_ROLE", "")
@@ -148,23 +166,14 @@ func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 	if err := fleet.Register(parent, id, captainHome, "", id); err != nil {
 		t.Fatal(err)
 	}
+	repo = seamProjectRepo(t)
 	if err := fleet.SeedCaptain(fleet.CaptainSeedOptions{
-		ID: id, Home: captainHome, Repo: seamProjectRepo(t), ParentHome: parent,
+		ID: id, Home: captainHome, Repo: repo, ParentHome: parent,
 		Integration: seamStaticIntegrationPort{},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	canon, err := home.CanonicalCaptainHome(captainHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(parent, "captain:"+id, map[string]string{
-		"kind": "captain", "sm_id": id, "home": canon, "window": "dead-window",
-		"backend": "herdr", "session_owner": "owned",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return parent, captainHome
+	return parent, captainHome, repo
 }
 
 // seamProjectRepo creates a project clone with an origin/main upstream.

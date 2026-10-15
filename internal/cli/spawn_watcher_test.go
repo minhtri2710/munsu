@@ -19,7 +19,6 @@ func TestSpawnEnsuresWatcher(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
 	t.Setenv("MUNSU_ROLE", "general")
-	t.Setenv("GEMINI_API_KEY", "test-key")
 
 	repoDir := t.TempDir()
 	runGit(t, repoDir, "init", "-b", "main")

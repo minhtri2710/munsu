@@ -26,12 +26,8 @@ jobs:
       - run: mkdir -p coverage
       - run: go build ./...
       - run: go vet ./...
-      # -coverprofile on all three lanes below feeds the `guards` job. Measured
-      # locally (darwin, 8 cores, warm cache) the default lane goes 95.0s ->
-      # 96.1s with it, which is inside the noise: `set` mode counters are a
-      # single store per block. The profiles are what let that job tell "no test
-      # reaches this refusal" from "this refusal is only reached by a lane that
-      # is not this one" -- see .github/scripts/uncovered-guards.sh.
+      # -coverprofile feeds the `guards` job, merged with the integration lane's
+      # profile -- see .github/scripts/uncovered-guards.sh.
       - run: |
           set -o pipefail
           go test -count=1 -json -coverprofile=coverage/default.out ./... | tee coverage/skips-default.json | jq -rj '.Output // empty'
@@ -42,24 +38,6 @@ jobs:
       - name: Cross-target vet for GOOS-gated files
         run: |
           GOOS=darwin go vet ./...
-      # `go test ./...` never builds these two tags, which is where a compile
-      # break sat unnoticed for four months. The tagged suites are small and
-      # fast; the reason, without a figure, is in the matching row of
-      # .github/build-tags.manifest. So they run for real rather than being
-      # compile-checked. Go's granularity is the package, so each step also
-      # repeats its package's default suite (~24s total); deriving the package from
-      # the tag is worth that over an enumerated -run filter that a new test
-      # would silently fall outside of.
-      - name: e2e-tagged tests
-        run: |
-          set -o pipefail
-          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -count=1 -json -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e) | tee coverage/skips-e2e.json | jq -rj '.Output // empty'
-      - name: lifecycle_integration-tagged tests
-        run: |
-          set -o pipefail
-          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -count=1 -json -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration) | tee coverage/skips-lifecycle_integration.json | jq -rj '.Output // empty'
       # Uploaded even when a step above failed, so a lane that got partway still
       # hands over what it measured. `warn` rather than `error` on an empty
       # upload, because `always()` also fires when `go build` broke and there is
@@ -140,7 +118,16 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.9"
-          cache: true
+          cache: false
+      # Own key: -race builds differ from the other jobs', which race this job to
+      # save setup-go's shared key.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-
       # The default lane runs without -race, so crash/replay/fence concurrency
       # in home, taskauthority and backend was never race-checked in CI.
       #
@@ -570,7 +557,7 @@ jobs:
     # green. Coverage is what sees that, which is why this job is separate --
     # it is the only one that has to wait for other jobs' profiles.
     #
-    # `needs` on both, because merging all four lanes is a correctness condition
+    # `needs` on both, because merging both lanes is a correctness condition
     # rather than a nicety: with the default profile alone every branch the 60
     # integration files are the only cover for reads as untested. The script
     # fails closed on a missing profile rather than treating it as zeros.

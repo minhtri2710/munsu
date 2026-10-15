@@ -436,7 +436,7 @@ func TestFencedClaudePreflightAsksForTheSeatsLogin(t *testing.T) {
 		wantErr     string
 	}{
 		{"a seat login is found", `[ "${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}" = "" ]`, ""},
-		{"no seat login refuses the launch", `false`, "auth-absent"},
+		{"no seat login refuses the launch", `false`, "not-ready"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			script := "#!/bin/sh\n" + tc.check + ` && [ -d "$CLAUDE_CONFIG_DIR" ] && [ "${CLAUDE_CONFIG_DIR%/*}" = ` + shQuote(harness.SeatBuildDir(homeDir)) + " ]\n"

@@ -1,15 +1,11 @@
 package bootstrap
 
-import "fmt"
-
 // FixCommand returns the recommended fix command for a missing tool.
 // Returns empty string if no standard fix exists.
 func FixCommand(tool string) string {
 	switch tool {
 	case "git":
 		return "Install git: https://git-scm.com/downloads"
-	case "treehouse":
-		return "go install github.com/kunchenguid/treehouse@latest"
 	case "gh-axi":
 		return "npm install -g gh-axi"
 	case "gh":
@@ -25,16 +21,10 @@ func FixCommand(tool string) string {
 	}
 }
 
-// Fix returns a human-readable fix string for a tool that is missing or failed to install.
+// Fix returns a human-readable fix string for a missing tool.
 func (d ToolDiagnostic) Fix() string {
-	switch d.Status {
-	case ToolMissing:
+	if d.Status == ToolMissing {
 		return FixCommand(d.Tool)
-	case ToolInstallFailed:
-		if cmd := FixCommand(d.Tool); cmd != "" {
-			return cmd
-		}
-		return fmt.Sprintf("install %s (see its documentation)", d.Tool)
 	}
 	return ""
 }

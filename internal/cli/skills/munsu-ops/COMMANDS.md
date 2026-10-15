@@ -24,8 +24,9 @@ for the complete registered set.
 |---------|-------------|
 | `munsu project add|list|show|rm` | Manage registered projects. |
 | `munsu project mode <name>` | Resolve delivery mode for a project. |
-| `munsu worktree get|return|status` | Acquire, return, or inspect pooled worktrees. |
-| `munsu worktree reclaim` | Reclaim orphaned worktrees not claimed by task metadata or authoritative task bindings; refuses when either source cannot be read. |
+| `munsu project config set <name> worktree '{"adapter":"treehouse","path":"/abs/treehouse"}'` | Opt the project into treehouse; without it worktrees use git worktree. A configured treehouse that is not Ready refuses the spawn. |
+| `munsu worktree get|return|status [--project <name>]` | Acquire, return, or inspect worktrees; `--project` uses that project's worktree tool, otherwise git worktree. |
+| `munsu worktree reclaim [--project <name>]` | Reclaim orphaned worktrees not claimed by task metadata or authoritative task bindings; refuses when either source cannot be read. |
 | `munsu harness detect` | Detect the running coding-agent harness. |
 | `munsu harness soldier|captain` | Resolve the configured harness for a rank. |
 

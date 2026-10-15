@@ -406,11 +406,9 @@ func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) St
 		return StepResult{Name: "launch-readiness", State: StepFailed,
 			Detail: fmt.Sprintf("harness %q not in adapter registry", h)}
 	}
-	// Check harness binary on PATH.
-	binPath, err := captainLookPath(a.Name)
+	binPath, err := captainHarnessPath(a.Name)
 	if err != nil {
-		return StepResult{Name: "launch-readiness", State: StepFailed,
-			Detail: fmt.Sprintf("harness binary %q not found on PATH: %v", a.Name, err)}
+		return StepResult{Name: "launch-readiness", State: StepFailed, Detail: err.Error()}
 	}
 	// Share the soldier/captain launch validation seam: a denied model — or an
 	// unresolved identity under an active policy — makes the captain not

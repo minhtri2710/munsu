@@ -10,7 +10,6 @@ type ToolSpec struct {
 var checkedTools = []ToolSpec{
 	{"git", true},
 	{"tmux", true},
-	{"treehouse", false},
 	{"gh-axi", false},
 	{"gh", false},
 	{"fuser", false},
