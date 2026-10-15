@@ -212,6 +212,7 @@ func TestGuardSkillShowDeniesManagementSkillsToASoldier(t *testing.T) {
 	} {
 		t.Run(tc.role, func(t *testing.T) {
 			t.Setenv("MUNSU_ROLE", tc.role)
+			t.Setenv("MUNSU_HOME", t.TempDir())
 			_, err := runRoot(t, "skill", "show", "munsu-ops")
 			if tc.want == "" {
 				if err != nil {
