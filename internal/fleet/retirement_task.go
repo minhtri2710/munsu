@@ -1498,15 +1498,17 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 	if partialLaunch {
 		return []string{"partial launch artifacts and worktree cleanliness verified"}, nil
 	}
-	if forge, err := taskForgeStep(opts.HomeDir, opts.ID); err == nil && taskauthority.DeliveryModeForForge(forge) == "local-only" {
-		proof, err := checkLocalLanded(wtPath)
-		if err != nil {
-			return nil, err
+	var localErr error
+	if authority != nil {
+		if forge, err := capturedForgeStep(authority, opts.ID); err == nil && taskauthority.DeliveryModeForForge(forge) == "local-only" {
+			var proof string
+			if proof, localErr = checkLocalLanded(wtPath); localErr == nil {
+				return []string{proof}, nil
+			}
 		}
-		return []string{proof}, nil
 	}
 	if err := checkRemoteBranch(wtPath); err != nil {
-		return nil, err
+		return nil, errors.Join(localErr, err)
 	}
 
 	return nil, nil

@@ -213,13 +213,19 @@ func dirtyTreeBlock(t *testing.T) {
 	}
 }
 
-// localOnlyLandingCheck runs the ship safety check of a local-only task whose
-// repository has no origin, after merging its branch into main when merged.
-func localOnlyLandingCheck(t *testing.T, merged bool) error {
+// localOnlyLandingCheck runs the ship safety check of a local-only task after
+// merging its branch into main when merged; origin is a bare remote holding the
+// pushed branch when pushed, and absent otherwise.
+func localOnlyLandingCheck(t *testing.T, merged, pushed bool) error {
 	t.Helper()
-	wt := filepath.Join(t.TempDir(), "worktree")
+	tmp := t.TempDir()
+	wt := filepath.Join(tmp, "worktree")
 	os.MkdirAll(wt, 0o755)
-	setupGitRepo(t, wt, "")
+	remote := ""
+	if pushed {
+		remote = filepath.Join(tmp, "remote.git")
+	}
+	setupGitRepo(t, wt, remote)
 	git := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
@@ -236,6 +242,9 @@ func localOnlyLandingCheck(t *testing.T, merged bool) error {
 		git("merge", "--no-ff", "-m", "land", "mu/local")
 		git("checkout", "mu/local")
 	}
+	if pushed {
+		git("push", "origin", "mu/local")
+	}
 	md := setupTopologyManifest(t, wt)
 	c, homeDir := newFleetCanonical(t)
 	seedCanonicalQueuedTask(t, c, "local", "general")
@@ -245,14 +254,20 @@ func localOnlyLandingCheck(t *testing.T, merged bool) error {
 }
 
 func localOnlyUnlandedBlock(t *testing.T) {
-	if err := localOnlyLandingCheck(t, false); err == nil || !strings.Contains(err.Error(), "worktree head is not merged into main") {
+	if err := localOnlyLandingCheck(t, false, false); err == nil || !strings.Contains(err.Error(), "worktree head is not merged into main") {
 		t.Fatalf("unlanded local-only task: err = %v, want not-merged refusal", err)
 	}
 }
 
 func localOnlyLandedAllow(t *testing.T) {
-	if err := localOnlyLandingCheck(t, true); err != nil {
+	if err := localOnlyLandingCheck(t, true, false); err != nil {
 		t.Fatalf("landed local-only task without origin: %v", err)
+	}
+}
+
+func localOnlyPushedUnmergedAllow(t *testing.T) {
+	if err := localOnlyLandingCheck(t, false, true); err != nil {
+		t.Fatalf("local-only task pushed to origin but not merged: %v", err)
 	}
 }
 
