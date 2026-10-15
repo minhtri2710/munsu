@@ -279,12 +279,12 @@ func TestDashboardFeedAppendsAfterCursor(t *testing.T) {
 }
 
 func TestDashboardRefusesWithoutTerminal(t *testing.T) {
-	old := dashboardTerminals
-	defer func() { dashboardTerminals = old }()
+	old := terminals
+	defer func() { terminals = old }()
 
 	// Both stdin and stdout must be terminals; either one alone is refused.
 	for _, c := range []struct{ stdin, stdout bool }{{false, false}, {true, false}, {false, true}} {
-		dashboardTerminals = func() (bool, bool) { return c.stdin, c.stdout }
+		terminals = func() (bool, bool) { return c.stdin, c.stdout }
 		root := NewRootCommand()
 		root.SetArgs([]string{"dashboard", "--home", t.TempDir()})
 		err := root.Execute()
@@ -502,7 +502,7 @@ func TestDashboardStaleRowIsNeverColored(t *testing.T) {
 		row("t-queued", "queued", "d", "primary", ""),
 	}, nil, nil))
 	m = press(m, "j") // keep the selected row off the first row
-	for _, c := range []lipgloss.Style{dashGreen, dashRed, dashYellow} {
+	for _, c := range []lipgloss.Style{styleOK, styleFail, styleWarn} {
 		sgr := strings.SplitN(c.Render("x"), "x", 2)[0]
 		for _, l := range strings.Split(m.frame(), "\n") {
 			if strings.Contains(l, "t-") && strings.Contains(l, sgr) {
@@ -999,7 +999,7 @@ func TestDashboardUnknownPhaseIsNeverGreen(t *testing.T) {
 		row("t-first", "working", "x", "primary", ""),
 		{ID: "t-unk", Kind: "ship", PaneAliveUnknown: true, Source: "primary"},
 	}, nil, nil))
-	green := strings.SplitN(dashGreen.Render("x"), "x", 2)[0]
+	green := strings.SplitN(styleOK.Render("x"), "x", 2)[0]
 	found := false
 	for _, l := range strings.Split(m.frame(), "\n") {
 		if strings.Contains(l, "t-unk") {

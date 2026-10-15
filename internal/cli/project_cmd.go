@@ -21,8 +21,12 @@ func newProjectCmd() *cobra.Command {
 
 If path-or-url is a git URL (http://, https://, git@, ssh://),
 the repository is cloned into the projects directory first.`,
-		Args: ExactArgs(2),
+		Args: exactArgsOrPrompt(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			args, err := promptArgs(args, "Project name", "Path or git URL")
+			if err != nil {
+				return err
+			}
 			yolo, _ := cmd.Flags().GetBool("yolo")
 			return fleet.Add(ctx.Home, args[0], args[1], yolo)
 		}),

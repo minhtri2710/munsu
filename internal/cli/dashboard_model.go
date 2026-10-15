@@ -177,7 +177,7 @@ func newDashboardModel(home, exe string) dashboardModel {
 
 	h := help.New()
 	h.ShortSeparator = "  "
-	h.Styles = help.Styles{Ellipsis: dashFaint, ShortKey: dashFaint, ShortDesc: dashFaint, ShortSeparator: dashFaint}
+	h.Styles = help.Styles{Ellipsis: styleMuted, ShortKey: styleMuted, ShortDesc: styleMuted, ShortSeparator: styleMuted}
 
 	return dashboardModel{
 		home:    home,

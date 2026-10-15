@@ -5,7 +5,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,42 +17,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-func captureStdout(fn func() error) (string, error) {
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		return "", err
-	}
-	os.Stdout = w
-
-	errChan := make(chan error, 1)
-	outChan := make(chan string)
-
-	go func() {
-		var buf strings.Builder
-		_, err := io.Copy(&buf, r)
-		if err != nil {
-			errChan <- err
-			return
-		}
-		outChan <- buf.String()
-	}()
-
-	fnErr := fn()
-	w.Close()
-	os.Stdout = old
-
-	select {
-	case err := <-errChan:
-		return "", err
-	case out := <-outChan:
-		return out, fnErr
-	}
-}
-
-// testSnapshotDeps returns the clean-break snapshot dependencies for tests:
-// the canonical current-state query is always present; the optional endpoint
-// probe (diagnostic only) is attached when provided.
 func testSnapshotDeps(t *testing.T, probes ...EndpointProbe) SnapshotDependencies {
 	t.Helper()
 	deps := SnapshotDependencies{CurrentState: NewCanonicalCurrentState()}
@@ -137,28 +100,6 @@ func TestPhaseFromMeta(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("PhaseFromMeta(%q, %v) = %q, want %q", tc.window, tc.paneAlive, got, tc.want)
 		}
-	}
-}
-
-func TestView_RegisteredPhase(t *testing.T) {
-	tmp := t.TempDir()
-	if _, err := home.Init(tmp); err != nil {
-		t.Fatal(err)
-	}
-
-	// A queued (not-yet-started) canonical task has canonical phase "queued",
-	// which must win over any diagnostic projection.
-	mustCreateFleetTask(t, tmp, "pre-spawn-task", "ship")
-
-	out, err := captureStdout(func() error {
-		return View(tmp, testSnapshotDeps(t))
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(out, "queued") {
-		t.Errorf("expected View to show canonical 'queued' phase, got: %q", out)
 	}
 }
 

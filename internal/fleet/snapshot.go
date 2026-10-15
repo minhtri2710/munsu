@@ -361,52 +361,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 	return tasks, nil
 }
 
-// View renders the fleet snapshot as Markdown.
-func View(homeDir string, deps SnapshotDependencies) error {
-	snap, err := Snapshot(homeDir, deps)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("# Fleet View — %s\n\n", snap.Time)
-	fmt.Printf("Tasks: %d\n\n", len(snap.Tasks))
-
-	for _, ts := range snap.Tasks {
-		phase := PhaseFromProjection(ts)
-
-		src := ts.Source
-		if src == "" {
-			src = "primary"
-		}
-		fmt.Printf("- **%s** (repo: %s) [%s]\n", ts.ID, ts.Project, src)
-		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
-		// Only show harness line; omit empty model/effort
-		var modelEffortParts []string
-		if ts.Harness != "" {
-			modelEffortParts = append(modelEffortParts, fmt.Sprintf("harness: %s", ts.Harness))
-		}
-		if ts.Model != "" {
-			modelEffortParts = append(modelEffortParts, fmt.Sprintf("model: %s", ts.Model))
-		}
-		if len(modelEffortParts) > 0 {
-			fmt.Printf("  %s\n", strings.Join(modelEffortParts, " | "))
-		}
-
-		// Show current state description when available, else status.
-		displayStatus := ts.CurrentDescription
-		if displayStatus == "" {
-			displayStatus = ts.LastStatus
-		}
-		fmt.Printf("  pane: %s (%s)\n", ts.Window, phase)
-		if displayStatus != "" {
-			fmt.Printf("  status: %s\n", displayStatus)
-		}
-		fmt.Println()
-	}
-
-	return nil
-}
-
 // CaptainStatus returns endpoint/meta truth for a captain.
 // Prefer the parent state durable-stem meta projection for logical
 // captain:<id> plus backend Alive when meta exists.
