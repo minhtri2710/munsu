@@ -13,29 +13,25 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// TestResolveTaskHome locates the task by its current canonical record: a task
-// whose launch never bound has no meta and still resolves, and a handed-off
-// task resolves to the captain home that holds it.
+// TestResolveTaskHome locates the task by its current canonical record, and a
+// handed-off task resolves to the captain home that holds it.
 func TestResolveTaskHome(t *testing.T) {
-	t.Run("primary task without meta", func(t *testing.T) {
+	t.Run("primary task", func(t *testing.T) {
 		home := t.TempDir()
 		seedTaskInHome(t, home, "t1", taskauthority.KindShip)
-		gotHome, meta, err := ResolveTaskHome(home, "t1")
-		if err != nil || gotHome != home || len(meta) != 0 {
-			t.Fatalf("ResolveTaskHome = %q, %v, %v; want primary %q with no meta", gotHome, meta, err, home)
+		gotHome, err := ResolveTaskHome(home, "t1")
+		if err != nil || gotHome != home {
+			t.Fatalf("ResolveTaskHome = %q, %v; want primary %q", gotHome, err, home)
 		}
 	})
-	t.Run("captain home task with meta", func(t *testing.T) {
+	t.Run("captain home task", func(t *testing.T) {
 		parent := t.TempDir()
 		seedTaskInHome(t, parent, "other", taskauthority.KindShip)
 		capHome := filepath.Join(parent, "captains", "munsu")
 		seedTaskInHome(t, capHome, "handed-ship", taskauthority.KindShip)
-		if err := mhome.WriteMeta(capHome, "handed-ship", map[string]string{"window": "w"}); err != nil {
-			t.Fatal(err)
-		}
-		gotHome, meta, err := ResolveTaskHome(parent, "handed-ship")
-		if err != nil || gotHome != capHome || meta["window"] != "w" {
-			t.Fatalf("ResolveTaskHome = %q, %v, %v; want captain %q with its meta", gotHome, meta, err, capHome)
+		gotHome, err := ResolveTaskHome(parent, "handed-ship")
+		if err != nil || gotHome != capHome {
+			t.Fatalf("ResolveTaskHome = %q, %v; want captain %q", gotHome, err, capHome)
 		}
 	})
 	t.Run("handed-off task resolves to the captain over its source home", func(t *testing.T) {
@@ -51,54 +47,44 @@ func TestResolveTaskHome(t *testing.T) {
 			t.Fatal(err)
 		}
 		seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
-		if err := mhome.WriteMeta(parent, "TASK-1", map[string]string{"window": "stale"}); err != nil {
-			t.Fatal(err)
-		}
 		if err := Handoff(parent, capHome, []string{"TASK-1"}); err != nil {
 			t.Fatalf("Handoff: %v", err)
 		}
-		gotHome, _, err := ResolveTaskHome(parent, "TASK-1")
+		gotHome, err := ResolveTaskHome(parent, "TASK-1")
 		if err != nil || gotHome != capHome {
 			t.Fatalf("ResolveTaskHome = %q, %v; want captain %q", gotHome, err, capHome)
 		}
 	})
-	t.Run("meta without a canonical record is not found", func(t *testing.T) {
+	t.Run("a task without a canonical record is not found", func(t *testing.T) {
 		parent := t.TempDir()
 		seedTaskInHome(t, parent, "other", taskauthority.KindShip)
-		if err := mhome.WriteMeta(parent, "missing", map[string]string{"window": "w"}); err != nil {
-			t.Fatal(err)
-		}
-		_, _, err := ResolveTaskHome(parent, "missing")
+		_, err := ResolveTaskHome(parent, "missing")
 		if err == nil || !strings.Contains(err.Error(), "task missing not found") || errors.Is(err, taskauthority.ErrNotFound) {
 			t.Fatalf("ResolveTaskHome err = %v, want the clean not-found error", err)
 		}
 	})
 }
 
-// TestRequireShipMeta_ReadsCanonicalKind pins the kind refusal: the kind is the
-// canonical task's, never the .meta's. The blocking row holds a .meta that
-// claims ship over a canonical scout; the allowing row holds a .meta without a
-// kind over a canonical ship in a captain home.
-func TestRequireShipMeta_ReadsCanonicalKind(t *testing.T) {
-	t.Run("canonical scout is refused although meta says ship", func(t *testing.T) {
+// TestRequireShipTask_ReadsCanonicalKind pins the kind refusal: a canonical
+// scout is refused, and a canonical ship in a captain home passes.
+func TestRequireShipTask_ReadsCanonicalKind(t *testing.T) {
+	t.Run("canonical scout is refused", func(t *testing.T) {
 		home := t.TempDir()
 		seedTaskInHome(t, home, "s1", taskauthority.KindScout)
-		mhome.WriteMeta(home, "s1", map[string]string{"kind": "ship"})
-		_, _, err := RequireShipMeta(home, "s1")
+		_, err := RequireShipTask(home, "s1")
 		if err == nil || !strings.Contains(err.Error(), `kind="scout"`) {
 			t.Fatalf("err = %v", err)
 		}
 	})
-	t.Run("canonical ship in a captain home passes without a meta kind", func(t *testing.T) {
+	t.Run("canonical ship in a captain home passes", func(t *testing.T) {
 		parent := t.TempDir()
 		os.MkdirAll(filepath.Join(parent, "data"), 0755)
 		capHome := filepath.Join(parent, "captains", "x")
 		seedTaskInHome(t, capHome, "ship-1", taskauthority.KindShip)
-		mhome.WriteMeta(capHome, "ship-1", map[string]string{"window": "w"})
 		os.WriteFile(filepath.Join(parent, "data", "captains.md"),
 			[]byte("- x - (home: "+capHome+"; scope: ; projects: ; added: 2026-07-20)\n"), 0644)
 
-		th, _, err := RequireShipMeta(parent, "ship-1")
+		th, err := RequireShipTask(parent, "ship-1")
 		if err != nil {
 			t.Fatal(err)
 		}

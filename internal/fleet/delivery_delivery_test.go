@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestGitBranch(t *testing.T) {
@@ -216,9 +215,7 @@ func TestReviewDiffDefaultBase(t *testing.T) {
 
 			auth, homeDir := newFleetCanonical(t)
 			mustFleetCreate(t, auth, "t1")
-			if err := home.WriteMeta(homeDir, "t1", map[string]string{"worktree": repo}); err != nil {
-				t.Fatal(err)
-			}
+			seedWorktreeEvidence(t, auth, "t1", repo, "lease-wt", "fence-wt")
 			stdout := os.Stdout
 			r, w, err := os.Pipe()
 			if err != nil {

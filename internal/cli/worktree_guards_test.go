@@ -9,7 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -128,8 +127,8 @@ func TestWorktreeOwnershipGuards(t *testing.T) {
 }
 
 // activeWorktreeClaims claims the worktree a task's current generation binds
-// and releases it once retirement cleanup has completed; a worktree only a
-// .meta names is no claim, and an unreadable task document fails closed.
+// and releases it once retirement cleanup has completed, and an unreadable
+// task document fails closed.
 func TestActiveWorktreeClaimsReadCanonicalBindings(t *testing.T) {
 	const worktree = "/pool/wt-claimed"
 	for _, tc := range []struct {
@@ -143,11 +142,6 @@ func TestActiveWorktreeClaimsReadCanonicalBindings(t *testing.T) {
 		}, true, ""},
 		{"allows a worktree whose retirement cleanup completed", func(t *testing.T, auth *taskauthority.Canonical, _ string) {
 			bindClaimWorktree(t, auth, "released", worktree, true)
-		}, false, ""},
-		{"allows a worktree only a .meta names", func(t *testing.T, _ *taskauthority.Canonical, homeDir string) {
-			if err := home.WriteMeta(homeDir, "meta-only", map[string]string{"worktree": worktree}); err != nil {
-				t.Fatal(err)
-			}
 		}, false, ""},
 		{"fails closed on an unreadable task document", func(t *testing.T, auth *taskauthority.Canonical, homeDir string) {
 			bindClaimWorktree(t, auth, "live", worktree, false)

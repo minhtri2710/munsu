@@ -787,16 +787,15 @@ func TestCheckCaptainTaskAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainTaskAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T) {
+func TestCheckCaptainTaskAuthority_AllowsWorkingTaskWithoutBoundEndpoint(t *testing.T) {
 	homeDir := t.TempDir()
-	_ = home.WriteMeta(homeDir, "pre-spawn", map[string]string{"kind": "ship"})
 	r := &Runner{
 		args:      Args{ID: "pre-spawn", Authority: seedSpawnAuthorityPhase(t, "pre-spawn", taskauthority.PhaseWorking)},
 		spawnRole: "captain",
 		homeDir:   homeDir,
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("a working task whose meta has no window must pass the backlog check, got: %v", err)
+		t.Fatalf("a working task with no bound endpoint must pass the backlog check, got: %v", err)
 	}
 }
 
@@ -917,11 +916,6 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Errorf("expected typed observation error, got: %v", err)
 	}
 
-	metaPath := filepath.Join(homeDir, "state", "reconcile-task.meta")
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Errorf("task meta file should NOT exist on failed verification: %s", metaPath)
-	}
-
 	statusLines, _ := home.ReadStatus(homeDir, "reconcile-task")
 	for _, l := range statusLines {
 		if strings.Contains(l, "working: spawned") {
@@ -954,9 +948,6 @@ func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
 	}
 	if windows != 0 {
 		t.Fatalf("NewWindow calls = %d, want none before the fence is proven", windows)
-	}
-	if _, statErr := os.Stat(filepath.Join(homeDir, "state", "reconcile-task.meta")); !os.IsNotExist(statErr) {
-		t.Fatalf("a refused launch wrote task meta: %v", statErr)
 	}
 }
 
@@ -1053,82 +1044,17 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 	}
 }
 
-// TestWriteTaskMetaNeverWritesAuthoritativeFields proves the pre-transition
-// side file is a runtime-only projection (Task 7.8 adjudication): when no
-// .meta exists yet it writes no authoritative Task Aggregate fields (kind,
-// project, description, owner, generation, state), and when a projection
-// exists it preserves the authoritative fields rather than overwriting them
-// from spawn args.
-func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "side-file-authoritative"
-	auth := mustCanonical(t)
-	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
-	r := &Runner{
-		homeDir:       homeDir,
-		args:          Args{ID: taskID, ProjectName: "test-proj", Authority: auth},
-		windowID:      "session:pane-1",
-		wtPath:        "/tmp/wt",
-		projPath:      "/tmp/proj",
-		harness:       "pi",
-		effectiveMode: "direct-PR",
-		endpoint:      CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
-	}
-	if err := r.writeTaskMeta(); err != nil {
-		t.Fatalf("writeTaskMeta: %v", err)
-	}
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	// No authoritative fields when there was no existing projection.
-	for _, key := range []string{"kind", "project", "description", "owner", "generation", "state"} {
-		if _, ok := meta[key]; ok {
-			t.Errorf("writeTaskMeta wrote authoritative field %q from spawn args: %v", key, meta)
-		}
-	}
-	if meta["window"] != "session:pane-1" || meta["worktree"] != "/tmp/wt" {
-		t.Fatalf("runtime fields = %v", meta)
-	}
-
-	// With an existing projection, authoritative fields are preserved (they
-	// were derived from the canonical aggregate at task add), never replaced
-	// by the spawn args (kind=scout here must not leak).
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{"kind": "ship", "project": "test-proj", "repo": "keep"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.writeTaskMeta(); err != nil {
-		t.Fatalf("writeTaskMeta second pass: %v", err)
-	}
-	meta, err = home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta["kind"] != "ship" || meta["project"] != "test-proj" {
-		t.Fatalf("authoritative fields clobbered by spawn args: %v", meta)
-	}
-	if meta["repo"] != "keep" {
-		t.Fatalf("runtime projection field lost: %v", meta)
-	}
-}
-
 // TestCheckBacklogAuthorityRequiresCanonicalAggregate proves the spawn
 // backlog shim no longer creates a legacy home aggregate (Task 7.8): the
 // task must already have a canonical Task Authority record, and spawn fails
 // closed otherwise without writing any v1 aggregate state.
 func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	homeDir := t.TempDir()
-	// The canonical home must be initialized before the projection is written
-	// so the composed canonical Authority is bound to the same home the
-	// projection reads.
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	// Meta exists, but the Authority has no record: the query must fail
-	// closed on the absent canonical aggregate (no legacy fallback).
-	if err := home.WriteMeta(homeDir, "no-agg", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	// The Authority has no record: the query must fail closed on the absent
+	// canonical aggregate.
 	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
 	if err != nil {
 		t.Fatal(err)

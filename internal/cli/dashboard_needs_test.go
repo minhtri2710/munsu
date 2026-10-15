@@ -214,7 +214,7 @@ func TestDashboardNeedsYou(t *testing.T) {
 
 	t.Run("a hold is listed once beside its own needs-decision line", func(t *testing.T) {
 		h := t.TempDir()
-		writeTaskMeta(t, h, "kilo", "ship")
+		initHomeWithTask(t, h, "kilo", "ship")
 		if out, err := runRoot(t, "decision-hold", "hold", "db", "--reason", "Pick a db", "--from", "kilo", "--home", h); err != nil {
 			t.Fatalf("hold: %v\n%s", err, out)
 		}
@@ -226,7 +226,7 @@ func TestDashboardNeedsYou(t *testing.T) {
 
 	t.Run("a hold belongs only to the task it scopes", func(t *testing.T) {
 		h := t.TempDir()
-		writeTaskMeta(t, h, "a", "ship")
+		initHomeWithTask(t, h, "a", "ship")
 		cliSeedCanonicalTask(t, h, "a-decision-x", "ship")
 		if out, err := runRoot(t, "decision-hold", "hold", "k", "--reason", "Pick", "--from", "a-decision-x", "--home", h); err != nil {
 			t.Fatalf("hold: %v\n%s", err, out)

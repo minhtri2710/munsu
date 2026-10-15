@@ -15,7 +15,6 @@ func TestRetirementSkipsVanishedCaptainMetaAndRefusesRealReadError(t *testing.T)
 	homeDir := t.TempDir()
 	taskID := "workspace-vanished-meta"
 	auth := mergeTestAuth(t, homeDir, taskID)
-	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktree"))
 
 	vanishedMeta, err := home.MetaFilePath(homeDir, "captain:aaa-vanished")
 	if err != nil {

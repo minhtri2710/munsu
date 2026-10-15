@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -187,17 +188,17 @@ This produces output with kind=inbox.ack.`,
 // A general or captain owns the home it runs in, so its receiver identity is
 // that home's provenance. A soldier owns no home: it is launched with
 // MUNSU_HOME set to its dispatcher's home, so its receiver identity is the
-// durable task record that home holds for MUNSU_TASK_ID. Both paths derive
+// live seat that home's Task Authority records for MUNSU_TASK_ID. Both paths derive
 // identity from durable state and fail closed when it is absent.
 func inboxReceiver(homeDir string) (*home.Receiver, error) {
 	if os.Getenv("MUNSU_ROLE") != "soldier" {
-		return home.NewReceiver(homeDir)
+		return home.NewReceiver(homeDir, fleet.SoldierSeat(homeDir))
 	}
 	taskID := os.Getenv("MUNSU_TASK_ID")
 	if taskID == "" {
 		return nil, fmt.Errorf("MUNSU_ROLE=soldier without MUNSU_TASK_ID: a soldier is identified by its task")
 	}
-	return home.NewSoldierReceiver(homeDir, taskID)
+	return home.NewSoldierReceiver(homeDir, taskID, fleet.SoldierSeat(homeDir))
 }
 
 // renderInbox prints the inbox view to the given writer.

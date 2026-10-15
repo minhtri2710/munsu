@@ -329,10 +329,6 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		t.Fatalf("harness readiness captures = %d, want 1 (a retry means a wall-clock wait)", endpoints.captures)
 	}
 
-	meta, err := home.ReadMeta(spawnHome, taskID)
-	if err != nil {
-		t.Fatalf("read task meta: %v", err)
-	}
 	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		t.Fatal(err)
@@ -349,8 +345,8 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 	// this policy may read (published snapshot for captain-mediated, fleet
 	// base for general-direct). Reading the other surface resolves the other
 	// identity, so these two assertions pin the surface, not just the spawn.
-	if meta["model"] != tc.model {
-		t.Fatalf("meta model = %q, want %q (wrong config surface for %s)", meta["model"], tc.model, tc.policy)
+	if spawned.Launch.Model != tc.model {
+		t.Fatalf("launch model = %q, want %q (wrong config surface for %s)", spawned.Launch.Model, tc.model, tc.policy)
 	}
 	switch {
 	case tc.digest != "":
@@ -362,13 +358,13 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 			t.Fatalf("launch snapshot digest = %q, want a fleet-base-resolved digest", digest)
 		}
 	}
-	if meta["window"] == "" || meta["worktree"] == "" {
-		t.Fatalf("meta is missing launch identity: %v", meta)
+	if spawned.Endpoint == nil || spawned.Endpoint.Handle == "" || spawned.Worktree == nil || spawned.Worktree.Path == "" {
+		t.Fatalf("spawned task is missing launch identity: endpoint=%+v worktree=%+v", spawned.Endpoint, spawned.Worktree)
 	}
 	// The launch envelope durably records the parent identity the policy
 	// resolved at the Fleet boundary.
 	envelope := map[string]any{}
-	raw, err := os.ReadFile(filepath.Join(meta["worktree"], fleet.EnvelopeName))
+	raw, err := os.ReadFile(filepath.Join(spawned.Worktree.Path, fleet.EnvelopeName))
 	if err != nil {
 		t.Fatalf("read launch envelope: %v", err)
 	}
@@ -457,7 +453,7 @@ func runLifecycleWorkflow(t *testing.T, tc workflowCase) {
 		t.Fatalf("phase after teardown = %s, want retired", retired.Phase)
 	}
 	t.Logf("workflow evidence: policy=%s model=%s digest=%s parent=%s endpoint(create=%d submit=%d ready-captures=%d) general-reports=%d supervision-emitted=%t teardown(phase=%s returned=%d disposed=%d)",
-		tc.policy, meta["model"], digest, tc.parentCaptainID,
+		tc.policy, spawned.Launch.Model, digest, tc.parentCaptainID,
 		endpoints.creates, endpoints.submits, endpoints.captures, len(generalReports), supervisionEmitted,
 		retired.Phase, teardown.returned, teardown.disposed)
 }

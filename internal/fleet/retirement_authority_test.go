@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -45,9 +44,6 @@ func mergedShipFixture(t *testing.T, homeDir, taskID string) *taskauthority.Cano
 	seedEndpointEvidence(t, auth, taskID, "@1", epLease, epFence)
 	seedSourceContract(t, auth, taskID, deliveryTestGitHubForge)
 	seedCompletedDeliveryOutcome(t, auth, taskID)
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{"backend": "tmux", "window": "@1", "worktree": wt}); err != nil {
-		t.Fatal(err)
-	}
 	return auth
 }
 
@@ -122,14 +118,6 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 		t.Fatalf("aggregate = phase %q revision %d, want retired revision 14", agg.Phase, agg.Revision)
 	}
 
-	// Saga-side cleanup removed the task meta.
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatal("meta should be removed after successful retirement")
-	}
 	if result.IsError() {
 		t.Fatal("expected IsError=false for fully successful retirement")
 	}
@@ -178,15 +166,6 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	taskID := "test-cleanup-failure"
 	auth := mergedShipFixture(t, homeDir, taskID)
 
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	// First attempt: the canonical Retire op commits (durable receipt) but the
 	// saga-side cleanup fails at the session dispose step.
 	first := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, fakeRetirementJournals{}, auth)
@@ -204,8 +183,7 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 		t.Fatal("expected IsError=true for retired-but-cleanup-pending")
 	}
 
-	// The committed retirement stands and the .meta projection is untouched
-	// (cleanup only removes it later); the canonical completed delivery
+	// The committed retirement stands and the canonical completed delivery
 	// outcome is preserved. Revision 13 = done, then retire committed the
 	// durable claim; the failed first attempt's BeginCleanup was a no-op
 	// (claim already active), so the aggregate carries exactly those bumps.
@@ -226,13 +204,6 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	}
 	if outcome.Status != taskauthority.DeliveryOutcomeCompleted {
 		t.Fatalf("canonical delivery outcome = %q, want completed", outcome.Status)
-	}
-	after, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatalf("meta removed by the retirement transition: %v", err)
-	}
-	if string(before) != string(after) {
-		t.Fatalf("retirement transition mutated .meta: before=%q after=%q", before, after)
 	}
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),
@@ -255,9 +226,6 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	}
 	if agg.Revision != 14 {
 		t.Fatalf("retry re-committed the retirement: revision = %d, want 14 (claim completion only)", agg.Revision)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatal("retry should complete the cleanup and remove meta")
 	}
 }
 
@@ -283,13 +251,6 @@ func TestMergeAndRetireCrossHomeRetirement(t *testing.T) {
 	}
 	if agg.Phase != taskauthority.PhaseRetired {
 		t.Fatalf("captain-home aggregate phase = %q, want retired", agg.Phase)
-	}
-	metaPath, err := home.MetaFilePath(capHome, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatal("captain-home meta should be removed after retirement")
 	}
 }
 

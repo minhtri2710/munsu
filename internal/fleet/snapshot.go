@@ -30,7 +30,6 @@ type TaskSnapshot struct {
 	Model            string `json:"model"`
 	Kind             string `json:"kind"`
 	Mode             string `json:"mode"`
-	Yolo             string `json:"yolo"`
 	Window           string `json:"window"`
 	Worktree         string `json:"worktree"`
 	PaneAlive        bool   `json:"pane_alive"`
@@ -231,8 +230,7 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 	// Task 7.8): kind/project/phase come from the canonical record; the
 	// .meta/.status/probe data is diagnostic display only and can never
 	// override an authoritative lifecycle transition. A home that is not a
-	// canonical v1 home, or a task-facing meta without an authoritative
-	// record, fails closed.
+	// canonical v1 home fails closed.
 	canonical, err := canonicalAggregates(taskHome)
 	if err != nil {
 		return nil, fmt.Errorf("reading canonical task authority state for %s: %w", taskHome, err)
@@ -247,27 +245,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 		return nil, err
 	}
 
-	// Reject task-facing meta-only entries (no canonical record). Captain
-	// metadata (kind=captain) is exempt: it is non-task authority metadata
-	// that lives outside the Task Authority by design.
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		id, err := mhome.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
-			continue
-		}
-		if _, hasCanonical := canonical[id]; hasCanonical {
-			continue
-		}
-		meta, metaErr := mhome.ReadMeta(taskHome, id)
-		if metaErr == nil && meta["kind"] == "captain" {
-			continue
-		}
-		return nil, fmt.Errorf("reading authoritative current state for task %q in home %s: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", id, taskHome)
-	}
-
 	canonicalIDs := make([]string, 0, len(canonical))
 	for id := range canonical {
 		canonicalIDs = append(canonicalIDs, id)
@@ -277,9 +254,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 	var tasks []TaskSnapshot
 	for _, id := range canonicalIDs {
 		agg := canonical[id]
-
-		// .meta holds operational/display fields (diagnostic only).
-		meta, _ := mhome.ReadMeta(taskHome, id)
 
 		// Authoritative current state comes from the single canonical query.
 		info, err := deps.CurrentState.Read(taskHome, id)
@@ -292,7 +266,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			Project:             agg.Definition.Project,
 			Kind:                agg.Definition.Kind,
 			Harness:             launchHarness(agg),
-			Yolo:                meta["yolo"],
 			Home:                homeLabel,
 			Source:              source,
 			CurrentState:        info.State,

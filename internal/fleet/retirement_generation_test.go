@@ -114,8 +114,7 @@ func seedEndpointEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, h
 // mergeTestAuth seeds one canonical ship task with bound worktree and
 // endpoint evidence (working) and returns the canonical Authority. It is the
 // canonical replacement for the deleted in-memory merge test authority; the
-// worktree binding path is <homeDir>/worktree so backend tests that write
-// that path into meta exercise the evidence-pinned return.
+// worktree binding path is <homeDir>/worktree.
 func mergeTestAuth(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
 	t.Helper()
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
@@ -129,8 +128,7 @@ func mergeTestAuth(t *testing.T, homeDir, taskID string) *taskauthority.Canonica
 // seedMergedDelivery seeds a canonical completed provider-merge delivery
 // outcome: bound worktree/endpoint (working), a provider-merge delivery
 // authorization, and a committed completed outcome under the task's own
-// identity. It is the canonical merged truth the retirement path requires;
-// no .meta projection is involved.
+// identity. It is the canonical merged truth the retirement path requires.
 func seedMergedDelivery(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string) {
 	t.Helper()
 	wtDir := filepath.Join(homeDir, "worktrees", taskID)
@@ -251,22 +249,6 @@ func seedCanonicalOutcome(t *testing.T, homeDir, taskID string, status taskautho
 	return auth
 }
 
-// writeRetireMeta writes a minimal task meta projection (no delivery
-// identity, so the baseline retirement prerequisite applies).
-func writeRetireMeta(t *testing.T, homeDir, taskID, window, worktree string) {
-	t.Helper()
-	meta := map[string]string{
-		"backend": "tmux",
-		"window":  window,
-	}
-	if worktree != "" {
-		meta["worktree"] = worktree
-	}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // recordingTeardown records every Dispose/ReturnWorktree it is asked to
 // perform so tests can assert exactly which evidence-owned resources were
 // released.
@@ -337,14 +319,12 @@ func TestCompletedCleanupRetryOnlyRemovesProjections(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, &recordingTeardown{alive: false}, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("initial teardown: %v", err)
 	}
 	// The initial run released the empty worktree and completed cleanup. A new
 	// task now owns this reservation; its sentinel and process must survive a
 	// projection-only retry for the retired task.
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	if err := os.WriteFile(filepath.Join(wtDir, "sentinel"), []byte("still owned"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -368,9 +348,6 @@ func TestCompletedCleanupRetryOnlyRemovesProjections(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(wtDir, "sentinel")); err != nil {
 		t.Fatalf("reallocated worktree changed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); !os.IsNotExist(err) {
-		t.Fatalf("stale meta remains: %v", err)
-	}
 	assertClaimCompleted(t, auth, taskID, 1)
 }
 
@@ -391,7 +368,6 @@ func retireEvidenceOwnedResources(t *testing.T, treehouse string) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidenceVia(t, auth, taskID, wtDir, "lease-wt", "fence-wt", treehouse)
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
 	rec := &recordingTeardown{alive: true}
 	result, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
@@ -414,13 +390,6 @@ func retireEvidenceOwnedResources(t *testing.T, treehouse string) {
 	}
 	// Projection removed after full cleanup; canonical retirement evidence is
 	// preserved (projection removal must not erase it).
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatal("meta should be removed after successful retirement")
-	}
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -451,7 +420,6 @@ func TestRetirementAmbiguousObservationNeverDisposes(t *testing.T) {
 			os.MkdirAll(wtDir, 0755)
 			seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
 			seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-			writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
 			rec := &recordingTeardown{status: func() *RetirementEndpointStatus {
 				s := endpointStatusFromState(state)
@@ -641,7 +609,6 @@ func TestRetirementClaimBarrierBetweenProbeAndDispose(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Commit the generation-1 retirement with interrupted cleanup (the
@@ -678,13 +645,6 @@ func TestRetirementClaimBarrierBetweenProbeAndDispose(t *testing.T) {
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("returned=%v, want evidence worktree %s", second.returned, wtDir)
 	}
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta should be removed after completed cleanup: %v", err)
-	}
 	assertClaimCompleted(t, auth, taskID, taskauthority.Generation(1))
 	_ = result
 
@@ -704,7 +664,6 @@ func TestRetirementClaimBarrierBeforeWorktreeReturn(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Interrupted first run: worktree return fails after the (independently
@@ -730,7 +689,7 @@ func TestRetirementClaimBarrierBeforeWorktreeReturn(t *testing.T) {
 }
 
 // barrierJournals runs a callback inside FinalizeRetirementJournals — exactly
-// BETWEEN the meta removal and the state-artifact/data removals, i.e. inside
+// BETWEEN the projection removals, i.e. inside
 // the projection multi-remove sequence — to attempt a barrier reopen while
 // individual filesystem removals are in progress.
 type barrierJournals struct{ onFinalize func() }
@@ -747,7 +706,7 @@ func (b barrierJournals) FinalizeRetirementJournals(string, string) ([]string, e
 // TestRetirementClaimBarrierDuringProjectionMultiRemove proves the durable
 // claim protects the projection multi-remove sequence: a reopen attempted
 // BETWEEN individual filesystem removals (after the projection fence released
-// the lock and after the meta file was already removed) is rejected, the
+// the lock) is rejected, the
 // remaining removals complete, and the claim reconciles to completed.
 func TestRetirementClaimBarrierDuringProjectionMultiRemove(t *testing.T) {
 	homeDir := t.TempDir()
@@ -757,7 +716,6 @@ func TestRetirementClaimBarrierDuringProjectionMultiRemove(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	rec := &recordingTeardown{alive: true}
@@ -770,13 +728,6 @@ func TestRetirementClaimBarrierDuringProjectionMultiRemove(t *testing.T) {
 	if len(rec.disposed) != 1 || len(rec.returned) != 1 {
 		t.Fatalf("disposed=%v returned=%v, want endpoint and worktree released", rec.disposed, rec.returned)
 	}
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta should be removed: %v", err)
-	}
 	statusPath, err := home.StatusFilePath(homeDir, taskID)
 	if err != nil {
 		t.Fatal(err)
@@ -787,48 +738,6 @@ func TestRetirementClaimBarrierDuringProjectionMultiRemove(t *testing.T) {
 	assertClaimCompleted(t, auth, taskID, taskauthority.Generation(1))
 }
 
-func TestRetirementMetaSubstitutionCannotRedirectCleanup(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "meta-substitution"
-	auth := canonicalMergeTestAuth(t, homeDir, taskID)
-	realWT := filepath.Join(homeDir, "worktrees", taskID)
-	os.MkdirAll(realWT, 0755)
-	seedWorktreeEvidence(t, auth, taskID, realWT, "lease-wt", "fence-wt")
-	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-
-	// The mutable .meta projection claims a DIFFERENT window and worktree:
-	// cleanup must ignore it and release only the evidence-pinned identities.
-	writeRetireMeta(t, homeDir, taskID, "@999", filepath.Join(homeDir, "evil-wt"))
-
-	rec := &recordingTeardown{alive: true}
-	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("retirement: %v", err)
-	}
-	if len(rec.disposed) != 1 || rec.disposed[0].Endpoint.Handle != "@1" {
-		t.Fatalf("disposed=%+v, want evidence handle @1 (not the substituted %q)", rec.disposed, "@999")
-	}
-	if len(rec.returned) != 1 || rec.returned[0] != realWT {
-		t.Fatalf("returned=%v, want evidence worktree %s (not the substituted path)", rec.returned, realWT)
-	}
-}
-
-func TestRetirementMetaOnlyResourcesAreNeverReleased(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "meta-only"
-	auth := canonicalMergeTestAuth(t, homeDir, taskID)
-	// No canonical endpoint/worktree evidence exists: .meta alone names
-	// resources, and .meta must never authorize a release.
-	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktree"))
-
-	rec := &recordingTeardown{alive: true}
-	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("retirement: %v", err)
-	}
-	if len(rec.disposed) != 0 || len(rec.returned) != 0 {
-		t.Fatalf("meta-only resources were released: disposed=%v returned=%v", rec.disposed, rec.returned)
-	}
-}
-
 func activeCleanupClaimAllow(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "crash-resume"
@@ -837,7 +746,6 @@ func activeCleanupClaimAllow(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Crash after the canonical Retire commit and before the endpoint dispose.
@@ -875,13 +783,6 @@ func activeCleanupClaimAllow(t *testing.T) {
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("resume returned=%v, want evidence worktree %s", second.returned, wtDir)
 	}
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatal("meta should be removed on resume")
-	}
 }
 
 func TestRetirementCrashResumeAfterWorktreeReturnInterruption(t *testing.T) {
@@ -892,7 +793,6 @@ func TestRetirementCrashResumeAfterWorktreeReturnInterruption(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Crash after the endpoint dispose and before the worktree return.
@@ -925,13 +825,6 @@ func TestRetirementCrashResumeAfterWorktreeReturnInterruption(t *testing.T) {
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("resume returned=%v, want evidence worktree %s", second.returned, wtDir)
 	}
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatal("meta should be removed on resume")
-	}
 }
 
 func TestRetirementCleanupFailurePreservesCanonicalEvidenceAndMergedTruth(t *testing.T) {
@@ -939,9 +832,8 @@ func TestRetirementCleanupFailurePreservesCanonicalEvidenceAndMergedTruth(t *tes
 	taskID := "evidence-preserved"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 	// seedMergedDelivery binds the worktree/endpoint and commits the canonical
-	// completed delivery outcome; no .meta projection is involved.
+	// completed delivery outcome.
 	seedMergedDelivery(t, auth, homeDir, taskID)
-	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktrees", taskID))
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// First attempt fails at the worktree return; the canonical evidence and
@@ -985,7 +877,6 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Commit the generation-1 retirement with interrupted cleanup.
@@ -1020,7 +911,6 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	}
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-2", "fence-ep-2")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
 	// Abort is TERMINAL and the old teardown retry is a STALE continuation:
 	// bound to the aborted generation-1 retirement, it fails closed with a
@@ -1087,13 +977,6 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != taskauthority.CleanupAborted || hist.CleanupClaim.Generation != 1 {
 		t.Fatalf("generation-1 claim = %+v, want aborted (terminal)", hist.CleanupClaim)
 	}
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta should be removed after the generation-2 retirement: %v", err)
-	}
 }
 
 func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing.T) {
@@ -1106,7 +989,6 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	os.MkdirAll(newWT, 0755)
 	seedWorktreeEvidence(t, auth, taskID, oldWT, "lease-wt-old", "fence-wt-old")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-old", "fence-ep-old")
-	writeRetireMeta(t, homeDir, taskID, "@1", oldWT)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Commit the generation-1 retirement with interrupted cleanup.
@@ -1138,7 +1020,6 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	}
 	seedWorktreeEvidence(t, auth, taskID, newWT, "lease-wt-new", "fence-wt-new")
 	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-new", "fence-ep-new")
-	writeRetireMeta(t, homeDir, taskID, "@2", newWT)
 
 	// Abort is TERMINAL and the old teardown retry is a STALE continuation:
 	// bound to the aborted generation-1 retirement, it fails closed with a
@@ -1199,16 +1080,6 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != taskauthority.CleanupAborted {
 		t.Fatalf("generation-1 claim = %+v, want aborted (terminal)", hist.CleanupClaim)
 	}
-	// The reopened generation's own projection is removed after its fresh
-	// retirement; the aborted generation-1 projection (oldWT meta) is gone
-	// because the current projection describes generation 2.
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta should be removed after the generation-2 retirement: %v", err)
-	}
 }
 
 // TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition proves the
@@ -1227,7 +1098,6 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Generation-1 retirement with interrupted cleanup (claim stays active).
@@ -1416,7 +1286,6 @@ func terminalCleanupClaimBlock(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Interrupted cleanup: claim active.
@@ -1454,14 +1323,6 @@ func terminalCleanupClaimBlock(t *testing.T) {
 	}
 	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupAborted {
 		t.Fatalf("claim not retained as aborted: %+v", agg.CleanupClaim)
-	}
-	// The projectons survive (nothing was released/removed).
-	metaPath, err := home.MetaFilePath(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(metaPath); err != nil {
-		t.Fatalf("meta destroyed on aborted retry: %v", err)
 	}
 }
 
@@ -1589,7 +1450,6 @@ func TestRetirementWorkspaceReferenceReadErrorFailsClosed(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "workspace-read-error"
 	auth := mergeTestAuth(t, homeDir, taskID)
-	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktree"))
 
 	otherID := "other-workspace-user"
 	seedHeldWorkspace(t, homeDir, otherID, "ws-"+taskID)
@@ -1609,7 +1469,6 @@ func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) 
 	homeDir := t.TempDir()
 	taskID := "acquired-workspace-read-error"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
-	writeRetireMeta(t, homeDir, taskID, "@1", "")
 
 	begin := taskauthority.CanonicalBeginSpawnRequest{
 		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: domain.Of(1, 1),
@@ -1657,7 +1516,6 @@ func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 	wtDir := filepath.Join(homeDir, "worktrees", taskID)
 	os.MkdirAll(wtDir, 0755)
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
 	// The task acquires an endpoint pre-bind (never binds it): launch intent
 	// + AttachEndpoint with the exact acquired identity.
@@ -1752,7 +1610,6 @@ func staleRetryFixture(t *testing.T) (auth *taskauthority.Canonical, homeDir, ta
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
 	first := &recordingTeardown{alive: true}
 	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, first, fakeRetirementJournals{}, auth); err != nil {
@@ -1777,7 +1634,6 @@ func staleRetryFixture(t *testing.T) (auth *taskauthority.Canonical, homeDir, ta
 	}
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
 	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-2", "fence-ep-2")
-	writeRetireMeta(t, homeDir, taskID, "@2", wtDir)
 	return auth, homeDir, taskID
 }
 
@@ -1850,7 +1706,6 @@ func TestRetirementExplicitTargetConflictWhenGenerationAdvanced(t *testing.T) {
 	os.MkdirAll(wtDir, 0755)
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// Generation-1 retirement with interrupted cleanup, then abort + reopen.
@@ -1931,7 +1786,6 @@ func TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration(t *testing.T) {
 	// Generation-1 retirement completes normally (claim completed).
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	first := &recordingTeardown{alive: true}
 	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("generation-1 teardown: %v", err)
@@ -1958,7 +1812,6 @@ func TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration(t *testing.T) {
 	}
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
 	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-2", "fence-ep-2")
-	writeRetireMeta(t, homeDir, taskID, "@2", wtDir)
 	target2 := taskauthority.Generation(2)
 	secondOpts := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target2}
 	second := &recordingTeardown{alive: true, disposeErr: errors.New("window busy")}

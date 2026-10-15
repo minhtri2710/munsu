@@ -26,7 +26,6 @@ func TestRetirementRules(t *testing.T) {
 		{"released delivery authorization does not block", deliveryReauthorizedBlock, deliveryReleasedAllow},
 		{"outcome of its own authorization does not block", deliveryReauthorizedBlock, deliveryOwnOutcomeAllow},
 		{"another task's delivery lock does not hold an unrelated task", deliveryLockHeldOwnBlock, unrelatedTaskNoWaitAllow},
-		{"review names no worktree, even with force", reviewWorktreeBlock, reviewWorktreeAllow},
 		{"abort needs the endpoint proven absent", abortLiveEndpointBlock, abortAbsentEndpointAllow},
 		{"stale teardown never retires a reopened generation", staleRetryBlock, explicitGenerationAllow},
 		{"terminal cleanup claim is never resumed", terminalCleanupClaimBlock, activeCleanupClaimAllow},
@@ -37,7 +36,7 @@ func TestRetirementRules(t *testing.T) {
 		{"ship PR is not open unmerged", openUnmergedBlock, mergedMatchingHeadAllow},
 		{"ship merged PR head matches the identity", wrongPRHeadBlock, mergedMatchingHeadAllow},
 		{"ship canonical delivery outcome is completed", outcomeNotCompletedBlock, outcomeCompletedAllow},
-		{"ship delivery identity is the authorization's, not .meta", authorizedIdentityBlock, unauthorizedIdentityAllow},
+		{"ship delivery identity is the authorization's", authorizedIdentityBlock, unauthorizedIdentityAllow},
 		{"an earlier generation's authorization is not the delivery identity", authorizedIdentityBlock, earlierGenerationIdentityAllow},
 	} {
 		t.Run(rule.name+"/blocks", rule.block)
