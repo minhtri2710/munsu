@@ -1967,44 +1967,30 @@ func withWorkspaceCloseGuard(homeDir, excludeID string, request DisposeRequest) 
 	return request, nil
 }
 
-// otherWorkspaceRefs scans all task meta files in homeDir for references to the given
-// workspace ID, excluding the task with the given ID. Returns a list of task IDs that
-// still reference the workspace. This prevents closing a workspace that another task is using.
-// A missing state directory or a meta file that vanishes after enumeration means
-// there are no references from that absent record; every other read error fails closed.
+// otherWorkspaceRefs lists the tasks and captains in homeDir other than
+// excludeID whose endpoint sits in workspaceID, so retirement never closes a
+// workspace another pane still uses.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) ([]string, error) {
-	stateDir := filepath.Join(homeDir, "state")
-	entries, err := os.ReadDir(stateDir)
+	held, err := heldEndpoints(homeDir, home.Open)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, err
 	}
-
+	captains, err := captainWorkspaces(homeDir)
+	if err != nil {
+		return nil, err
+	}
 	var refs []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
-		}
-		taskID, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
-			continue
-		}
-		if taskID == excludeID {
-			continue
-		}
-
-		meta, err := home.ReadMetaFile(filepath.Join(stateDir, entry.Name()))
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, err
-		}
-		if meta[backend.MetaWorkspaceID] == workspaceID {
-			refs = append(refs, taskID)
+	for _, h := range held {
+		if h.TaskID != excludeID && h.Endpoint.WorkspaceID == workspaceID {
+			refs = append(refs, h.TaskID)
 		}
 	}
+	for id, ws := range captains {
+		if id != excludeID && ws == workspaceID {
+			refs = append(refs, id)
+		}
+	}
+	sort.Strings(refs)
 	return refs, nil
 }

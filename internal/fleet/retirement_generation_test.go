@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1464,64 +1465,124 @@ func terminalCleanupClaimBlock(t *testing.T) {
 	}
 }
 
-func TestOtherWorkspaceRefsTreatMissingStateAsNoReferences(t *testing.T) {
-	homeDir := t.TempDir()
-	refs, err := otherWorkspaceRefs(homeDir, "task", "workspace")
+// retireSoldier retires the task's current generation, releasing its bindings.
+func retireSoldier(t *testing.T, c *taskauthority.Canonical, taskID string) {
+	t.Helper()
+	agg, err := c.Get(mustTaskID(t, taskID))
 	if err != nil {
-		t.Fatalf("otherWorkspaceRefs on missing state: %v", err)
+		t.Fatal(err)
 	}
-	if len(refs) != 0 {
-		t.Fatalf("otherWorkspaceRefs on missing state = %v, want no references", refs)
+	retire := taskauthority.CanonicalRetireRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "retire"}
+	if _, err := c.Retire(mustFleetOperation(t, "op-retire-"+taskID, retire), retire); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// TestOtherWorkspaceRefsMatchesTheExactWorkspace: a task recording the same
-// workspace denies its close; a task recording a workspace whose id merely
-// starts with it does not.
-func TestOtherWorkspaceRefsMatchesTheExactWorkspace(t *testing.T) {
+// corruptCanonicalTask makes the task's canonical current document unreadable.
+func corruptCanonicalTask(t *testing.T, homeDir, taskID string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json"), []byte("{corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// otherWorkspaceRefs names every other task whose current generation holds an
+// endpoint in the workspace, and every captain whose .meta records it; a
+// retired generation holds none, and an unreadable task document fails closed.
+func TestOtherWorkspaceRefs(t *testing.T) {
 	for _, tc := range []struct {
-		recorded string
-		want     int
+		name    string
+		seed    func(t *testing.T, homeDir string)
+		want    []string
+		wantErr string
 	}{
-		{"w1", 1},
-		{"w10", 0},
+		{"an uninitialized home holds nothing", func(*testing.T, string) {}, nil, ""},
+		{"blocks another task's live binding in the workspace", func(t *testing.T, homeDir string) {
+			seedHeldWorkspace(t, homeDir, "other", "w1")
+		}, []string{"other"}, ""},
+		{"allows another task's retired binding in the workspace", func(t *testing.T, homeDir string) {
+			retireSoldier(t, seedHeldWorkspace(t, homeDir, "other", "w1"), "other")
+		}, nil, ""},
+		{"allows a workspace whose id merely starts with it", func(t *testing.T, homeDir string) {
+			seedHeldWorkspace(t, homeDir, "other", "w10")
+		}, nil, ""},
+		{"allows the retiring task's own binding", func(t *testing.T, homeDir string) {
+			seedHeldWorkspace(t, homeDir, "task", "w1")
+		}, nil, ""},
+		{"blocks a captain whose meta records the workspace", func(t *testing.T, homeDir string) {
+			if err := home.WriteMeta(homeDir, "captain:c1", map[string]string{"kind": "captain", "workspace_id": "w1"}); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{"captain:c1"}, ""},
+		{"fails closed on an unreadable task document", func(t *testing.T, homeDir string) {
+			seedHeldWorkspace(t, homeDir, "other", "w1")
+			corruptCanonicalTask(t, homeDir, "other")
+		}, nil, "other"},
 	} {
-		homeDir := t.TempDir()
-		if err := home.WriteMeta(homeDir, "other", map[string]string{"workspace_id": tc.recorded}); err != nil {
-			t.Fatal(err)
-		}
-		refs, err := otherWorkspaceRefs(homeDir, "task", "w1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(refs) != tc.want {
-			t.Errorf("workspace w1 with another task recording %q: refs = %v, want %d", tc.recorded, refs, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			tc.seed(t, homeDir)
+			refs, err := otherWorkspaceRefs(homeDir, "task", "w1")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("otherWorkspaceRefs = %v, %v, want a read failure naming %q", refs, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(refs, tc.want) {
+				t.Fatalf("otherWorkspaceRefs = %v, %v, want %v", refs, err, tc.want)
+			}
+		})
 	}
 }
 
-func TestOtherWorkspaceRefsSkipsVanishedMetaFile(t *testing.T) {
-	homeDir := t.TempDir()
-	stateDir := filepath.Join(homeDir, "state")
-	if err := os.MkdirAll(stateDir, 0700); err != nil {
-		t.Fatal(err)
+// LiveWorkspaceIDs, which herdr prune never closes, holds each live task
+// binding's workspace and each captain .meta's; a retired binding holds none,
+// and an unreadable task document fails closed.
+func TestLiveWorkspaceIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, homeDir string)
+		want    map[string]bool
+		wantErr string
+	}{
+		{"blocks a live task binding's workspace", func(t *testing.T, homeDir string) {
+			seedHeldWorkspace(t, homeDir, "live", "w1")
+		}, map[string]bool{"w1": true}, ""},
+		{"allows a retired task binding's workspace", func(t *testing.T, homeDir string) {
+			retireSoldier(t, seedHeldWorkspace(t, homeDir, "gone", "w1"), "gone")
+		}, map[string]bool{}, ""},
+		{"blocks a captain meta's workspace", func(t *testing.T, homeDir string) {
+			if err := home.WriteMeta(homeDir, "captain:c1", map[string]string{"kind": "captain", "workspace_id": "w2"}); err != nil {
+				t.Fatal(err)
+			}
+		}, map[string]bool{"w2": true}, ""},
+		{"fails closed on an unreadable task document", func(t *testing.T, homeDir string) {
+			seedHeldWorkspace(t, homeDir, "live", "w1")
+			corruptCanonicalTask(t, homeDir, "live")
+		}, nil, "reading task endpoint bindings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			tc.seed(t, homeDir)
+			got, err := LiveWorkspaceIDs(homeDir)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("LiveWorkspaceIDs = %v, %v, want %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("LiveWorkspaceIDs = %v, %v, want %v", got, err, tc.want)
+			}
+		})
 	}
-	vanishedTarget := filepath.Join(stateDir, "aaa-vanished.meta.target")
-	metaPath := filepath.Join(stateDir, "aaa-vanished.meta")
-	if err := os.Symlink(vanishedTarget, metaPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(homeDir, "zzz-valid", map[string]string{"workspace_id": "workspace"}); err != nil {
-		t.Fatal(err)
-	}
+}
 
-	refs, err := otherWorkspaceRefs(homeDir, "task", "workspace")
-	if err != nil {
-		t.Fatalf("otherWorkspaceRefs with vanished meta file: %v", err)
-	}
-	if len(refs) != 1 || refs[0] != "zzz-valid" {
-		t.Fatalf("otherWorkspaceRefs with vanished meta file = %v, want [zzz-valid]", refs)
-	}
+// seedHeldWorkspace binds a ship task to a herdr pane in workspace.
+func seedHeldWorkspace(t *testing.T, homeDir, taskID, workspace string) *taskauthority.Canonical {
+	t.Helper()
+	return seedBoundSoldierTask(t, homeDir, taskID, taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:" + taskID, SessionOwner: "s", WorkspaceID: workspace, TabID: "tab-" + taskID})
 }
 
 func TestRetirementWorkspaceReferenceReadErrorFailsClosed(t *testing.T) {
@@ -1531,25 +1592,11 @@ func TestRetirementWorkspaceReferenceReadErrorFailsClosed(t *testing.T) {
 	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktree"))
 
 	otherID := "other-workspace-user"
-	if err := home.WriteMeta(homeDir, otherID, map[string]string{"workspace_id": "ws-" + taskID}); err != nil {
-		t.Fatal(err)
-	}
-	otherMeta, err := home.MetaFilePath(homeDir, otherID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(otherMeta); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(otherMeta+"-target", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(otherMeta+"-target", otherMeta); err != nil {
-		t.Fatal(err)
-	}
+	seedHeldWorkspace(t, homeDir, otherID, "ws-"+taskID)
+	corruptCanonicalTask(t, homeDir, otherID)
 
 	rec := &recordingTeardown{alive: true}
-	_, err = RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
+	_, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
 	if err == nil || !strings.Contains(err.Error(), "reading workspace references") {
 		t.Fatalf("RetireTask error = %v, want workspace-reference read failure", err)
 	}
@@ -1585,25 +1632,11 @@ func TestRetirementAcquiredWorkspaceReferenceReadErrorFailsClosed(t *testing.T) 
 	}
 
 	otherID := "other-acquired-workspace-user"
-	if err := home.WriteMeta(homeDir, otherID, map[string]string{"workspace_id": "ws-" + taskID}); err != nil {
-		t.Fatal(err)
-	}
-	otherMeta, err := home.MetaFilePath(homeDir, otherID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(otherMeta); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(otherMeta+"-target", 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(otherMeta+"-target", otherMeta); err != nil {
-		t.Fatal(err)
-	}
+	seedHeldWorkspace(t, homeDir, otherID, "ws-"+taskID)
+	corruptCanonicalTask(t, homeDir, otherID)
 
 	rec := &recordingTeardown{alive: true}
-	_, err = RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
+	_, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
 	if err == nil || !strings.Contains(err.Error(), "reading workspace references") {
 		t.Fatalf("RetireTask error = %v, want workspace-reference read failure", err)
 	}

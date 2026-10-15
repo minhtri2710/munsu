@@ -10,7 +10,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
@@ -293,25 +292,12 @@ func verifyManualWorktreeRelease(worktreePath string) error {
 // activeWorktreeClaims returns the worktree paths held by a task, retirement, or
 // live launch reservation, and the reservation IDs released by canonical
 // retirement. A reservation ID live in any scanned home is never released.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[string]bool, map[string]bool, error) {
 	active := make(map[string]bool)
 	reservedLaunches := make(map[string]bool)
 	releasedLaunches := make(map[string]bool)
 	addHome := func(dir string) error {
-		ids, err := home.ListMetaIDs(dir)
-		if err != nil {
-			return fmt.Errorf("listing task meta in %s: %w", dir, err)
-		}
-		for _, id := range ids {
-			meta, err := home.ReadMeta(dir, id)
-			if err != nil {
-				return fmt.Errorf("reading task meta %q in %s: %w", id, dir, err)
-			}
-			if wt := meta["worktree"]; wt != "" {
-				active[worktreeClaimKey(wt)] = true
-			}
-		}
-
 		auth, err := taskAuthorityForRead(dir)
 		if err != nil {
 			return fmt.Errorf("reading task authority in %s: %w", dir, err)
