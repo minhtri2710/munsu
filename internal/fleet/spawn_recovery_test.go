@@ -935,10 +935,12 @@ func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 		holders     string // `treehouse status --json`; RES is the launch reservation
 		refused     bool
 		configMoved bool
+		failReturn  bool
 	}{
-		{"reservation still held", `[{"path":"/pool/held","lease_holder":"RES"}]`, true, false},
-		{"reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, false, false},
-		{"recorded treehouse after the worktree config moved", `[]`, false, true},
+		{"reservation still held", `[{"path":"/pool/held","lease_holder":"RES"}]`, true, false, false},
+		{"reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, false, false, false},
+		{"recorded treehouse after the worktree config moved", `[]`, false, true, false},
+		{"failure return through the recorded treehouse after the config moved", `[]`, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchFixture(t, "wt-treehouse-reentry")
@@ -983,6 +985,15 @@ func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 			if !strings.Contains(log, "get") || !strings.Contains(log, "--lease-holder "+res) {
 				t.Fatalf("re-entry did not acquire the launch reservation as lease holder: %q", log)
 			}
+			if tc.failReturn {
+				if err := f.runner.returnWorktreeOnFailure(); err != nil {
+					t.Fatalf("returnWorktreeOnFailure: %v", err)
+				}
+				if data, _ := os.ReadFile(logPath); !strings.Contains(string(data), "return --force") {
+					t.Fatalf("failure return did not go through the recorded treehouse: %q", data)
+				}
+				return
+			}
 			if tc.configMoved {
 				bound, err := f.runner.bindWorktree()
 				if err != nil {
@@ -1012,7 +1023,7 @@ func fakeTreehouse(t *testing.T, logPath, holders, repo string) string {
 	} else {
 		create = fmt.Sprintf("git -C %q worktree add -q --detach %q HEAD >/dev/null 2>&1 || exit 1", repo, wt)
 	}
-	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = status ]; then printf '%%s\\n' '%s'; exit 0; fi\n%s\nprintf '%%s\\n' %q\n", logPath, holders, create, wt)
+	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = status ]; then printf '%%s\\n' '%s'; exit 0; fi\nif [ \"$1\" = return ]; then exit 0; fi\n%s\nprintf '%%s\\n' %q\n", logPath, holders, create, wt)
 	return testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), content)
 }
 

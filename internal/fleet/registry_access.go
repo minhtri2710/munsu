@@ -183,16 +183,21 @@ func ProjectWorktreeTool(homeDir, project string) (string, error) {
 	return step.Path, nil
 }
 
-// HomeWorktreeTools lists the worktree providers homeDir's projects use: git
-// worktree, then each distinct Ready treehouse a registered project configures.
+// HomeWorktreeTools lists the worktree providers homeDir uses: git worktree,
+// then each distinct treehouse a registered project configures or a task in
+// the home recorded and has not released. Every one must be Ready.
 func HomeWorktreeTools(homeDir string) ([]string, error) {
-	var steps []config.ResolvedStep
+	type owned struct {
+		owner string
+		step  config.ResolvedStep
+	}
+	var steps []owned
 	if config.PublishedSnapshotAvailable(homeDir) {
 		snap, err := config.LoadPublishedSnapshot(homeDir)
 		if err != nil {
 			return nil, err
 		}
-		steps = append(steps, snap.Config().WorktreeStep)
+		steps = append(steps, owned{"project " + snap.Config().Project, snap.Config().WorktreeStep})
 	} else {
 		projects, err := List(homeDir)
 		if err != nil {
@@ -204,17 +209,50 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 		}
 		for _, p := range projects {
 			if entry := overlays[p.Name].Worktree; entry != nil {
-				steps = append(steps, config.ResolvedStep{Adapter: entry.Adapter, Path: entry.Path})
+				steps = append(steps, owned{"project " + p.Name, config.ResolvedStep{Adapter: entry.Adapter, Path: entry.Path}})
+			}
+		}
+	}
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening task authority home %s: %w", homeDir, err)
+	}
+	c, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		return nil, fmt.Errorf("composing task authority: %w", err)
+	}
+	aggs, err := c.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, agg := range aggs {
+		if agg.Phase == taskauthority.PhaseRetired && agg.CleanupClaim != nil && agg.CleanupClaim.Status == taskauthority.CleanupCompleted {
+			continue
+		}
+		recorded := []string{}
+		if agg.Launch != nil {
+			recorded = append(recorded, agg.Launch.WorktreeTool)
+		}
+		if agg.Worktree != nil {
+			recorded = append(recorded, agg.Worktree.Treehouse)
+		}
+		if agg.Retirement != nil && agg.Retirement.Worktree != nil {
+			recorded = append(recorded, agg.Retirement.Worktree.Treehouse)
+		}
+		for _, path := range recorded {
+			if path != "" {
+				steps = append(steps, owned{"task " + agg.TaskID, config.ResolvedStep{Adapter: "treehouse", Path: path}})
 			}
 		}
 	}
 	tools := []string{""}
-	for _, step := range steps {
-		if err := requireReadyWorktree(step); err != nil {
-			return nil, err
+	for _, s := range steps {
+		// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
+		if err := requireReadyWorktree(s.step); err != nil {
+			return nil, fmt.Errorf("%s: %w", s.owner, err)
 		}
-		if !slices.Contains(tools, step.Path) {
-			tools = append(tools, step.Path)
+		if !slices.Contains(tools, s.step.Path) {
+			tools = append(tools, s.step.Path)
 		}
 	}
 	return tools, nil

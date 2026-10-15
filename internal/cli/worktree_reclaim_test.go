@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -636,6 +637,31 @@ func TestWorktreeReclaimSparesTreehouseLeaseHolderBeforeCleanupCompletes(t *test
 	}
 }
 
+// recordTreehouseLease binds a live task worktree record acquired through the
+// project's configured treehouse, then removes the project's worktree entry.
+func recordTreehouseLease(t *testing.T, homeDir string) {
+	t.Helper()
+	overlay, err := config.LoadProjectOverlay(homeDir, treehouseProject)
+	if err != nil || overlay.Worktree == nil {
+		t.Fatalf("treehouse overlay = %+v, err=%v", overlay, err)
+	}
+	cliSeedCanonicalTask(t, homeDir, "leased-task", "ship")
+	auth := cliCanonicalForHome(t, homeDir)
+	taskID := mustTaskIDFor(t, "leased-task")
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := taskauthority.WorktreeBinding{RepositoryIdentity: "repo", Path: filepath.Join(t.TempDir(), "leased"), GitDir: "git", CommonDir: "common", BaseHead: "head", LeaseID: "leased-lease", FenceToken: "leased-fence", Treehouse: overlay.Worktree.Path, BoundAtUnix: 1}
+	bind := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Binding: binding, Reason: "reclaim test"}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "leased-bind", bind), bind); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectOverlay(homeDir, treehouseProject, config.ProjectOverlay{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func completeHeldTask(t *testing.T, auth *taskauthority.Canonical, taskID domain.TaskID, to taskauthority.Phase) {
 	t.Helper()
 	agg, err := auth.Get(taskID)
@@ -798,18 +824,24 @@ func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 }
 
 // TestWorktreeReclaimReturnsCleanUnownedOrphan reclaims a treehouse project's
-// clean orphan through its configured provider, named or found by walking the
-// home's projects.
+// clean orphan through its configured provider, named, found by walking the
+// home's projects, or found in a live task's worktree record after the
+// project's entry is removed.
 func TestWorktreeReclaimReturnsCleanUnownedOrphan(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		args []string
+		name      string
+		args      []string
+		dropEntry bool
 	}{
-		{"with --project", []string{"--project", treehouseProject}},
-		{"without --project", nil},
+		{"with --project", []string{"--project", treehouseProject}, false},
+		{"without --project", nil, false},
+		{"recorded treehouse after the project entry is removed", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+			homeDir, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
+			if tc.dropEntry {
+				recordTreehouseLease(t, homeDir)
+			}
 			output, err := runWorktreeReclaim(t, tc.args...)
 			if err != nil {
 				t.Fatal(err)
