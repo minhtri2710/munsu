@@ -471,7 +471,7 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
-			Backend:        "tmux",
+			Backend:        "herdr",
 		},
 		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
 	}
