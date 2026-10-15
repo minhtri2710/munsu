@@ -10,7 +10,9 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	homepkg "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -368,6 +370,58 @@ func TestYoloDoesNotRelaxConfiguredForgeTool(t *testing.T) {
 	}
 }
 
+// seedTaskTreehouse records tool on task "held" in the named record only:
+// a worktree binding, a launch intent, a retirement with cleanup pending, or a
+// retirement whose cleanup completed.
+func seedTaskTreehouse(t *testing.T, homeDir, record, tool string) {
+	t.Helper()
+	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalCreateTask(t, auth, "held", "ship", "")
+	if record == "launch" {
+		begin := taskauthority.CanonicalBeginSpawnRequest{
+			HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(1, 1),
+			SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: "pi", Model: "opus", Effort: "high",
+			Mode: "direct-PR", Kind: "ship", Project: "alpha", ParentTaskID: "parent", LaunchID: "launch-held",
+			WindowLabel: "window-held", WorktreeReservationID: "wt-res", WorktreeFenceToken: "wt-fence", WorktreeTool: tool,
+			EndpointReservationID: "ep-res", EndpointFenceToken: "ep-fence", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-held", Reason: "spawn",
+			SeatEnv: testSeatEnv(),
+		}
+		if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-held", begin), begin); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	bind := taskauthority.CanonicalBindWorktreeRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(1, 1), Reason: "spawn",
+		Binding: taskauthority.WorktreeBinding{
+			RepositoryIdentity: "repo-held", Path: filepath.Join(homeDir, "worktrees", "held"), GitDir: "git", CommonDir: "common",
+			BaseHead: strings.Repeat("a", 40), LeaseID: "lease-wt", FenceToken: "fence-wt", Treehouse: tool, BoundAtUnix: 1,
+		},
+	}
+	if _, err := auth.BindWorktree(mustFleetOperation(t, "op-bind-held", bind), bind); err != nil {
+		t.Fatal(err)
+	}
+	if record == "worktree" {
+		return
+	}
+	agg, err := auth.Get(mustTaskID(t, "held"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Reason: "retire"}
+	if _, err := auth.Retire(mustFleetOperation(t, "op-retire-held", retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	if record == "cleaned" {
+		if err := auth.ReconcileRetirementCleanup(mustTaskID(t, "held"), agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // TestWorktreeToolResolution pins the worktree port: git worktree unless the
 // project configures treehouse, and a configured treehouse refuses unless Ready.
 func TestWorktreeToolResolution(t *testing.T) {
@@ -378,6 +432,7 @@ func TestWorktreeToolResolution(t *testing.T) {
 		policy    DispatchPolicy
 		project   string // set: resolve through ProjectWorktreeTool for this project
 		homeTools bool   // resolve through HomeWorktreeTools
+		taskTool  string // seed task "held" with a missing treehouse in this record: worktree, launch, retirement, cleaned
 		wantErr   string
 	}{
 		{name: "configured treehouse not Ready is refused", configure: true, policy: DispatchPolicyGeneralDirect, wantErr: "resolved worktree adapter treehouse probe missing"},
@@ -389,6 +444,10 @@ func TestWorktreeToolResolution(t *testing.T) {
 		{name: "published snapshot of the project allows the project tool", configure: true, ready: true, policy: DispatchPolicyCaptainMediated, project: "alpha"},
 		{name: "home with a missing project treehouse refuses", configure: true, policy: DispatchPolicyGeneralDirect, homeTools: true, wantErr: "project alpha: worktree adapter treehouse probe missing"},
 		{name: "home with a Ready project treehouse lists it", configure: true, ready: true, policy: DispatchPolicyGeneralDirect, homeTools: true},
+		{name: "task-bound missing treehouse refuses and names the way out", policy: DispatchPolicyGeneralDirect, homeTools: true, taskTool: "worktree", wantErr: "task held: worktree adapter treehouse probe missing"},
+		{name: "task launch intent with a missing treehouse refuses", policy: DispatchPolicyGeneralDirect, homeTools: true, taskTool: "launch", wantErr: "task held: worktree adapter treehouse probe missing"},
+		{name: "task retirement record with a missing treehouse refuses", policy: DispatchPolicyGeneralDirect, homeTools: true, taskTool: "retirement", wantErr: "task held: worktree adapter treehouse probe missing"},
+		{name: "cleaned-up task's missing treehouse is skipped", policy: DispatchPolicyGeneralDirect, homeTools: true, taskTool: "cleaned"},
 		{name: "published treehouse no longer Ready refuses the project tool", configure: true, policy: DispatchPolicyCaptainMediated, project: "alpha", wantErr: "configured worktree tool is not Ready"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -434,6 +493,10 @@ func TestWorktreeToolResolution(t *testing.T) {
 				}
 			}
 
+			gone := filepath.Join(t.TempDir(), "gone-treehouse")
+			if tc.taskTool != "" {
+				seedTaskTreehouse(t, home, tc.taskTool, gone)
+			}
 			var got SpawnProjectConfig
 			var err error
 			if tc.homeTools {
@@ -449,6 +512,9 @@ func TestWorktreeToolResolution(t *testing.T) {
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				if hint := "reinstall treehouse at " + gone + " to retire task held, or reclaim one project with --project <name>"; tc.taskTool != "" && !strings.Contains(err.Error(), hint) {
+					t.Fatalf("error = %v, want hint %q", err, hint)
 				}
 				return
 			}

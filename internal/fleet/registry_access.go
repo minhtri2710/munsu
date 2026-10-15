@@ -190,6 +190,7 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 	type owned struct {
 		owner string
 		step  config.ResolvedStep
+		hint  string
 	}
 	var steps []owned
 	if config.PublishedSnapshotAvailable(homeDir) {
@@ -197,7 +198,7 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		steps = append(steps, owned{"project " + snap.Config().Project, snap.Config().WorktreeStep})
+		steps = append(steps, owned{"project " + snap.Config().Project, snap.Config().WorktreeStep, ""})
 	} else {
 		projects, err := List(homeDir)
 		if err != nil {
@@ -209,7 +210,7 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 		}
 		for _, p := range projects {
 			if entry := overlays[p.Name].Worktree; entry != nil {
-				steps = append(steps, owned{"project " + p.Name, config.ResolvedStep{Adapter: entry.Adapter, Path: entry.Path}})
+				steps = append(steps, owned{"project " + p.Name, config.ResolvedStep{Adapter: entry.Adapter, Path: entry.Path}, ""})
 			}
 		}
 	}
@@ -241,7 +242,8 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 		}
 		for _, path := range recorded {
 			if path != "" {
-				steps = append(steps, owned{"task " + agg.TaskID, config.ResolvedStep{Adapter: "treehouse", Path: path}})
+				hint := fmt.Sprintf("; reinstall treehouse at %s to retire task %s, or reclaim one project with --project <name>", path, agg.TaskID)
+				steps = append(steps, owned{"task " + agg.TaskID, config.ResolvedStep{Adapter: "treehouse", Path: path}, hint})
 			}
 		}
 	}
@@ -249,7 +251,7 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 	for _, s := range steps {
 		// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
 		if err := requireReadyWorktree(s.step); err != nil {
-			return nil, fmt.Errorf("%s: %w", s.owner, err)
+			return nil, fmt.Errorf("%s: %w%s", s.owner, err, s.hint)
 		}
 		if !slices.Contains(tools, s.step.Path) {
 			tools = append(tools, s.step.Path)
