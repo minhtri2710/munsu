@@ -2,6 +2,7 @@ package harness
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,6 +58,7 @@ func TestPreflight_Ready(t *testing.T) {
 		timeout    time.Duration
 		seat       *ClaudeConfig
 		noBuild    bool // the seat's empty config dir cannot be made
+		byPath     bool // asked through CheckReady with the binary's path
 		want       PreflightLevel
 		wantDetail string
 	}{
@@ -66,6 +68,8 @@ func TestPreflight_Ready(t *testing.T) {
 		{name: "claude not on PATH", harness: Claude, want: PreflightUnknown},
 		{name: "pi lists models", harness: Pi, script: piList + "echo 'provider model'\necho 'anthropic claude-fable-5'\n", want: PreflightOK},
 		{name: "pi has no models", harness: Pi, script: piList + "echo 'No models available. Use /login to log into a provider via OAuth or API key.'\n", want: PreflightAbsent, wantDetail: "`pi --list-models` reported: No models available."},
+		{name: "pi has no models, asked by path", harness: Pi, script: piList + "echo 'No models available. Use /login to log into a provider via OAuth or API key.'\n", byPath: true, want: PreflightAbsent, wantDetail: "harness \"pi\" cannot run: `"},
+		{name: "pi lists models, asked by path", harness: Pi, script: piList + "echo 'anthropic claude-fable-5'\n", byPath: true, want: PreflightOK},
 		{name: "codex has no readiness command", harness: Codex, script: "#!/bin/sh\nexit 1\n", want: PreflightUnknown},
 		// A fenced seat logs in with a config dir of its own and the Human's
 		// keychain item; the fake answers only when asked that way.
@@ -97,6 +101,20 @@ func TestPreflight_Ready(t *testing.T) {
 				orig := readinessProbeTimeout
 				readinessProbeTimeout = tc.timeout
 				t.Cleanup(func() { readinessProbeTimeout = orig })
+			}
+			if tc.byPath {
+				path, err := exec.LookPath(preflightBinaryNames[tc.harness])
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = CheckReady(tc.harness, path)
+				if tc.want == PreflightOK && err != nil {
+					t.Fatalf("CheckReady = %v, want nil", err)
+				}
+				if tc.want != PreflightOK && (err == nil || !strings.Contains(err.Error(), tc.wantDetail) || !strings.Contains(err.Error(), "--list-models` reported: No models available.")) {
+					t.Fatalf("CheckReady = %v, want not-ready quoting pi", err)
+				}
+				return
 			}
 			result, err := Preflight(tc.harness, seat)
 			if err != nil {
