@@ -126,7 +126,8 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          key: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-
       # The default lane runs without -race, so crash/replay/fence concurrency
       # in home, taskauthority and backend was never race-checked in CI.
       #
