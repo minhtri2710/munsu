@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -159,6 +161,31 @@ func TestDashboardNeedsYou(t *testing.T) {
 		want := []string{"NEEDS YOU 1", "decision kilo db: Pick a db"}
 		if got := needsLines(attentionModel(t, h, 120, 40).View().Content); !slices.Equal(got, want) {
 			t.Fatalf("NEEDS YOU =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	})
+
+	t.Run("a hold belongs only to the task it scopes", func(t *testing.T) {
+		h := t.TempDir()
+		writeTaskMeta(t, h, "a", "ship")
+		cliSeedCanonicalTask(t, h, "a-decision-x", "ship")
+		if out, err := runRoot(t, "decision-hold", "hold", "k", "--reason", "Pick", "--from", "a-decision-x", "--home", h); err != nil {
+			t.Fatalf("hold: %v\n%s", err, out)
+		}
+		for _, tc := range []struct {
+			id     string
+			listed bool
+		}{
+			{"a", false},
+			{"a-decision-x", true},
+		} {
+			m := selectTask(t, attentionModel(t, h, 120, 40), tc.id)
+			m.ask = func(*huh.Form) tea.Cmd { return nil }
+			got := needsLines(m.View().Content)
+			listed := slices.ContainsFunc(got, func(l string) bool { return strings.HasPrefix(l, "decision "+tc.id+" ") })
+			m = press(m, "enter")
+			if listed != tc.listed || (m.mode == modeRunning) != tc.listed {
+				t.Errorf("%s: listed %v, decidable %v; want %v:\n%s", tc.id, listed, m.mode == modeRunning, tc.listed, strings.Join(got, "\n"))
+			}
 		}
 	})
 

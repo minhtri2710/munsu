@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -51,7 +52,7 @@ func dashHolds(primary string, snap *fleet.DisplaySnapshot) (map[dashHoldKey][]d
 		for _, id := range ids {
 			for _, hold := range holds {
 				key, ok := strings.CutPrefix(hold.ID, decisionHoldID(id, ""))
-				if ok && hold.ReleasedAt == 0 {
+				if ok && hold.ReleasedAt == 0 && slices.Contains(hold.Scope.TaskIDs, id) {
 					k := dashHoldKey{dir, id}
 					out[k] = append(out[k], dashHold{key: key, reason: hold.Reason})
 				}
