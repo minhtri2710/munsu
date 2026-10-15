@@ -82,15 +82,15 @@ func (m dashboardModel) feedMax() int {
 }
 
 // resize sizes every component from the terminal size and the lines the
-// header, notes and footer take. The confirm viewport gets its rows first, so
-// the command the Human approves is never what gives way; then the feed, then
+// header, notes, NEEDS YOU and footer take. The confirm viewport gets its rows
+// first, so the command the Human approves is never what gives way; then the
+// feed, then the detail pane when the list keeps its title and two rows, then
 // the list. A section with no rows left is not drawn.
 func (m *dashboardModel) resize() {
 	w := m.width
-	m.help.SetWidth(w)
 	m.argv.SetWidth(w)
 	m.feed.SetWidth(w)
-	avail := max(0, m.height-len(m.header())-len(m.notes())-len(m.footer()))
+	avail := max(0, m.height-len(m.header())-len(m.notes())-len(m.needsSection())-len(m.footer()))
 	if m.mode == modeConfirm {
 		rows := min(m.argv.TotalLineCount(), avail)
 		m.argv.SetHeight(rows)
@@ -98,7 +98,12 @@ func (m *dashboardModel) resize() {
 		avail -= rows
 	}
 	m.feedH = min(m.feedMax(), avail/2)
-	m.listH = avail - m.feedH
+	rest := avail - m.feedH
+	m.detailH = 0
+	if d := len(m.detail()); rest >= d+3 {
+		m.detailH = d
+	}
+	m.listH = rest - m.detailH
 
 	m.feed.SetContentLines(m.feedLines(w))
 	rows := max(0, m.feedH-1)
@@ -174,6 +179,7 @@ const (
 	stemFleetReadFailed
 	stemLoadingFleet
 	stemNoTasks
+	stemNothingNeedsYou
 )
 
 func keepStem(s dashStem) dashKeep {
@@ -186,8 +192,20 @@ func keepStem(s dashStem) dashKeep {
 		return dashKeep{styleMuted.Render("Loading fleet...")}
 	case stemNoTasks:
 		return dashKeep{styleMuted.Render("No tasks and no failed sources.")}
+	case stemNothingNeedsYou:
+		return dashKeep{styleMuted.Render("Nothing needs you.")}
 	}
 	return dashKeep{}
+}
+
+// keepNeedsTitle is "NEEDS YOU" and its count, with the shown count when the
+// section is capped.
+func keepNeedsTitle(shown, total int) dashKeep {
+	title := fmt.Sprintf("NEEDS YOU %d", total)
+	if shown < total {
+		title += fmt.Sprintf(" - showing %d", shown)
+	}
+	return dashKeep{styleFail.Bold(true).Render(title)}
 }
 
 // keepListTitle names the list and, when a page clips it, counts what it draws.
@@ -250,7 +268,11 @@ func (m dashboardModel) layout() []dashLine {
 	m.resize()
 	lines := m.header()
 	lines = append(lines, m.notes()...)
+	lines = append(lines, m.needsSection()...)
 	lines = append(lines, m.body()...)
+	if m.detailH > 0 {
+		lines = append(lines, m.detail()...)
+	}
 	lines = append(lines, m.feedSection()...)
 	if m.mode == modeConfirm {
 		lines = append(lines, dashFree(strings.Split(m.argv.View(), "\n")...)...)
@@ -521,11 +543,10 @@ func eventLine(e orchestrator.Record) string {
 	return strings.TrimRight(fmt.Sprintf("%s %s %s %s %s", at, dashText(e.Type), dashText(e.Producer), dashText(e.Key), dashText(e.Payload)), " ")
 }
 
-// helpLines are the key footer: the movement entry (with two rows or more),
-// every action the selection can carry (a.bind finds no problem, the test begin
-// applies), and quit, in table order. Entries fill a line while the line still
-// fits the terminal; the next one starts a new line, and no entry is split. A
-// pressed action key that is hidden here still reaches begin and gets its notice.
+// helpLines are the key footer: the movement entry, every action of the table,
+// decide and quit, in that order. An entry the selection cannot carry (bind
+// finds a problem, the test begin applies) is dimmed; its key still reaches
+// begin and gets its notice.
 func (m dashboardModel) helpLines() []string {
 	hasTarget := len(m.list.Items()) > 0
 	move := dashMove
@@ -537,25 +558,40 @@ func (m dashboardModel) helpLines() []string {
 		b.SetEnabled(problem == "")
 		entries = append(entries, b)
 	}
-	entries = append(entries, dashQuit)
-
-	// help.Model cuts a line wider than its width with an ellipsis, so a line's
-	// natural width is measured on a copy with no width.
-	natural := m.help
-	natural.SetWidth(0)
-	var lines []string
-	var line []key.Binding
-	for _, e := range entries {
-		if !e.Enabled() {
-			continue
-		}
-		if len(line) > 0 && m.width > 0 && lipgloss.Width(natural.ShortHelpView(append(line[:len(line):len(line)], e))) > m.width {
-			lines = append(lines, m.help.ShortHelpView(line))
-			line = nil
-		}
-		line = append(line, e)
+	decide := dashDecide
+	held := false
+	if it, ok := m.list.SelectedItem().(dashItem); ok && it.row != nil {
+		_, _, held = heldDecision(*it.row)
 	}
-	return append(lines, m.help.ShortHelpView(line))
+	decide.SetEnabled(held)
+	return m.keyLines(append(entries, decide, dashQuit)...)
+}
+
+// keyLines draws key entries, each its key and label, a disabled one dimmed.
+// Entries fill a line while it fits the terminal; the next one starts a new
+// line, and no entry is split.
+func (m dashboardModel) keyLines(entries ...key.Binding) []string {
+	var lines []string
+	line, width := "", 0
+	for _, e := range entries {
+		h := e.Help()
+		text := styleAccent.Render(h.Key) + " " + h.Desc
+		if !e.Enabled() {
+			text = styleMuted.Render(h.Key + " " + h.Desc)
+		}
+		w := lipgloss.Width(text)
+		if line != "" && m.width > 0 && width+2+w > m.width {
+			lines = append(lines, line)
+			line, width = "", 0
+		}
+		if line != "" {
+			line += "  "
+			width += 2
+		}
+		line += text
+		width += w
+	}
+	return append(lines, line)
 }
 
 // fieldView draws one form field. A value holding text the dashboard must not
@@ -588,7 +624,7 @@ func (m dashboardModel) footer() []dashLine {
 			}
 			out = append(out, dashLine{rest: fieldView(p.inputs[i], cur+f.label+req+": ", m.width)})
 		}
-		out = append(out, dashLine{rest: styleMuted.Render("enter next/submit  esc cancel")})
+		out = append(out, dashFree(m.keyLines(dashFormNext, dashFormCancel)...)...)
 	case modeConfirm:
 		switch {
 		case m.argvRows() && m.argv.AtBottom():
@@ -598,7 +634,9 @@ func (m dashboardModel) footer() []dashLine {
 		default:
 			out = append(out, dashLine{rest: styleFail.Render("Terminal too small to show the whole command: enlarge it, or esc to cancel.")})
 		}
-		out = append(out, dashLine{rest: styleMuted.Render("y run  esc cancel")})
+		run := dashRun
+		run.SetEnabled(m.argvRows() && m.argv.AtBottom())
+		out = append(out, dashFree(m.keyLines(run, dashRunCancel)...)...)
 	case modeRunning:
 		out = append(out, dashLine{rest: styleMuted.Render("Running...")})
 	default:
