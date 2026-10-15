@@ -115,7 +115,7 @@ func (f *reentrantEndpointCapabilities) submitCount() int {
 // acquireWorktree, bindWorktree, buildSoldierPrompt, createSession,
 // attachEndpoint, submitLaunch, writeLaunchManifest, waitAndInjectBrief,
 // verifyEndpointReadyBeforePersist, writeTaskMeta, confirmSpawn) against a
-// canonical home with a real git-fallback worktree and a counting
+// canonical home with a real git worktree and a counting
 // reservation-aware endpoint capability.
 type launchFixture struct {
 	t         *testing.T
@@ -138,9 +138,9 @@ func requiredSkillStubDir(t *testing.T) string {
 	return dir
 }
 
-// newLaunchFixture builds the fixture. PATH is sanitized to git only so the
-// worktree acquisition uses the deterministic git fallback (never the
-// external treehouse pool).
+// newLaunchFixture builds the fixture. PATH is sanitized to git and the skill
+// stubs; the project configures no worktree tool, so acquisition uses git
+// worktree.
 func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 	t.Helper()
 	homeDir := t.TempDir()

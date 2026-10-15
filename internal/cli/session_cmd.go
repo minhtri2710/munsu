@@ -307,18 +307,15 @@ func newSessionStartCmd() *cobra.Command {
 
 func newBootstrapCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "bootstrap [install <tools>...]",
+		Use:   "bootstrap",
 		Short: "Detect toolchain and run setup sweeps",
+		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			locked, err := orchestrator.IsSessionLocked(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("session lock probe: %w", err)
 			}
-			var installTools []string
-			if len(args) > 1 && args[0] == "install" {
-				installTools = args[1:]
-			}
-			result, err := bootstrap.Run(ctx.Home, !locked, installTools, taskDataDirReclaimer(ctx.Home))
+			result, err := bootstrap.Run(ctx.Home, !locked, taskDataDirReclaimer(ctx.Home))
 			if err != nil {
 				return err
 			}

@@ -1079,7 +1079,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				}
 				return cleanupPending(fmt.Errorf("teardown %s: launch artifact disposal refused: %w", opts.ID, err))
 			}
-			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
+			if err := backend.ReturnWorktree(opts.HomeDir, ev.Worktree.Treehouse, wtPath); err != nil {
 				_ = poolLock.Release()
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err))
 			}

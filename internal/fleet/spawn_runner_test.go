@@ -32,7 +32,7 @@ func TestReturnWorktreeOnFailure_PreservesBoundWorktreeOnAggregateReadError(t *t
 	called := false
 	original := returnWorktree
 	t.Cleanup(func() { returnWorktree = original })
-	returnWorktree = func(string, string) error {
+	returnWorktree = func(string, string, string) error {
 		called = true
 		return nil
 	}
@@ -50,7 +50,7 @@ func TestReturnWorktreeOnFailureSurfacesReturnError(t *testing.T) {
 	want := errors.New("return failed")
 	original := returnWorktree
 	t.Cleanup(func() { returnWorktree = original })
-	returnWorktree = func(string, string) error { return want }
+	returnWorktree = func(string, string, string) error { return want }
 
 	r := &Runner{homeDir: t.TempDir(), wtPath: filepath.Join(t.TempDir(), "bound")}
 	err := r.returnWorktreeOnFailure()

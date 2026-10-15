@@ -110,7 +110,7 @@ func (w *workflowTeardown) Dispose(string, map[string]string, fleet.DisposeReque
 	return nil
 }
 
-func (w *workflowTeardown) ReturnWorktree(string, string) error { w.returned++; return nil }
+func (w *workflowTeardown) ReturnWorktree(string, string, string) error { w.returned++; return nil }
 
 func (w *workflowTeardown) QueryMergeStatus(taskauthority.DeliveryStep, *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return nil, nil
@@ -486,6 +486,7 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 		Model:            "workflow-captain-model",
 		CaptainProfile:   config.CaptainProfile{Harness: harness.Pi},
 		ForgeStep:        config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
+		WorktreeStep:     config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
 		FenceUnsupported: "allow",
 		Digest:           workflowPublishedDigest,
 	}); err != nil {

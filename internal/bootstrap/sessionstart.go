@@ -318,7 +318,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		recordGeneralDelivery(w, home)
 	}
 
-	bootRes, err := sessionStartBootstrap(home, acquired, nil, res.RuntimeIdentity, reclaim)
+	bootRes, err := sessionStartBootstrap(home, acquired, res.RuntimeIdentity, reclaim)
 	if err != nil {
 		bootstrapErr := fmt.Errorf("bootstrap: %w", err)
 		if !acquired {
@@ -350,7 +350,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	}
 	if len(bootRes.MissingTools) > 0 {
 		fmt.Fprintln(w, "")
-		fmt.Fprintln(w, "Missing tools -- install with: munsu bootstrap install <tool>")
+		fmt.Fprintln(w, "Missing tools -- run munsu doctor for fix commands")
 	}
 
 	printIntegrationMatrix(w, home)

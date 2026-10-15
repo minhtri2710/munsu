@@ -199,7 +199,7 @@ func TestDoctor_CorruptBaseConfigFails(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"git", "tmux", "treehouse", "gh-axi", "gh", "fuser"} {
+	for _, name := range []string{"git", "tmux", "gh-axi", "gh", "fuser"} {
 		testutil.WriteFakeExecutable(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
 	}
 	t.Setenv("PATH", bin)

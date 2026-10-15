@@ -24,8 +24,6 @@ type ToolStatus int
 const (
 	ToolFound ToolStatus = iota
 	ToolMissing
-	ToolInstallFailed
-	ToolInstalled
 )
 
 // AuthStatus represents whether GitHub CLI authentication is valid.
@@ -41,7 +39,6 @@ type ToolDiagnostic struct {
 	Tool   string
 	Status ToolStatus
 	Path   string
-	Err    error
 }
 
 // AuthDiagnostic describes the result of checking GitHub auth.
@@ -83,16 +80,16 @@ type Result struct {
 
 // Run executes bootstrap diagnostics for the given munsu home.
 // If lockHeld is true, mutating sweeps (fleet-sync) may run.
-func Run(home string, lockHeld bool, installTools []string, reclaim ReclaimTaskDataDir) (*Result, error) {
+func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) (*Result, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = home
 	}
 	runtimeIdentity := CollectRuntimeIdentity(home, cwd, "")
-	return runWithRuntimeIdentity(home, lockHeld, installTools, &runtimeIdentity, reclaim)
+	return runWithRuntimeIdentity(home, lockHeld, &runtimeIdentity, reclaim)
 }
 
-func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) (*Result, error) {
+func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) (*Result, error) {
 	res := &Result{
 		LockAcquired:    lockHeld,
 		RuntimeIdentity: runtimeIdentity,
@@ -161,18 +158,7 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 	}
 	res.WriteFence = writeFenceDiagnostic(fence.Supported(), unfenced)
 
-	// 6. Install tools if requested and lock held
-	if lockHeld && len(installTools) > 0 {
-		for _, tool := range installTools {
-			if err := installTool(tool); err != nil {
-				res.Tools = append(res.Tools, ToolDiagnostic{Tool: tool, Status: ToolInstallFailed, Err: err})
-			} else {
-				res.Tools = append(res.Tools, ToolDiagnostic{Tool: tool, Status: ToolInstalled})
-			}
-		}
-	}
-
-	// 7. GC orphan data dirs (only when lock held and a task ownership
+	// 6. GC orphan data dirs (only when lock held and a task ownership
 	// source was supplied). Without one the sweep cannot tell a brief that
 	// is still waiting for its soldier from one nobody will read again, so
 	// it removes nothing.
@@ -208,17 +194,6 @@ func writeFenceDiagnostic(unsupported error, unfenced []string) *ConfigDiagnosti
 func ghAuth() bool {
 	_, err := runCapabilityCommand("gh", []string{"auth", "status"}, "", capabilityProbeTimeout)
 	return err == nil
-}
-
-// installTool runs the appropriate install command for a tool.
-func installTool(tool string) error {
-	switch tool {
-	case "treehouse":
-		cmd := exec.Command("go", "install", "github.com/kunchenguid/treehouse@latest")
-		return cmd.Run()
-	default:
-		return fmt.Errorf("no automatic install for %s", tool)
-	}
 }
 
 // ReclaimTaskDataDir reclaims a released task directory while its lifecycle

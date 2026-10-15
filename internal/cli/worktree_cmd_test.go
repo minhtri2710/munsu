@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -42,7 +44,7 @@ func setupClaimedWorktreeReturn(t *testing.T) (worktreePath, tracePath string) {
 		t.Fatalf("binding canonical worktree: %v", err)
 	}
 	tracePath = filepath.Join(homeDir, "treehouse-returns")
-	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
+	fakeTreehouseProject(t, homeDir, "#!/bin/sh\n"+
 		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then\n"+
 		"  printf '[{\"path\":\"%s\",\"lease_holder\":\"\"}]\\n' '"+worktreePath+"'\n"+
 		"  exit 0\n"+
@@ -53,6 +55,28 @@ func setupClaimedWorktreeReturn(t *testing.T) (worktreePath, tracePath string) {
 		"fi\n"+
 		"exit 1\n")
 	return worktreePath, tracePath
+}
+
+const treehouseProject = "treehouse-proj"
+
+// fakeTreehouseProject registers treehouseProject in homeDir with a fake
+// treehouse running script as its configured worktree tool.
+func fakeTreehouseProject(t *testing.T, homeDir, script string) {
+	t.Helper()
+	tool := testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), script)
+	if _, err := config.LoadFleetBase(homeDir); err != nil {
+		if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fleet.Find(homeDir, treehouseProject); err != nil {
+		if err := fleet.Add(homeDir, treehouseProject, t.TempDir(), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := config.StoreProjectOverlay(homeDir, treehouseProject, config.ProjectOverlay{Worktree: &config.ToolEntry{Adapter: "treehouse", Path: tool}}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func gitOrphanWorktree(t *testing.T) (repoPath, worktreePath string) {
@@ -92,7 +116,7 @@ func setupCleanOrphanWorktree(t *testing.T) (homeDir, repoPath, worktreePath, tr
 	if err != nil {
 		t.Fatal(err)
 	}
-	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
+	fakeTreehouseProject(t, homeDir, "#!/bin/sh\n"+
 		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then printf '%s\\n' '"+string(status)+"'; exit 0; fi\n"+
 		"if [ \"$1\" = \"return\" ]; then printf '%s\\n' \"$3\" >> \""+tracePath+"\"; exit 0; fi\nexit 1\n")
 	return homeDir, repoPath, worktreePath, tracePath
@@ -139,7 +163,7 @@ func TestWorktreeReturnGuards(t *testing.T) {
 				root := NewRootCommand()
 				root.SetOut(new(strings.Builder))
 				root.SetErr(new(strings.Builder))
-				root.SetArgs([]string{"worktree", "return", path})
+				root.SetArgs([]string{"worktree", "return", "--project", treehouseProject, path})
 				err := root.Execute()
 				if tc.refused == "" {
 					if err != nil {
@@ -170,7 +194,7 @@ func TestWorktreeReturnRejectsForceFlag(t *testing.T) {
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "return", "--force", worktreePath})
+	root.SetArgs([]string{"worktree", "return", "--project", treehouseProject, "--force", worktreePath})
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag: --force") {
 		t.Fatalf("--force error = %v, want explicit flag rejection", err)
 	}

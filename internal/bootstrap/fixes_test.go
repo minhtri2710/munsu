@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -11,7 +10,6 @@ func TestFixCommand(t *testing.T) {
 		want string // empty means no fix expected
 	}{
 		{"git", "Install git: https://git-scm.com/downloads"},
-		{"treehouse", "go install github.com/kunchenguid/treehouse@latest"},
 		{"gh-axi", "npm install -g gh-axi"},
 		{"gh", "Install GitHub CLI: brew install gh  |  https://cli.github.com/"},
 		{"tmux", "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
@@ -36,28 +34,11 @@ func TestToolDiagnostic_Fix_Missing(t *testing.T) {
 	}
 }
 
-func TestToolDiagnostic_Fix_InstallFailed(t *testing.T) {
-	d := ToolDiagnostic{Tool: "treehouse", Status: ToolInstallFailed, Err: errors.New("timeout")}
-	got := d.Fix()
-	want := "go install github.com/kunchenguid/treehouse@latest"
-	if got != want {
-		t.Errorf("ToolDiagnostic{Fix} for install-failed treehouse = %q, want %q", got, want)
-	}
-}
-
 func TestToolDiagnostic_Fix_Found_NoFix(t *testing.T) {
 	d := ToolDiagnostic{Tool: "git", Status: ToolFound, Path: "/usr/bin/git"}
 	got := d.Fix()
 	if got != "" {
 		t.Errorf("ToolDiagnostic{Fix} for found tool = %q, want empty", got)
-	}
-}
-
-func TestToolDiagnostic_Fix_Installed_NoFix(t *testing.T) {
-	d := ToolDiagnostic{Tool: "treehouse", Status: ToolInstalled}
-	got := d.Fix()
-	if got != "" {
-		t.Errorf("ToolDiagnostic{Fix} for installed tool = %q, want empty", got)
 	}
 }
 
@@ -67,15 +48,6 @@ func TestToolDiagnostic_Fix_UnknownToolMissing(t *testing.T) {
 	// FixCommand returns "" for unknown tools; missing returns FixCommand directly
 	if got != "" {
 		t.Errorf("ToolDiagnostic{Fix} for missing unknown tool = %q, want empty", got)
-	}
-}
-
-func TestToolDiagnostic_Fix_UnknownToolInstallFailed_Fallback(t *testing.T) {
-	d := ToolDiagnostic{Tool: "unknownthing", Status: ToolInstallFailed, Err: errors.New("fail")}
-	got := d.Fix()
-	want := "install unknownthing (see its documentation)"
-	if got != want {
-		t.Errorf("ToolDiagnostic{Fix} for install-failed unknown tool = %q, want %q", got, want)
 	}
 }
 

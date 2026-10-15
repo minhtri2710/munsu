@@ -38,6 +38,13 @@ func canonicalMergeTestAuth(t *testing.T, homeDir, taskID string) *taskauthority
 // canonical Authority at the task's current generation/revision.
 func seedWorktreeEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, path, lease, fence string) {
 	t.Helper()
+	seedWorktreeEvidenceVia(t, auth, taskID, path, lease, fence, "")
+}
+
+// seedWorktreeEvidenceVia binds the lease as acquired through treehouse, or
+// git worktree when treehouse is empty.
+func seedWorktreeEvidenceVia(t *testing.T, auth *taskauthority.Canonical, taskID, path, lease, fence, treehouse string) {
+	t.Helper()
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +61,7 @@ func seedWorktreeEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, p
 			BaseHead:           strings.Repeat("a", 40),
 			LeaseID:            lease,
 			FenceToken:         fence,
+			Treehouse:          treehouse,
 			BoundAtUnix:        time.Now().Unix(),
 		},
 		Reason: "spawn",
@@ -258,6 +266,7 @@ func writeRetireMeta(t *testing.T, homeDir, taskID, window, worktree string) {
 type recordingTeardown struct {
 	disposed   []DisposeRequest
 	returned   []string
+	treehouses []string
 	alive      bool
 	status     *RetirementEndpointStatus // fixed observation; overrides alive when set
 	onProbe    func()                    // executed at the start of Probe (TOCTOU simulation)
@@ -290,11 +299,12 @@ func (r *recordingTeardown) Dispose(_ string, _ map[string]string, req DisposeRe
 func (r *recordingTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return QueryDeliveryMergeStatus(forge, ident)
 }
-func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
+func (r *recordingTeardown) ReturnWorktree(_, treehouse, path string) error {
 	if r.onReturn != nil {
 		r.onReturn()
 	}
 	r.returned = append(r.returned, path)
+	r.treehouses = append(r.treehouses, treehouse)
 	return r.returnErr
 }
 
@@ -358,12 +368,21 @@ func TestCompletedCleanupRetryOnlyRemovesProjections(t *testing.T) {
 }
 
 func TestRetirementDisposesAndReturnsOnlyEvidenceOwnedResources(t *testing.T) {
+	for _, tc := range []struct{ name, treehouse string }{
+		{"git worktree", ""},
+		{"recorded treehouse", "/opt/treehouse/bin/treehouse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { retireEvidenceOwnedResources(t, tc.treehouse) })
+	}
+}
+
+func retireEvidenceOwnedResources(t *testing.T, treehouse string) {
 	homeDir := t.TempDir()
 	taskID := "exact-release"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 	wtDir := filepath.Join(homeDir, "worktrees", taskID)
 	os.MkdirAll(wtDir, 0755)
-	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+	seedWorktreeEvidenceVia(t, auth, taskID, wtDir, "lease-wt", "fence-wt", treehouse)
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
 	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
@@ -382,6 +401,9 @@ func TestRetirementDisposesAndReturnsOnlyEvidenceOwnedResources(t *testing.T) {
 	}
 	if len(rec.returned) != 1 || rec.returned[0] != wtDir {
 		t.Fatalf("returned=%v, want evidence worktree %s", rec.returned, wtDir)
+	}
+	if len(rec.treehouses) != 1 || rec.treehouses[0] != treehouse {
+		t.Fatalf("returned through %q, want the recorded provider %q", rec.treehouses, treehouse)
 	}
 	// Projection removed after full cleanup; canonical retirement evidence is
 	// preserved (projection removal must not erase it).

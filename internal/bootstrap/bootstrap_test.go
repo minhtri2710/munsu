@@ -19,13 +19,6 @@ import (
 )
 
 func TestInvalidClosedSetInputsRefuse(t *testing.T) {
-	t.Run("install tool", func(t *testing.T) {
-		err := installTool("unknown-tool")
-		if err == nil || !strings.Contains(err.Error(), "no automatic install") {
-			t.Fatalf("installTool error = %v, want unsupported tool refusal", err)
-		}
-	})
-
 	scopeCases := []struct {
 		name string
 		call func() error
@@ -77,7 +70,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) 
 	t.Setenv("TMUX", "/tmp/tmux-xxx/default")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +84,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +103,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 	testutil.WriteFakeExecutable(t, filepath.Join(fakeBin, "tmux"), "#!/bin/sh\nexit 0")
 	testutil.PrependPath(t, fakeBin)
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +122,7 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	// Env must not shadow the persisted typed Backend.
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +149,7 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +164,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +181,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 
 func TestRun_BaseConfigErr(t *testing.T) {
 	missing := t.TempDir()
-	result, err := Run(missing, false, nil, nil)
+	result, err := Run(missing, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +201,7 @@ func TestRun_BaseConfigErr(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte(body), 0644); err != nil {
 				t.Fatal(err)
 			}
-			result, err := Run(home, false, nil, nil)
+			result, err := Run(home, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -650,7 +643,7 @@ func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
 	}
 	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
 
-	result, err := Run(home, true, nil, nil)
+	result, err := Run(home, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

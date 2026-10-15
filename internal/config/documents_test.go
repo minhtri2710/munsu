@@ -369,7 +369,7 @@ func resolvedDigest(t *testing.T, base FleetBaseDocument, facts ProjectFacts) st
 // resolveBaseline resolves a project whose forge tool is baseline, the state
 // of an overlay with no tool entry.
 func resolveBaseline(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
-	return ResolveProjectWithSteps(base, facts, baselineStep())
+	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep())
 }
 
 func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
@@ -426,6 +426,27 @@ func TestToolStepRefusals(t *testing.T) {
 		{"gitlab forge with absolute path", func(*testing.T) error {
 			return ValidateProjectTools(ProjectOverlay{Forge: &ToolEntry{Adapter: "gitlab", Path: "/bin/glab"}})
 		}, ""},
+		{"unknown worktree adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Worktree: &ToolEntry{Adapter: "git", Path: "/bin/git"}})
+		}, "worktree tool has unknown adapter \"git\""},
+		{"treehouse without a path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Worktree: &ToolEntry{Adapter: "treehouse"}})
+		}, "worktree adapter treehouse requires an absolute path"},
+		{"treehouse with args", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Worktree: &ToolEntry{Adapter: "treehouse", Path: "/bin/treehouse", Args: []string{"--x"}}})
+		}, "worktree adapter treehouse does not accept args"},
+		{"treehouse with an absolute path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Worktree: &ToolEntry{Adapter: "treehouse", Path: "/bin/treehouse"}})
+		}, ""},
+		{"worktree step not matching the overlay", func(*testing.T) error {
+			_, err := ResolveProjectWithSteps(base, bare, baselineStep(), ResolvedStep{Adapter: "treehouse", Path: "/bin/treehouse", ProbeState: "ready"})
+			return err
+		}, "resolved worktree step does not match the project overlay"},
+		{"worktree step matching the overlay", func(*testing.T) error {
+			th := validFacts(bare.Name, bare.Path, ProjectOverlay{Worktree: &ToolEntry{Adapter: "treehouse", Path: "/bin/treehouse"}})
+			_, err := ResolveProjectWithSteps(base, th, baselineStep(), ResolvedStep{Adapter: "treehouse", Path: "/bin/treehouse", ProbeState: "ready"})
+			return err
+		}, ""},
 		{"empty snapshot", func(*testing.T) error {
 			_, err := (ResolvedSnapshot{}).WithSteps(baselineStep())
 			return err
@@ -443,23 +464,23 @@ func TestToolStepRefusals(t *testing.T) {
 			return err
 		}, ""},
 		{"adapter outside the forge set", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "bogus", Path: "/bin/bogus", ProbeState: "ready"})
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "bogus", Path: "/bin/bogus", ProbeState: "ready"}, baselineStep())
 			return err
 		}, "resolved forge adapter bogus probe ready"},
 		{"step not matching the overlay", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, readyForge)
+			_, err := ResolveProjectWithSteps(base, bare, readyForge, baselineStep())
 			return err
 		}, "does not match the project overlay"},
 		{"step matching the overlay", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, facts, readyForge)
+			_, err := ResolveProjectWithSteps(base, facts, readyForge, baselineStep())
 			return err
 		}, ""},
 		{"baseline step carrying tool data", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "github", ProbeState: "baseline"})
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "github", ProbeState: "baseline"}, baselineStep())
 			return err
 		}, "baseline carries configured tool data"},
 		{"relative executable path", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, facts, ResolvedStep{Adapter: "github", Path: "gh-axi", ProbeState: "ready"})
+			_, err := ResolveProjectWithSteps(base, facts, ResolvedStep{Adapter: "github", Path: "gh-axi", ProbeState: "ready"}, baselineStep())
 			return err
 		}, "requires an absolute executable path"},
 		{"no session backend identity anywhere", func(*testing.T) error {

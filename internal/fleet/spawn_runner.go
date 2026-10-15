@@ -877,8 +877,8 @@ func (r *Runner) checkTangle() error {
 // the committed launch intent: when the aggregate already holds the durable
 // worktree binding (recovery after a crash), the bound path is adopted and no
 // provider call happens. A re-entry with no binding is passed to the provider
-// as a recovery: it returns the SAME reservation-owned worktree (git fallback:
-// deterministic reservation-keyed path), acquires afresh a reservation nothing
+// as a recovery: it returns the SAME reservation-owned worktree (git
+// worktree: deterministic reservation-keyed path), acquires afresh a reservation nothing
 // holds (treehouse: lease-holder lookup), or fails closed (treehouse: a held
 // reservation it cannot re-acquire) — never a replacement for a held lease.
 // The binding identity is verified at bindWorktree.
@@ -905,7 +905,7 @@ func (r *Runner) acquireWorktree() error {
 		return fmt.Errorf("acquiring worktree: %w", err)
 	}
 	defer poolLock.Release()
-	wtPath, err := backend.GetWorktreeReserved(r.homeDir, r.projPath, true, reservationID, r.launchReentry)
+	wtPath, err := backend.GetWorktreeReserved(r.homeDir, r.launchWorktreeTool(), r.projPath, true, reservationID, r.launchReentry)
 	if err != nil {
 		if backend.IsWorktreeReservationRecoveryUnsupported(err) {
 			return fmt.Errorf("acquiring worktree: %w — DEPENDENCY_REQUEST (treehouse CLI has no reservation-keyed get/recover)", err)
@@ -1009,6 +1009,13 @@ func (r *Runner) wtReservationID() string {
 	return ""
 }
 
+func (r *Runner) launchWorktreeTool() string {
+	if r.launch != nil {
+		return r.launch.WorktreeTool
+	}
+	return ""
+}
+
 // worktreeReturnAllowed reports whether the acquired worktree may be returned
 // to the pool on failure. Phase-aware: a worktree the aggregate durably owns
 // (bound under the launch fence) must never be returned; only unbound
@@ -1018,7 +1025,7 @@ func (r *Runner) returnWorktreeOnFailure() error {
 	if r.wtPath == "" || r.retainWorktreeOnFailure || !r.worktreeReturnAllowed() {
 		return nil
 	}
-	if err := returnWorktree(r.homeDir, r.wtPath); err != nil {
+	if err := returnWorktree(r.homeDir, r.launchWorktreeTool(), r.wtPath); err != nil {
 		return fmt.Errorf("returning worktree %s: %w", r.wtPath, err)
 	}
 	return nil
@@ -1195,8 +1202,9 @@ func (r *Runner) recordDeliveryContract() error {
 // caller because it is opaque and cannot be re-derived.
 func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string, seatPath []string, seatEnv taskauthority.SeatEnv) taskauthority.CanonicalBeginSpawnRequest {
 	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
+	wtTool := r.projectConfig.WorktreeTool
 	if r.kind == taskauthority.KindReview {
-		wtRes, wtFence = "", "" // a review task reserves no worktree
+		wtRes, wtFence, wtTool = "", "", "" // a review task reserves no worktree
 	}
 	return taskauthority.CanonicalBeginSpawnRequest{
 		HomeID:                r.args.Authority.HomeID(),
@@ -1215,6 +1223,7 @@ func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthor
 		WindowLabel:           fmt.Sprintf("%s-g%d", soldierTabLabel(r.args.ProjectName, r.args.ID), uint64(gen)),
 		WorktreeReservationID: wtRes,
 		WorktreeFenceToken:    wtFence,
+		WorktreeTool:          wtTool,
 		EndpointReservationID: epRes,
 		EndpointFenceToken:    epFence,
 		EndpointIncarnation:   endpointIncarnation,
@@ -1232,7 +1241,8 @@ func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnReques
 		l.Model == req.Model && l.Effort == req.Effort && l.Mode == req.Mode && l.Kind == req.Kind &&
 		l.Project == req.Project && l.ParentTaskID == req.ParentTaskID && l.LaunchID == req.LaunchID &&
 		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
-		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
+		l.WorktreeFenceToken == req.WorktreeFenceToken && l.WorktreeTool == req.WorktreeTool &&
+		l.EndpointReservationID == req.EndpointReservationID &&
 		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation &&
 		slices.Equal(l.SeatPathDirs, req.SeatPathDirs) && l.SeatEnv == req.SeatEnv
 }
@@ -1348,7 +1358,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 	} else {
 		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
 	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken)
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken, r.launchWorktreeTool())
 	if err != nil {
 		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
@@ -1389,7 +1399,7 @@ func (r *Runner) spawnOperationID(verb string, gen taskauthority.Generation) str
 	return fmt.Sprintf("spawn-%s-%s-%d", verb, r.args.ID, uint64(gen))
 }
 
-func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken string) (taskauthority.WorktreeBinding, error) {
+func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken, treehouse string) (taskauthority.WorktreeBinding, error) {
 	canonicalWorktree, err := canonicalExistingPath(worktreePath)
 	if err != nil {
 		return taskauthority.WorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
@@ -1421,6 +1431,7 @@ func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken str
 		BaseHead:           head,
 		LeaseID:            leaseID,
 		FenceToken:         fenceToken,
+		Treehouse:          treehouse,
 		BoundAtUnix:        time.Now().Unix(),
 	}, nil
 }
