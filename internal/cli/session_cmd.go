@@ -327,7 +327,7 @@ func runGuardBlocking(homeDir string) error {
 	// Blind turn: in-flight work + unhealthy watcher → block the stop
 	reason := "TURN WOULD END BLIND: "
 	if !status.Exists {
-		reason += "watcher never started"
+		reason += watcherAbsentReason
 	} else {
 		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
 	}
@@ -388,7 +388,7 @@ func runGuardGrok(homeDir string) error {
 	// Blind turn: in-flight work + unhealthy watcher -> block the stop
 	reason := "TURN WOULD END BLIND: "
 	if !status.Exists {
-		reason += "watcher never started"
+		reason += watcherAbsentReason
 	} else {
 		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
 	}
@@ -471,7 +471,7 @@ func runGuardAgy(homeDir string) error {
 	// Blind turn: in-flight work + unhealthy watcher -> continue the turn
 	reason := "TURN WOULD END BLIND: "
 	if !status.Exists {
-		reason += "watcher never started"
+		reason += watcherAbsentReason
 	} else {
 		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
 	}

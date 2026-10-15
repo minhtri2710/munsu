@@ -28,7 +28,8 @@ func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
 	}
 	// Register a project through the Fleet Registry (the sole lifecycle
 	// authority).
-	if err := fleet.Add(tmp, "demo", "/tmp/demo", false); err != nil {
+	unresolved := filepath.Join(tmp, "not-checked-out")
+	if err := fleet.Add(tmp, "demo", unresolved, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,8 +51,8 @@ func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
 	if !strings.Contains(out, "Registered projects") {
 		t.Fatalf("missing projects section:\n%s", out)
 	}
-	if !strings.Contains(out, "demo") {
-		t.Fatalf("expected demo project in list:\n%s", out)
+	if !strings.Contains(out, "- demo ("+unresolved+")") {
+		t.Fatalf("expected demo project with its registered path in list:\n%s", out)
 	}
 	if !strings.Contains(out, "munsu session-start") {
 		t.Fatalf("missing session-start next step:\n%s", out)

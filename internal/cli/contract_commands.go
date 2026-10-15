@@ -174,6 +174,9 @@ func observeReadError(homeDir, id string, err error) error {
 		fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %s: %v", id, homeDir, err))
 }
 
+// watcherAbsentReason is what every surface reports when no liveness beacon exists.
+const watcherAbsentReason = "WATCHER STOPPED - no liveness beacon"
+
 func newContractGuardCmd() *cobra.Command {
 	var harnessFlag string
 	cmd := &cobra.Command{
@@ -226,7 +229,7 @@ func newContractGuardCmd() *cobra.Command {
 			if !beatStatus.Exists {
 				allConditions = append(allConditions, orchestrator.ConditionInfo{
 					Code:    orchestrator.ConditionWatcherAbsent,
-					Message: "WATCHER STOPPED - no liveness beacon",
+					Message: watcherAbsentReason,
 				})
 			} else if beatStatus.Stale {
 				allConditions = append(allConditions, orchestrator.ConditionInfo{

@@ -82,6 +82,15 @@ func TestSyncSeparatesSyncedAndStuck(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("Errors = %v, want none for per-project outcomes", result.Errors)
 	}
+
+	byName, err := Sync(fleetHome, "registered-name")
+	if err != nil || len(byName.Stuck) != 1 || !strings.HasPrefix(byName.Stuck[0], "registered-name:") {
+		t.Fatalf("Sync(registered-name) = %+v, %v, want the local project", byName, err)
+	}
+	byDir, err := Sync(fleetHome, "checkout-dir")
+	if err != nil || len(byDir.Stuck)+len(byDir.Synced) != 0 {
+		t.Fatalf("Sync(checkout-dir) = %+v, %v, want no project: the filter is the registered name", byDir, err)
+	}
 }
 
 func gitSyncTestRun(t *testing.T, dir string, args ...string) {

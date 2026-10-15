@@ -36,11 +36,17 @@ func newFleetSyncCmd() *cobra.Command {
 				return err
 			}
 			if len(result.Synced) == 0 && len(result.Stuck) == 0 && len(result.Errors) == 0 {
+				message := "No projects to sync."
+				if projectName != "" {
+					if _, findErr := fleet.Find(ctx.Home, projectName); findErr != nil {
+						message = fmt.Sprintf("no registered project named %q", projectName)
+					}
+				}
 				return writeContract(cmd, Response[MessageResult]{
 					SchemaVersion: SchemaVersion,
 					Kind:          "fleet.sync",
 					Status:        "success",
-					Data:          MessageResult{Message: "No projects to sync."},
+					Data:          MessageResult{Message: message},
 				})
 			}
 			var b strings.Builder
