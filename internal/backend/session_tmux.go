@@ -290,6 +290,7 @@ func (t *TmuxBackend) promptForeground(windowID, want string) (string, *PromptRe
 	if err != nil {
 		return "", &PromptResult{Status: PromptBackendFailed, Detail: "reading the pane's terminal mode failed", Err: err}
 	}
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: refuse prompts to a line-buffered terminal)
 	if lineBuffered {
 		return "", &PromptResult{Status: PromptUnsupported, Detail: "pane runs " + process + ", which reads its terminal by line, not an agent"}
 	}

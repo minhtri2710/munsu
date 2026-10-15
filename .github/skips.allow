@@ -17,6 +17,7 @@ github.com/minhtri2710/munsu/internal/backend TestTmux_SendKeys_NoWindow tmux no
 github.com/minhtri2710/munsu/internal/backend TestTmux_Teardown_AbsentTargetIsDone tmux not on PATH
 github.com/minhtri2710/munsu/internal/cli TestHelperNewWatcher not a helper invocation
 github.com/minhtri2710/munsu/internal/cli TestOrphanScanChildProcess helper process for TestOrphanScanReportsRealGarbageAndLeavesItRunning
+github.com/minhtri2710/munsu/internal/cli TestUnbufferedCaptainChild helper process for TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat
 github.com/minhtri2710/munsu/internal/fleet TestOrphanScanChildProcess helper process for TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets
 github.com/minhtri2710/munsu/internal/orchestrator TestAFKDaemonChildProcess AFK daemon child process entry point
 github.com/minhtri2710/munsu/internal/orchestrator TestHelperDaemonIgnoresSIGTERM child process entry point for startSIGTERMIgnoringDaemon
