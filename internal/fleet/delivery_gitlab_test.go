@@ -988,10 +988,6 @@ func TestDeliverGitLabOpenMRRefusesChangesRequested(t *testing.T) {
 	}
 }
 
-func validIdentity() *domain.DeliveryIdentity {
-	return &domain.DeliveryIdentity{Provider: "github", Owner: "minhtri2710", Repo: "munsu", Number: 42, URL: "https://github.com/minhtri2710/munsu/pull/42", BaseRef: "main", HeadRef: "feature/test", HeadSHA: "6503e5e9852b028c95c8d1c9cd9178667506ac7b", CapturedAt: "2026-07-18T12:00:00Z"}
-}
-
 func TestGlabClientChangesRequestedRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name string
