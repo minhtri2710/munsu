@@ -166,7 +166,7 @@ func newSessionStartCmd() *cobra.Command {
 					Lock:            lockState,
 					Watcher:         watcherState,
 					BootstrapOK:     result.Bootstrap != nil,
-					FleetSyncOK:     result.FleetSync != nil,
+					FleetSyncOK:     result.FleetSync != nil && len(result.FleetSync.Stuck) == 0,
 					RuntimeIdentity: sessionRuntimeIdentityContract(result.RuntimeIdentity),
 					Message:         "Session started. Lock: " + lockState + ". Watcher: " + watcherState + ".",
 				},
@@ -327,7 +327,7 @@ func runGuardBlocking(homeDir string) error {
 	// Blind turn: in-flight work + unhealthy watcher → block the stop
 	reason := "TURN WOULD END BLIND: "
 	if !status.Exists {
-		reason += "watcher never started"
+		reason += watcherAbsentReason
 	} else {
 		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
 	}
@@ -388,7 +388,7 @@ func runGuardGrok(homeDir string) error {
 	// Blind turn: in-flight work + unhealthy watcher -> block the stop
 	reason := "TURN WOULD END BLIND: "
 	if !status.Exists {
-		reason += "watcher never started"
+		reason += watcherAbsentReason
 	} else {
 		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
 	}
@@ -471,7 +471,7 @@ func runGuardAgy(homeDir string) error {
 	// Blind turn: in-flight work + unhealthy watcher -> continue the turn
 	reason := "TURN WOULD END BLIND: "
 	if !status.Exists {
-		reason += "watcher never started"
+		reason += watcherAbsentReason
 	} else {
 		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
 	}

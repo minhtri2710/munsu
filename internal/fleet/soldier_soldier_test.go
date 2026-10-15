@@ -63,6 +63,9 @@ func TestDefaultCharter_ReportCommand(t *testing.T) {
 	if !strings.Contains(charter, "terminal") {
 		t.Error("DefaultCharter must mention terminal reporting")
 	}
+	if !strings.Contains(charter, `munsu report <state> "<msg>" [--key <slug>]`) {
+		t.Error("DefaultCharter must show --key as optional, as the brief and munsu report do")
+	}
 }
 
 func TestDefaultCharter_DurableFiles(t *testing.T) {
@@ -630,9 +633,8 @@ func TestTerminalReport_ExactCommand(t *testing.T) {
 	if strings.Contains(reminder, "[--key") {
 		t.Error("terminal report must NOT contain literal brackets around --key")
 	}
-	// Must mention the --key is required.
-	if !strings.Contains(reminder, "REQUIRED") {
-		t.Error("terminal report must state --key is REQUIRED")
+	if !strings.Contains(reminder, `The --key flag is optional; a report without it uses the key "default".`) {
+		t.Error("terminal report must state --key is optional, as munsu report treats it")
 	}
 	// Must reference parent captain.
 	if !strings.Contains(reminder, "captain-alpha") {

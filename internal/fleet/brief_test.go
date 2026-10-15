@@ -418,8 +418,8 @@ func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 		"scout": mustScoutBrief(t, "s1", "repo", "direct-PR", false, "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}") {
-				t.Fatalf("brief missing keyed resolution syntax")
+			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}` to your status file `$MUNSU_HOME/state/$MUNSU_TASK_ID.status`") {
+				t.Fatalf("brief missing keyed resolution syntax and where to append it")
 			}
 			if !strings.Contains(tmpl, "Repeating the same resolved key is safe") {
 				t.Fatalf("brief missing idempotency guidance")

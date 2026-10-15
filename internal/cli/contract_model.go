@@ -441,11 +441,11 @@ type TaskEntry struct {
 
 // ProjectEntry is one row in a project list.
 type ProjectEntry struct {
-	Name        string `json:"name"`
-	Yolo        bool   `json:"yolo,omitempty"`
-	Description string `json:"description,omitempty"`
-	Added       string `json:"added,omitempty"`
-	Directory   string `json:"directory,omitempty"`
+	Name      string `json:"name"`
+	Yolo      bool   `json:"yolo,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Added     string `json:"added,omitempty"`
+	Directory string `json:"directory,omitempty"`
 }
 
 // SafetyCheckData is the structured safety assessment result.

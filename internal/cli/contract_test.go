@@ -183,6 +183,9 @@ func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	// process lifetime -- a real `munsu session-start` is a process, and exit
 	// drops the flock. This test is not a process, so release it here.
 	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
+	if err := fleet.Add(home, "not-a-repo", t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
 
 	out, err := runContract(t, []string{"session-start", "--output", "json"})
 	if err != nil {
@@ -190,12 +193,37 @@ func TestSessionStartUsesSessionStartKind(t *testing.T) {
 	}
 	var envelope struct {
 		Kind string `json:"kind"`
+		Data struct {
+			FleetSyncOK bool `json:"fleet_sync_ok"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
 	if envelope.Kind != "session.start" {
 		t.Fatalf("kind=%q want session.start", envelope.Kind)
+	}
+	if envelope.Data.FleetSyncOK {
+		t.Fatalf("fleet_sync_ok = true with a stuck project:\n%s", out)
+	}
+}
+
+func TestProjectListAndShowLabelPath(t *testing.T) {
+	home := t.TempDir()
+	initCLITestHome(t, home)
+	t.Setenv("MUNSU_HOME", home)
+	dir := t.TempDir()
+	if err := fleet.Add(home, "demo", dir, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"project", "show", "demo"}, {"project", "list"}} {
+		out, err := runContract(t, append(args, "--output", "json"))
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(out, `"path": "`+dir+`"`) || strings.Contains(out, `"description"`) {
+			t.Fatalf("%v does not label the path as path:\n%s", args, out)
+		}
 	}
 }
 

@@ -97,7 +97,7 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 	}
 
 	// Poll until beat + identity ownership land, or timeout. A single short sleep
-	// races the child process and caused false "started"/NEVER STARTED reports.
+	// races the child process and caused false "started"/stopped reports.
 	afterStatus, validated := waitForWatcherBeacon(homeDir, pid, watcherBeaconTimeout)
 
 	if !validated {
@@ -410,7 +410,7 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 
 	var diagnostics []string
 	if !beatStatus.Exists {
-		diagnostics = append(diagnostics, "Watcher never started — run 'munsu watch ensure'")
+		diagnostics = append(diagnostics, watcherAbsentReason+" — run 'munsu watch ensure'")
 	} else if beatStatus.Stale {
 		diagnostics = append(diagnostics, "Watcher beat stale — run 'munsu watch ensure --restart'")
 	}

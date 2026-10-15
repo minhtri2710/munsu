@@ -79,8 +79,7 @@ func scanGeneral(homeDir string) []StatusEntry {
 	// Harness adapter — at least one known harness binary on PATH
 	entries = append(entries, checkHarnessAdapter())
 
-	// Session backend — tmux or herdr available
-	entries = append(entries, checkSessionBackend())
+	entries = append(entries, checkSessionBackend(homeDir))
 
 	// GitHub auth
 	entries = append(entries, checkGitHubAuth())
@@ -118,28 +117,28 @@ func checkHarnessAdapter() StatusEntry {
 	}
 }
 
-func checkSessionBackend() StatusEntry {
-	// Check tmux
-	if _, err := exec.LookPath("tmux"); err == nil {
+func checkSessionBackend(homeDir string) StatusEntry {
+	backend, err := fleet.ResolveGeneralHomeBackend(homeDir)
+	if err != nil {
 		return StatusEntry{
 			Subsystem: "session_backend",
-			Status:    StatusCurrent,
-			Detail:    "tmux found on PATH",
+			Status:    StatusAbsent,
+			Detail:    fmt.Sprintf("no session backend configured: %v", err),
+			RepairCmd: "munsu config set backend herdr|tmux",
 		}
 	}
-	// Check herdr env
-	if os.Getenv("HERDR_ENV") != "" {
+	if _, err := exec.LookPath(backend); err != nil {
 		return StatusEntry{
 			Subsystem: "session_backend",
-			Status:    StatusCurrent,
-			Detail:    "HERDR_ENV active",
+			Status:    StatusAbsent,
+			Detail:    fmt.Sprintf("backend %s configured, %s not found on PATH", backend, backend),
+			RepairCmd: FixCommand(backend),
 		}
 	}
 	return StatusEntry{
 		Subsystem: "session_backend",
-		Status:    StatusAbsent,
-		Detail:    "no session backend (herdr or tmux) detected",
-		RepairCmd: "run munsu inside herdr (HERDR_ENV=1), or install tmux: brew install tmux | apt install tmux",
+		Status:    StatusCurrent,
+		Detail:    fmt.Sprintf("backend %s configured, found on PATH", backend),
 	}
 }
 

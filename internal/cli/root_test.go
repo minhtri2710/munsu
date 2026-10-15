@@ -147,6 +147,18 @@ func TestFleetSyncEmpty(t *testing.T) {
 	if !strings.Contains(output, "No projects to sync.") {
 		t.Errorf("empty fleet sync should show 'No projects to sync.', got: %s", output)
 	}
+
+	buf.Reset()
+	root = NewRootCommand()
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"fleet", "sync", "nope"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("fleet sync nope: unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), `no registered project named \"nope\"`) {
+		t.Errorf("fleet sync with an unregistered name should name the filter, got: %s", buf.String())
+	}
 }
 
 func TestUsageErrorExitCode(t *testing.T) {

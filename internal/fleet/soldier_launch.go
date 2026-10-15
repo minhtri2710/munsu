@@ -175,7 +175,7 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 }
 
 // terminalReportReminder returns the exact terminal report command
-// that the Soldier must use. The --key is required, not optional.
+// that the Soldier must use.
 func terminalReportReminder(taskID, taskKind, deliveryMode, parentCaptainID string) string {
 	bt := "`"
 	if taskKind == taskauthority.KindReview {
@@ -194,7 +194,7 @@ When the task is complete, you MUST execute exactly:
 This is the authoritative terminal report signal to your parent Captain (%[3]s).
 Do not use any other command or mechanism for terminal reporting.
 
-The --key flag is REQUIRED and must match the task ID exactly.
+The --key flag is optional; a report without it uses the key "default".
 
 Summary of report states:
 - %[4]smunsu report working "..." --key <slug>%[4]s — material phase
