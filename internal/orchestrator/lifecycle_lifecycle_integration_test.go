@@ -1,5 +1,3 @@
-//go:build lifecycle_integration
-
 package orchestrator
 
 import (
@@ -57,13 +55,10 @@ func helperProc(t *testing.T, home string) (*exec.Cmd, string) {
 	return cmd, strings.TrimSpace(scan.Text())
 }
 
-// TestLifecycleEnqueueToClaimLatency is the lifecycle_integration enqueue-to-
-// claim assertion for the typed internal wake-to-claim latency observation
-// (issue #546): it enqueues a wake through the durable queue and claims it,
-// then asserts the claim reports a sane latency measured since the latest
-// enqueue Epoch end-to-end through the real queue and lease path.
+// TestLifecycleEnqueueToClaimLatency enqueues a wake through the durable queue,
+// claims it, and asserts the claim reports a sane wake-to-claim latency.
 func TestLifecycleEnqueueToClaimLatency(t *testing.T) {
-	home := freshHome(t)
+	home := t.TempDir()
 
 	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
 		t.Fatalf("EnqueueWake: %v", err)
@@ -92,7 +87,7 @@ func TestLifecycleEnqueueToClaimLatency(t *testing.T) {
 // when the holding process exits (the leaked FD closes). This is the behavior
 // session/sessionstart.go and supervision/watcher.go depend on.
 func TestLockCrossProcessReleaseAtExit(t *testing.T) {
-	home := freshHome(t)
+	home := t.TempDir()
 
 	holder, verdict := helperProc(t, home)
 	if verdict != "HELD" {

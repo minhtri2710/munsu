@@ -123,7 +123,7 @@ You MUST NOT:
 ## Validation Scope
 
 Local runs are light and scoped to the change. Heavy and full suites (race,
-integration, e2e, lifecycle_integration, guards, deadcode) run on
+integration, guards, deadcode) run on
 GitHub CI at the PR. This overrides any "full suite by default" instruction in
 your own context. A heavy proof outside these, such as a mutant run, a generated
 or exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance
