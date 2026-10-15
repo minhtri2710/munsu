@@ -3,6 +3,8 @@
 package cli
 
 import (
+	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,26 +46,28 @@ func TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cat, err := os.ReadFile("/bin/cat")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"claude", "notagent"} {
-		if err := os.WriteFile(filepath.Join(bin, name), cat, 0o755); err != nil {
+	for name, src := range map[string]string{"claude": os.Args[0], "notagent": "/bin/cat"} {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, name), b, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	claude, notagent := filepath.Join(bin, "claude"), filepath.Join(bin, "notagent")
-	seat := munsu + " --home " + captainHome + " captain seat -- "
+	claude := "env " + unbufferedCaptain + "=1 " + filepath.Join(bin, "claude") + " -test.run=^TestUnbufferedCaptainChild$"
+	notagent := filepath.Join(bin, "notagent")
+	seat := "env " + unbufferedCaptain + "=1 " + munsu + " --home " + captainHome + " captain seat -- " + filepath.Join(bin, "claude") + " -test.run=^TestUnbufferedCaptainChild$"
+	seatNotagent := munsu + " --home " + captainHome + " captain seat -- " + notagent
 
 	tk := &backend.TmuxBackend{}
 	for _, tc := range []struct {
 		name, command, foreground string
 		alive                     bool
 	}{
-		{"the seat's claude is the live captain", seat + claude, "claude", true},
+		{"the seat's claude is the live captain", seat, "claude", true},
 		{"claude in the pane is the live captain", claude, "claude", true},
-		{"the seat running another program is not", seat + notagent, "notagent", false},
+		{"the seat running another program is not", seatNotagent, "notagent", false},
 		{"claude under a parent that is not a seat is not", "perl -e 'system @ARGV' " + claude, "perl", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,6 +109,26 @@ func TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat(t *testing.T) {
 			})
 		})
 	}
+}
+
+// unbufferedCaptain makes TestUnbufferedCaptainChild a stand-in captain: it
+// reads its terminal unbuffered, as a harness does, and echoes each line.
+const unbufferedCaptain = "MUNSU_TEST_UNBUFFERED_CAPTAIN"
+
+func TestUnbufferedCaptainChild(t *testing.T) {
+	if os.Getenv(unbufferedCaptain) == "" {
+		t.Skip("runs only as the captain of TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat")
+	}
+	stty := exec.Command("stty", "-icanon")
+	stty.Stdin = os.Stdin
+	if err := stty.Run(); err != nil {
+		os.Exit(1)
+	}
+	lines := bufio.NewScanner(os.Stdin)
+	for lines.Scan() {
+		fmt.Println("got: " + lines.Text())
+	}
+	os.Exit(0)
 }
 
 func waitTmux(t *testing.T, what string, done func() bool) {

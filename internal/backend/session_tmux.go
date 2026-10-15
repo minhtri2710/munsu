@@ -1,12 +1,16 @@
 package backend
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -266,6 +270,71 @@ var tmuxShells = map[string]bool{
 	"tcsh": true, "csh": true, "nu": true, "login": true, "tmux": true,
 }
 
+// promptForeground returns the pane's foreground process when a prompt may be
+// typed into it: not a shell, the same process as want when want is set, and
+// reading its terminal unbuffered. A program reading by line (canonical mode)
+// leaves pasted text queued in the terminal when it exits, and the shell after
+// it would run that text.
+func (t *TmuxBackend) promptForeground(windowID, want string) (string, *PromptResult) {
+	process, err := t.ForegroundProcess(windowID)
+	if err != nil {
+		return "", &PromptResult{Status: PromptBackendFailed, Detail: "reading the pane's foreground process failed", Err: err}
+	}
+	if tmuxShells[filepath.Base(process)] {
+		return "", &PromptResult{Status: PromptUnsupported, Detail: "pane runs " + process + ", not an agent"}
+	}
+	if want != "" && process != want {
+		return "", &PromptResult{Status: PromptUnsupported, Detail: "pane now runs " + process + ", not " + want}
+	}
+	lineBuffered, err := t.lineBuffered(windowID)
+	if err != nil {
+		return "", &PromptResult{Status: PromptBackendFailed, Detail: "reading the pane's terminal mode failed", Err: err}
+	}
+	if lineBuffered {
+		return "", &PromptResult{Status: PromptUnsupported, Detail: "pane runs " + process + ", which reads its terminal by line, not an agent"}
+	}
+	return process, nil
+}
+
+// lineBuffered reports whether the pane's terminal is in canonical mode, read
+// by `stty -a` on the pane's tty.
+func (t *TmuxBackend) lineBuffered(windowID string) (bool, error) {
+	bin, err := lookBackendBin("tmux")
+	if err != nil {
+		return false, err
+	}
+	out, stderr, err := runBackendCommand(bin, []string{"display-message", "-p", "-t", normalizeTarget(windowID), "#{pane_tty}"}, "", nil)
+	if err != nil {
+		return false, wrapBackendCommandError("tmux display-message", out, stderr, err)
+	}
+	tty, err := os.OpenFile(strings.TrimSpace(string(out)), os.O_RDONLY|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false, err
+	}
+	defer tty.Close()
+	sttyBin, err := lookBackendBin("stty")
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), backendCommandTimeoutFor(backendCommandShort))
+	defer cancel()
+	stty := exec.CommandContext(ctx, sttyBin, "-a")
+	stty.Stdin = tty
+	modes, err := stty.Output()
+	if err != nil {
+		return false, fmt.Errorf("stty -a on %s: %w", tty.Name(), err)
+	}
+	for _, f := range strings.Fields(string(modes)) {
+		switch f {
+		case "icanon":
+			return true, nil
+		case "-icanon":
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("stty -a on %s: no icanon flag", tty.Name())
+}
+
 // tmuxPromptSettle is the pause between the paste and Enter, and between Enter
 // and the capture that looks for the turn start.
 var tmuxPromptSettle = 200 * time.Millisecond
@@ -275,7 +344,9 @@ var tmuxPromptSettle = 200 * time.Millisecond
 const tmuxPromptStartPolls = 25
 
 // AgentPrompt pastes text into the pane as one bracketed paste (the payload
-// never reaches a shell argument) and presses Enter. tmux reports no agent
+// never reaches a shell argument) and presses Enter. The foreground is checked
+// before the paste and again before Enter; when it has changed by then, the
+// pasted line is cleared with C-u and Enter is never pressed. tmux reports no agent
 // status, so a turn start is taken as the pane redrawing after Enter; a pane
 // that does not change within the window reports PromptStalled.
 func (t *TmuxBackend) AgentPrompt(windowID, text string) PromptResult {
@@ -290,12 +361,9 @@ func (t *TmuxBackend) AgentPrompt(windowID, text string) PromptResult {
 	if err != nil {
 		return PromptResult{Status: PromptBackendFailed, Detail: "pane liveness check failed", Err: err}
 	}
-	process, err := t.ForegroundProcess(windowID)
-	if err != nil {
-		return PromptResult{Status: PromptBackendFailed, Detail: "reading the pane's foreground process failed", Err: err}
-	}
-	if tmuxShells[filepath.Base(process)] {
-		return PromptResult{Status: PromptUnsupported, Detail: "pane runs " + process + ", not an agent"}
+	process, refused := t.promptForeground(windowID, "")
+	if refused != nil {
+		return *refused
 	}
 	target := normalizeTarget(windowID)
 	before, err := t.Capture(windowID, 30)
@@ -310,6 +378,10 @@ func (t *TmuxBackend) AgentPrompt(windowID, text string) PromptResult {
 	if out, stderr, err := runBackendCommand(bin, []string{"set-buffer", "-b", buffer, "--", text}, "", nil); err != nil {
 		return PromptResult{Status: PromptBackendFailed, Detail: "nothing was typed", Err: wrapBackendCommandError("tmux set-buffer", out, stderr, err)}
 	}
+	if _, refused := t.promptForeground(windowID, process); refused != nil {
+		_, _, _ = runBackendCommand(bin, []string{"delete-buffer", "-b", buffer}, "", nil)
+		return *refused
+	}
 	if out, stderr, err := runBackendCommand(bin, []string{"paste-buffer", "-d", "-r", "-p", "-b", buffer, "-t", target}, "", nil); err != nil {
 		_, _, _ = runBackendCommand(bin, []string{"delete-buffer", "-b", buffer}, "", nil)
 		return PromptResult{Status: PromptBackendFailed, Detail: "paste state unknown", Err: wrapBackendCommandError("tmux paste-buffer", out, stderr, err)}
@@ -321,6 +393,13 @@ func (t *TmuxBackend) AgentPrompt(windowID, text string) PromptResult {
 	}
 	if staged == before {
 		return PromptResult{Status: PromptStalled, Detail: "the paste did not render; Enter not sent"}
+	}
+	if _, refused := t.promptForeground(windowID, process); refused != nil {
+		if out, stderr, err := runBackendCommand(bin, []string{"send-keys", "-t", target, "C-u"}, "", nil); err != nil {
+			return PromptResult{Status: PromptBackendFailed, Detail: refused.Detail + "; text pasted, Enter not sent, clearing it failed", Err: wrapBackendCommandError("tmux send-keys", out, stderr, err)}
+		}
+		refused.Detail += "; text pasted and cleared, Enter not sent"
+		return *refused
 	}
 	if out, stderr, err := runBackendCommand(bin, []string{"send-keys", "-t", target, "Enter"}, "", nil); err != nil {
 		return PromptResult{Status: PromptStalled, Detail: "text pasted, Enter failed", Err: wrapBackendCommandError("tmux send-keys", out, stderr, err)}
