@@ -400,6 +400,7 @@ func TestTaskReopenCarriesTheTestImpactMap(t *testing.T) {
 		name, fill, want string
 	}{
 		{"keeps a filled map", "- internal/x.go: TestX", "- internal/x.go: TestX"},
+		{"keeps a map with its own heading", "- a.go: TestA\n## sub\n- b.go: TestB", "- a.go: TestA\n## sub\n- b.go: TestB"},
 		{"keeps an unfilled placeholder", "{TEST_IMPACT}", "{TEST_IMPACT}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

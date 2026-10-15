@@ -75,14 +75,15 @@ func Scaffold(opts ScaffoldOptions) error {
 }
 
 // testImpactSection returns the ship brief's Test-impact map section, from its
-// heading up to the next heading, or "" when the brief has none.
+// heading up to the Definition of done heading or the end, or "" when the
+// brief has none.
 func testImpactSection(brief string) string {
 	const heading = "## Test-impact map\n"
 	start := strings.Index(brief, heading)
 	if start < 0 {
 		return ""
 	}
-	end := strings.Index(brief[start+len(heading):], "\n## ")
+	end := strings.Index(brief[start+len(heading):], "\n## Definition of done\n")
 	if end < 0 {
 		return brief[start:]
 	}
