@@ -293,13 +293,7 @@ func recordGeneralDelivery(w io.Writer, home string) {
 	}
 }
 
-// RunSessionStartWithWatcher refuses no session by its checkout's gate role.
-// Human words (domain.Words): grantor the Human, channel Claude Code session
-// with the Lead (typed), 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin
-// tích hợp rời nếu user cần thui" (removes the gate-agent refusal). The
-// project-registry read that check made goes with it, so session-start no
-// longer refuses on an unresolvable registered project path; spawn still
-// classifies the project path before any launch.
+// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc, reclaim ReclaimTaskDataDir) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	runtimeIdentity := CollectRuntimeIdentity(home, currentWorkingDirOrHome(home), "")

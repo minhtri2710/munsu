@@ -367,7 +367,6 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 // section 1 conditions include "PR-3 O_NOFOLLOW+regular-file": "Duyệt, có R3
 // (Recommended): option 1 + 3 PRs with section 1 conditions; R3 worded as an
 // accident guard (not a boundary), error names munsu report <state>; [...]"
-// (the elided tail concerns gate state munsu no longer models).
 func ReadRegularFile(path string) ([]byte, error) {
 	f, err := openRegular(path, os.O_RDONLY, 0)
 	if err != nil {

@@ -213,6 +213,64 @@ func dirtyTreeBlock(t *testing.T) {
 	}
 }
 
+// localOnlyLandingCheck runs the ship safety check of a local-only task after
+// merging its branch into main when merged; origin is a bare remote holding the
+// pushed branch when pushed, and absent otherwise.
+func localOnlyLandingCheck(t *testing.T, merged, pushed bool) error {
+	t.Helper()
+	tmp := t.TempDir()
+	wt := filepath.Join(tmp, "worktree")
+	os.MkdirAll(wt, 0o755)
+	remote := ""
+	if pushed {
+		remote = filepath.Join(tmp, "remote.git")
+	}
+	setupGitRepo(t, wt, remote)
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = wt
+		cmd.Env = topologyGitEnv(wt)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	git("checkout", "-b", "mu/local")
+	git("commit", "--allow-empty", "-m", "work")
+	if merged {
+		git("checkout", "main")
+		git("merge", "--no-ff", "-m", "land", "mu/local")
+		git("checkout", "mu/local")
+	}
+	if pushed {
+		git("push", "origin", "mu/local")
+	}
+	md := setupTopologyManifest(t, wt)
+	c, homeDir := newFleetCanonical(t)
+	seedCanonicalQueuedTask(t, c, "local", "general")
+	seedSourceContract(t, c, "local", taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"})
+	_, err := shipSafetyCheck(Options{HomeDir: homeDir, ID: "local"}, nil, fakeTeardown{}, c, testWorktreeBinding(wt, md), false)
+	return err
+}
+
+func localOnlyUnlandedBlock(t *testing.T) {
+	if err := localOnlyLandingCheck(t, false, false); err == nil || !strings.Contains(err.Error(), "worktree head is not merged into main") {
+		t.Fatalf("unlanded local-only task: err = %v, want not-merged refusal", err)
+	}
+}
+
+func localOnlyLandedAllow(t *testing.T) {
+	if err := localOnlyLandingCheck(t, true, false); err != nil {
+		t.Fatalf("landed local-only task without origin: %v", err)
+	}
+}
+
+func localOnlyPushedUnmergedAllow(t *testing.T) {
+	if err := localOnlyLandingCheck(t, false, true); err != nil {
+		t.Fatalf("local-only task pushed to origin but not merged: %v", err)
+	}
+}
+
 func TestShipSafetyCheck_Topology_NoWorktreeInMeta(t *testing.T) {
 	// Missing canonical worktree binding should fail.
 	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, nil, false)

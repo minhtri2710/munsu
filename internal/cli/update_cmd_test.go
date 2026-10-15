@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// TestUpdateCaptainsFlagReachesCaptainStep drives `munsu update` through cobra
-// parsing with the self-update stubbed: only --captains reaches the captain
-// fast-forward step, which reports the empty registry. A registered captain
-// would run fleet.Converge against live session endpoints, so no row registers
-// one; that branch has no hermetic test.
+// No row registers a captain: one would run fleet.Converge against live
+// session endpoints.
 func TestUpdateCaptainsFlagReachesCaptainStep(t *testing.T) {
 	savedUpdateIn := doUpdateIn
 	doUpdateIn = func(string) error { return nil }

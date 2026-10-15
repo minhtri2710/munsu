@@ -4,12 +4,8 @@ package fixture
 
 import "errors"
 
-// This file is type-checked in the GOOS=darwin pass of the two-GOOS union
-// (loadTypes unions linux and darwin), so `e` resolves to string and
-// DarwinEndpoint's refusal IS measured. The comment survives here to record
-// the old failure mode: under a single-host-GOOS load, or a name-only
-// heuristic, `e` read as an error and every branch of this function silently
-// vanished from the lane -- the fail-open the fix removes.
+// Type-checked only in the GOOS=darwin pass, where `e` resolves to string, so
+// this refusal is measured; a name-only heuristic would read `e` as an error.
 func DarwinEndpoint(e string) error {
 	if e == "" {
 		return errors.New("empty endpoint")

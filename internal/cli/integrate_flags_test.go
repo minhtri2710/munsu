@@ -10,16 +10,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 )
 
-// TestIntegrateHarnessScopeAndDryRunFlags drives every integrate install,
-// repair and status flag through cobra parsing, so a flag that is registered but
-// wired to nothing fails a row. Without --harness every subcommand uses the
-// configured soldier-harness and refuses when none is configured, even where the
-// environment names a harness; --harness overrides that refusal. A --scope other
-// than user or project is refused. The install and repair allows rows use codex
-// with a stub munsu on PATH: a dry run then needs no live tool, unlike pi, whose
-// capability probe needs the pi binary, node and the installed Pi package. Rows
-// run from a scratch directory so a broken --dry-run cannot write project-scope
-// artifacts into the checkout.
+// Allows rows use codex with a stub munsu on PATH because pi's capability probe
+// needs a live pi install, and run from a scratch directory so a broken
+// --dry-run cannot write into the checkout.
 func TestIntegrateHarnessScopeAndDryRunFlags(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

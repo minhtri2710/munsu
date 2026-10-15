@@ -63,12 +63,7 @@ func DefaultCharter(taskID, taskKind, deliveryMode, scaffold string) string {
 		planScaffold = guidedPlanScaffold
 	}
 	bt := "`"
-	doneMessage := "PR {url}"
-	doneDescription := "committed, pushed, and PR open (no merge)"
-	if taskKind == taskauthority.KindScout {
-		doneMessage = "summary of findings location"
-		doneDescription = "scout report complete"
-	}
+	doneMessage, doneDescription := doneReport(taskKind, deliveryMode)
 	return fmt.Sprintf(`# Soldier Charter
 
 **Version: %[1]s**
@@ -202,6 +197,18 @@ The task is complete only when:
 Do not merge the PR.
 
 `, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules, planScaffold)
+}
+
+// doneReport returns the message a soldier's terminal done report carries and
+// what it means, by task kind and delivery mode.
+func doneReport(taskKind, deliveryMode string) (message, meaning string) {
+	switch {
+	case taskKind == taskauthority.KindScout:
+		return "summary of findings location", "scout report complete"
+	case deliveryMode == "local-only":
+		return "committed {sha}", "committed on your branch, not pushed (the orchestrator merges it)"
+	}
+	return "PR {url}", "committed, pushed, and PR open (no merge)"
 }
 
 // reviewerCharter returns the charter of the read-only reviewer seat. The

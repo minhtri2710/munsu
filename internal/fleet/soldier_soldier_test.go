@@ -624,7 +624,7 @@ func TestBuildLaunchArgs_PiWithoutModelOrEffort(t *testing.T) {
 // =============================================================================
 
 func TestTerminalReport_ExactCommand(t *testing.T) {
-	reminder := terminalReportReminder("test-task-42", "ship", "captain-alpha")
+	reminder := terminalReportReminder("test-task-42", "ship", "direct-PR", "captain-alpha")
 	// Must contain exact command without literal brackets.
 	if !strings.Contains(reminder, `munsu report done "PR {url}" --key test-task-42`) {
 		t.Errorf("terminal report must contain exact command, got:\n%s", reminder)
@@ -642,17 +642,28 @@ func TestTerminalReport_ExactCommand(t *testing.T) {
 	}
 }
 
-func TestTerminalReport_ExactBytes(t *testing.T) {
-	// Verify exact byte output for the terminal report command.
-	note := terminalReportReminder("x-task", "ship", "x-captain")
-	expected := `munsu report done "PR {url}" --key x-task`
-	if !strings.Contains(note, expected) {
-		t.Errorf("terminal report must contain exact bytes:\nwant: %s\ngot:  %s", expected, note)
+func TestBuildLaunchPrompt_ShipDoneReportFollowsDeliveryMode(t *testing.T) {
+	for _, tc := range []struct{ mode, want, unwanted string }{
+		{"direct-PR", `munsu report done "PR {url}" --key x-task`, `"committed {sha}"`},
+		{"local-only", `munsu report done "committed {sha}" --key x-task`, "PR {url}"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			prompt, _, err := BuildLaunchPrompt(LaunchPromptInput{
+				TaskID: "x-task", TaskKind: "ship", DeliveryMode: tc.mode, ParentCaptainID: "x-captain",
+				WorktreePath: t.TempDir(), HomeDir: "/tmp/home", BriefContent: []byte("# brief\n"), HarnessName: "pi",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(prompt, tc.want) || strings.Contains(prompt, tc.unwanted) {
+				t.Errorf("prompt must contain %s and not %s:\n%s", tc.want, tc.unwanted, prompt)
+			}
+		})
 	}
 }
 
 func TestTerminalReport_ScoutUsesFindingsSummary(t *testing.T) {
-	note := terminalReportReminder("scout-task", "scout", "general")
+	note := terminalReportReminder("scout-task", "scout", "direct-PR", "general")
 	if !strings.Contains(note, `munsu report done "summary of findings location" --key scout-task`) {
 		t.Errorf("scout terminal report must use findings summary, got:\n%s", note)
 	}

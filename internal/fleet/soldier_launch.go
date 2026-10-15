@@ -92,7 +92,7 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 		b.WriteString(skillSection)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(terminalReportReminder(input.TaskID, input.TaskKind, input.ParentCaptainID))
+	b.WriteString(terminalReportReminder(input.TaskID, input.TaskKind, input.DeliveryMode, input.ParentCaptainID))
 
 	prompt := b.String()
 
@@ -176,7 +176,7 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 
 // terminalReportReminder returns the exact terminal report command
 // that the Soldier must use.
-func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
+func terminalReportReminder(taskID, taskKind, deliveryMode, parentCaptainID string) string {
 	bt := "`"
 	if taskKind == taskauthority.KindReview {
 		return `## Verdict Requirement
@@ -184,12 +184,7 @@ func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 End your work by writing the verdict file ` + bt + `$MUNSU_VERDICT_FILE` + bt + ` (one JSON object with the fields ` + verdictFileShape(bt) + `) to a sibling named ` + bt + `$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>` + bt + ` (a number, then lowercase hex digits) and renaming that over the verdict file, then stop.
 You run no ` + bt + `munsu report` + bt + `; the verdict file is your whole output.`
 	}
-	doneMessage := "PR {url}"
-	doneDescription := "task complete, PR open (no merge)"
-	if taskKind == taskauthority.KindScout {
-		doneMessage = "summary of findings location"
-		doneDescription = "scout report complete"
-	}
+	doneMessage, doneDescription := doneReport(taskKind, deliveryMode)
 	return fmt.Sprintf(`## Terminal Report Requirement
 
 When the task is complete, you MUST execute exactly:

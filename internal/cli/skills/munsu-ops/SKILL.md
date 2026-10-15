@@ -77,13 +77,13 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 Delivery mode is derived from the project's configured forge step. Act according to the resolved mode:
 
 - **direct-PR**: The Soldier pushes its committed task branch and opens the PR. Then `munsu delivery review-diff <id>` to review the branch and `munsu delivery pr-merge <id> <pr-url>` once approved. A landed merge marks the task done and tears the soldier down in the same command; re-run it to resume a failed teardown. `munsu delivery merge-status <id>` answers whether a delivery landed.
-- **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
+- **local-only**: The Soldier commits on `mu/<id>`, never pushes, and reports `done: committed <sha>`. munsu registers no local merge command: merge or fast-forward `mu/<id>` into the default branch in the project checkout (a squash merge does not count as landed), close the task with `munsu task done <id>`, then run `munsu teardown <id>`. Teardown proves the worktree head is an ancestor of the local default branch and needs no `origin`.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
 ### 7. Teardown
 
-A direct-PR task is torn down by `munsu delivery pr-merge`. For local-only and scout tasks, run teardown only after the task is done and fully landed (merged or report submitted).
+A direct-PR task is torn down by `munsu delivery pr-merge`; a local-only task as step 6 states. For a scout task, run teardown only after the task is done and its report submitted.
 
 ```sh
 munsu teardown <id> [--force]

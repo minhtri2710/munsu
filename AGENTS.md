@@ -54,9 +54,9 @@ and why; the reason column is documentation, matching is on package and test.
 
 That job also enforces the flake ledger: a test CI caught being flaky on
 `main` has a row there with a deadline, and an `open` row past its deadline
-turns `invariants` red on every PR until someone fixes the test. Rows come from
-the post-merge sweep in `.github/workflows/flake-ledger.yml`, which reports the
-diff for a person to apply; the rules live in `.github/flake-ledger.md`; never close a row because the test has been green for
+turns `invariants` red on every PR until someone fixes the test. A person
+applies the rows `.github/workflows/flake-ledger.yml` reports after merge; the
+rules live in `.github/flake-ledger.md`. Never close a row because the test has been green for
 a while.
 
 ### Working the guard registers
