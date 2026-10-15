@@ -65,9 +65,6 @@
 #   - A flake red on two consecutive main runs is filed as a regression, and
 #     someone will bisect for nothing. The fast path covers most of that, not
 #     all of it.
-#   - `build` and `race` run without -v, so for those lanes a test that turned
-#     into `t.Skip` is indistinguishable from one that passes. Only
-#     `integration` runs -v (ci.yml). Closing that is what v1's `-json` is for.
 #   - A self-heal caused by a fix in a *dependency* of the test's package is
 #     filed as a flake. The touch check below only knows the test's own
 #     directory; a call-graph is out of scope at this size.
@@ -147,7 +144,6 @@ lane_key() {
 	case "$1" in
 	"Build and test") echo build ;;
 	"Race detector") echo race ;;
-	"Integration tests") echo integration ;;
 	*) echo "" ;;
 	esac
 }
@@ -250,14 +246,13 @@ observe() {
 		# nothing to say. Measured, not assumed.
 		#
 		# Every lane in ci.yml runs unconditionally (no `if:`), so "the run was
-		# green" does mean "each of these three lanes was green". A lane that
+		# green" does mean "each of these lanes was green". A lane that
 		# grows an `if:` would read as green here while never having run; that
 		# is the one thing to re-check before adding one.
 		if [ "$attempts" = "1" ] && [ "$conclusion" = "success" ]; then
 			printf 'run\t%s\t1\t%s\t%s\n' "$run_id" "$sha" "$created"
 			printf 'job\t%s\t1\tbuild\tsuccess\n' "$run_id"
 			printf 'job\t%s\t1\trace\tsuccess\n' "$run_id"
-			printf 'job\t%s\t1\tintegration\tsuccess\n' "$run_id"
 			continue
 		fi
 		for a in $(seq 1 "$attempts"); do

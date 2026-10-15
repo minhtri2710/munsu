@@ -52,9 +52,10 @@ FIXTURES="$ROOT/.github/testdata/flake-ledger"
 # string that is never past due, so the whole lane would quietly stop failing.
 readonly COLUMNS='test|lane|first_seen|last_seen|deadline|owner_issue|state'
 
-# Lane keys, not job display names. The sweep maps `Integration tests` to
-# `integration`; the display name can be reworded in ci.yml without rewriting
-# every historical entry here.
+# Lane keys, not job display names. The sweep maps `Race detector` to `race`;
+# the display name can be reworded in ci.yml without rewriting every historical
+# entry here. `integration` is the key of a job since folded into `race`; rows
+# filed under it remain.
 readonly LANES='build|race|integration'
 
 die() {

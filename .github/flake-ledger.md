@@ -67,7 +67,7 @@ to make its re-flakes silent.
 | column | meaning |
 | --- | --- |
 | `test` | Go test name, top level (a subtest is filed under its parent) |
-| `lane` | `build`, `race` or `integration` |
+| `lane` | `build` or `race`; `integration` on rows filed before that job folded into `race` |
 | `first_seen` | `<sha>@<run_id>/<attempt>` -- the attempt is the part a later rerun cannot invalidate |
 | `last_seen` | the newest observation the sweep has seen, same `<sha>@<run_id>/<attempt>` format as `first_seen`; bot-maintained, and the sweep is red while it lags the evidence |
 | `deadline` | `YYYY-MM-DD`, 14 days from filing by default |
