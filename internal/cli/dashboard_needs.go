@@ -124,12 +124,31 @@ func (m dashboardModel) needsLines(n int) []dashLine {
 		if !stale {
 			kind = dashNeedStyle[n.kind].Render(kind)
 		}
-		out = append(out, dashLine{rest: "  " + kind + pad(dashText(n.id), 20) + " " + dashText(n.text)})
+		out = append(out, dashLine{rest: kind + pad(dashText(n.id), 20) + " " + dashText(n.text)})
 	}
 	return out
 }
 
-// needsSection is NEEDS YOU in the lines resize gave it.
+// needsSection is NEEDS YOU in the lines resize gave it: a red panel, or a
+// title with its items indented below it. "Nothing needs you." is one line.
 func (m dashboardModel) needsSection() []dashLine {
-	return m.needsLines(m.needsH)
+	if m.needsH < 1 {
+		return nil
+	}
+	lines := m.needsLines(m.needsH)
+	if lines[0].keep == keepStem(stemNothingNeedsYou) {
+		return lines
+	}
+	if m.look == lookFlat {
+		for i := range lines[1:] {
+			lines[i+1].rest = "  " + lines[i+1].rest
+		}
+		return lines
+	}
+	border := styleFail
+	if m.state() == stateStale {
+		border = m.theme().border
+	}
+	lines = m.needsLines(m.needsH - 1)
+	return panel(lines[0], lines[1:], m.width, 0, border)
 }
