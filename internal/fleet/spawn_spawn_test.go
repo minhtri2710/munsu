@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -19,15 +18,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
-
-func TestCheckScopeGate_YoloDoesNotBypassGate(t *testing.T) {
-	repo := t.TempDir()
-	t.Setenv("NO_MISTAKES_GATE", "")
-	r := &Runner{args: Args{Yolo: true}, projPath: repo}
-	if err := r.checkScopeGate(); err == nil {
-		t.Fatal("expected gate refusal even with yolo")
-	}
-}
 
 // fakeBackend implements session.Backend for testing.
 // Fixture: r6 transcript capture of pi ready UI (trimmed to key lines).
@@ -182,129 +172,6 @@ func TestDefaultReadyPatterns(t *testing.T) {
 		if p == "" {
 			t.Error("DefaultReadyPatterns should not contain empty patterns")
 		}
-	}
-}
-
-func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
-	homeDir := t.TempDir()
-	projectDir := t.TempDir()
-	os.WriteFile(filepath.Join(projectDir, "AGENTS.md"), []byte("instructions"), 0644)
-	os.MkdirAll(filepath.Join(homeDir, "data", "test-task"), 0755)
-	os.WriteFile(filepath.Join(homeDir, "data", "test-task", "brief.md"), []byte("brief"), 0644)
-
-	calledNewWindow := false
-	fake := &fakeBackend{newWindow: func(session, name string) (string, error) {
-		calledNewWindow = true
-		return "", fmt.Errorf("must not allocate a session")
-	}}
-	preflightCalled := false
-	r := NewRunner(Args{
-		ID:          "test-task",
-		ProjectName: "test-project",
-		HomeDir:     homeDir,
-		Endpoints:   fakeEndpointCapabilities{backend: fake},
-		NoMistakesPreflight: func(repoPath string, _ taskauthority.DeliveryStep) error {
-			preflightCalled = true
-			if repoPath != projectDir {
-				t.Fatalf("repoPath=%q, want %q", repoPath, projectDir)
-			}
-			return fmt.Errorf("incompatible no-mistakes gate agent")
-		},
-	})
-	r.projPath = projectDir
-	r.effectiveMode = "no-mistakes"
-	r.reviewStep = taskauthority.DeliveryStep{Adapter: "no-mistakes", Path: "/fake/no-mistakes", ProbeState: "ready"}
-
-	err := r.preflightNoMistakes()
-	if err == nil || !strings.Contains(err.Error(), "incompatible") {
-		t.Fatalf("preflight error=%v", err)
-	}
-	if r.effectiveMode != "no-mistakes" {
-		t.Fatalf("effectiveMode = %q after a refused preflight, want no fallback", r.effectiveMode)
-	}
-	if !preflightCalled {
-		t.Fatal("preflight was not called")
-	}
-	if calledNewWindow {
-		t.Fatal("session allocation occurred before compatibility preflight")
-	}
-}
-
-func TestCheckNoMistakesCompatibility(t *testing.T) {
-	tests := []struct {
-		name                       string
-		hasDocs                    bool
-		disableProjectSettings     bool
-		disableProjectSettingsYAML string // if non-empty, write this raw yaml instead of bool helper
-		overrides                  map[string][]string
-		agents                     []string
-		available                  map[string]bool
-		wantBlocker                GateBlockerCategory
-		wantSelected               string
-	}{
-		{name: "no instruction files", agents: []string{"pi"}, available: map[string]bool{"pi": true}},
-		{name: "no instructions and no opt-out needs no neutralization", agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantSelected: "opencode"},
-		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "pi"},
-		{name: "pi ok with disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantSelected: "pi"},
-		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantSelected: "codex"},
-		{name: "pi selected first with claude fallback", hasDocs: true, agents: []string{"pi", "claude"}, available: map[string]bool{"pi": true, "claude": true}, wantSelected: "pi"},
-		{name: "claude supported without opt-out", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantSelected: "claude"},
-		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "pi"},
-		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "codex", overrides: map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}},
-		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantBlocker: GateBlockerUnsupportedNeutralization, wantSelected: "claude", overrides: map[string][]string{"claude": {"--setting-sources", "user,project"}}},
-		{name: "disable_project_settings overrides codex defeat", hasDocs: true, disableProjectSettings: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantSelected: "codex", overrides: map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}},
-		{name: "malformed no-mistakes yaml still requires neutralizer", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: [", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "disable_project_settings false keeps preflight", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: false\n", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "configured agent unavailable", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{}, wantBlocker: GateBlockerAgentUnavailable},
-		{name: "opencode refused under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
-		{name: "auto resolves to available pi under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"auto"}, available: map[string]bool{"pi": true}},
-		{name: "auto with no installed native agent", agents: []string{"auto"}, available: map[string]bool{}, wantBlocker: GateBlockerAgentUnavailable},
-		{name: "codex supported with pi fallback", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"codex": true, "pi": true}, wantSelected: "codex"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := t.TempDir()
-			if tc.hasDocs {
-				os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("instructions"), 0644)
-			}
-			if tc.disableProjectSettingsYAML != "" {
-				os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte(tc.disableProjectSettingsYAML), 0644)
-			} else if tc.disableProjectSettings {
-				os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: true\n"), 0644)
-			}
-			cfg := noMistakesConfig{Agents: tc.agents, AgentArgsOverride: tc.overrides}
-			probe := ProbeNoMistakesGateAgent(repo, cfg, func(agent string) bool {
-				return tc.available[agent]
-			}, func() ProbeResult {
-				return ProbeResult{State: backend.Ready, Version: "1.45.4", Path: "/usr/local/bin/no-mistakes"}
-			})
-			got := GateBlockerNone
-			if probe.Blocker != nil {
-				got = probe.Blocker.Category
-			}
-			if got != tc.wantBlocker {
-				t.Fatalf("blocker category = %q, want %q (detail: %v)", got, tc.wantBlocker, probe.Blocker)
-			}
-			if tc.wantSelected != "" && probe.Selected != tc.wantSelected {
-				t.Errorf("Selected = %q, want %q", probe.Selected, tc.wantSelected)
-			}
-		})
-	}
-}
-
-func TestProjectSettingsDisabled(t *testing.T) {
-	repo := t.TempDir()
-	if projectSettingsDisabled(repo) {
-		t.Fatal("missing yaml should be false")
-	}
-	os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: true\n"), 0644)
-	if !projectSettingsDisabled(repo) {
-		t.Fatal("expected true")
-	}
-	os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: false\n"), 0644)
-	if projectSettingsDisabled(repo) {
-		t.Fatal("expected false")
 	}
 }
 
@@ -736,21 +603,36 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// The claude captures are pane text measured on claude 2.1.300 under the
+// soldier posture; the not-logged-in footer also carries the ready pattern.
 func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
-	fake := &fakeBackend{
-		capture: func(windowID string, lines int) (string, error) {
-			return "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder", nil
-		},
-	}
-	r := &Runner{
-		harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
-	}
-	err := r.waitForHarnessReady(5)
-	if err == nil {
-		t.Fatal("expected failure pattern error, got nil")
-	}
-	if !strings.Contains(err.Error(), "detected launch failure") || !strings.Contains(err.Error(), "Quick safety check") {
-		t.Errorf("error should be the early failure detection echoing the capture, got: %v", err)
+	for _, tc := range []struct {
+		name, capture, wantErr string
+	}{
+		{"folder-trust dialog", "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder", "Quick safety check"},
+		{"not logged in", "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort", "Not logged in"},
+		{"logged in", "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
+		{"brief quotes the dialog title", "❯ Reword the Quick safety check dialog.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
+		{"brief quotes the phrase", "❯ Fix the banner that says Not logged in after login.\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeBackend{
+				capture: func(windowID string, lines int) (string, error) { return tc.capture, nil },
+			}
+			r := &Runner{
+				harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+			}
+			err := r.waitForHarnessReady(5)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ready capture refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), `harness "claude" detected launch failure`) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error should be the early failure detection echoing the capture, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -924,19 +806,13 @@ func TestCheckCaptainTaskAuthority_PassesWorkingWithoutLiveMeta(t *testing.T) {
 // brief for task reconcile-task, and returns the Args of a full Spawn over a
 // fake backend whose pane is never alive.
 // deliveryOverlayForMode returns the project tools a spawn fixture's mode label
-// stands for: no-mistakes is a Ready review tool with a github forge, direct-PR
-// a Ready github forge, and local-only the baseline.
+// stands for: direct-PR is a Ready github forge, and local-only the baseline.
 func deliveryOverlayForMode(t *testing.T, mode string) config.ProjectOverlay {
 	t.Helper()
 	// A spawn that reaches the launch must not stop at the fence on a host with
 	// none: the fixture project allows an unfenced seat.
 	overlay := config.ProjectOverlay{FenceUnsupported: "allow"}
-	switch mode {
-	case "no-mistakes":
-		installFakeGH(t)
-		overlay.Review = &config.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(createFakeNoMistakesReady(t), "no-mistakes")}
-		overlay.Forge = &config.ToolEntry{Adapter: "github"}
-	case "direct-PR":
+	if mode == "direct-PR" {
 		installFakeGH(t)
 		overlay.Forge = &config.ToolEntry{Adapter: "github"}
 	}
@@ -954,7 +830,6 @@ func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Ar
 	binDir := t.TempDir()
 	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "pi"), "#!/bin/sh\nexit 0\n")
 	testutil.PrependPath(t, binDir)
-	t.Setenv("GEMINI_API_KEY", "test-key")
 
 	projectDir := filepath.Join(homeDir, "projects", "test-proj")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -1038,24 +913,27 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 }
 
 // A refused launch fence stops a full Spawn before any pane exists: the
-// no-mistakes primary here has no gate remote, so the fence cannot name the
-// gate it must allow.
+// primary's branch reflog parent here is a symlink, so the fence refuses to
+// pre-create the seat's reflog.
 func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
-	testutil.PrependPath(t, createFakeNoMistakesReady(t))
-	testutil.FakeOnPath(t, "gh-axi", "#!/bin/sh\nexit 0\n")
 	windows := 0
 	fakeBk := &fakeBackend{newWindow: func(session, name string) (string, error) {
 		windows++
 		return "default:w6F:p3", nil
 	}}
-	homeDir, args := spawnRunFixture(t, "no-mistakes", fakeBk)
-	args.NoMistakesPreflight = func(string, taskauthority.DeliveryStep) error { return nil }
+	homeDir, args := spawnRunFixture(t, "local-only", fakeBk)
+	heads := filepath.Join(homeDir, "projects", "test-proj", ".git", "logs", "refs", "heads")
+	if err := os.MkdirAll(heads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(heads, "mu")); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := Spawn(args)
 	if err == nil || !strings.Contains(err.Error(), "launch fence: ") {
 		t.Fatalf("Spawn err = %v, want the launch fence refusal", err)
 	}
-	requireGateBlocker(t, err, GateBlockerNotInitialized, "the primary has no no-mistakes remote")
 	if windows != 0 {
 		t.Fatalf("NewWindow calls = %d, want none before the fence is proven", windows)
 	}
@@ -1064,22 +942,19 @@ func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
 	}
 }
 
-// A failed no-mistakes preflight stops a full Spawn before the launch intent
-// is committed: no pane, no intent, no worktree.
-func TestSpawn_FailedNoMistakesPreflightCommitsNoLaunchIntent(t *testing.T) {
-	testutil.PrependPath(t, createFakeNoMistakesReady(t))
+// A failed delivery preflight stops a full Spawn before the launch intent is
+// committed: no pane, no intent, no worktree. The direct-PR project here has
+// no remote.
+func TestSpawn_FailedDeliveryPreflightCommitsNoLaunchIntent(t *testing.T) {
 	windows := 0
 	fakeBk := &fakeBackend{newWindow: func(session, name string) (string, error) {
 		windows++
 		return "default:w6F:p3", nil
 	}}
-	_, args := spawnRunFixture(t, "no-mistakes", fakeBk)
-	args.NoMistakesPreflight = func(string, taskauthority.DeliveryStep) error {
-		return fmt.Errorf("incompatible no-mistakes gate agent")
-	}
+	_, args := spawnRunFixture(t, "direct-PR", fakeBk)
 
 	_, err := Spawn(args)
-	if err == nil || !strings.Contains(err.Error(), "incompatible no-mistakes gate agent") {
+	if err == nil || !strings.Contains(err.Error(), `delivery preflight for "direct-PR" blocked`) {
 		t.Fatalf("Spawn err = %v, want the preflight refusal", err)
 	}
 	agg, getErr := args.Authority.Get(mustTaskID(t, "reconcile-task"))

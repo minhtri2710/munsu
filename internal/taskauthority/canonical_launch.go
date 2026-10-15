@@ -52,6 +52,9 @@ type CanonicalBeginSpawnRequest struct {
 	WindowLabel           string
 	WorktreeReservationID string
 	WorktreeFenceToken    string
+	// WorktreeTool is the treehouse executable the launch acquires through,
+	// or "" for git worktree.
+	WorktreeTool          string
 	EndpointReservationID string
 	EndpointFenceToken    string
 	// EndpointIncarnation is the opaque launch-operation provenance token
@@ -85,6 +88,7 @@ func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {
 		WindowLabel           string   `json:"window_label,omitempty"`
 		WorktreeReservationID string   `json:"worktree_reservation_id"`
 		WorktreeFenceToken    string   `json:"worktree_fence_token"`
+		WorktreeTool          string   `json:"worktree_tool,omitempty"`
 		EndpointReservationID string   `json:"endpoint_reservation_id"`
 		EndpointFenceToken    string   `json:"endpoint_fence_token"`
 		EndpointIncarnation   string   `json:"endpoint_incarnation,omitempty"`
@@ -94,7 +98,7 @@ func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {
 	}{
 		r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision,
 		r.SnapshotDigest, r.Backend, r.Harness, r.Model, r.Effort, r.Mode, r.Kind, r.Project,
-		r.ParentTaskID, r.LaunchID, r.WindowLabel, r.WorktreeReservationID, r.WorktreeFenceToken,
+		r.ParentTaskID, r.LaunchID, r.WindowLabel, r.WorktreeReservationID, r.WorktreeFenceToken, r.WorktreeTool,
 		r.EndpointReservationID, r.EndpointFenceToken, r.EndpointIncarnation, r.SeatPathDirs, r.SeatEnv, r.Reason,
 	})
 }
@@ -171,6 +175,7 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 			WindowLabel:           req.WindowLabel,
 			WorktreeReservationID: req.WorktreeReservationID,
 			WorktreeFenceToken:    req.WorktreeFenceToken,
+			WorktreeTool:          req.WorktreeTool,
 			EndpointReservationID: req.EndpointReservationID,
 			EndpointFenceToken:    req.EndpointFenceToken,
 			EndpointIncarnation:   req.EndpointIncarnation,
@@ -194,6 +199,7 @@ func launchIntentSame(l LaunchIntent, req CanonicalBeginSpawnRequest) bool {
 		l.Kind == req.Kind && l.Project == req.Project && l.ParentTaskID == req.ParentTaskID &&
 		l.LaunchID == req.LaunchID && l.WindowLabel == req.WindowLabel &&
 		l.WorktreeReservationID == req.WorktreeReservationID && l.WorktreeFenceToken == req.WorktreeFenceToken &&
+		l.WorktreeTool == req.WorktreeTool &&
 		l.EndpointReservationID == req.EndpointReservationID && l.EndpointFenceToken == req.EndpointFenceToken &&
 		l.EndpointIncarnation == req.EndpointIncarnation && slices.Equal(l.SeatPathDirs, req.SeatPathDirs) && l.SeatEnv == req.SeatEnv
 }

@@ -41,20 +41,6 @@ After installation, ensure the binary directory is on your `$PATH`:
 - **make install path:** `${XDG_BIN_HOME:-$HOME/.local/bin}` is commonly on `PATH`; otherwise add
   `export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"` to your shell rc.
 
-### no-mistakes init (for delivery pipelines)
-
-> **Note:** `no-mistakes` is an external delivery pipeline tool, not owned by munsu. The commands below work only when the
-> no-mistakes daemon is installed and configured on the host.
-
-```sh
-cd projects/<name>
-no-mistakes init
-no-mistakes doctor
-```
-
-This registers the project for automated code review, linting, testing, and PR delivery.
-For standalone munsu use, skip this step — without a `review` tool entry the review step is baseline and `munsu spawn` works without the no-mistakes daemon.
-
 ## Quick start
 
 ```sh
@@ -69,45 +55,14 @@ munsu --version          # print version
 
 Skills are embedded in the binary. `munsu skill list` shows them and
 `munsu skill show <name>` prints one; `munsu init --skill` installs `munsu-ops`.
-Six of them are mirrored as `SKILL.md` files under `.agents/skills/`, which
+Six of them are symlinked from `.agents/skills/` into `internal/cli/skills/`, so
 agent harnesses that auto-discover that directory (Pi, Claude Code, Codex, agy)
-load by frontmatter `name:`.
+load the embedded source by frontmatter `name:`.
 
-## Usage examples
+## Usage
 
-### Session start
-
-```sh
-munsu session-start
-```
-
-### Task management
-
-```sh
-munsu task add <task-id> "<description>" --kind ship --repo <name>
-munsu task add <task-id> "<description>" --kind review --reviews <ship-id> [--repo <name>]
-munsu task start <task-id>
-munsu task done <task-id>
-```
-
-### Soldier lifecycle
-
-```sh
-munsu spawn <task-id> [<project>]  (project inferred from cwd; delivery mode derived from the project's review and forge tool entries)
-munsu watch ensure [--restart]
-munsu send <task-id> "<instruction>"
-munsu peek <task-id> [--lines N]
-munsu teardown <task-id>
-```
-
-### Fleet management
-
-```sh
-munsu dashboard       # interactive fleet view (needs a terminal)
-munsu fleet view      # non-interactive fleet view
-munsu guard
-munsu captain list
-```
+`munsu skill show munsu-ops` prints the operator workflow and its command map
+(`internal/cli/skills/munsu-ops/COMMANDS.md`); `munsu <command> --help` is authoritative.
 
 ## Documentation
 

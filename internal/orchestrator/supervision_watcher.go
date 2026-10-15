@@ -49,14 +49,6 @@ type WatcherHooks interface {
 	Activate(homeDir string)
 }
 
-type ObservedTaskState struct {
-	Status, Description, NoMistakesRunStep string
-	PaneAlive                              bool
-}
-type TaskStatePort interface {
-	ReadTaskState(homeDir, taskID string) (*ObservedTaskState, error)
-}
-
 type processEventWakeKey struct {
 	eventID    string
 	generation uint64
@@ -164,8 +156,8 @@ func wakeActiveDeliveries(homeDir string, port ActiveDeliveryPort, obs *cycleObs
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, reviews, states, events, deliveries)
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, reviews, events, deliveries)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -174,7 +166,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -227,7 +219,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		if err := wakeActiveDeliveries(homeDir, deliveries, obs); err != nil {
 			return err
 		}
-		if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, states, obs); err != nil {
+		if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, obs); err != nil {
 			return err
 		}
 		logCycleObservation(obs)
@@ -400,7 +392,7 @@ var (
 	staleFirstSeen   = map[string]time.Time{}
 )
 
-func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness, obs *cycleObservation) []*WakeReason {
+func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, lv config.SeatLiveness, obs *cycleObservation) []*WakeReason {
 	var reasons []*WakeReason
 	// Status-signal path: Human-needed last lines (needs-decision, blocked,
 	// failed) wake General even when the pane is alive. Completion, readiness
@@ -443,7 +435,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		if obs != nil {
 			obs.scannedTasks++
 		}
-		reason := scanTaskWithProbe(homeDir, id, ep.Meta, probe, states, lv)
+		reason := scanTaskWithProbe(homeDir, id, ep.Meta, probe, lv)
 		if reason == nil {
 			if clearResolved {
 				clearWakeMarker(homeDir, id)
@@ -548,7 +540,7 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 	return out
 }
 
-func scanTaskWithProbe(homeDir, id string, meta map[string]string, probe TaskEndpointProbe, states TaskStatePort, lv config.SeatLiveness) *WakeReason {
+func scanTaskWithProbe(homeDir, id string, meta map[string]string, probe TaskEndpointProbe, lv config.SeatLiveness) *WakeReason {
 	windowID := meta["window"]
 
 	if probe == nil {
@@ -564,7 +556,7 @@ func scanTaskWithProbe(homeDir, id string, meta map[string]string, probe TaskEnd
 			// here (race), surface once with a stable message.
 			return handleStale(id, fmt.Sprintf("pane %s is dead (general-relevant status)", windowID))
 		}
-		if shouldAbsorbStale(homeDir, id, false, states, lv) {
+		if shouldAbsorbStale(homeDir, id, false, lv) {
 			resetStreak(id)
 			return nil
 		}
@@ -578,7 +570,7 @@ func scanTaskWithProbe(homeDir, id string, meta map[string]string, probe TaskEnd
 				if isStatusGeneralRelevant(homeDir, id) {
 					return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
 				}
-				if shouldAbsorbStale(homeDir, id, true, states, lv) {
+				if shouldAbsorbStale(homeDir, id, true, lv) {
 					resetStreak(id)
 					return nil
 				}
@@ -598,9 +590,9 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort) (bool, error) {
 	obs := newCycleObservation()
-	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, states, obs)
+	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, obs)
 	if err == nil {
 		logCycleObservation(obs)
 	}
@@ -652,7 +644,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, states TaskStatePort, obs *cycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, obs *cycleObservation) (bool, error) {
 	lv, err := config.ReadSeatLiveness(homeDir)
 	if err != nil {
 		return false, err
@@ -688,7 +680,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 
 	emitted := false
 	var humanNeeded []humanNeededEvent
-	for _, reason := range scanFleetWithProbe(homeDir, true, probe, states, lv, obs) {
+	for _, reason := range scanFleetWithProbe(homeDir, true, probe, lv, obs) {
 		if len(reason.TaskIDs) == 0 {
 			continue
 		}
@@ -801,41 +793,13 @@ func resetStreak(id string) {
 	staleFirstSeenMu.Unlock()
 }
 
-// isNoMistakesActive checks whether the task has an active no-mistakes
-// run-step that indicates it is provably working. Tasks driving the
-// no-mistakes pipeline (running, fixing, ci, awaiting_approval)
-// should not trigger stale wakes.
-func isNoMistakesActive(homeDir, id string, states TaskStatePort) bool {
-	s, err := states.ReadTaskState(homeDir, id)
-	if err != nil {
-		return false
-	}
-	return absorbStaleSignal(s)
-}
-
-// absorbStaleSignal returns true when the soldier state has an active
-// no-mistakes run-step that should absorb a stale signal.
-func absorbStaleSignal(s *ObservedTaskState) bool {
-	if s == nil {
-		return false
-	}
-	switch s.NoMistakesRunStep {
-	case "running", "fixing", "ci", "awaiting_approval":
-		return true
-	}
-	return false
-}
-
 // shouldAbsorbStale reports whether a stale condition is benign.
 // paneAlive gates status-only "working" absorb: a dead pane with a leftover
 // working: line is still actionable; an alive idle pane with working: is healthy.
 // A paused task beyond the resurface threshold is NOT absorbed — it surfaces as stale.
 // A task whose last status is done has reported completion (an audit
 // projection, not attention), so its pane state is not a stale condition.
-func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort, lv config.SeatLiveness) bool {
-	if isNoMistakesActive(homeDir, id, states) {
-		return true
-	}
+func shouldAbsorbStale(homeDir, id string, paneAlive bool, lv config.SeatLiveness) bool {
 	if isStatusDone(homeDir, id) {
 		return true
 	}

@@ -7,8 +7,7 @@
     "status": "working",
     "description": "Writing contract fixtures",
     "branch": "mu/phase-0",
-    "pane_alive": true,
-    "no_mistakes_step": "test"
+    "pane_alive": true
   },
   "help": [
     "Run `munsu task observe phase-0 --fields description,branch` for expanded fields"

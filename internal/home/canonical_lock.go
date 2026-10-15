@@ -11,11 +11,10 @@ import (
 
 // errLockBusy is the one condition the retry loop is allowed to retry on:
 // somebody else holds the scope right now. Every other failure from
-// lockFile -- a bad descriptor, a filesystem with no lock support, a
-// Windows LockFileEx that could not be called at all -- means retrying will
-// never succeed, and reporting it as ErrLockTimeout after spinning the full
-// budget would name the wrong cause. Each GOOS file maps its own busy errno
-// (EWOULDBLOCK, ERROR_LOCK_VIOLATION) onto this.
+// lockFile -- a bad descriptor, a filesystem with no lock support -- means
+// retrying will never succeed, and reporting it as ErrLockTimeout after
+// spinning the full budget would name the wrong cause. file_lock_unix.go maps
+// the busy errno (EWOULDBLOCK) onto this.
 var errLockBusy = errors.New("home: lock is held by another owner")
 
 // Bounded lock acquisition budget. Acquisition is advisory and per-scope; there

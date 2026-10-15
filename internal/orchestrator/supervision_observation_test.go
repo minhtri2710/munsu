@@ -48,7 +48,7 @@ func TestRunCycleWithProbeAndSenderLogsObservation(t *testing.T) {
 	}
 	previous := os.Stderr
 	os.Stderr = writer
-	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, testTaskStatePort{})
+	_, cycleErr := RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil)
 	_ = writer.Close()
 	os.Stderr = previous
 	if cycleErr != nil {
@@ -75,7 +75,7 @@ func TestCycleObservation_ScannedCount(t *testing.T) {
 
 	// aliveTaskProbe reports every pane alive, so no task wakes.
 	obs := newCycleObservation()
-	reasons := scanFleetWithProbe(home, false, aliveTaskProbe{}, testTaskStatePort{}, testSeatLiveness, obs)
+	reasons := scanFleetWithProbe(home, false, aliveTaskProbe{}, testSeatLiveness, obs)
 	if len(reasons) != 0 {
 		t.Fatalf("alive fleet produced %d wake reasons, want 0", len(reasons))
 	}
@@ -121,7 +121,7 @@ func TestCycleObservation_StaleAgeCaptured(t *testing.T) {
 
 	obs := newCycleObservation()
 	obs.now = func() time.Time { return ref }
-	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{}, testSeatLiveness, obs)
+	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testSeatLiveness, obs)
 	if len(reasons) != 1 || reasons[0].Kind != "stale" {
 		t.Fatalf("expected one stale reason, got %v", reasons)
 	}
@@ -214,7 +214,7 @@ func TestCycleObservation_DuplicateSuppression(t *testing.T) {
 
 // runCycleObs runs one full scan/enqueue cycle with the observation capture.
 func runCycleObs(home string, obs *cycleObservation) (*cycleObservation, error) {
-	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, testTaskStatePort{}, obs)
+	_, err := runCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, nil, obs)
 	return obs, err
 }
 

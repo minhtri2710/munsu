@@ -36,57 +36,14 @@ func (i Identity) String() string {
 	}
 }
 
-type GateCapability int
-
-const (
-	GateUnknown GateCapability = iota
-	GatePresent
-	GateAbsent
-)
-
-func (g GateCapability) String() string {
-	switch g {
-	case GatePresent:
-		return "gate-present"
-	case GateAbsent:
-		return "gate-absent"
-	default:
-		return "gate-unknown"
-	}
-}
-
+// Result is a path's checkout identity.
+// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 type Result struct {
-	Identity      Identity       `json:"identity"`
-	GateCap       GateCapability `json:"gate_capability"`
-	CommonDir     string         `json:"common_dir,omitempty"`
-	GitDir        string         `json:"git_dir,omitempty"`
-	CanonicalPath string         `json:"canonical_path,omitempty"`
-	GateSource    string         `json:"gate_source,omitempty"`
-	Err           error          `json:"error,omitempty"`
-}
-
-func (r *Result) GateRefusalError() error {
-	if r == nil {
-		return fmt.Errorf("scope classification unavailable")
-	}
-	if r.Err != nil {
-		return r.Err
-	}
-	if r.GateCap == GatePresent {
-		return fmt.Errorf("gate agent refused for %s (%s)", r.CanonicalPath, r.GateSource)
-	}
-	return nil
-}
-
-func NMHome() string {
-	if h := os.Getenv("NM_HOME"); h != "" {
-		return h
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".no-mistakes")
+	Identity      Identity `json:"identity"`
+	CommonDir     string   `json:"common_dir,omitempty"`
+	GitDir        string   `json:"git_dir,omitempty"`
+	CanonicalPath string   `json:"canonical_path,omitempty"`
+	Err           error    `json:"error,omitempty"`
 }
 
 func canonicalPath(path string) (string, error) {
@@ -158,29 +115,6 @@ func ClassifyIdentity(path string) (Identity, string, string, error) {
 	return Worktree, gitDir, commonDir, nil
 }
 
-func gateCommonDir(commonDir string) bool {
-	if commonDir == "" {
-		return false
-	}
-	markers := filepath.Join(NMHome(), "repos")
-	resolvedMarkers, err := canonicalPath(markers)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(resolvedMarkers, commonDir)
-	if err != nil || rel == "." || strings.Contains(rel, string(filepath.Separator)) {
-		return false
-	}
-	return strings.HasSuffix(rel, ".git")
-}
-
-// GateAgentEnvSet reports whether the NO_MISTAKES_GATE marker is in the
-// environment, even empty. Every reader of the marker goes through it.
-func GateAgentEnvSet() bool {
-	_, present := os.LookupEnv("NO_MISTAKES_GATE")
-	return present
-}
-
 func Classify(path string) *Result {
 	res := &Result{}
 	canonical, err := canonicalPath(path)
@@ -190,61 +124,12 @@ func Classify(path string) *Result {
 		res.CanonicalPath = path
 	}
 
-	if GateAgentEnvSet() {
-		res.GateCap = GatePresent
-		res.GateSource = "env"
-		identity, gitDir, commonDir, identityErr := ClassifyIdentity(path)
-		res.Identity, res.GitDir, res.CommonDir = identity, gitDir, commonDir
-		if identityErr != nil {
-			res.Err = fmt.Errorf("classifying identity: %w", identityErr)
-		}
-		return res
-	}
-
 	identity, gitDir, commonDir, err := ClassifyIdentity(path)
 	if err != nil {
-		res.GateCap = GateUnknown
 		res.Identity = Unknown
 		res.Err = fmt.Errorf("classifying identity: %w", err)
 		return res
 	}
 	res.Identity, res.GitDir, res.CommonDir = identity, gitDir, commonDir
-	if gateCommonDir(commonDir) {
-		res.GateCap = GatePresent
-		res.GateSource = "git-common-dir"
-	} else {
-		res.GateCap = GateAbsent
-	}
 	return res
-}
-
-func GateRefusalError(path string) error {
-	return Classify(path).GateRefusalError()
-}
-
-// GateRefuseFromCWD checks the current working directory for gate agent signals.
-// Returns nil (no error) when this is a normal session — neither the
-// NO_MISTAKES_GATE env marker nor a gate checkout path is detected.
-// When either signal is present, or the working directory cannot be classified
-// (git unavailable, a path that cannot be resolved), returns a non-nil error
-// formatted for direct display to the user, mirroring firstmate's
-// fm-refuse-if-gate-agent.
-func GateRefuseFromCWD() error {
-	// 1. Env marker check: NO_MISTAKES_GATE present (even empty) → immediate refuse.
-	if GateAgentEnvSet() {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("gate agent refused: NO_MISTAKES_GATE set (env)")
-		}
-		return GateRefusalError(cwd)
-	}
-
-	// 2. Path check: detect a gate checkout from cwd. A working directory that
-	// cannot be determined or classified (git unavailable, a path that cannot
-	// be resolved) refuses.
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("classifying identity: working directory: %w", err)
-	}
-	return GateRefusalError(cwd)
 }

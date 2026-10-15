@@ -161,7 +161,18 @@ func CaptainIDFromTask(taskID string, meta map[string]string) string {
 
 // --- Injectable seams for testing ---
 
-var captainLookPath = exec.LookPath
+var captainHarnessPath = readyHarnessPath
+
+// readyHarnessPath resolves a captain's harness binary and runs the harness's
+// own readiness command.
+// Words: Human, typed, 2026-10-15: "sao lại phải dùng env?? chạy cli của harness agent là được rồi, nếu harness đó không chạy được thì báo lại"
+func readyHarnessPath(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("%s harness not found on PATH: %w", name, err)
+	}
+	return path, harness.CheckReady(name, path)
+}
 
 // proveSleep is the pause between post-launch liveness probes in the
 // package-level Recover/Converge paths; overridden in tests.
@@ -357,14 +368,15 @@ The canonical Task Authority is the authoritative task source:
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]smunsu task list%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
+  %[6]smunsu task list%[6]s → %[6]smunsu spawn <id>%[6]s
+- A task's brief (data/<id>/brief.md) is written by %[6]smunsu task add%[6]s and arrives with a handed-off task; fill a remaining %[6]s{TEST_IMPACT}%[6]s placeholder before spawn.
 - kind: ship (default) | scout — the delivery mode comes from the project's configured review and forge tools
 - After spawning, monitor soldier progress through their task state.
 - A soldier's material report arrives in this home as a report wake. Settle it with %[6]smunsu wake resolve%[6]s or %[6]smunsu wake ack%[6]s, then report the domain result to General (see Uplink).
 - Teardown of a soldier is refused while one of its material reports is unsettled.
 - If the General sends a stop with a matching task key, stop the soldier immediately — do not wait for completion.
 - If a soldier is stuck, use the ladder: %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → interrupt → relaunch → fail.
-- After a ship PR is merged, run %[6]smunsu teardown <soldier-id>%[6]s.
+- A landed %[6]smunsu delivery pr-merge%[6]s marks the task done and tears its soldier down.
 - Never launch another Captain.
 
 ## Uplink (Captain → General)
@@ -384,13 +396,11 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 
 When a Soldier opens a PR:
 - The General authorizes merges. You do not merge without authorization.
-- When authorized: %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s
-- After merge, run %[6]smunsu teardown <soldier-id>%[6]s.
+- When authorized: %[6]smunsu delivery pr-merge <id> <url>%[6]s; a landed merge marks the task done and tears the soldier down.
 - Decision holds: if you need a decision from General, report %[6]sneeds-decision%[6]s and wait.
 - Never use bare %[6]sgh pr merge%[6]s without %[6]smunsu delivery%[6]s when meta lives here.
-- The selected delivery mode (direct-PR, no-mistakes, local-only) is authoritative:
-  - **no-mistakes**: Automated code review, tests, lint, docs, push, PR, CI — all gates must pass. Failure fails closed.
-  - **direct-PR**: Commit, push, and open PR directly (no automated gate pipeline).
+- The selected delivery mode (direct-PR, local-only) is authoritative:
+  - **direct-PR**: Commit, push, and open PR directly.
   - **local-only**: Changes stay local (no push, no PR).
 
 ## AXI-First / Fail-Closed
@@ -431,11 +441,10 @@ You MUST NOT:
 | Action | Command |
 |--------|---------|
 | Report state | %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s |
-| Brief soldier | %[6]smunsu brief <id> <project>%[6]s |
-| Spawn soldier | %[6]smunsu spawn <id> [<project>]%[6]s |
+| Spawn soldier | %[6]smunsu spawn <id>%[6]s |
 | Teardown soldier | %[6]smunsu teardown <id>%[6]s |
 | Send to soldier | %[6]smunsu send <id> <message>%[6]s |
-| Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
+| Merge PR | %[6]smunsu delivery pr-merge <id> <url>%[6]s |
 | Stuck soldier | %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → ... |
 | View tasks | %[6]smunsu task list%[6]s |
 | Mark a queued task working without spawning | %[6]smunsu task start <id>%[6]s |
@@ -472,7 +481,7 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.FleetBaseConfig{
 			SoldierHarness: "pi",
-			Backend:        "tmux",
+			Backend:        "herdr",
 		},
 		CaptainProfile: config.CaptainProfile{Harness: harness.Pi},
 	}
@@ -938,9 +947,9 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration
 		return fmt.Errorf("canonicalizing captain home: %w", err)
 	}
 
-	binPath, err := captainLookPath(binName)
+	binPath, err := captainHarnessPath(binName)
 	if err != nil {
-		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
+		return fmt.Errorf("captain launch: %w", err)
 	}
 	seat, err := prepareCaptainSeat(canonicalCaptainHome, parentHome, markerID, h)
 	if err != nil {

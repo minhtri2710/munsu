@@ -45,7 +45,6 @@ type TaskSnapshot struct {
 	// Resolved current-state projection (populated when a resolver is wired).
 	CurrentState        string            `json:"current_state,omitempty"`
 	CurrentDescription  string            `json:"current_description,omitempty"`
-	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
 	StatusLogSuperseded bool              `json:"status_log_superseded"`
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
@@ -56,7 +55,6 @@ type TaskSnapshot struct {
 type CurrentStateInfo struct {
 	State               string            `json:"state"`
 	Description         string            `json:"description"`
-	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
 	StatusLogSuperseded bool              `json:"status_log_superseded"`
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
@@ -181,7 +179,7 @@ func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapsho
 	if err != nil {
 		entries = nil
 		// A missing captains directory means no captains. Decide that from Stat, not
-		// the ReadDir error: on Windows ReadDir of a regular file fails ErrNotExist-shaped.
+		// the ReadDir error.
 		if _, statErr := os.Stat(capRoot); !errors.Is(statErr, fs.ErrNotExist) {
 			snap.Failures = append(snap.Failures, SourceFailure{Source: captainsSource, Home: homeDir, Err: err})
 		}
@@ -303,7 +301,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			Source:              source,
 			CurrentState:        info.State,
 			CurrentDescription:  info.Description,
-			NoMistakesRunStep:   info.NoMistakesRunStep,
 			StatusLogSuperseded: true,
 			OpenActivities:      info.OpenActivities,
 		}
@@ -362,86 +359,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 	}
 
 	return tasks, nil
-}
-
-// View renders the fleet snapshot as Markdown.
-func View(homeDir string, deps SnapshotDependencies) error {
-	snap, err := Snapshot(homeDir, deps)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("# Fleet View — %s\n\n", snap.Time)
-	fmt.Printf("Tasks: %d\n\n", len(snap.Tasks))
-
-	for _, ts := range snap.Tasks {
-		phase := PhaseFromProjection(ts)
-
-		src := ts.Source
-		if src == "" {
-			src = "primary"
-		}
-		fmt.Printf("- **%s** (repo: %s) [%s]\n", ts.ID, ts.Project, src)
-		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
-		// Only show harness line; omit empty model/effort
-		var modelEffortParts []string
-		if ts.Harness != "" {
-			modelEffortParts = append(modelEffortParts, fmt.Sprintf("harness: %s", ts.Harness))
-		}
-		if ts.Model != "" {
-			modelEffortParts = append(modelEffortParts, fmt.Sprintf("model: %s", ts.Model))
-		}
-		if len(modelEffortParts) > 0 {
-			fmt.Printf("  %s\n", strings.Join(modelEffortParts, " | "))
-		}
-
-		// Show current state description when available, else status.
-		displayStatus := ts.CurrentDescription
-		if displayStatus == "" {
-			displayStatus = ts.LastStatus
-		}
-		fmt.Printf("  pane: %s (%s)\n", ts.Window, phase)
-		if displayStatus != "" {
-			fmt.Printf("  status: %s\n", displayStatus)
-		}
-		fmt.Println()
-	}
-
-	return nil
-}
-
-// Bearings prints a compact resume report.
-func Bearings(homeDir string, projectDir string, deps SnapshotDependencies) error {
-	snap, err := Snapshot(homeDir, deps)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("# Bearings — %s\n\n", snap.Time)
-
-	inFlight := 0
-	for _, ts := range snap.Tasks {
-		if !taskauthority.SoldierKind(ts.Kind) {
-			continue
-		}
-		inFlight++
-		phase := PhaseFromProjection(ts)
-		src := ts.Source
-		if src == "" {
-			src = "primary"
-		}
-		displayStatus := ts.CurrentDescription
-		if displayStatus == "" {
-			displayStatus = ts.LastStatus
-		}
-		fmt.Printf("- **%s** (%s) [%s] — %s [%s]\n", ts.ID, ts.Project, src, displayStatus, phase)
-	}
-
-	if inFlight == 0 {
-		fmt.Println("No in-flight ship/scout tasks. Fleet is idle.")
-	}
-
-	return nil
 }
 
 // CaptainStatus returns endpoint/meta truth for a captain.

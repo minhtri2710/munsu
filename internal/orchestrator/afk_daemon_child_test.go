@@ -153,7 +153,7 @@ func stopAFKDaemonChild(t *testing.T, child *afkDaemonChild) {
 	if err := stopProcess(pid); err != nil {
 		t.Fatalf("stopping AFK daemon child PID %d: %v", pid, err)
 	}
-	if err := child.wait(t, 5*time.Second); err != nil && !stopProcessIsLossy() {
+	if err := child.wait(t, 5*time.Second); err != nil {
 		t.Fatalf("AFK daemon child exited after graceful stop with error: %v\n%s", err, child.output())
 	}
 }

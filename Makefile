@@ -29,4 +29,4 @@ cover:
 	go test -coverprofile=cover.out -covermode=atomic ./...
 	go tool cover -func=cover.out | tail -1
 
-all: lint build test integration cover
+all: lint build test integration

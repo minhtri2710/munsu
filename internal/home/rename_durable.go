@@ -1,5 +1,3 @@
-//go:build !windows
-
 package home
 
 import (
@@ -9,8 +7,7 @@ import (
 
 // RenameDurable renames from to to and fsyncs the destination parent and,
 // for cross-directory moves, the source parent, so the rename survives a
-// crash. It is the unix half of the durability pair;
-// rename_durable_windows.go provides the MOVEFILE_WRITE_THROUGH equivalent.
+// crash.
 func RenameDurable(from, to string) error {
 	if err := os.Rename(from, to); err != nil {
 		return err

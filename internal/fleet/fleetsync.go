@@ -26,59 +26,58 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 	projectsDir := filepath.Join(home, "projects")
 
 	// Read the project registry to find directories
-	dirs, localDirs, err := readProjectDirs(home, projectsDir)
+	dirs, err := readProjectDirs(home, projectsDir)
 	if err != nil {
 		return res, fmt.Errorf("reading projects: %w", err)
 	}
 
-	// Track which dirs are local-path registrations
-	localSet := make(map[string]bool)
-	for _, d := range localDirs {
-		localSet[d] = true
-	}
-
-	for _, dir := range dirs {
-		if projectName != "" && filepath.Base(dir) != projectName {
+	for _, d := range dirs {
+		if projectName != "" && d.name != projectName {
 			continue
 		}
 
-		isLocal := localSet[dir]
-		if err := syncOne(dir); err != nil {
-			if isLocal && strings.Contains(err.Error(), "dirty working tree") {
-				fmt.Fprintf(os.Stderr, "WARN: %s: %v (local path, skipping)\n", filepath.Base(dir), err)
+		if err := syncOne(d.dir); err != nil {
+			if d.local && strings.Contains(err.Error(), "dirty working tree") {
+				fmt.Fprintf(os.Stderr, "WARN: %s: %v (local path, skipping)\n", d.name, err)
 			} else {
-				res.Stuck = append(res.Stuck, fmt.Sprintf("%s: %v", filepath.Base(dir), err))
+				res.Stuck = append(res.Stuck, fmt.Sprintf("%s: %v", d.name, err))
 			}
 		} else {
-			res.Synced = append(res.Synced, filepath.Base(dir))
+			res.Synced = append(res.Synced, d.name)
 		}
 	}
 
 	return res, nil
 }
 
+// projectDir is one registered project's checkout, labelled by its registered name.
+type projectDir struct {
+	name, dir string
+	local     bool
+}
+
 // readProjectDirs reads the project registry and resolves project directories.
 // Uses the typed project registry to find both cloned repos (in projects/<name>)
 // and local-path registrations (where Path is an absolute existing path).
-func readProjectDirs(homeDir, projectsDir string) (dirs []string, localDirs []string, _ error) {
+func readProjectDirs(homeDir, projectsDir string) ([]projectDir, error) {
 	r, err := openRegistry(homeDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	projects, err := r.ListProjects()
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return nil, nil, nil
+			return nil, nil
 		}
-		return nil, nil, err
+		return nil, err
 	}
 
+	var dirs []projectDir
 	for _, p := range projects {
 		// 1. Check if Path is an absolute existing path (local path registration)
 		if filepath.IsAbs(p.Path) {
 			if fi, statErr := os.Stat(p.Path); statErr == nil && fi.IsDir() {
-				dirs = append(dirs, p.Path)
-				localDirs = append(localDirs, p.Path)
+				dirs = append(dirs, projectDir{name: p.Name, dir: p.Path, local: true})
 				continue
 			}
 		}
@@ -86,11 +85,11 @@ func readProjectDirs(homeDir, projectsDir string) (dirs []string, localDirs []st
 		// 2. Check if projects/<name> exists (cloned repo)
 		dir := filepath.Join(projectsDir, p.Name)
 		if fi, statErr := os.Stat(dir); statErr == nil && fi.IsDir() {
-			dirs = append(dirs, dir)
+			dirs = append(dirs, projectDir{name: p.Name, dir: dir})
 		}
 	}
 
-	return dirs, localDirs, nil
+	return dirs, nil
 }
 
 // syncOne fast-forwards a single project clone.

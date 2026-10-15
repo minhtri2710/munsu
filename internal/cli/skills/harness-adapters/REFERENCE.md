@@ -23,7 +23,7 @@ One-time step per project: open claude once in the project repository and answer
 
 ## Supervision by harness
 
-No supervising session arms the watcher with a shell `&`. Under herdr a claude General is delivered each wake as a prompt (the `munsu-ops` skill owns that rule); every other session except pi claims with `munsu wake claim --consumer <id>` (in pi the extension claims). `munsu watch ensure` returns within the beacon timeout (3s), plus up to 2s to stop a holder on `--restart` or a stalled holder, with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue, and neither command prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion. `munsu watch ensure --restart` forces a restart.
+No supervising session arms the watcher with a shell `&`. Under herdr a claude General is delivered each wake as a prompt (the `munsu-ops` skill owns that rule and the `munsu watch ensure` timing); every other session except pi claims with `munsu wake claim --consumer <id>` (in pi the extension claims). `munsu watch ensure --restart` forces a restart.
 
 | Harness | Mode | Arm and wake rule |
 |---|---|---|

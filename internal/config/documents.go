@@ -77,9 +77,10 @@ type CaptainProfile struct {
 
 // ToolEntry names a compiled-in adapter of one port, with an optional absolute
 // path that replaces PATH lookup and optional args appended to the adapter's
-// fixed argv. review accepts no-mistakes; forge accepts github and gitlab; the
-// github adapter takes neither path nor args (it runs gh-axi and gh from PATH),
-// and a review entry naming no-mistakes needs a forge entry. A tool on PATH
+// fixed argv. forge accepts github and gitlab; the github adapter takes neither
+// path nor args (it runs gh-axi and gh from PATH). worktree accepts treehouse
+// with a required absolute path and no args; without it the worktree port is
+// git worktree. A tool on PATH
 // with no entry is not used. A configured step whose probe is not Ready is refused
 // and never falls back to its baseline; the operator
 // removes the entry to run the baseline.
@@ -96,8 +97,8 @@ type ProjectOverlay struct {
 	Backend          string            `json:"backend,omitempty"`
 	TamperCheck      string            `json:"tamperCheck,omitempty"`
 	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
-	Review           *ToolEntry        `json:"review,omitempty"`
 	Forge            *ToolEntry        `json:"forge,omitempty"`
+	Worktree         *ToolEntry        `json:"worktree,omitempty"`
 	// FenceWritableRoots are extra absolute directories the write fence leaves
 	// writable for this project's soldiers. FenceUnsupported "allow" lets this
 	// project's seats launch unfenced on a host with no write fence. Both are
@@ -117,7 +118,7 @@ type ResolvedStep struct {
 }
 
 // FleetBaseConfig is the fleet-wide overlay. Tool entries are project-only, so
-// it has no Review or Forge field and a fleet base document cannot carry one.
+// it has no Forge or Worktree field and a fleet base document cannot carry one.
 // Keep its fields in step with ProjectOverlay.
 type FleetBaseConfig struct {
 	SoldierHarness   string            `json:"soldierHarness,omitempty"`
@@ -156,8 +157,8 @@ type ResolvedProjectConfig struct {
 	TamperCheck        string            `json:"tamperCheck,omitempty"`
 	DispatchProfiles   []DispatchProfile `json:"dispatchProfiles,omitempty"`
 	CaptainProfile     CaptainProfile    `json:"captainProfile,omitempty"`
-	ReviewStep         ResolvedStep      `json:"reviewStep"`
 	ForgeStep          ResolvedStep      `json:"forgeStep"`
+	WorktreeStep       ResolvedStep      `json:"worktreeStep"`
 	FenceWritableRoots []string          `json:"fenceWritableRoots,omitempty"`
 	FenceUnsupported   string            `json:"fenceUnsupported,omitempty"`
 	Digest             string            `json:"digest"`
@@ -177,7 +178,7 @@ func validateSchema(name, got, want string) error {
 	return nil
 }
 
-func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, probe func(string, ToolEntry) ResolvedStep) (ResolvedProjectConfig, error) {
+func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, probe func(ToolEntry) ResolvedStep) (ResolvedProjectConfig, error) {
 	if err := base.Validate(); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -185,18 +186,18 @@ func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, pro
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	review, forge, err := ResolveProjectTools(effective, probe)
+	forge, err := ResolveProjectTools(effective, probe)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	return ResolveProjectWithSteps(base, facts, review, forge)
+	return ResolveProjectWithSteps(base, facts, forge, resolveToolStep(effective.Worktree, probe))
 }
 
 func baselineStep() ResolvedStep {
 	return ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"}
 }
 
-func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, reviewStep, forgeStep ResolvedStep) (ResolvedProjectConfig, error) {
+func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, forgeStep, worktreeStep ResolvedStep) (ResolvedProjectConfig, error) {
 	if err := base.Validate(); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -210,16 +211,20 @@ func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, reviewS
 	if err := ValidateProjectTools(effective); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	if err := validateResolvedStep("review", reviewStep); err != nil {
+	if err := validateResolvedStep("forge", forgeAdapters, forgeStep); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	if err := validateResolvedStep("forge", forgeStep); err != nil {
+	if !stepMatchesEntry(forgeStep, effective.Forge) {
+		return ResolvedProjectConfig{}, fmt.Errorf("resolved forge step does not match the project overlay")
+	}
+	// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
+	if err := validateResolvedStep("worktree", worktreeAdapters, worktreeStep); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	if !stepMatchesEntry(reviewStep, effective.Review) || !stepMatchesEntry(forgeStep, effective.Forge) {
-		return ResolvedProjectConfig{}, fmt.Errorf("resolved tool steps do not match the project overlay")
+	if !stepMatchesEntry(worktreeStep, effective.Worktree) {
+		return ResolvedProjectConfig{}, fmt.Errorf("resolved worktree step does not match the project overlay")
 	}
-	digest, err := projectDigest(effective, reviewStep, forgeStep)
+	digest, err := projectDigest(effective, forgeStep, worktreeStep)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -228,9 +233,10 @@ func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, reviewS
 		SoldierHarness: effective.SoldierHarness, Model: effective.Model,
 		DispatchAutonomy: effective.DispatchAutonomy,
 		Backend:          effective.Backend, TamperCheck: effective.TamperCheck,
-		DispatchProfiles: cloneProfiles(effective.DispatchProfiles),
-		CaptainProfile:   base.CaptainProfile,
-		ReviewStep:       cloneResolvedStep(reviewStep), ForgeStep: cloneResolvedStep(forgeStep),
+		DispatchProfiles:   cloneProfiles(effective.DispatchProfiles),
+		CaptainProfile:     base.CaptainProfile,
+		ForgeStep:          cloneResolvedStep(forgeStep),
+		WorktreeStep:       cloneResolvedStep(worktreeStep),
 		FenceWritableRoots: append([]string(nil), effective.FenceWritableRoots...),
 		FenceUnsupported:   effective.FenceUnsupported,
 		Digest:             digest,
@@ -257,25 +263,18 @@ func stepMatchesEntry(step ResolvedStep, entry *ToolEntry) bool {
 	return true
 }
 
-func validateResolvedStep(name string, step ResolvedStep) error {
+func validateResolvedStep(port string, adapters map[string]bool, step ResolvedStep) error {
 	if step.Baseline {
 		if step.Adapter != "" || step.Path != "" || len(step.Args) != 0 || step.ProbeState != "baseline" {
-			return fmt.Errorf("resolved %s baseline carries configured tool data", name)
+			return fmt.Errorf("resolved %s baseline carries configured tool data", port)
 		}
 		return nil
 	}
-	var supported bool
-	switch name {
-	case "review":
-		supported = step.Adapter == noMistakesAdapter
-	case "forge":
-		supported = step.Adapter == "github" || step.Adapter == "gitlab"
-	}
-	if !supported || step.ProbeState != "ready" {
-		return fmt.Errorf("resolved %s adapter %s probe %s: %s", name, step.Adapter, step.ProbeState, step.Reason)
+	if !adapters[step.Adapter] || step.ProbeState != "ready" {
+		return fmt.Errorf("resolved %s adapter %s probe %s: %s", port, step.Adapter, step.ProbeState, step.Reason)
 	}
 	if step.Path == "" || !filepath.IsAbs(step.Path) {
-		return fmt.Errorf("resolved %s adapter %s requires an absolute executable path", name, step.Adapter)
+		return fmt.Errorf("resolved %s adapter %s requires an absolute executable path", port, step.Adapter)
 	}
 	return nil
 }
@@ -292,34 +291,35 @@ func toolEntryFromStep(step ResolvedStep) *ToolEntry {
 	return &ToolEntry{Adapter: step.Adapter, Path: step.Path, Args: append([]string(nil), step.Args...)}
 }
 
-func ResolveProjectTools(overlay ProjectOverlay, probe func(string, ToolEntry) ResolvedStep) (ResolvedStep, ResolvedStep, error) {
+func ResolveProjectTools(overlay ProjectOverlay, probe func(ToolEntry) ResolvedStep) (ResolvedStep, error) {
 	if err := ValidateProjectTools(overlay); err != nil {
-		return ResolvedStep{}, ResolvedStep{}, err
+		return ResolvedStep{}, err
 	}
-	resolve := func(step string, entry *ToolEntry) ResolvedStep {
-		if entry == nil {
-			return baselineStep()
-		}
-		if probe == nil {
-			return ResolvedStep{Adapter: entry.Adapter, Path: entry.Path, Args: append([]string(nil), entry.Args...), ProbeState: "failed", Reason: "configured tool probe is unavailable"}
-		}
-		result := probe(step, *cloneToolEntry(entry))
-		result.Adapter = entry.Adapter
-		result.Args = append([]string(nil), entry.Args...)
-		if entry.Path != "" {
-			result.Path = entry.Path
-		}
-		return result
-	}
-	return resolve("review", overlay.Review), resolve("forge", overlay.Forge), nil
+	return resolveToolStep(overlay.Forge, probe), nil
 }
 
-func projectDigest(config ProjectOverlay, review, forge ResolvedStep) (string, error) {
+func resolveToolStep(entry *ToolEntry, probe func(ToolEntry) ResolvedStep) ResolvedStep {
+	if entry == nil {
+		return baselineStep()
+	}
+	if probe == nil {
+		return ResolvedStep{Adapter: entry.Adapter, Path: entry.Path, Args: append([]string(nil), entry.Args...), ProbeState: "failed", Reason: "configured tool probe is unavailable"}
+	}
+	result := probe(*cloneToolEntry(entry))
+	result.Adapter = entry.Adapter
+	result.Args = append([]string(nil), entry.Args...)
+	if entry.Path != "" {
+		result.Path = entry.Path
+	}
+	return result
+}
+
+func projectDigest(config ProjectOverlay, forge, worktree ResolvedStep) (string, error) {
 	payload := struct {
-		Config     ProjectOverlay `json:"config"`
-		ReviewStep ResolvedStep   `json:"reviewStep"`
-		ForgeStep  ResolvedStep   `json:"forgeStep"`
-	}{cloneOverlay(config), cloneResolvedStep(review), cloneResolvedStep(forge)}
+		Config       ProjectOverlay `json:"config"`
+		ForgeStep    ResolvedStep   `json:"forgeStep"`
+		WorktreeStep ResolvedStep   `json:"worktreeStep"`
+	}{cloneOverlay(config), cloneResolvedStep(forge), cloneResolvedStep(worktree)}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal resolved project config: %w", err)
@@ -347,11 +347,11 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	if len(src.DispatchProfiles) > 0 {
 		dst.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
 	}
-	if src.Review != nil {
-		dst.Review = cloneToolEntry(src.Review)
-	}
 	if src.Forge != nil {
 		dst.Forge = cloneToolEntry(src.Forge)
+	}
+	if src.Worktree != nil {
+		dst.Worktree = cloneToolEntry(src.Worktree)
 	}
 	if len(src.FenceWritableRoots) > 0 {
 		dst.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
@@ -364,8 +364,8 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 func cloneOverlay(src ProjectOverlay) ProjectOverlay {
 	result := src
 	result.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
-	result.Review = cloneToolEntry(src.Review)
 	result.Forge = cloneToolEntry(src.Forge)
+	result.Worktree = cloneToolEntry(src.Worktree)
 	result.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
 	return result
 }
@@ -419,36 +419,33 @@ func cloneProfiles(src []DispatchProfile) []DispatchProfile {
 	}
 	return result
 }
+
+var (
+	forgeAdapters    = map[string]bool{"github": true, "gitlab": true}
+	worktreeAdapters = map[string]bool{"treehouse": true}
+)
+
 func ValidateProjectTools(overlay ProjectOverlay) error {
-	if err := validateToolEntry("review", overlay.Review, map[string]bool{noMistakesAdapter: true}); err != nil {
-		return err
+	if entry := overlay.Worktree; entry != nil {
+		if !worktreeAdapters[entry.Adapter] {
+			return fmt.Errorf("worktree tool has unknown adapter %q", entry.Adapter)
+		}
+		if !filepath.IsAbs(entry.Path) {
+			return fmt.Errorf("worktree adapter %s requires an absolute path", entry.Adapter)
+		}
+		if len(entry.Args) != 0 {
+			return fmt.Errorf("worktree adapter %s does not accept args", entry.Adapter)
+		}
 	}
-	if err := validateToolEntry("forge", overlay.Forge, map[string]bool{"github": true, "gitlab": true}); err != nil {
-		return err
-	}
-	return requireForgeForReview(overlay.Review, overlay.Forge)
-}
-
-const noMistakesAdapter = "no-mistakes"
-
-// requireForgeForReview is the one statement of the rule shared by overlays and
-// resolved steps; a nil entry is an unconfigured (baseline) step.
-func requireForgeForReview(review, forge *ToolEntry) error {
-	if review != nil && review.Adapter == noMistakesAdapter && forge == nil {
-		return fmt.Errorf("review adapter no-mistakes requires a configured forge tool")
-	}
-	return nil
-}
-
-func validateToolEntry(step string, entry *ToolEntry, adapters map[string]bool) error {
+	entry := overlay.Forge
 	if entry == nil {
 		return nil
 	}
-	if !adapters[entry.Adapter] {
-		return fmt.Errorf("%s tool has unknown adapter %q", step, entry.Adapter)
+	if !forgeAdapters[entry.Adapter] {
+		return fmt.Errorf("forge tool has unknown adapter %q", entry.Adapter)
 	}
 	if entry.Path != "" && !filepath.IsAbs(entry.Path) {
-		return fmt.Errorf("%s adapter %s path must be absolute", step, entry.Adapter)
+		return fmt.Errorf("forge adapter %s path must be absolute", entry.Adapter)
 	}
 	if entry.Adapter == "github" && (entry.Path != "" || len(entry.Args) != 0) {
 		return fmt.Errorf("forge adapter github does not accept path or args because it uses gh-axi and gh from PATH")

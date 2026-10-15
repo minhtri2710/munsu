@@ -1,14 +1,11 @@
 package fleet
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/home"
 )
-
-var ErrProcessInventoryUnsupported = errors.New("OS process inventory is unsupported on this platform")
 
 type DurableArtifactScanner struct{ Kinds []string }
 

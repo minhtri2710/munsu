@@ -14,7 +14,7 @@ func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmp)
 
 	// Provide git and tmux stubs so the hard-required scan does not
-	// short-circuit before the config-driven no-mistakes check runs.
+	// short-circuit before the config read.
 	bin := filepath.Join(tmp, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestCheckInstructions_ValidCommands(t *testing.T) {
 
 Run ` + "`" + `munsu doctor` + "`" + ` for diagnostics.
 Use ` + "`" + `munsu fleet snapshot` + "`" + ` for fleet state.
-Use ` + "`" + `munsu fleet bearings` + "`" + ` for a resume report.
+Use ` + "`" + `munsu fleet view` + "`" + ` for the fleet view.
 Spawn with ` + "`" + `munsu spawn` + "`" + `.
 `
 
@@ -175,7 +175,6 @@ func TestBuildCommandIndex_ContainsExpected(t *testing.T) {
 		"doctor",
 		"fleet",
 		"fleet snapshot",
-		"fleet bearings",
 		"fleet view",
 		"fleet sync",
 		"spawn",
@@ -199,7 +198,7 @@ func TestDoctor_CorruptBaseConfigFails(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"git", "tmux", "treehouse", "no-mistakes", "gh-axi", "gh", "fuser"} {
+	for _, name := range []string{"git", "tmux", "gh-axi", "gh", "fuser"} {
 		testutil.WriteFakeExecutable(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
 	}
 	t.Setenv("PATH", bin)

@@ -63,20 +63,16 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 }
 
 // rendezvous is the blocking point the fake herdr's agent-wait branch parks
-// on. The primitive differs by platform — a POSIX FIFO on unix, a loopback TCP
-// socket on windows (see rendezvous_unix_test.go / rendezvous_windows_test.go)
-// — but what does not differ is that opening it is what blocks, and that
-// completing the test's end of that open is the only proof the fake is already
+// on, a POSIX FIFO (see rendezvous_unix_test.go). Opening it is what blocks,
+// and completing the test's end of that open is the only proof the fake is already
 // blocked rather than merely about to be.
 type rendezvous struct {
 	// path is what the fake's script parks on, spelled for the shell it runs
 	// under rather than for this process. It appears only in failure messages.
 	path string
 	// blockCmd is the exact `exec cat ...` line the fake script runs to park
-	// on path. It differs by platform: on unix it opens path as an argument
-	// (cat opens the FIFO itself, after the exec); on windows it redirects
-	// path from a /dev/tcp socket, the only form the POSIX shell there can
-	// reach (see rendezvous_windows_test.go).
+	// on path: it opens path as an argument (cat opens the FIFO itself, after
+	// the exec).
 	blockCmd string
 	// await returns once the test's end of the rendezvous has completed,
 	// proving the fake is blocked. The returned Closer holds the test's end
@@ -89,9 +85,7 @@ type rendezvous struct {
 // branch blocks until the invoking process is killed (context cancellation
 // via exec.CommandContext), then returns the rendezvous that fake blocks on.
 // Completing the test process's end of that rendezvous is what proves the fake
-// is blocked — see awaitFakeBlocking. The fake binaries in this file keep
-// routing through internal/testutil, which owns fake-shell descendant cleanup
-// on windows via a job object.
+// is blocked — see awaitFakeBlocking.
 func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, rendezvous) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -105,15 +99,12 @@ func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSourc
 // `agent wait` branch blocks until killed (models a herdr CLI blocked inside
 // its own bounded wait, only interruptible by the caller's context).
 //
-// On POSIX, the blocking branch uses `exec` so the blocked process REPLACES
+// The blocking branch uses `exec` so the blocked process REPLACES
 // the shell and keeps the same pid exec.CommandContext knows about. A
 // backgrounded blocker would be a grandchild: CommandContext kills only the
 // direct child (the shell), the surviving grandchild keeps the write end of
 // the stdout pipe open, and cmd.Output() blocks waiting for an EOF that never
-// comes. On Windows, the native launcher in internal/testutil is the direct
-// child and its job object owns the shell and its descendants, so cancellation
-// closes that ownership boundary. The shell script remains the single source
-// of fake behavior on both platforms.
+// comes.
 //
 // What it execs is `cat` (parked on the rendezvous returned by newRendezvous)
 // rather than `sleep`, because that makes blocked-ness observable to the test
@@ -367,16 +358,14 @@ func spawnBackstop(t *testing.T) <-chan time.Time {
 
 // awaitFakeBlocking returns only once the fake herdr is demonstrably blocked.
 //
-// The proof is a rendezvous, not a marker file. The fake's blocking
-// branch ends in `exec cat` on the rendezvous (a FIFO on unix, a /dev/tcp
-// socket on windows), so the process that opens that rendezvous for reading is
-// the process image that reached the blocking call. Opening a rendezvous for
-// reading completes only when the test's end of it does, so this
-// open returning proves the exec has happened and that what remains is a
-// reader parked on a pipe nobody writes to. On POSIX, that process image is
-// the direct child exec.CommandContext kills; on Windows, the native launcher
-// owns it and its shell descendants through a job object. cancel() therefore
-// cannot land on a shell that is still on its way to the blocking call.
+// The proof is a rendezvous, not a marker file. The fake's blocking branch
+// ends in `exec cat` on the rendezvous FIFO, so the process that opens that
+// rendezvous for reading is the process image that reached the blocking call.
+// Opening a rendezvous for reading completes only when the test's end of it
+// does, so this open returning proves the exec has happened and that what
+// remains is a reader parked on a pipe nobody writes to. That process image is
+// the direct child exec.CommandContext kills, so cancel() cannot land on a
+// shell that is still on its way to the blocking call.
 //
 // Be exact about where that proof stops, because it stops one syscall short:
 // at the instant this open returns, the reader has just been RELEASED from

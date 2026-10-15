@@ -27,10 +27,9 @@ type DisposeRequest struct {
 	DenyWorkspaceClose                                              bool
 }
 type BoundTeardown interface {
-	RefuseGate() error
 	Probe(homeDir string, meta map[string]string) (RetirementEndpointStatus, error)
 	Dispose(homeDir string, meta map[string]string, request DisposeRequest) error
-	ReturnWorktree(homeDir, worktreePath string) error
+	ReturnWorktree(homeDir, treehouse, worktreePath string) error
 	QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
 }
 

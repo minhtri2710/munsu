@@ -7,14 +7,13 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // TestProjectScopeInstallPathsMatchesInstalledFiles pins that the derived
 // paths are exactly the files a project-scope Install writes, per harness.
 func TestProjectScopeInstallPathsMatchesInstalledFiles(t *testing.T) {
 	bin := fakePiToolchain(t)
-	SetMunsuPathResolver(testMunsuResolver{path: testutil.FakeExecutablePath(filepath.Join(bin, "munsu"))})
+	SetMunsuPathResolver(testMunsuResolver{path: filepath.Join(bin, "munsu")})
 	t.Cleanup(ResetMunsuPathResolver)
 
 	for _, name := range []string{harness.Pi, harness.Claude, harness.Codex, harness.Grok, harness.Opencode, harness.Agy} {

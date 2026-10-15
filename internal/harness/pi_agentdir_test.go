@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -234,10 +233,8 @@ func TestBuildPiAgentDir(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(dst, "sessions")); !os.IsNotExist(err) {
 			t.Fatalf("sessions in the seat dir: %v; want none, so pi creates its own", err)
 		}
-		if runtime.GOOS != "windows" {
-			if fi, err := os.Stat(dst); err != nil || fi.Mode().Perm() != 0o700 {
-				t.Fatalf("agent dir stat = %v, %v; want a private 0700 dir", fi, err)
-			}
+		if fi, err := os.Stat(dst); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Fatalf("agent dir stat = %v, %v; want a private 0700 dir", fi, err)
 		}
 		raw, _ := os.ReadFile(filepath.Join(dst, "settings.json"))
 		if !strings.Contains(string(raw), `"keep"`) || !strings.Contains(string(raw), "!"+OrchestrationSkill) {

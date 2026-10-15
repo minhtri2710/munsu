@@ -11,46 +11,12 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func TestShipBriefTemplateNoMistakes(t *testing.T) {
-	tmpl := mustShipBrief(t, "test-task-1", "munsu", "no-mistakes", false)
-
-	checks := []string{
-		"Task brief: test-task-1",
-		"git checkout -b mu/",
-		"no-mistakes doctor",
-		"Delivery mode: no-mistakes",
-		"no-mistakes axi respond",
-		"after the pipeline reports CI green",
-		"git push no-mistakes HEAD:refs/heads/mu/test-task-1",
-		"Commit the completed change, then start the no-mistakes run by pushing",
-		"and stop",
-	}
-	for _, c := range checks {
-		if !strings.Contains(tmpl, c) {
-			t.Errorf("no-mistakes brief missing %q in:\n%s", c, tmpl)
-		}
-	}
-	if strings.Contains(tmpl, "open a PR directly") {
-		t.Error("no-mistakes brief inherited direct-PR instructions")
-	}
-	if strings.Contains(tmpl, "local-only") {
-		t.Error("no-mistakes brief inherited local-only instructions")
-	}
-	for _, required := range []string{
-		"shared `no-mistakes` daemon",
-		"every lane/home",
-		"kills other lanes",
-	} {
-		if !strings.Contains(tmpl, required) {
-			t.Errorf("no-mistakes brief missing shared-daemon rule fragment %q", required)
-		}
-	}
-}
-
 func TestShipBriefTemplateDirectPR(t *testing.T) {
 	tmpl := mustShipBrief(t, "test-task-1", "munsu", "direct-PR", false)
 
 	checks := []string{
+		"Task brief: test-task-1",
+		"git checkout -b mu/",
 		"Delivery mode: direct-PR",
 		"commit",
 		"Commit the completed change. Push the task branch and open a PR.",
@@ -62,7 +28,7 @@ func TestShipBriefTemplateDirectPR(t *testing.T) {
 			t.Errorf("direct-PR brief missing %q", c)
 		}
 	}
-	for _, forbidden := range []string{"no-mistakes doctor", "/no-mistakes", "no-mistakes axi", "orchestrator merge"} {
+	for _, forbidden := range []string{"orchestrator merge"} {
 		if strings.Contains(tmpl, forbidden) {
 			t.Errorf("direct-PR brief inherited forbidden instruction %q", forbidden)
 		}
@@ -83,7 +49,7 @@ func TestShipBriefTemplateLocalOnly(t *testing.T) {
 			t.Errorf("local-only brief missing %q", c)
 		}
 	}
-	for _, forbidden := range []string{"no-mistakes doctor", "/no-mistakes", "no-mistakes axi", "open a PR directly"} {
+	for _, forbidden := range []string{"Push the task branch"} {
 		if strings.Contains(tmpl, forbidden) {
 			t.Errorf("local-only brief inherited forbidden instruction %q", forbidden)
 		}
@@ -106,9 +72,6 @@ func TestScoutBriefTemplate(t *testing.T) {
 	}
 
 	// Must NOT contain ship-mode features
-	if strings.Contains(tmpl, "no-mistakes") {
-		t.Error("scout brief should not contain no-mistakes references")
-	}
 	if strings.Contains(tmpl, "git checkout -b") {
 		t.Error("scout brief should not contain branch creation")
 	}
@@ -124,7 +87,7 @@ func TestScaffoldRefreshesDirectoryMtime(t *testing.T) {
 	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "aged", Repo: "munsu", Mode: "no-mistakes"}); err != nil {
+	if err := Scaffold(ScaffoldOptions{HomeDir: tmp, ID: "aged", Repo: "munsu", Mode: "direct-PR"}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(dir)
@@ -177,7 +140,7 @@ func TestScaffoldShip(t *testing.T) {
 		ID:      "test-ship",
 		Repo:    "munsu",
 		Scout:   false,
-		Mode:    "no-mistakes",
+		Mode:    "direct-PR",
 		Yolo:    false,
 	}
 
@@ -197,7 +160,7 @@ func TestScaffoldShip(t *testing.T) {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, "Delivery mode: no-mistakes") {
+	if !strings.Contains(content, "Delivery mode: direct-PR") {
 		t.Errorf("brief should contain delivery mode")
 	}
 	if strings.Contains(content, "+yolo") {
@@ -299,7 +262,7 @@ func TestExists(t *testing.T) {
 		HomeDir: tmp,
 		ID:      "test-exists",
 		Repo:    "munsu",
-		Mode:    "no-mistakes",
+		Mode:    "direct-PR",
 	})
 
 	if !Exists(tmp, "test-exists") {
@@ -371,7 +334,7 @@ func TestScaffoldCreatesDir(t *testing.T) {
 		HomeDir: tmp,
 		ID:      "dir-test",
 		Repo:    "munsu",
-		Mode:    "no-mistakes",
+		Mode:    "direct-PR",
 	}
 
 	if err := Scaffold(opts); err != nil {
@@ -389,7 +352,7 @@ func TestScaffoldCreatesDir(t *testing.T) {
 }
 
 func TestShipBriefContainsStatusReporting(t *testing.T) {
-	tmpl := mustShipBrief(t, "t1", "repo", "no-mistakes", false)
+	tmpl := mustShipBrief(t, "t1", "repo", "direct-PR", false)
 	if !strings.Contains(tmpl, "munsu report") {
 		t.Error("ship brief should reference munsu report command")
 	}
@@ -411,9 +374,9 @@ func TestScoutBriefHasReportContract(t *testing.T) {
 
 // TestShipBriefUnknownModeFailsLoud pins the delivery-rules switch: an empty
 // or unrecognized delivery mode is a resolution failure, never a silent
-// fall-through to the no-mistakes rules.
+// fall-through to another mode's rules.
 func TestShipBriefUnknownModeFailsLoud(t *testing.T) {
-	for _, mode := range []string{"", "direct-pr", "no-mistake", "yolo"} {
+	for _, mode := range []string{"", "direct-pr", "local", "yolo"} {
 		t.Run(mode, func(t *testing.T) {
 			tmpl, err := shipBriefTemplate("t1", "repo", mode, false)
 			if err == nil {
@@ -451,12 +414,12 @@ func TestShipBriefModeLinePresent(t *testing.T) {
 
 func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 	for name, tmpl := range map[string]string{
-		"ship":  mustShipBrief(t, "t1", "repo", "no-mistakes", false),
+		"ship":  mustShipBrief(t, "t1", "repo", "direct-PR", false),
 		"scout": mustScoutBrief(t, "s1", "repo", "direct-PR", false, "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}") {
-				t.Fatalf("brief missing keyed resolution syntax")
+			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}` to your status file `$MUNSU_HOME/state/$MUNSU_TASK_ID.status`") {
+				t.Fatalf("brief missing keyed resolution syntax and where to append it")
 			}
 			if !strings.Contains(tmpl, "Repeating the same resolved key is safe") {
 				t.Fatalf("brief missing idempotency guidance")
@@ -473,7 +436,7 @@ func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
 // unrecognized delivery mode is a resolution failure upstream, never a line
 // the brief quietly omits.
 func TestScoutBriefUnknownModeFailsLoud(t *testing.T) {
-	for _, mode := range []string{"", "direct-pr", "no-mistake", "yolo"} {
+	for _, mode := range []string{"", "direct-pr", "local", "yolo"} {
 		t.Run(mode, func(t *testing.T) {
 			tmpl, err := scoutBriefTemplate("s1", "repo", mode, false, "", 1)
 			if err == nil {

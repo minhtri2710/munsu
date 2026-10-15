@@ -1,5 +1,3 @@
-//go:build !windows
-
 package fleet
 
 import (

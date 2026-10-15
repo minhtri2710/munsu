@@ -656,63 +656,6 @@ func TestResolveStateDirRefusals(t *testing.T) {
 	})
 }
 
-func TestResolveGateRefusals(t *testing.T) {
-	l := newLayout(t)
-	gateRepo := filepath.Join(l.root, "gate", "repo.git")
-	if err := os.MkdirAll(gateRepo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(l.root, "file")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	gate := func(x *Launch) { x.GateRepo = gateRepo }
-	// bare keeps the common dir outside the primary so each overlaps alone.
-	bare := filepath.Join(l.root, "common.git")
-	bareGit := filepath.Join(bare, "worktrees", "wt")
-	if err := os.MkdirAll(bareGit, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	setBare := func(x *Launch) { x.CommonDir, x.GitDir = bare, bareGit }
-
-	t.Run("a valid gate set resolves", func(t *testing.T) {
-		launch := l.soldier()
-		gate(&launch)
-		p, err := resolveLaunch(launch)
-		if err != nil || p.gateRepo != gateRepo {
-			t.Fatalf("gate = %q, %v", p.gateRepo, err)
-		}
-	})
-	tests := []struct {
-		name string
-		mut  func(*Launch)
-		want string
-	}{
-		{"a reviewer has none", func(x *Launch) { *x = l.reviewer(); gate(x) }, "a reviewer launch has no gate write set"},
-		{"relative repo", func(x *Launch) { gate(x); x.GateRepo = "repo.git" }, "fence: gate repo: path"},
-		{"missing repo", func(x *Launch) { gate(x); x.GateRepo = filepath.Join(l.root, "nope") }, "fence: gate repo:"},
-		{"repo is a file", func(x *Launch) { gate(x); x.GateRepo = file }, "gate repo " + file + " is not a directory"},
-		{"repo inside the primary", func(x *Launch) { gate(x); setBare(x); x.GateRepo = l.primary }, "gate path " + l.primary + " overlaps " + l.primary},
-		{"repo containing the worktree", func(x *Launch) { gate(x); x.GateRepo = l.root }, "gate path " + l.root + " overlaps"},
-	}
-	for _, r := range homeRoots(l.home) {
-		tests = append(tests, struct {
-			name string
-			mut  func(*Launch)
-			want string
-		}{"repo inside home root " + filepath.Base(r), func(x *Launch) { gate(x); x.GateRepo = r }, "overlaps " + r})
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			launch := l.soldier()
-			tt.mut(&launch)
-			if _, err := resolveLaunch(launch); err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("err = %v, want it to contain %q", err, tt.want)
-			}
-		})
-	}
-}
-
 func TestNewRefusesAnUnknownRole(t *testing.T) {
 	l := newLayout(t)
 	for _, role := range []Role{"", "general"} {
@@ -872,7 +815,6 @@ func TestResolveLaunchWritableRoots(t *testing.T) {
 	l := newLayout(t)
 	rootsEnv(t, l.root)
 	cache := mkRoot(t, filepath.Join(l.root, "npm-cache"))
-	gateRepo := mkRoot(t, filepath.Join(l.root, "gate", "repo.git"))
 
 	t.Run("a soldier's roots resolve into the launch", func(t *testing.T) {
 		launch := l.soldier()
@@ -889,10 +831,6 @@ func TestResolveLaunchWritableRoots(t *testing.T) {
 	}{
 		{"a reviewer has none", func(x *Launch) { *x = l.reviewer(); x.WritableRoots = []string{cache} }, "a reviewer launch has no extra writable roots"},
 		{"the soldier's own worktree", func(x *Launch) { x.WritableRoots = []string{l.worktree} }, "overlaps protected path " + l.worktree},
-		{"the gate repo", func(x *Launch) {
-			x.GateRepo = gateRepo
-			x.WritableRoots = []string{gateRepo}
-		}, "overlaps protected path " + gateRepo},
 		{"a registered project's checkout", func(x *Launch) { x.Checkouts = []string{cache}; x.WritableRoots = []string{cache} }, "overlaps protected path " + cache},
 	}
 	for _, tt := range tests {

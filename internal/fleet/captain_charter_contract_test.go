@@ -36,11 +36,6 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		t.Error("DefaultCaptainCharter must NOT contain deprecated 'munsu launch' command")
 	}
 
-	// Must contain munsu brief in the dispatch ordering.
-	if !strings.Contains(charter, "munsu brief") {
-		t.Error("DefaultCaptainCharter must contain 'munsu brief' command")
-	}
-
 	// Must contain munsu task commands for task lifecycle management.
 	if !strings.Contains(charter, "munsu task list") {
 		t.Error("DefaultCaptainCharter must contain 'munsu task list' command")
@@ -62,7 +57,7 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		t.Error("DefaultCaptainCharter must contain 'munsu delivery pr-merge' command")
 	}
 
-	// Dispatch order is list -> brief -> spawn. Spawn needs a queued task and
+	// Dispatch order is list -> spawn. Spawn needs a queued task and
 	// performs the queued-to-working transition itself, so the flow line must
 	// not put start before spawn.
 	flow := ""
@@ -73,24 +68,20 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		}
 	}
 	listIdx := strings.Index(flow, "munsu task list")
-	briefIdx := strings.Index(flow, "munsu brief")
 	spawnIdx := strings.Index(flow, "munsu spawn")
-	if flow == "" || !(listIdx < briefIdx && briefIdx < spawnIdx) || strings.Contains(flow, "munsu task start") {
-		t.Errorf("dispatch flow must be list -> brief -> spawn with no task start, got %q", flow)
+	if flow == "" || listIdx > spawnIdx || strings.Contains(flow, "munsu task start") {
+		t.Errorf("dispatch flow must be list -> spawn with no task start, got %q", flow)
 	}
 }
 
-// TestCharter_DeliveryModeNeutrality verifies the charter documents mode-specific
-// behavior and does NOT mandate no-mistakes for all paths.
+// TestCharter_DeliveryModeNeutrality verifies the charter documents
+// mode-specific behavior.
 func TestCharter_DeliveryModeNeutrality(t *testing.T) {
 	charter := defaultCaptainCharter(t, "mode-test", t.TempDir())
 
-	// Must mention all three delivery modes.
+	// Must mention both delivery modes.
 	if !strings.Contains(charter, "direct-PR") {
 		t.Error("DefaultCaptainCharter must mention direct-PR delivery mode")
-	}
-	if !strings.Contains(charter, "no-mistakes") {
-		t.Error("DefaultCaptainCharter must mention no-mistakes delivery mode")
 	}
 	if !strings.Contains(charter, "local-only") {
 		t.Error("DefaultCaptainCharter must mention local-only delivery mode")
@@ -99,11 +90,6 @@ func TestCharter_DeliveryModeNeutrality(t *testing.T) {
 	// Must say the selected mode is authoritative.
 	if !strings.Contains(charter, "selected delivery mode") {
 		t.Error("DefaultCaptainCharter must state that the selected delivery mode is authoritative")
-	}
-
-	// Must NOT mandate no-mistakes for all code changes.
-	if strings.Contains(charter, "All code changes go through the no-mistakes") {
-		t.Error("DefaultCaptainCharter must NOT mandate no-mistakes for all code changes")
 	}
 }
 

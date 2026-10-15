@@ -3,7 +3,6 @@ kind: safety.check
 status: success
 data:
   identity: codex-adapter
-  gate_capability: mount
   canonical_path: /tmp/munsu-mount
   gate_refused: false
   block: false

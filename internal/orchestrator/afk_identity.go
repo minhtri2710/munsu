@@ -38,8 +38,8 @@ func clearDaemonIdentity(homeDir string, identity home.WriterIdentity) {
 // It is not the AFK lock's second field. That field is time.Now() at the moment
 // home.AcquireAFKLock wrote the file, not a process start time, and it is
 // formatted RFC3339 while home.ProcessIdentity returns an opaque per-GOOS token
-// (jiffies on linux, sec:usec on darwin, a FILETIME on windows). Comparing the
-// two is a category error on every platform, not only on windows -- the lock
+// (jiffies on linux, sec:usec on darwin). Comparing the two is a category
+// error on every platform -- the lock
 // timestamp can say a lock was taken at 10:00 while saying nothing about which
 // process now holds that PID. The writer identity carries the token the kernel
 // can be re-asked for, so it is the only evidence in the tree that answers "is

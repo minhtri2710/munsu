@@ -189,7 +189,7 @@ func TestProbeHerdrCapability_MalformedSchema(t *testing.T) {
 func TestProbeHerdrCapability_ExplicitPath(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := writeFakeHerdrWithSchema(t, tmp, "herdr 0.7.5", schemaV075)
-	binPath := testutil.FakeExecutablePath(filepath.Join(fakePath, "herdr"))
+	binPath := filepath.Join(fakePath, "herdr")
 
 	info := ProbeHerdrCapability(binPath)
 	if info.State != HerdrReady {

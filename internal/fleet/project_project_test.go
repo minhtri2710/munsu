@@ -72,8 +72,8 @@ func TestListAndAdd(t *testing.T) {
 	if !p.Yolo {
 		t.Error("Yolo = false, want true")
 	}
-	if p.Description != "/tmp/test-path" {
-		t.Errorf("Description = %q, want %q", p.Description, "/tmp/test-path")
+	if p.Path != "/tmp/test-path" {
+		t.Errorf("Path = %q, want %q", p.Path, "/tmp/test-path")
 	}
 }
 
@@ -108,8 +108,8 @@ func TestAddIdempotent(t *testing.T) {
 	if p.Yolo {
 		t.Error("Yolo = true, want false")
 	}
-	if p.Description != "/path/second" {
-		t.Errorf("Description = %q, want %q", p.Description, "/path/second")
+	if p.Path != "/path/second" {
+		t.Errorf("Path = %q, want %q", p.Path, "/path/second")
 	}
 }
 
@@ -345,8 +345,8 @@ func TestResolveAdhoc_InGitRepo(t *testing.T) {
 	if p.Name == "" {
 		t.Error("ResolveAdhoc returned empty name")
 	}
-	if p.Description == "" {
-		t.Error("ResolveAdhoc returned empty description")
+	if p.Path == "" {
+		t.Error("ResolveAdhoc returned empty path")
 	}
 }
 
@@ -422,8 +422,8 @@ func TestResolveFromCwd_RegistryAliasMatch(t *testing.T) {
 	if p.Name != aliasName {
 		t.Errorf("Name = %q, want %q (registered alias should win over basename %q)", p.Name, aliasName, "repo-basename")
 	}
-	if p.Description != repoDir {
-		t.Errorf("Description = %q, want %q", p.Description, repoDir)
+	if p.Path != repoDir {
+		t.Errorf("Path = %q, want %q", p.Path, repoDir)
 	}
 }
 

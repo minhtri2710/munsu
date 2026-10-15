@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
-	// Create a real git repo with a commit, then exercise the git fallback
+func TestGitWorktree_GetAndReturnWorktree(t *testing.T) {
+	// Create a real git repo with a commit, then exercise git worktree
 	// via gitWorktreeProvider directly.
 	repoDir := t.TempDir()
 	runCmd(t, repoDir, "git", "init")
@@ -25,13 +27,13 @@ func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
 
 	p := &gitWorktreeProvider{homeDir: t.TempDir()}
 
-	// Get via git fallback
+	// Get via git worktree
 	wtPath, err := p.Get(repoDir, false)
 	if err != nil {
-		t.Fatalf("git fallback Get failed: %v", err)
+		t.Fatalf("git worktree Get failed: %v", err)
 	}
 	if wtPath == "" {
-		t.Fatal("expected non-empty worktree path from git fallback")
+		t.Fatal("expected non-empty worktree path from git worktree")
 	}
 
 	// Verify it is a real linked worktree: git marks one with a .git *file*
@@ -43,12 +45,12 @@ func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
 		t.Fatalf("stat .git in worktree: %v", err)
 	}
 	if info.IsDir() {
-		t.Error("expected linked worktree from git fallback, got a primary checkout (.git is a directory)")
+		t.Error("expected linked worktree from git worktree, got a primary checkout (.git is a directory)")
 	}
 
 	// Return the worktree
 	if err := p.Return(wtPath); err != nil {
-		t.Fatalf("git fallback Return failed: %v", err)
+		t.Fatalf("git worktree Return failed: %v", err)
 	}
 
 	// Verify worktree directory is removed
@@ -57,7 +59,7 @@ func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
 	}
 }
 
-func TestGitFallback_Status(t *testing.T) {
+func TestGitWorktree_Status(t *testing.T) {
 	// Create a real git repo, get a worktree, then check status lists it.
 	repoDir := t.TempDir()
 	runCmd(t, repoDir, "git", "init")
@@ -74,13 +76,13 @@ func TestGitFallback_Status(t *testing.T) {
 	// Status before Get should be empty or no-error
 	_, err := p.Status()
 	if err != nil {
-		t.Fatalf("git fallback Status failed: %v", err)
+		t.Fatalf("git worktree Status failed: %v", err)
 	}
 
 	// Get a worktree
 	wtPath, err := p.Get(repoDir, false)
 	if err != nil {
-		t.Fatalf("git fallback Get failed: %v", err)
+		t.Fatalf("git worktree Get failed: %v", err)
 	}
 	defer func() {
 		_ = p.Return(wtPath)
@@ -89,71 +91,62 @@ func TestGitFallback_Status(t *testing.T) {
 	// Status after Get should include the worktree path
 	out2, err := p.Status()
 	if err != nil {
-		t.Fatalf("git fallback Status after Get failed: %v", err)
+		t.Fatalf("git worktree Status after Get failed: %v", err)
 	}
 	if !strings.Contains(out2, wtPath) {
 		t.Errorf("Status output should contain worktree path %q, got: %q", wtPath, out2)
 	}
 }
 
-func TestReservedWorktreePath_GitFallback(t *testing.T) {
-	t.Setenv("PATH", "/dev/null")
+func TestReservedGitWorktreePath(t *testing.T) {
 	homeDir := t.TempDir()
 	repoPath := filepath.Join(t.TempDir(), "repo")
 	reservationID := "reservation-1"
 
-	path, ok, err := ReservedWorktreePath(homeDir, repoPath, reservationID)
-	if err != nil {
-		t.Fatalf("ReservedWorktreePath: %v", err)
-	}
+	path, ok := ReservedGitWorktreePath(homeDir, repoPath, reservationID)
 	if !ok {
-		t.Fatal("ReservedWorktreePath returned ok=false for a non-empty reservation")
+		t.Fatal("ReservedGitWorktreePath returned ok=false for a non-empty reservation")
 	}
 	want := filepath.Join(homeDir, ".worktrees", stableHash(repoPath+"\x00"+reservationID))
 	if path != want {
-		t.Fatalf("ReservedWorktreePath = %q, want %q", path, want)
+		t.Fatalf("ReservedGitWorktreePath = %q, want %q", path, want)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("ReservedWorktreePath created %q: stat error = %v", path, err)
+		t.Fatalf("ReservedGitWorktreePath created %q: stat error = %v", path, err)
 	}
 
-	if path, ok, err := ReservedWorktreePath(homeDir, repoPath, ""); err != nil || ok || path != "" {
-		t.Fatalf("ReservedWorktreePath with empty reservation = (%q, %v, %v), want (\"\", false, nil)", path, ok, err)
+	if path, ok := ReservedGitWorktreePath(homeDir, repoPath, ""); ok || path != "" {
+		t.Fatalf("ReservedGitWorktreePath with empty reservation = (%q, %v), want (\"\", false)", path, ok)
 	}
 }
 
 func TestProviderSelection(t *testing.T) {
-	// Without treehouse on PATH, selectProvider should return gitWorktreeProvider.
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", "/dev/null")
-	p, err := selectProvider(t.TempDir())
+	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\nexit 0\n")
+	p, err := selectProvider(t.TempDir(), "")
 	if err != nil {
-		t.Fatalf("selectProvider with homeDir failed: %v", err)
+		t.Fatalf("selectProvider without a worktree tool: %v", err)
 	}
 	if _, ok := p.(*gitWorktreeProvider); !ok {
-		t.Errorf("expected gitWorktreeProvider when treehouse absent, got %T", p)
+		t.Errorf("no worktree tool with treehouse on PATH selected %T, want git worktree", p)
 	}
-
-	// With a mock treehouse on PATH, selectProvider should return treehouseProvider.
-	os.Setenv("PATH", oldPath)
-	fakeTreehouseOnPath(t, fakeCmd{stdout: "ok"})
-	p2, err2 := selectProvider("")
-	if err2 != nil {
-		t.Fatalf("selectProvider with treehouse on PATH should succeed, got: %v", err2)
+	tool := fakeTreehouse(t, fakeCmd{stdout: "ok"})
+	p, err = selectProvider("", tool)
+	if err != nil {
+		t.Fatalf("selectProvider with a configured treehouse: %v", err)
 	}
-	if _, ok := p2.(*treehouseProvider); !ok {
-		t.Errorf("expected treehouseProvider when treehouse present, got %T", p2)
+	if th, ok := p.(*treehouseProvider); !ok || th.bin != tool {
+		t.Errorf("configured treehouse selected %#v, want treehouse at %s", p, tool)
 	}
 }
+
 func TestGet_EmptyPath_ReturnsError(t *testing.T) {
 	// A treehouse that returns empty stdout.
-	fakeTreehouseOnPath(t, fakeCmd{})
+	tool := fakeTreehouse(t, fakeCmd{})
 
 	repoDir := t.TempDir()
 
 	// Get without lease should return empty -> error
-	_, err := GetWorktree(t.TempDir(), repoDir, false)
+	_, err := GetWorktree(t.TempDir(), tool, repoDir, false)
 	if err == nil {
 		t.Fatal("expected error for empty path from treehouse, got nil")
 	}
@@ -164,11 +157,11 @@ func TestGet_EmptyPath_ReturnsError(t *testing.T) {
 
 func TestGet_WithLease_ReturnsPath(t *testing.T) {
 	// A treehouse that returns a path.
-	fakeTreehouseOnPath(t, fakeCmd{stdout: "/tmp/wt-12345"})
+	tool := fakeTreehouse(t, fakeCmd{stdout: "/tmp/wt-12345"})
 
 	repoDir := t.TempDir()
 
-	path, err := GetWorktree(t.TempDir(), repoDir, true)
+	path, err := GetWorktree(t.TempDir(), tool, repoDir, true)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -200,10 +193,10 @@ func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
 	// treehouse return without --force prompts interactively when the worktree
 	// has uncommitted changes. With stdin closed / no tty, it prints "Aborted"
 	// and exits 0. Our Return must detect this as an error.
-	fakeTreehouseOnPath(t, fakeCmd{stdout: "Aborted"})
+	tool := fakeTreehouse(t, fakeCmd{stdout: "Aborted"})
 	_, worktreePath := newCleanGitWorktree(t)
 
-	err := ReturnWorktree(t.TempDir(), worktreePath)
+	err := ReturnWorktree(t.TempDir(), tool, worktreePath)
 	if err == nil {
 		t.Fatal("expected error for Aborted output, got nil")
 	}
@@ -214,10 +207,10 @@ func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
 
 func TestReturn_Clean_ReturnsNil(t *testing.T) {
 	// Clean success: "worktree returned to pool" and exit 0.
-	fakeTreehouseOnPath(t, fakeCmd{stdout: "worktree returned to pool"})
+	tool := fakeTreehouse(t, fakeCmd{stdout: "worktree returned to pool"})
 	_, worktreePath := newCleanGitWorktree(t)
 
-	err := ReturnWorktree(t.TempDir(), worktreePath)
+	err := ReturnWorktree(t.TempDir(), tool, worktreePath)
 	if err != nil {
 		t.Fatalf("expected no error for clean return, got: %v", err)
 	}
@@ -225,10 +218,10 @@ func TestReturn_Clean_ReturnsNil(t *testing.T) {
 
 func TestReturn_ErrorExit_ReturnsError(t *testing.T) {
 	// treehouse exit non-zero (e.g. path not found)
-	fakeTreehouseOnPath(t, fakeCmd{stdout: "path not found", exitCode: 1})
+	tool := fakeTreehouse(t, fakeCmd{stdout: "path not found", exitCode: 1})
 	_, worktreePath := newCleanGitWorktree(t)
 
-	err := ReturnWorktree(t.TempDir(), worktreePath)
+	err := ReturnWorktree(t.TempDir(), tool, worktreePath)
 	if err == nil {
 		t.Fatal("expected error for non-zero exit, got nil")
 	}
@@ -249,7 +242,7 @@ func TestGet_RelativeRepoPath_PassesAbsolute(t *testing.T) {
 	// `treehouse get` and use it as cmd.Dir. A relative repoPath previously
 	// produced a cryptic "not a directory" error.
 	argsFile := filepath.Join(t.TempDir(), "args.txt")
-	fakeTreehouseOnPath(t, fakeCmd{stdout: "/tmp/wt-rel", argsFile: argsFile})
+	tool := fakeTreehouse(t, fakeCmd{stdout: "/tmp/wt-rel", argsFile: argsFile})
 
 	// Build a real repo dir and reference it by a RELATIVE path from its parent.
 	repoDir := t.TempDir()
@@ -263,7 +256,7 @@ func TestGet_RelativeRepoPath_PassesAbsolute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path, err := GetWorktree(t.TempDir(), rel, true)
+	path, err := GetWorktree(t.TempDir(), tool, rel, true)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

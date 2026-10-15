@@ -9,10 +9,9 @@ import (
 
 // TestCaptainDurableKeyRoundTrip exercises the full taskmeta and classification
 // surface with soldier-slug and captain:<id> style logical keys on every
-// platform. It never asserts a specific persisted filename, so it passes both
-// on Unix (durable key is the identity) and on Windows (durable key is the
-// NTFS-safe encoding), while proving that the write path, read path, status
-// path, and enumeration agree on the logical id.
+// platform. It never asserts a specific persisted filename, while proving that
+// the write path, read path, status path, and enumeration agree on the logical
+// id.
 func TestCaptainDurableKeyRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 

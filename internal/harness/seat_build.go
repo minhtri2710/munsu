@@ -10,7 +10,7 @@ import (
 
 // SeatBuildDirName is the hidden dir directly under a munsu home where an
 // unfenced munsu builds what a claude or pi process will load: a seat's config
-// dir before it is renamed into state/, and the auth preflight's empty config
+// dir before it is renamed into state/, and the readiness preflight's empty config
 // dir. fence.New denies every write under it to both the soldier and the
 // reviewer, after all of its allows, so the dir stays munsu's wherever the home
 // lives, a temp root included (pinned by TestSeatDirRefusals).
@@ -25,7 +25,7 @@ func SeatBuildDir(homeDir string) string {
 // seatBuildStaleAge is how old an entry of the seat build dir must be before a
 // later build removes it. Every entry is a build in progress or a preflight's
 // empty config dir; a build links a few entries and writes one small file, and
-// a preflight is bounded by claudeAuthProbeTimeout, so an entry this old was
+// a preflight is bounded by readinessProbeTimeout, so an entry this old was
 // left by a process that crashed or was killed.
 const seatBuildStaleAge = time.Hour
 

@@ -1,7 +1,0 @@
-jobs:
-  invariants:
-    name: Repo invariants
-    permissions: {contents: read, actions: read}
-    steps:
-      - env: {GH_TOKEN: token, HOME: /tmp}
-        run: .github/scripts/flake-sweep.sh applied

@@ -86,56 +86,8 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 			t.Fatalf("%q blocked: %s", command, reason)
 		}
 	}
-	// The gate remote uses the same shim argv path. Its configured destination
-	// is validated before the push is allowed.
-	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
-	runGitForSafety(t, worktree, "config", "remote.no-mistakes.push", "HEAD:refs/heads/mu/ship-1")
-	for _, command := range []string{
-		"git push origin HEAD:refs/heads/mu/ship-1",
-		"git push no-mistakes HEAD:refs/heads/mu/ship-1",
-	} {
-		block, reason := runPiSafetyForGit(t, worktree, command)
-		if block {
-			t.Errorf("%q blocked: %s", command, reason)
-		}
-	}
-	// Force the Windows-literal reading on Darwin so the exact Windows-shaped
-	// --git-dir reaches the binding comparison without requiring a Windows host.
-	for _, path := range []string{`C:\Users\soldier\repo`, `\\server\share\repo`} {
-		if got := resolveSafetyPathWithMode(worktree, path, backslashLiteral); got != path {
-			t.Fatalf("resolveSafetyPathWithMode(%q) = %q, want unchanged Windows absolute path", path, got)
-		}
-	}
-	const windowsGitDir = `C:\Users\soldier\.git\worktrees\wt`
-	auth := testAuthorityFor(t, homeDir)
-	agg, err := auth.Get(mustTaskIDFor(t, "ship-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.Worktree == nil {
-		t.Fatal("test task has no worktree binding")
-	}
-	windowsBinding := *agg.Worktree
-	windowsBinding.GitDir = windowsGitDir
-	for _, tc := range []struct {
-		name    string
-		command string
-		gitDir  string
-		blocked bool
-	}{
-		{name: "bound git-dir", command: `git --work-tree . --git-dir ` + windowsGitDir + ` add file.txt`, gitDir: windowsGitDir},
-		{name: "wrong git-dir", command: `git --work-tree . --git-dir C:\Users\soldier\.git\worktrees\other add file.txt`, gitDir: `C:\Users\soldier\.git\worktrees\other`, blocked: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			parsedWindows := parseGitSafetyCommandForTest(worktree, tc.command, backslashLiteral)
-			if parsedWindows.gitDir != tc.gitDir {
-				t.Fatalf("parsed Windows --git-dir = %q, want %q", parsedWindows.gitDir, tc.gitDir)
-			}
-			reason := validateCanonicalGitExplicitTargetBinding(parsedWindows.gitDir, "", &windowsBinding)
-			if (reason != "") != tc.blocked {
-				t.Fatalf("git-dir=%q reason=%q blocked=%v, want blocked=%v", tc.gitDir, reason, reason != "", tc.blocked)
-			}
-		})
+	if block, reason := runPiSafetyForGit(t, worktree, "git push origin HEAD:refs/heads/mu/ship-1"); block {
+		t.Errorf("push to origin blocked: %s", reason)
 	}
 }
 
@@ -348,22 +300,16 @@ func TestSafetyCheckArgvLevelFenceEvasionDenied(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-evade")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-evade")
-	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
 	head := strings.TrimSpace(gitOutputForSafety(t, worktree, "rev-parse", "HEAD"))
-	other := strings.Repeat("0", 40)
 
 	for _, command := range []string{
-		// gate-only argv: a foreign push option, options or --no-verify toward
-		// origin, and a sha refspec that is stale, abbreviated, or off-task.
-		"git push -o other.key no-mistakes HEAD",
-		"git push -oother.k no-mistakes HEAD",
-		"git push --push-option=other.k no-mistakes HEAD",
-		"git push origin " + head + ":refs/heads/mu/ship-evade",
-		"git push -o no-mistakes.k origin HEAD",
+		// push options, --no-verify and a sha refspec: none is a push flag or
+		// task refspec pushTargetAllowed names.
+		"git push -o k origin HEAD",
+		"git push -ok origin HEAD",
+		"git push --push-option=k origin HEAD",
 		"git push --no-verify origin HEAD",
-		"git push no-mistakes " + other + ":refs/heads/mu/ship-evade",
-		"git push no-mistakes " + head[:12] + ":refs/heads/mu/ship-evade",
-		"git push no-mistakes " + head + ":refs/heads/main",
+		"git push origin " + head + ":refs/heads/mu/ship-evade",
 		// push: force/delete after the refspec, bundled short, +refspec, and a
 		// -c value that would otherwise shadow the push verb.
 		"git push origin HEAD:refs/heads/mu/ship-evade --force",
@@ -406,10 +352,7 @@ func TestSafetyCheckNormalPushAndBranchFormsAllowed(t *testing.T) {
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-ok")
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-ok")
-	runGitForSafety(t, worktree, "config", "remote.no-mistakes.url", primary)
-	head := strings.TrimSpace(gitOutputForSafety(t, worktree, "rev-parse", "HEAD"))
 	for _, command := range []string{
-		"git push --no-verify -o no-mistakes.intent=abc no-mistakes " + head + ":refs/heads/mu/ship-ok",
 		"git push origin mu/ship-ok",
 		"git push origin HEAD:refs/heads/mu/ship-ok",
 		"git push -q origin mu/ship-ok",
@@ -446,7 +389,6 @@ func TestSafetyCheckReadsSubshellsAndBuiltinCd(t *testing.T) {
 		"command cd " + primary + " && git add f",
 		"X=1 cd " + primary + " && git add f",
 		"(munsu watch)",
-		"(ls .no-mistakes)",
 	} {
 		if block, _ := runPiSafetyForGit(t, worktree, command); !block {
 			t.Errorf("%q allowed, want refused", command)
@@ -667,117 +609,6 @@ func resolveGitPathForSafety(base, raw string) string {
 	return filepath.Join(base, raw)
 }
 
-// TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix pins the two
-// required behaviors from the guard fix:
-//
-//  1. On Windows-shaped input (backslashLiteral reading) a valid Windows path in
-//     --git-dir must read literally, match the bound worktree, and be allowed
-//     (the false-positive refusal the fix removes).
-//  2. On POSIX (backslashEscapes reading) the guard must keep treating a lone
-//     backslash as a shell escape: the same Windows path is mangled and still
-//     fails the binding comparison (no weakening of POSIX refusals).
-func TestSafetyCheckGitWindowsBackslashReadingIsolatedFromPosix(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-win", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-win")
-
-	// A Windows-machine worktree binding whose --git-dir uses backslashes.
-	const windowsGitDir = `C:\Users\soldier\.git\worktrees\wt`
-	auth := testAuthorityFor(t, homeDir)
-	agg, err := auth.Get(mustTaskIDFor(t, "ship-win"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.Worktree == nil {
-		t.Fatal("test task has no worktree binding")
-	}
-	windowsBinding := *agg.Worktree
-	windowsBinding.GitDir = windowsGitDir
-
-	const command = `git --work-tree . --git-dir ` + windowsGitDir + ` add file.txt`
-
-	// (1) Windows reading: backslashes literal -> bound path matches -> allowed.
-	winParsed := parseGitSafetyCommandForTest(worktree, command, backslashLiteral)
-	if winParsed.gitDir != windowsGitDir {
-		t.Fatalf("Windows-literal --git-dir = %q, want %q", winParsed.gitDir, windowsGitDir)
-	}
-	if reason := validateCanonicalGitExplicitTargetBinding(winParsed.gitDir, "", &windowsBinding); reason != "" {
-		t.Fatalf("bound Windows --git-dir refused under Windows reading: %s", reason)
-	}
-
-	// (2) POSIX reading: backslash is an escape -> Windows path mangled -> still
-	// refused (guard keeps refusing on POSIX).
-	posixParsed := parseGitSafetyCommandForTest(worktree, command, backslashEscapes)
-	if posixParsed.gitDir == windowsGitDir {
-		t.Fatalf("POSIX reading kept backslashes literal: %q; POSIX must escape them", posixParsed.gitDir)
-	}
-	if reason := validateCanonicalGitExplicitTargetBinding(posixParsed.gitDir, "", &windowsBinding); reason == "" {
-		t.Fatalf("mangled Windows --git-dir %q unexpectedly matched binding under POSIX reading", posixParsed.gitDir)
-	}
-
-	// resolveSafetyPathWithMode must only short-circuit to the absolute Windows
-	// path under the Windows (literal) reading; under POSIX it must join to the
-	// base (treat the backslash path as relative), not weaken POSIX refusals.
-	if got := resolveSafetyPathWithMode(worktree, windowsGitDir, backslashLiteral); got != windowsGitDir {
-		t.Fatalf("Windows reading resolveSafetyPathWithMode(%q) = %q, want unchanged Windows absolute path", windowsGitDir, got)
-	}
-	posixResolved := resolveSafetyPathWithMode(worktree, windowsGitDir, backslashEscapes)
-	if posixResolved == windowsGitDir {
-		t.Fatalf("POSIX reading treat Windows path %q as absolute; must join under base", windowsGitDir)
-	}
-	if !strings.HasPrefix(posixResolved, worktree) {
-		t.Fatalf("POSIX resolved path %q not joined under base %q", posixResolved, worktree)
-	}
-}
-
-// TestResolveSafetyPathModeDetermined pins resolveSafetyPathWithMode's
-// absoluteness decision to the backslash mode, not to the host's
-// filepath.IsAbs, which is the core of #686. It exercises the function
-// directly on the running host and confirms the two production readings are
-// internally consistent: under backslashLiteral a Windows-shaped --git-dir is
-// returned absolute (unchanged), and under backslashEscapes it is joined under
-// the base (treated as relative). The Windows-host cell of this property is
-// covered by TestResolveSafetyPathWindowsHostModeIsolation, which fails before
-// the fix and passes after it on a Windows runner.
-func TestResolveSafetyPathModeDetermined(t *testing.T) {
-	const base = "/repo/worktree"
-	type cell struct {
-		name string
-		path string
-		mode backslashMode
-		want string
-	}
-	cells := []cell{
-		{"windows-drive-literal", `C:\Users\soldier\.git\worktrees\wt`, backslashLiteral, `C:\Users\soldier\.git\worktrees\wt`},
-		{"windows-unc-literal", `\\server\share\.git\worktrees\wt`, backslashLiteral, `\\server\share\.git\worktrees\wt`},
-		{"windows-drive-escape", `C:\Users\soldier\.git\worktrees\wt`, backslashEscapes, filepath.Join(base, `C:\Users\soldier\.git\worktrees\wt`)},
-		{"windows-unc-escape", `\\server\share\.git\worktrees\wt`, backslashEscapes, filepath.Join(base, `\\server\share\.git\worktrees\wt`)},
-		{"relative-escape", "rel/path", backslashEscapes, filepath.Join(base, "rel/path")},
-		{"relative-literal", "rel/path", backslashLiteral, filepath.Join(base, "rel/path")},
-	}
-	for _, c := range cells {
-		got := resolveSafetyPathWithMode(base, c.path, c.mode)
-		if got != c.want {
-			t.Fatalf("resolveSafetyPathWithMode(%q, %q, %v) = %q, want %q", base, c.path, c.mode, got, c.want)
-		}
-	}
-}
-
-// parseGitSafetyCommandForTest parses the first mutating git command in command
-// under one backslash reading, the way evaluateGitMutationSafety reads each
-// segment.
-func parseGitSafetyCommandForTest(checkPath, command string, mode backslashMode) gitCommandSafety {
-	for _, segment := range tokenizeSegments(mode, command) {
-		if commands := segmentGitCommands(checkPath, segment, mode); len(commands) > 0 {
-			return commands[0].g
-		}
-	}
-	return gitCommandSafety{}
-}
-
 // TestSafetyCheckGitVerdictsOnSharedTokenizer pins the hook verdict for every
 // command whose reading moved when the git guard switched from its own
 // dequote-then-split reader to tokenizeSegments and began reading every
@@ -940,52 +771,50 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 		// A substituted word is a write target in the shared checkout.
 		{"cd " + primary + "/docs && cp ../README.md ${x:-b c}", refuse, refuse},
 	}
-	if runtime.GOOS != "windows" {
-		// A POSIX backslash-newline is a line continuation that joins the
-		// text around it; the Windows reading keeps the backslash literal.
-		rows = append(rows, []struct {
-			command string
-			old     bool
-			want    bool
-		}{
-			{"/usr/bin/git \\\npush --force", allow, refuse},
-			{"git \\\nreset --hard", allow, refuse},
-			{"echo hi && git \\\npush --force", allow, refuse},
-			{"git \\\n-C /tmp push", allow, refuse},
-			{"git pu\\\nsh --force", allow, refuse},
-			{"bash -c \"git pu\\\nsh --force\"", refuse, refuse},
-			// A single-quoted continuation is literal in the word, but the
-			// word is read as shell again, where it joins.
-			{"echo 'git \\\npush --force'", allow, refuse},
-			// `$$` is the PID, so the `'` after it opens an ordinary single
-			// quote that the first `\'` closes; bash then runs git.
-			{`$$'\' ; gi\t push --force #\''`, refuse, refuse},
-			{`echo $$'\' ; gi\t push --force #\''`, refuse, refuse},
-		}...)
-		// bash ends a comment at the newline and runs `gi\t` as git, but the
-		// tokenizer reads the `$'` in the comment as ANSI-C quoting and
-		// decodes `\t` to a TAB that splits the verb. The raw span, read as
-		// shell again, is what bash runs.
-		const commented = "echo hi # $'\ngi\\t push --force #'"
-		bashC := func(script string) string {
-			return "bash -c '" + strings.ReplaceAll(script, "'", `'\''`) + "'"
-		}
-		rows = append(rows, []struct {
-			command string
-			old     bool
-			want    bool
-		}{
-			{commented, refuse, refuse},
-			{bashC(commented), refuse, refuse},
-			{bashC(bashC(commented)), refuse, refuse},
-			{bashC(bashC(bashC(commented))), refuse, refuse},
-			{"x=1 # $'\ngi\\t push --force #'", refuse, refuse},
-			{"bash <<'EOF'\n" + commented + "\nEOF", refuse, refuse},
-			// The raw reading reaches ANSI-C text inside double quotes too,
-			// where bash decodes nothing and runs no git (ruling (e)).
-			{`echo "$'gi\\t push --force'"`, allow, refuse},
-		}...)
+	// A POSIX backslash-newline is a line continuation that joins the
+	// text around it.
+	rows = append(rows, []struct {
+		command string
+		old     bool
+		want    bool
+	}{
+		{"/usr/bin/git \\\npush --force", allow, refuse},
+		{"git \\\nreset --hard", allow, refuse},
+		{"echo hi && git \\\npush --force", allow, refuse},
+		{"git \\\n-C /tmp push", allow, refuse},
+		{"git pu\\\nsh --force", allow, refuse},
+		{"bash -c \"git pu\\\nsh --force\"", refuse, refuse},
+		// A single-quoted continuation is literal in the word, but the
+		// word is read as shell again, where it joins.
+		{"echo 'git \\\npush --force'", allow, refuse},
+		// `$$` is the PID, so the `'` after it opens an ordinary single
+		// quote that the first `\'` closes; bash then runs git.
+		{`$$'\' ; gi\t push --force #\''`, refuse, refuse},
+		{`echo $$'\' ; gi\t push --force #\''`, refuse, refuse},
+	}...)
+	// bash ends a comment at the newline and runs `gi\t` as git, but the
+	// tokenizer reads the `$'` in the comment as ANSI-C quoting and
+	// decodes `\t` to a TAB that splits the verb. The raw span, read as
+	// shell again, is what bash runs.
+	const commented = "echo hi # $'\ngi\\t push --force #'"
+	bashC := func(script string) string {
+		return "bash -c '" + strings.ReplaceAll(script, "'", `'\''`) + "'"
 	}
+	rows = append(rows, []struct {
+		command string
+		old     bool
+		want    bool
+	}{
+		{commented, refuse, refuse},
+		{bashC(commented), refuse, refuse},
+		{bashC(bashC(commented)), refuse, refuse},
+		{bashC(bashC(bashC(commented))), refuse, refuse},
+		{"x=1 # $'\ngi\\t push --force #'", refuse, refuse},
+		{"bash <<'EOF'\n" + commented + "\nEOF", refuse, refuse},
+		// The raw reading reaches ANSI-C text inside double quotes too,
+		// where bash decodes nothing and runs no git (ruling (e)).
+		{`echo "$'gi\\t push --force'"`, allow, refuse},
+	}...)
 	for _, tc := range rows {
 		block, reason := runPiSafetyForGit(t, worktree, tc.command)
 		if block != tc.want {
@@ -995,27 +824,25 @@ func TestSafetyCheckGitVerdictsOnSharedTokenizer(t *testing.T) {
 }
 
 // TestMunsuCommandRulesReadParameterExpansionWords pins that the munsu watch
-// and no-mistakes rules read a parameter expansion's substituted words, and
+// rule reads a parameter expansion's substituted words, and
 // never re-read an expansion that reads as itself, so a benign one does not
 // exhaust the depth bound.
 func TestMunsuCommandRulesReadParameterExpansionWords(t *testing.T) {
 	for _, tc := range []struct {
 		command string
 		watch   bool
-		names   bool
 	}{
-		{`echo ${x:-a b}`, false, false},
-		{`${x:-munsu watch}`, true, false},
-		{`ls ${x:-.no-mistakes/x}`, false, true},
+		{`echo ${x:-a b}`, false},
+		{`${x:-munsu watch}`, true},
 		// Every candidate at each position the rule reads is read.
-		{`${a:-munsu} ${b:-watch}`, true, false},
-		{`${a:-${c:-munsu}} ${b:-watch}`, true, false},
-		{`munsu ${a:---home} ${b:-/h} watch`, true, false},
-		{`${a:-munsu} ${b:-watch} run`, false, false},
+		{`${a:-munsu} ${b:-watch}`, true},
+		{`${a:-${c:-munsu}} ${b:-watch}`, true},
+		{`munsu ${a:---home} ${b:-/h} watch`, true},
+		{`${a:-munsu} ${b:-watch} run`, false},
 		// A word that may be removed leaves the next word in its place.
-		{`${b:+x} munsu watch`, true, false},
-		{`munsu $b watch`, true, false},
-		{`munsu watch "$b"`, true, false},
+		{`${b:+x} munsu watch`, true},
+		{`munsu $b watch`, true},
+		{`munsu watch "$b"`, true},
 	} {
 		got, tooDeep := munsuInvocations(tc.command, 0)
 		watch := slices.ContainsFunc(got, func(invocation munsuInvocation) bool {
@@ -1023,9 +850,6 @@ func TestMunsuCommandRulesReadParameterExpansionWords(t *testing.T) {
 		})
 		if tooDeep || watch != tc.watch {
 			t.Errorf("munsuInvocations(%q) = %q tooDeep=%v, want a bare watch=%v", tc.command, got, tooDeep, tc.watch)
-		}
-		if names, tooDeep := namesNoMistakesDir(tc.command, 0); tooDeep || names != tc.names {
-			t.Errorf("namesNoMistakesDir(%q) = %v tooDeep=%v, want %v", tc.command, names, tooDeep, tc.names)
 		}
 	}
 }
@@ -1046,16 +870,6 @@ func TestMunsuInvocationsDepthBound(t *testing.T) {
 	}
 	if _, tooDeep := munsuInvocations(bashC(inside), 0); !tooDeep {
 		t.Errorf("munsuInvocations past depth %d: tooDeep=false, want true", maxShellPayloadDepth)
-	}
-	names := "ls .no-mistakes"
-	for range maxShellPayloadDepth {
-		names = bashC(names)
-	}
-	if got, tooDeep := namesNoMistakesDir(names, 0); !got || tooDeep {
-		t.Errorf("namesNoMistakesDir at depth %d = %v tooDeep=%v, want true", maxShellPayloadDepth, got, tooDeep)
-	}
-	if got, tooDeep := namesNoMistakesDir(bashC(names), 0); got || !tooDeep {
-		t.Errorf("namesNoMistakesDir past depth %d = %v tooDeep=%v, want tooDeep", maxShellPayloadDepth, got, tooDeep)
 	}
 	checkPath := t.TempDir()
 	if block, reason := runPiSafetyForGit(t, checkPath, inside); !block || !strings.Contains(reason, "Bare 'munsu watch'") {
@@ -1215,7 +1029,6 @@ func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.
 		{`x=${ git push --force; }`, refuse},
 		{"${\tgit push --force; }", refuse},
 		{`${ munsu watch; }`, refuse},
-		{`${ ls .no-mistakes; }`, refuse},
 		{"cd " + docs + " && ${ echo hi > f; }", refuse},
 		{`${x[0]:-git} push --force`, refuse},
 		{`${x[1]-git} push --force`, refuse},

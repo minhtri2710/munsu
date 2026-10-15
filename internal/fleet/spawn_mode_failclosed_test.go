@@ -65,18 +65,17 @@ func TestResolveBriefProject_UnknownProjectFailsClosed(t *testing.T) {
 
 // TestResolveBriefProjectDerivesModeFromConfiguredTools pins the derivation
 // table at the spawn boundary: the mode comes from the project's configured
-// review and forge tools, and a baseline step never selects a mode of its own.
+// forge tool.
 func TestResolveBriefProjectDerivesModeFromConfiguredTools(t *testing.T) {
 	installFakeGH(t)
 	github := &fleetconfig.ToolEntry{Adapter: "github"}
 	for _, tc := range []struct {
-		name          string
-		review, forge *fleetconfig.ToolEntry
-		want          string
+		name  string
+		forge *fleetconfig.ToolEntry
+		want  string
 	}{
-		{name: "no tools is local-only", want: "local-only"},
-		{name: "baseline review with forge is direct-PR", forge: github, want: "direct-PR"},
-		{name: "no-mistakes review with forge is no-mistakes", review: &fleetconfig.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(createFakeNoMistakesReady(t), "no-mistakes")}, forge: github, want: "no-mistakes"},
+		{name: "no forge is local-only", want: "local-only"},
+		{name: "forge is direct-PR", forge: github, want: "direct-PR"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -84,7 +83,7 @@ func TestResolveBriefProjectDerivesModeFromConfiguredTools(t *testing.T) {
 				SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
 				Config:        fleetconfig.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi"},
 			}, []testProjectRecord{
-				{Name: "alpha", Path: filepath.Join(home, "projects", "alpha"), Config: fleetconfig.ProjectOverlay{Review: tc.review, Forge: tc.forge}},
+				{Name: "alpha", Path: filepath.Join(home, "projects", "alpha"), Config: fleetconfig.ProjectOverlay{Forge: tc.forge}},
 			}, nil)
 			mode, _, err := ResolveBriefProject(home, "alpha", true)
 			if err != nil {

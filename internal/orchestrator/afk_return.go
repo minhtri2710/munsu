@@ -51,26 +51,14 @@ type ReturnReport struct {
 	// reports are settled and the file still holds them, so a re-run replays
 	// the idempotent settlement and removes it.
 	DigestNotRemoved string `json:"digest_not_removed,omitempty"`
-
-	// LossyStop records that the daemon was stopped by a mechanism that can
-	// skip its final digest flush (stopProcessIsLossy, afk_process_windows.go):
-	// the drained digest may be missing up to one window of entries that never
-	// reached the file. It is set only when Return actually stopped a daemon;
-	// a Return that found nothing to stop carries no loss.
-	LossyStop bool `json:"lossy_stop"`
 }
 
 // HasActionable reports whether the return report contains any item
 // needing munsu attention before resuming normal work.
 // The caller must check this before resuming normal work and re-run
 // Return until it returns clean (HasActionable == false).
-//
-// A lossy stop is actionable even when the digest drained empty: entries the
-// stop dropped are gone, and the caller must see the report that says so
-// rather than a clean bill. Re-running Return clears the flag -- there is
-// nothing left to stop or drain -- but cannot recover the lost window.
 func (r *ReturnReport) HasActionable() bool {
-	return len(r.Escalations) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.DigestNotRemoved != "" || r.LossyStop
+	return len(r.Escalations) > 0 || len(r.BlockedItems) > 0 || len(r.UnacceptedReports) > 0 || r.DigestNotRemoved != ""
 }
 
 // String returns a human-readable summary of the report.
@@ -106,9 +94,6 @@ func (r *ReturnReport) String() string {
 	}
 	if r.DigestNotRemoved != "" {
 		b.WriteString(fmt.Sprintf("  digest not removed: %s; its reports are accepted, run `munsu afk return` again once the cause is fixed to remove it\n", r.DigestNotRemoved))
-	}
-	if r.LossyStop {
-		b.WriteString("\nLossy stop: the daemon was killed without its final digest flush, so up to one batch window of entries never reached the digest and cannot be drained. Treat the record above as a lower bound, not the full window. Reports in that window were never settled and still hold their task's teardown: retire such a task with `munsu teardown <id> --force`.\n")
 	}
 	if r.HasActionable() {
 		b.WriteString("\nActionable items remain — reconcile before resuming normal work.\n")
@@ -162,8 +147,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 			// Exit A -- PID is alive but unverifiable. home.IsProcessAlive answers
 			// "some process holds this PID", not "our daemon does", and PIDs are
 			// reused. Terminating on that answer alone kills whatever the OS
-			// handed the number to, and on windows stopProcess is an uncatchable
-			// TerminateProcess. So refuse, and say why. Residual: lock + flag
+			// handed the number to. So refuse, and say why. Residual: lock + flag
 			// kept, nothing signalled.
 			identity, err := daemonIdentityForPID(homeDir, daemonPID)
 			if err != nil {
@@ -180,60 +164,11 @@ func Return(homeDir string) (*ReturnReport, error) {
 			if !waitForDaemonExit(daemonPID) {
 				return report, fmt.Errorf("AFK daemon PID %d remained alive %s after stop request", daemonPID, afkStopWait)
 			}
-			// The stop took effect. stopProcessIsLossy reports whether it could
-			// have skipped the daemon's final digest flush: false on unix where
-			// stopProcess is SIGTERM and the daemon flushes in its deferred
-			// shutdown (afk_daemon.go step 7), true on windows where it is
-			// TerminateProcess and the flush never runs. Carry it into the
-			// report so ReturnReport refuses to claim "All clear" over a digest
-			// missing up to one window of entries (#530).
-			//
-			// This is option (b) of #530, chosen over the owner-clean route
-			// (c) -- making the digester durable on arrival instead of holding
-			// `entries []BatchedEntry` in RAM for the window (afk_digester.go)
-			// -- because (c) is a durability plus concurrency change across
-			// Digester / drainDigest / BatchedEscalation, materially wider than
-			// #530 authorizes, and also closes a hole this stop does not open:
-			// a unix SIGKILL, panic, or power loss drops the same window today.
-			// (c) is the preferred successor -- not (a), the windows soft stop,
-			// which builds shutdown IPC on a platform where home.Init fails
-			// every write (#524) and nothing here can verify it. Removal
-			// condition: revisit once the windows lane is a required check AND
-			// the product actually runs on windows (#524/#525/#526 landed and
-			// observed green).
-			//
-			// Known and deliberate limit of (b): this refusal reaches the
-			// human-readable ReturnReport only. IsClean (afk_gate.go), which
-			// backs the machine-readable gate in session_cmd.go, re-reads the
-			// drained digest and cannot see a loss. It reports clean for a
-			// missing file, which is exactly the state a lossy stop produces
-			// when the unflushed window held the only escalations; an
-			// unparseable or unreadable file is an error, never clean. So
-			// #530's "stop claiming All clear" is closed for the report and
-			// still open for the gate. Closing it for the gate
-			// too would mean persisting a durable loss marker at Return time:
-			// new machinery on a platform that cannot currently complete a
-			// single write (#524), which is the same objection that rules out
-			// (a), and machinery that (c) removes the need for rather than
-			// adds to. Left to the same removal condition above, not patched
-			// here.
-			//
-			// What the lossy window now also loses: the report wakes in it were
-			// already drained from the wake queue, so a dropped entry leaves its
-			// report unsettled (teardown refuses it). Escape: `munsu teardown
-			// <id> --force`; ReturnReport.String says so. Removal condition: a
-			// digester that is durable on arrival, (c) above.
-			if stopProcessIsLossy() {
-				report.LossyStop = true
-			}
-			// stopProcess is a lossy stop on windows (afk_process_windows.go):
-			// Kill skips the daemon's deferred clearDaemonIdentity, so the "afk"
-			// writer identity artifact outlives the process it describes and
-			// other readers keep treating it as a live writer. Compensate here,
-			// where the death is confirmed and the identity is known to be the
-			// one that just died. Idempotent: on unix the daemon's own defer has
-			// normally already removed it, and RemoveWriterIdentityIfMatches
-			// refuses to remove a successor's artifact.
+			// The stop took effect. Clear the "afk" writer identity here, where the
+			// death is confirmed and the identity is known to be the one that just
+			// died. Idempotent: the daemon's own defer has normally already removed
+			// it, and RemoveWriterIdentityIfMatches refuses to remove a successor's
+			// artifact.
 			clearDaemonIdentity(homeDir, identity)
 		}
 	}
@@ -305,12 +240,8 @@ func blockedEntry(entry BatchedEntry) bool {
 // expires, and reports whether it is gone.
 //
 // It replaces a flat 300ms sleep followed by a single check. That constant had
-// no measurement behind it on any platform, and on windows it is measured
-// against the wrong thing entirely: stopProcess is TerminateProcess, which
-// returns as soon as the kernel accepts the request, and home.IsProcessAlive reads
-// GetExitCodeProcess == STILL_ACTIVE, which still holds while the process is
-// being torn down. A fixed sleep either loses to that teardown or pads every
-// fast exit.
+// no measurement behind it, and a fixed sleep either loses to a slow teardown
+// or pads every fast exit.
 //
 // Expiry is an error at the one call site, unlike waitForWatcherExit
 // (supervision_watcher.go), which treats it as tolerable. The difference is what

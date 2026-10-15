@@ -703,7 +703,7 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 	sigCh := make(chan os.Signal)
 	done := make(chan *WakeReason, 1)
 	go func() {
-		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, nil, raceTaskStatePort{}, port, NoopActiveDeliveryPort{})
+		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, nil, port, NoopActiveDeliveryPort{})
 		done <- reason
 	}()
 
@@ -875,7 +875,6 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 	probe := countingProbe{fn: func(string, map[string]string) (bool, error) { return true, nil }}
 	sender := raceCycleSender{}
 	hooks := raceTestHooks{}
-	states := raceTaskStatePort{}
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -913,7 +912,7 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 					return
 				default:
 				}
-				if _, err := RunCycleWithProbeAndSender(homeDir, probe, sender, hooks, nil, states); err != nil {
+				if _, err := RunCycleWithProbeAndSender(homeDir, probe, sender, hooks, nil); err != nil {
 					return
 				}
 				cycleCount.Add(1)
@@ -1003,10 +1002,3 @@ type raceTestHooks struct{}
 
 func (raceTestHooks) Reconcile(string, bool) error { return nil }
 func (raceTestHooks) Activate(string)              {}
-
-// raceTaskStatePort reports a working task so stale signals are not misread.
-type raceTaskStatePort struct{}
-
-func (raceTaskStatePort) ReadTaskState(homeDir, taskID string) (*ObservedTaskState, error) {
-	return &ObservedTaskState{Status: "working:" + taskID}, nil
-}

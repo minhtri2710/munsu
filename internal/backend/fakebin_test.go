@@ -4,6 +4,7 @@ package backend
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,16 +19,11 @@ type fakeCmd struct {
 	argsFile string // when set, each argument is written on its own line
 }
 
-// fakeTreehouseOnPath installs a fake `treehouse` in a fresh directory and
-// prepends that directory to PATH for the duration of the test.
-//
-// Without it selectProvider finds no treehouse on windows, silently falls back
-// to real `git worktree`, and the test measures git rather than the fake it
-// installed (#549 group 8). testutil.FakeOnPath owns why a shell script needs a
-// companion to be visible there.
-func fakeTreehouseOnPath(t *testing.T, spec fakeCmd) {
+// fakeTreehouse writes a fake `treehouse` in a fresh directory and returns its
+// path, the configured executable a caller passes as the worktree tool.
+func fakeTreehouse(t *testing.T, spec fakeCmd) string {
 	t.Helper()
-	testutil.FakeOnPath(t, "treehouse", spec.script())
+	return testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), spec.script())
 }
 
 func (spec fakeCmd) script() string {

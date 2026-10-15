@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -259,9 +258,9 @@ func TestRecoverLaunchReadiness_DeniedModelFailsClosed(t *testing.T) {
 	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
-	oldLookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { captainLookPath = oldLookPath }()
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	defer func() { captainHarnessPath = oldLookPath }()
 
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi, Model: "claude-sonnet-4-20250515"})
 	tx := &RecoverTransaction{}
@@ -281,9 +280,9 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
-	oldLookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { captainLookPath = oldLookPath }()
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	defer func() { captainHarnessPath = oldLookPath }()
 
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi, Model: "opencode-go/deepseek-v4-flash"})
 	tx := &RecoverTransaction{}
@@ -362,9 +361,9 @@ func TestRecoverLaunchReadiness_NoModelWithPolicyFailsClosed(t *testing.T) {
 	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
-	oldLookPath := captainLookPath
-	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	defer func() { captainLookPath = oldLookPath }()
+	oldLookPath := captainHarnessPath
+	captainHarnessPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	defer func() { captainHarnessPath = oldLookPath }()
 
 	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi})
 	tx := &RecoverTransaction{}
@@ -468,9 +467,6 @@ func TestSpawn_ProjectConfigModelValidated(t *testing.T) {
 // is identical to the one validated. A quota-balanced profile makes each
 // selector invocation exec quota-axi; a fake quota-axi on PATH counts calls.
 func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake quota-axi executable is POSIX-only")
-	}
 	homeDir := t.TempDir()
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,

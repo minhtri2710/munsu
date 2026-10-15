@@ -28,14 +28,14 @@ func captureContract(t *testing.T, f *launchFixture) {
 }
 
 // seedDeliveryConfig stores the typed config documents with the fixture
-// project's review and forge tool entries (nil means baseline).
-func seedDeliveryConfig(t *testing.T, f *launchFixture, review, forge *config.ToolEntry) {
+// project's forge tool entry (nil means baseline).
+func seedDeliveryConfig(t *testing.T, f *launchFixture, forge *config.ToolEntry) {
 	t.Helper()
 	storeTestDocuments(t, f.runner.homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.FleetBaseConfig{Backend: "tmux", SoldierHarness: "pi", Model: "gpt-5"},
 	}, []testProjectRecord{
-		{Name: "test-proj", Path: f.runner.projPath, Config: config.ProjectOverlay{Review: review, Forge: forge}},
+		{Name: "test-proj", Path: f.runner.projPath, Config: config.ProjectOverlay{Forge: forge}},
 	}, nil)
 }
 
@@ -49,13 +49,13 @@ func contractOf(t *testing.T, f *launchFixture) *taskauthority.DeliveryContract 
 }
 
 // TestRecordDeliveryContractOnFirstLaunch pins the capture: generation 1 of a
-// task carries the resolved mode and the captured review and forge steps
+// task carries the resolved mode and the captured forge step
 // durably after the launch intent commits. A re-entrant record under recovery
 // does not record a second time.
 func TestRecordDeliveryContractOnFirstLaunch(t *testing.T) {
 	f := newLaunchFixture(t, "contract-record")
 	installFakeGH(t)
-	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
+	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "github"})
 	captureContract(t, f)
 
 	agg, err := f.auth.Get(mustTaskID(t, f.taskID))
@@ -66,8 +66,8 @@ func TestRecordDeliveryContractOnFirstLaunch(t *testing.T) {
 		t.Fatalf("generation = %d", agg.Generation)
 	}
 	dc := agg.DeliveryContract
-	if dc == nil || dc.Mode != "direct-PR" || !dc.Review.Baseline || dc.Forge.Adapter != "github" {
-		t.Fatalf("contract = %+v, want direct-PR with baseline review and github forge", dc)
+	if dc == nil || dc.Mode != "direct-PR" || dc.Forge.Adapter != "github" {
+		t.Fatalf("contract = %+v, want direct-PR with github forge", dc)
 	}
 
 	before := agg.Revision
@@ -89,7 +89,7 @@ func TestRecordDeliveryContractOnFirstLaunch(t *testing.T) {
 func TestRecordDeliveryContractRefusesChangedStepsInSameMode(t *testing.T) {
 	f := newLaunchFixture(t, "contract-changed")
 	installFakeGH(t)
-	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
+	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "github"})
 	captureContract(t, f)
 	captured := contractOf(t, f)
 
@@ -108,12 +108,12 @@ func TestRecordDeliveryContractRefusesChangedStepsInSameMode(t *testing.T) {
 // task, because a fresh resolution of that config would refuse.
 func TestContractedLaunchReadsCapturedStepsOverDriftedConfig(t *testing.T) {
 	f := newLaunchFixture(t, "contract-read")
-	seedDeliveryConfig(t, f, nil, nil)
+	seedDeliveryConfig(t, f, nil)
 	captureContract(t, f)
 
 	// gh-axi is absent from the sanitized fixture PATH, so the drifted forge
 	// is not Ready.
-	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
+	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "github"})
 	if _, err := ResolveSpawnProjectConfig(f.runner.homeDir, Args{ProjectName: "test-proj"}, DispatchPolicyGeneralDirect, nil); err == nil {
 		t.Fatal("fixture: a fresh resolution of the drifted config must refuse")
 	}
@@ -135,7 +135,7 @@ func TestContractedLaunchReprobesCapturedForgeBeforeLaunch(t *testing.T) {
 	f := newLaunchFixture(t, "contract-reprobe")
 	installFakeGH(t)
 	runGitForSpawnBinding(t, f.runner.projPath, "remote", "add", "origin", "https://github.com/test/test.git")
-	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
+	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "github"})
 	captureContract(t, f)
 
 	oldAxi := ghAxiLookPath
@@ -158,7 +158,7 @@ func TestContractedLaunchReprobesCapturedForgeBeforeLaunch(t *testing.T) {
 // captures the steps the project configures now.
 func TestResolveModeReopenRecapturesConfig(t *testing.T) {
 	f := newLaunchFixture(t, "contract-reopen")
-	seedDeliveryConfig(t, f, nil, nil)
+	seedDeliveryConfig(t, f, nil)
 	captureContract(t, f)
 
 	reopenTaskForBranchTest(t, f)
@@ -167,7 +167,7 @@ func TestResolveModeReopenRecapturesConfig(t *testing.T) {
 	}
 
 	installFakeGH(t)
-	seedDeliveryConfig(t, f, nil, &config.ToolEntry{Adapter: "github"})
+	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "github"})
 	captureContract(t, f)
 	dc := contractOf(t, f)
 	if dc == nil || dc.Mode != "direct-PR" || dc.Forge.Adapter != "github" {
@@ -176,12 +176,12 @@ func TestResolveModeReopenRecapturesConfig(t *testing.T) {
 }
 
 // TestResolveModeRefusesNotReadyConfiguredToolBeforeMutation pins the refusal
-// before mutation: a configured review tool that is not Ready refuses in
+// before mutation: a configured forge tool that is not Ready refuses in
 // resolveMode, and the task keeps no launch intent or contract.
 func TestResolveModeRefusesNotReadyConfiguredToolBeforeMutation(t *testing.T) {
 	f := newLaunchFixture(t, "contract-refuse")
 	installFakeGH(t)
-	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "no-mistakes", Path: filepath.Join(t.TempDir(), "no-mistakes")}, &config.ToolEntry{Adapter: "github"})
+	seedDeliveryConfig(t, f, &config.ToolEntry{Adapter: "gitlab", Path: filepath.Join(t.TempDir(), "glab")})
 	before, err := f.auth.Get(mustTaskID(t, f.taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestResolveModeRefusesNotReadyConfiguredToolBeforeMutation(t *testing.T) {
 
 	r := f.runner
 	if err := r.resolveMode(); err == nil {
-		t.Fatal("resolveMode accepted a configured review tool whose probe is not Ready")
+		t.Fatal("resolveMode accepted a configured forge tool whose probe is not Ready")
 	}
 	after, err := f.auth.Get(mustTaskID(t, f.taskID))
 	if err != nil {
@@ -243,15 +243,14 @@ func TestCapturedForgeStepRefusesUncontractedTask(t *testing.T) {
 }
 
 // TestResolveSpawnProjectConfigRefusesContractModeMismatch pins the refusal for
-// a contract whose mode disagrees with its captured steps, before any config read.
+// a contract whose mode disagrees with its captured step, before any config read.
 func TestResolveSpawnProjectConfigRefusesContractModeMismatch(t *testing.T) {
 	contract := &taskauthority.DeliveryContract{
-		Mode:   "local-only",
-		Review: taskauthority.DeliveryStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"},
-		Forge:  taskauthority.DeliveryStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"},
+		Mode:  "local-only",
+		Forge: taskauthority.DeliveryStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"},
 	}
 	_, err := ResolveSpawnProjectConfig(t.TempDir(), Args{ProjectName: "test-proj"}, DispatchPolicyGeneralDirect, contract)
-	if err == nil || !strings.Contains(err.Error(), "disagrees with captured review and forge steps") {
+	if err == nil || !strings.Contains(err.Error(), "disagrees with the captured forge step") {
 		t.Fatalf("ResolveSpawnProjectConfig = %v, want a contract mode refusal", err)
 	}
 }

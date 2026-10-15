@@ -17,7 +17,7 @@ import (
 func initTestRepo(t *testing.T, dir, parentRemote string) {
 	t.Helper()
 	// core.autocrlf is set explicitly because these repos live in t.TempDir()
-	// and inherit the host's git config, where it defaults to true on Windows.
+	// and inherit the host's git config, which may set it.
 	// The charter tests write LF, commit, and then compare the checked-out
 	// bytes to what they wrote, so an inherited autocrlf turns a byte-for-byte
 	// preservation assertion into an assertion about the host -- #549 group 9.

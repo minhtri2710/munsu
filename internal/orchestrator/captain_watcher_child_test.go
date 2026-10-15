@@ -128,9 +128,8 @@ type watcherChild struct {
 //
 // The reaping cleanup is registered here, before the spawn, so that a failure
 // between the spawn and the explicit reap still gets a reap attempt: a live
-// child holds the captain home as its working directory, and on windows that
-// blocks the t.TempDir removal -- the same failure the gate above exists to
-// prevent, reappearing through its own fix. Registering after the first
+// child left running is the same failure the gate above exists to prevent,
+// reappearing through its own fix. Registering after the first
 // t.TempDir call also orders that attempt ahead of the removal, cleanups being
 // run last-registered-first.
 //
@@ -159,9 +158,7 @@ func armWatcherChildWith(t *testing.T, pidPath string, waits watcherChildWaits) 
 
 // reap asserts that the child announced itself and then waits for it to exit.
 // EnsureWatcher discards its *exec.Cmd, so nothing else will ever wait on that
-// process: on unix it stays a zombie for the lifetime of the test binary, and
-// on windows it keeps both the captain home it runs in and the test executable
-// open against deletion.
+// process: it stays a zombie for the lifetime of the test binary.
 //
 // The state only reaches reapCompleted once awaitProcessExit has returned --
 // on that function's own terms, which discard errors; see reapCompleted. Every
@@ -229,8 +226,7 @@ func readWatcherChildPID(pidPath string, within time.Duration) (int, bool) {
 }
 
 // awaitProcessExit waits for pid to exit, killing it at the deadline, and
-// reports whether it exited on its own. os.FindProcess never fails on unix and
-// opens the process on windows, where a failure means it is already gone.
+// reports whether it exited on its own. os.FindProcess never fails on unix.
 func awaitProcessExit(pid int, timeout time.Duration) bool {
 	proc, err := os.FindProcess(pid)
 	if err != nil {

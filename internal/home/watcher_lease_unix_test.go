@@ -1,5 +1,3 @@
-//go:build !windows
-
 package home
 
 import (
@@ -173,11 +171,6 @@ func TestClaimWatcherLeaseRefusesALiveHolderWithoutPATH(t *testing.T) {
 // Only one watcher may hold a home. A lease held by a process that is still
 // alive is not reclaimable — reclaiming it would run two watchers over the
 // same home. A lease left by a dead process is.
-//
-// It lives on this !windows file because its dead-holder control needs the
-// kernel's own answer, and syscall.Kill does not exist on Windows -- the file
-// this test came from carries no build constraint, so it compiles under
-// `GOOS=windows go vet ./...`.
 func TestClaimWatcherLeaseRefusesALeaseHeldByALiveProcess(t *testing.T) {
 	dir := t.TempDir()
 

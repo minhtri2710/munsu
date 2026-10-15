@@ -87,11 +87,10 @@ Typical munsu-ops flow:
 			} else {
 				for _, p := range projects {
 					line := "- " + p.Name
-					if p.Description != "" {
-						line += " — " + p.Description
-					}
 					if path, rerr := fleet.ResolveRepoPath(ctx.Home, p.Name); rerr == nil && path != "" {
 						line += " (" + path + ")"
+					} else if p.Path != "" {
+						line += " (" + p.Path + ")"
 					}
 					fmt.Fprintln(out, line)
 				}

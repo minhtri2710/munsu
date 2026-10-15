@@ -122,7 +122,7 @@ func TestApplyPatchIntoWorktreeAllowedDespiteBlockedStringInBody(t *testing.T) {
 	target := filepath.Join(worktree, "internal", "cli", "integrate_cmd.go")
 	for _, body := range []string{
 		`if strings.Contains(effectiveCommand, "munsu watch") {`,
-		`cd .no-mistakes && munsu watch stop`,
+		`cd /tmp && munsu watch`,
 		`git push --force origin main`,
 	} {
 		code, stderr := runCodexApplyPatch(t, worktree, patchTouching(target, body))

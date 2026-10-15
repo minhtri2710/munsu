@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -80,8 +79,7 @@ func scanGeneral(homeDir string) []StatusEntry {
 	// Harness adapter — at least one known harness binary on PATH
 	entries = append(entries, checkHarnessAdapter())
 
-	// Session backend — tmux or herdr available
-	entries = append(entries, checkSessionBackend())
+	entries = append(entries, checkSessionBackend(homeDir))
 
 	// GitHub auth
 	entries = append(entries, checkGitHubAuth())
@@ -119,28 +117,28 @@ func checkHarnessAdapter() StatusEntry {
 	}
 }
 
-func checkSessionBackend() StatusEntry {
-	// Check tmux
-	if _, err := exec.LookPath("tmux"); err == nil {
+func checkSessionBackend(homeDir string) StatusEntry {
+	backend, err := fleet.ResolveGeneralHomeBackend(homeDir)
+	if err != nil {
 		return StatusEntry{
 			Subsystem: "session_backend",
-			Status:    StatusCurrent,
-			Detail:    "tmux found on PATH",
+			Status:    StatusAbsent,
+			Detail:    fmt.Sprintf("no session backend configured: %v", err),
+			RepairCmd: "munsu config set backend herdr|tmux",
 		}
 	}
-	// Check herdr env
-	if os.Getenv("HERDR_ENV") != "" {
+	if _, err := exec.LookPath(backend); err != nil {
 		return StatusEntry{
 			Subsystem: "session_backend",
-			Status:    StatusCurrent,
-			Detail:    "HERDR_ENV active",
+			Status:    StatusAbsent,
+			Detail:    fmt.Sprintf("backend %s configured, %s not found on PATH", backend, backend),
+			RepairCmd: FixCommand(backend),
 		}
 	}
 	return StatusEntry{
 		Subsystem: "session_backend",
-		Status:    StatusAbsent,
-		Detail:    "no session backend (herdr or tmux) detected",
-		RepairCmd: "run munsu inside herdr (HERDR_ENV=1), or install tmux: brew install tmux | apt install tmux",
+		Status:    StatusCurrent,
+		Detail:    fmt.Sprintf("backend %s configured, found on PATH", backend),
 	}
 }
 
@@ -230,13 +228,8 @@ func projectDefaultReadinessEntry(subsystem string, pr fleet.ProjectReadiness) S
 		return StatusEntry{Subsystem: subsystem, Status: StatusCurrent,
 			Detail: fmt.Sprintf("launch would pass: delivery %s, harness %s", pr.Mode, pr.Harness)}
 	}
-	entry := StatusEntry{Subsystem: subsystem, Status: StatusAbsent,
+	return StatusEntry{Subsystem: subsystem, Status: StatusAbsent,
 		Detail: fmt.Sprintf("launch would be refused: %v", pr.Err)}
-	var gate *fleet.GateBlockerError
-	if errors.As(pr.Err, &gate) {
-		entry.RepairCmd = gate.Guidance
-	}
-	return entry
 }
 
 // ---------------------------------------------------------------------------
@@ -338,9 +331,8 @@ func checkCaptainRegistry(homeDir string) StatusEntry {
 
 func checkConvergeReadiness(homeDir string) StatusEntry {
 	lockPath := filepath.Join(homeDir, "state", fleet.ConvergeLockName)
-	// Existence is not the signal: on Windows the lock file is permanent by
-	// design (see fleet.acquireExclusiveLock), and on Unix a live converge
-	// holds the file just as a stale crash artifact does. Probe the lock
+	// Existence is not the signal: a live converge holds the file just as a
+	// stale crash artifact does. Probe the lock
 	// instead — free means the file is stale but harmless, held means a
 	// converge is genuinely running, which is not a fault.
 	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
@@ -382,9 +374,6 @@ func scanSoldier(homeDir string) []StatusEntry {
 	// Worktree state
 	entries = append(entries, checkWorktreeState(homeDir))
 
-	// No-mistakes or direct-PR readiness
-	entries = append(entries, checkPipelineReadiness())
-
 	// Brief existence
 	entries = append(entries, checkSoldierBrief(homeDir))
 
@@ -415,25 +404,6 @@ func checkWorktreeState(homeDir string) StatusEntry {
 		Status:    StatusAbsent,
 		Detail:    "not inside a git worktree",
 		RepairCmd: "change to a project directory or run munsu worktree get",
-	}
-}
-
-// checkPipelineReadiness reports the review tool that the delivery mode is
-// derived from. Each project's review and forge steps come from its own
-// configured tool entries; a tool on PATH is reported and
-// never selected, so this check cannot fail a home.
-func checkPipelineReadiness() StatusEntry {
-	if _, err := exec.LookPath("no-mistakes"); err != nil {
-		return StatusEntry{
-			Subsystem: "pipeline_readiness",
-			Status:    StatusCurrent,
-			Detail:    "no-mistakes not on PATH; projects use the baseline review step",
-		}
-	}
-	return StatusEntry{
-		Subsystem: "pipeline_readiness",
-		Status:    StatusCurrent,
-		Detail:    "no-mistakes on PATH but unused until a project sets a review tool entry (munsu project config set review)",
 	}
 }
 

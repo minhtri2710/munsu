@@ -9,10 +9,6 @@ func (d ToolDiagnostic) String() string {
 		return fmt.Sprintf("FOUND: %s at %s", d.Tool, d.Path)
 	case ToolMissing:
 		return fmt.Sprintf("MISSING: %s (install instructions vary)", d.Tool)
-	case ToolInstallFailed:
-		return fmt.Sprintf("INSTALL_FAILED: %s — %v", d.Tool, d.Err)
-	case ToolInstalled:
-		return fmt.Sprintf("INSTALLED: %s", d.Tool)
 	default:
 		return ""
 	}

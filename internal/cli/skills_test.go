@@ -1,11 +1,11 @@
 package cli
 
 import (
-	"errors"
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"io/fs"
+	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -154,165 +154,9 @@ func TestReplaceSkill(t *testing.T) {
 	}
 }
 
-// TestBuildWithEmbed verifies that the package compiles with the //go:embed directive.
-func TestBuildWithEmbed(t *testing.T) {
-	// This test is intentionally minimal — it verifies the embed builds via
-	// the other tests that call embeddedSkillNames() and readEmbeddedSkill().
-	// If the embed package compiles, these tests pass. The real embed is tested
-	// in TestEmbeddedSkillNames and TestReadEmbeddedSkill above.
-}
-
-// TestInitCmdHasSkillFlag verifies newInitCmd exposes --skill.
-func TestInitCmdHasSkillFlag(t *testing.T) {
-	cmd := newInitCmd()
-	flag := cmd.Flags().Lookup("skill")
-	if flag == nil {
-		t.Fatal("init command missing --skill flag")
-	}
-	if flag.DefValue != "" {
-		t.Errorf("expected empty default for --skill, got %q", flag.DefValue)
-	}
-}
-
 func TestEmbeddedSkillReferencesResolve(t *testing.T) {
 	if err := validateSkillBundle(skillFiles, "skills"); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// agentMirrorSkills have .agents/skills/<name> machine-compared to the embedded
-// canonical by TestAgentSkillMirrorsMatchCanonical. A skill belongs here whenever
-// the mirror exists at all: an unlisted mirror is a copy nothing compares.
-var agentMirrorSkills = []string{
-	"bootstrap-diagnostics",
-	"captain-provisioning",
-	"harness-adapters",
-	"munsu-ops",
-	"munsu-update",
-	"stuck-soldier-recovery",
-}
-
-// embeddedOnlySkills are explicitly embedded-only: no .agents/skills mirror.
-var embeddedOnlySkills = []string{"afk", "ask-user-authority", "decision-hold-lifecycle", "diagnostic-reasoning"}
-
-func validateAgentMirrorCoverage(repo fs.FS, embeddedNames, declaredNames []string) error {
-	declared := make(map[string]bool, len(declaredNames))
-	for _, name := range declaredNames {
-		declared[name] = true
-	}
-
-	var errs []error
-	for _, name := range embeddedNames {
-		mirror := path.Join(".agents", "skills", name)
-		info, err := fs.Stat(repo, mirror)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				errs = append(errs, fmt.Errorf("stat mirror %s: %w", mirror, err))
-			}
-			continue
-		}
-		if !info.IsDir() {
-			continue
-		}
-		if !declared[name] {
-			errs = append(errs, fmt.Errorf("embedded skill %q has an .agents/skills mirror; add it to agentMirrorSkills or delete the mirror", name))
-		}
-	}
-
-	for _, name := range declaredNames {
-		mirror := path.Join(".agents", "skills", name)
-		info, err := fs.Stat(repo, mirror)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				errs = append(errs, fmt.Errorf("declared mirror %s is missing", mirror))
-			} else {
-				errs = append(errs, fmt.Errorf("stat declared mirror %s: %w", mirror, err))
-			}
-			continue
-		}
-		if !info.IsDir() {
-			errs = append(errs, fmt.Errorf("declared mirror %s is not a directory", mirror))
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func TestAgentMirrorCoverage(t *testing.T) {
-	repo := fstest.MapFS{
-		".agents/skills/embedded/SKILL.md":  {Data: []byte("skill")},
-		".agents/skills/declared/SKILL.md":  {Data: []byte("skill")},
-		".agents/skills/unrelated/SKILL.md": {Data: []byte("skill")},
-	}
-
-	if err := validateAgentMirrorCoverage(repo, []string{"embedded", "declared"}, []string{"declared"}); err == nil || !strings.Contains(err.Error(), `embedded skill "embedded"`) {
-		t.Fatalf("expected undeclared mirror error, got %v", err)
-	}
-	if err := validateAgentMirrorCoverage(repo, nil, []string{"missing"}); err == nil || !strings.Contains(err.Error(), "declared mirror .agents/skills/missing is missing") {
-		t.Fatalf("expected missing declared mirror error, got %v", err)
-	}
-	// The fixture also contains an unrelated mirror; only embedded names are checked.
-	if err := validateAgentMirrorCoverage(repo, []string{"declared"}, []string{"declared"}); err != nil {
-		t.Fatalf("expected declared mirror to pass and unrelated mirror to be ignored: %v", err)
-	}
-}
-
-// TestEmbeddedSkillParityCoverage is the parity gate over every embedded skill
-// name. Each name must carry a disposition: a machine-compared mirror
-// (agentMirrorSkills pins .agents/skills/<name>) or an explicit embedded-only
-// disposition. For embedded names, on-disk mirrors must correspond exactly to
-// agentMirrorSkills. embedded-only is exclusive: it asserts the absence of the
-// mirror agentMirrorSkills pins, so holding both is a contradiction.
-func TestEmbeddedSkillParityCoverage(t *testing.T) {
-	names, err := embeddedSkillNames()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	classified := map[string][]string{}
-	for _, n := range agentMirrorSkills {
-		classified[n] = append(classified[n], "agent-mirror")
-	}
-	for _, s := range embeddedOnlySkills {
-		classified[s] = append(classified[s], "embedded-only")
-	}
-
-	embedded := make(map[string]bool, len(names))
-	for _, n := range names {
-		embedded[n] = true
-		if len(classified[n]) == 0 {
-			t.Errorf("embedded skill %q has no parity disposition; add it to agentMirrorSkills or embeddedOnlySkills", n)
-		}
-	}
-	for n, dispositions := range classified {
-		if !embedded[n] {
-			t.Errorf("parity disposition names %q, but no such embedded skill exists", n)
-		}
-		if len(dispositions) > 1 && slices.Contains(dispositions, "embedded-only") {
-			t.Errorf("skill %q is declared embedded-only and %v; embedded-only asserts the absence of the mirror agentMirrorSkills pins", n, dispositions)
-		}
-	}
-
-	repo := os.DirFS(filepath.Join("..", ".."))
-	if err := validateAgentMirrorCoverage(repo, names, agentMirrorSkills); err != nil {
-		t.Error(err)
-	}
-	for _, name := range embeddedOnlySkills {
-		t.Run(name, func(t *testing.T) {
-			if _, err := fs.Stat(repo, path.Join(".agents", "skills", name)); err == nil {
-				t.Errorf("embedded-only skill %q has an .agents/skills mirror; move it to agentMirrorSkills or remove the mirror", name)
-			}
-		})
-	}
-}
-
-func TestAgentSkillMirrorsMatchCanonical(t *testing.T) {
-	repo := os.DirFS(filepath.Join("..", ".."))
-	for _, name := range agentMirrorSkills {
-		t.Run(name, func(t *testing.T) {
-			canonical := path.Join("internal", "cli", "skills", name)
-			mirror := path.Join(".agents", "skills", name)
-			compareSkillDirectories(t, repo, canonical, mirror)
-		})
 	}
 }
 
@@ -378,71 +222,27 @@ func TestValidateSkillBundleReferences(t *testing.T) {
 	}
 }
 
-func compareSkillDirectories(t *testing.T, fsys fs.FS, left, right string) {
-	t.Helper()
-	leftFiles := readSkillDirectory(t, fsys, left)
-	rightFiles := readSkillDirectory(t, fsys, right)
-	if len(leftFiles) != len(rightFiles) {
-		t.Fatalf("file count differs: canonical=%d mirror=%d", len(leftFiles), len(rightFiles))
+func TestSkillCmdRegistration(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"skill", "list", "--output", "json"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("skill list: %v", err)
 	}
-	for name, leftData := range leftFiles {
-		rightData, ok := rightFiles[name]
-		if !ok {
-			t.Errorf("mirror missing %s", name)
-			continue
-		}
-		if string(leftData) != string(rightData) {
-			t.Errorf("mirror content differs for %s", name)
-		}
+	var resp Response[MessageResult]
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode skill list output %q: %v", out.String(), err)
 	}
-}
-
-func readSkillDirectory(t *testing.T, fsys fs.FS, root string) map[string][]byte {
-	t.Helper()
-	files := map[string][]byte{}
-	err := fs.WalkDir(fsys, root, func(filename string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := fs.ReadFile(fsys, filename)
-		if err != nil {
-			return err
-		}
-		files[strings.TrimPrefix(filename, root+"/")] = data
-		return nil
-	})
+	names, err := embeddedSkillNames()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return files
-}
-
-func TestSkillCmdRegistration(t *testing.T) {
-	cmd := newSkillCmd()
-	if cmd.Use != "skill" {
-		t.Errorf("expected Use='skill', got %q", cmd.Use)
-	}
-	subs := cmd.Commands()
-	if len(subs) == 0 {
-		t.Fatal("expected skill subcommands")
-	}
-	hasList, hasShow := false, false
-	for _, s := range subs {
-		if s.Name() == "list" {
-			hasList = true
-		}
-		if s.Name() == "show" {
-			hasShow = true
-		}
-	}
-	if !hasList {
-		t.Error("expected 'skill list' subcommand")
-	}
-	if !hasShow {
-		t.Error("expected 'skill show' subcommand")
+	slices.Sort(names)
+	if got := strings.Split(resp.Data.Message, "\n"); !slices.Equal(got, names) {
+		t.Errorf("skill list printed %q, want %q", got, names)
 	}
 }
 

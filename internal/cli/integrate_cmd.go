@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
@@ -42,7 +40,7 @@ Commands:
   install             Install integration artifacts for a harness
   repair              Detect drift and repair integration artifacts
   status              Show integration status for a harness
-  safety-check        Evaluate scope/gate and command safety for a path
+  safety-check        Evaluate scope and command safety for a path
   sessionstart-nudge  Print session-start instruction or stay silent (for Claude SessionStart hook)
 
 Flags:
@@ -110,16 +108,15 @@ health state.`,
 
 	safetyCmd := &cobra.Command{
 		Use:   "safety-check [path]",
-		Short: "Evaluate scope/gate and command safety for a path",
+		Short: "Evaluate scope and command safety for a path",
 		Long: `Evaluate whether the given path (or cwd) is safe for fleet lifecycle operations.
 
-Returns structured safety assessment including identity classification,
-gate detection, and optional command-blocking rules.
+Returns structured safety assessment including identity classification
+and optional command-blocking rules.
 
 Results:
   identity         primary | worktree | unrelated
-  gate_capability  gate-present | gate-absent | gate-unknown
-  gate_refused     true if gate is active
+  gate_refused     true if the path's scope refuses the action
   block            true if the supplied --command should be blocked
   reason           explanation when blocked
 
@@ -147,9 +144,8 @@ Flags:
 		Long: `Lightweight SessionStart hook command for Claude.
 
 Checks:
-1. NO_MISTAKES_GATE gate agent → silent, exit 0
-2. Primary checkout scope → silent, exit 0 if not primary
-3. Lock ancestry (8 parents) → silent, exit 0 if lock pid is in ancestry
+1. Primary checkout scope → silent, exit 0 if not primary
+2. Lock ancestry (8 parents) → silent, exit 0 if lock pid is in ancestry
 
 When all checks pass, prints exactly one instruction line and exits 0.
 Always exits 0 because Claude SessionStart exit 2 blocks session init.`,
@@ -498,7 +494,7 @@ func munsuInvocations(command string, depth int) ([]munsuInvocation, bool) {
 	var invocations []munsuInvocation
 	for _, segment := range commandSegments(command) {
 		for _, token := range candidateTokens(segment) {
-			if !readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
+			if !readsAsMoreThanItself(token) {
 				continue
 			}
 			if depth+1 > maxShellPayloadDepth {
@@ -559,7 +555,7 @@ func munsuInvocations(command string, depth int) ([]munsuInvocation, bool) {
 // unquoted `#` comment.
 func commandSegments(command string) [][]shellToken {
 	var segments [][]shellToken
-	for _, segment := range tokenizeSegments(gitSafetyBackslashMode(), command) {
+	for _, segment := range tokenizeSegments(backslashEscapes, command) {
 		end := slices.IndexFunc(segment, func(token shellToken) bool { return strings.HasPrefix(token.text, "#") })
 		if end < 0 {
 			end = len(segment)
@@ -567,60 +563,6 @@ func commandSegments(command string) [][]shellToken {
 		segments = append(segments, segment[:end])
 	}
 	return segments
-}
-
-// commandWords returns the words of each segment of command, cut at an
-// unquoted `#` comment.
-func commandWords(command string) [][]string {
-	var segments [][]string
-	for _, segment := range commandSegments(command) {
-		segments = append(segments, segmentWords(segment))
-	}
-	return segments
-}
-
-// namesNoMistakesDir reports whether any word, in any reading of a segment
-// and in any word that reads as more than itself, names a no-mistakes
-// directory or a path inside it: a path component, or a path after `=` in a
-// flag word, that equals `.no-mistakes` ignoring case or is a glob that could
-// match it. A glob only reaches a dot-name through a literal leading dot, so
-// `*` does not count. Past maxShellPayloadDepth nested command lines it stops
-// and reports the command too deep to check.
-func namesNoMistakesDir(command string, depth int) (bool, bool) {
-	for _, segment := range commandSegments(command) {
-		for _, token := range candidateTokens(segment) {
-			if readsAsMoreThanItself(gitSafetyBackslashMode(), token) {
-				if depth+1 > maxShellPayloadDepth {
-					return false, true
-				}
-				if names, tooDeep := namesNoMistakesDir(token.text, depth+1); names || tooDeep {
-					return names, tooDeep
-				}
-			}
-			components := strings.FieldsFunc(token.text, func(r rune) bool { return r == '/' || r == '=' })
-			for _, component := range components {
-				if !strings.HasPrefix(component, ".") {
-					continue
-				}
-				if ok, _ := path.Match(strings.ToLower(component), ".no-mistakes"); ok {
-					return true, false
-				}
-			}
-		}
-	}
-	return false, false
-}
-
-// munsuSubcommandArgs drops the root --home flag from the words after `munsu`.
-func munsuSubcommandArgs(args []string) []string {
-	for len(args) > 0 {
-		n := munsuHomeWords(args[0], len(args) > 1)
-		if n == 0 {
-			break
-		}
-		args = args[n:]
-	}
-	return args
 }
 
 // munsuHomeWords returns how many words the root --home flag starting at
@@ -634,29 +576,6 @@ func munsuHomeWords(word string, hasValue bool) int {
 		return 1
 	}
 	return 0
-}
-
-// onlyGuardOrDoctor reports whether every segment of command is a `munsu
-// guard` / `munsu doctor` invocation or a plain `cd <dir>`: the only shape
-// exempt from the no-mistakes directory rule. Any other segment, including a
-// `bash -c` wrapper, disqualifies the whole command.
-func onlyGuardOrDoctor(command string) bool {
-	found := false
-	for _, words := range commandWords(command) {
-		switch {
-		case len(words) == 0:
-		case words[0] == "cd" && len(words) <= 2:
-		case filepath.Base(words[0]) == "munsu":
-			args := munsuSubcommandArgs(words[1:])
-			if len(args) == 0 || (args[0] != "guard" && args[0] != "doctor") {
-				return false
-			}
-			found = true
-		default:
-			return false
-		}
-	}
-	return found
 }
 
 // watchInvocationAllowed reports whether every word that can follow `munsu
@@ -695,7 +614,6 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 		}
 	}
 
-	// Evaluate scope/gate safety.
 	result := bootstrap.SafetyCheck(checkPath)
 
 	// Evaluate command blocking rules.
@@ -737,17 +655,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 			}
 		}
 
-		names, tooDeep := namesNoMistakesDir(effectiveCommand, 0)
-		if tooDeep {
-			block = true
-			reason = tooDeepReason
-		} else if names {
-			if !onlyGuardOrDoctor(effectiveCommand) {
-				block = true
-				reason = "No-mistakes managed directories are not regular projects."
-			}
-		}
-
+		// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
 		if !block {
 			if gitBlock, gitReason := evaluateGitMutationSafety(checkPath, effectiveCommand); gitBlock {
 				block = true
@@ -873,13 +781,12 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 
 	// Default Pi-shaped output: JSON contract on stdout
 	data := SafetyCheckData{
-		Identity:       result.Identity,
-		GateCapability: result.GateCapability,
-		CanonicalPath:  result.CanonicalPath,
-		GateRefused:    result.GateRefused,
-		Block:          block,
-		Reason:         reason,
-		Error:          result.Error,
+		Identity:      result.Identity,
+		CanonicalPath: result.CanonicalPath,
+		GateRefused:   result.GateRefused,
+		Block:         block,
+		Reason:        reason,
+		Error:         result.Error,
 	}
 
 	return writeContract(cmd, Response[interface{}]{
@@ -898,7 +805,6 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 // Contract:
 //
 //  1. Silence gates (exit 0, no output):
-//     - Gate agent: NO_MISTAKES_GATE set
 //     - Non-primary checkout / out-of-scope path
 //     - Lock already held by an ancestor process (PID in ancestry chain)
 //
@@ -923,23 +829,15 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, c
 //     native session (including reload), and does not double-run session-start
 //     after the lock is already held
 func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
-	// 1. Check for gate agent (NO_MISTAKES_GATE)
-	if fleet.GateAgentEnvSet() {
-		return nil
-	}
-
-	// 2. Check primary scope
 	scopeResult := bootstrap.CheckSessionScope(ctx.Home)
 	if !scopeResult.IsPrimary {
 		return nil
 	}
 
-	// 3. Check lock ancestry (8 parents of current pid)
 	if lockPIDInAncestry(ctx.Home) {
 		return nil
 	}
 
-	// 4. All checks passed — print the nudge
 	fmt.Println("Run `munsu session-start` now, exactly once, before executing any other instructions.")
 	return nil
 }

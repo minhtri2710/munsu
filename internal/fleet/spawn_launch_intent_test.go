@@ -115,7 +115,7 @@ func (f *reentrantEndpointCapabilities) submitCount() int {
 // acquireWorktree, bindWorktree, buildSoldierPrompt, createSession,
 // attachEndpoint, submitLaunch, writeLaunchManifest, waitAndInjectBrief,
 // verifyEndpointReadyBeforePersist, writeTaskMeta, confirmSpawn) against a
-// canonical home with a real git-fallback worktree and a counting
+// canonical home with a real git worktree and a counting
 // reservation-aware endpoint capability.
 type launchFixture struct {
 	t         *testing.T
@@ -138,9 +138,9 @@ func requiredSkillStubDir(t *testing.T) string {
 	return dir
 }
 
-// newLaunchFixture builds the fixture. PATH is sanitized to git only so the
-// worktree acquisition uses the deterministic git fallback (never the
-// external treehouse pool).
+// newLaunchFixture builds the fixture. PATH is sanitized to git and the skill
+// stubs; the project configures no worktree tool, so acquisition uses git
+// worktree.
 func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 	t.Helper()
 	homeDir := t.TempDir()
@@ -184,7 +184,6 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 		effort:              "high",
 		effectiveMode:       "direct-PR",
 		contractMode:        "direct-PR",
-		reviewStep:          taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"},
 		forgeStep:           taskauthority.DeliveryStep{Adapter: "github", Path: "/usr/local/bin/gh-axi", ProbeState: "ready"},
 		spawnRole:           "general",
 		dispatchPolicy:      DispatchPolicyGeneralDirect,
@@ -313,7 +312,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
 		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
 		PathDirs: r.seatPath, TaskKind: r.kind,
-		SeatEnv: testSeatEnv(),
+		HomeID: f.auth.HomeID().Value(), SeatEnv: testSeatEnv(),
 	})
 	if err != nil {
 		t.Fatalf("prepareLaunchScript: %v", err)
@@ -962,7 +961,15 @@ func TestRefusedExcludesLeaveNoPaneOrEndpoint(t *testing.T) {
 func TestRefusedFenceProbeLeavesNoPaneOrEndpoint(t *testing.T) {
 	isolateHuman(t)
 	f := newLaunchFixture(t, "fence-refused")
-	f.runner.effectiveMode = "no-mistakes" // the primary has no gate remote, so the fence cannot name its gate
+	// A symlinked parent of the seat's branch reflog makes the fence refuse
+	// to pre-create it.
+	heads := filepath.Join(f.repoPath, ".git", "logs", "refs", "heads")
+	if err := os.MkdirAll(heads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(heads, "mu")); err != nil {
+		t.Fatal(err)
+	}
 	err := runLaunchPhases(f, "")
 	if err == nil || !strings.HasPrefix(err.Error(), "probe-fence: launch fence: ") {
 		t.Fatalf("err = %v, want the probe-fence refusal", err)

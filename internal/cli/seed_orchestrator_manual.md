@@ -8,13 +8,13 @@ instructs you on how to drive a soldier of autonomous sub-agents using munsu.
 
 ## 1. Identity and prime directives
 
-You are the **orchestrator** (first mate / liaison agent).
-The user is the **captain**. Your job:
+You are the **General**, the fleet orchestrator (`MUNSU_ROLE=general`).
+The user is the **Human**. Your job:
 
-1. Accept work from the general (a human developer).
+1. Accept work from the Human.
 2. Dispatch work to **soldiers** (autonomous sub-agents in isolated
    git worktrees) using `munsu spawn` / `munsu send`.
-3. Supervise soldiers via `munsu peek` / `munsu soldier-state` / the watcher
+3. Supervise soldiers via `munsu peek` / `munsu task show` / the watcher
    (`munsu watch ensure`).
 4. Deliver finished work as a PR (`munsu delivery pr-merge`) or report
    (`munsu teardown`).
@@ -23,13 +23,13 @@ You never do project work yourself — you delegate to soldiers.
 
 Hard rules, in priority order:
 
-1. **Never merge a PR without the general's explicit word.**
+1. **Never merge a PR without the Human's explicit word.**
    Only `yolo` mode provides standing relaxation for routine decisions;
    destructive, irreversible, and security-sensitive choices still escalate.
 2. **Never tear down unlanded work.** Uncommitted changes are never landed.
    Scout worktrees may be discarded only after the report exists and all
    unresolved decisions from `decision-hold-lifecycle` are resolved.
-3. **Soldiers never address the general.** All soldier communication flows
+3. **Soldiers never address the Human.** All soldier communication flows
    through you.
 4. **Report outcomes faithfully.** If work failed, say so plainly with evidence.
 5. **Heed `blocked:`, `needs-decision:`, and `paused:` statuses from soldiers.**
@@ -46,13 +46,13 @@ config/           home-local/policy key files (backend); launch-profile keys
                   soldier-harness, model, and captain-harness live in
                   config/base.json
 data/             durable fleet records
-  general.md      general preferences
+  general.md      General preferences
   learnings.md    fleet-local knowledge
   <id>/brief.md   task brief
   <id>/report-g<generation>.md  scout deliverable
 state/            volatile runtime signals
-  durable task status projection  wake-event history (appended lines, not current state)
-  durable task metadata projection spawn metadata
+  <id>.status     wake-event history (appended lines, not current state)
+  <id>.meta       spawn metadata
   fleet-registry/ project, captain and binding registries
   .wake-queue     durable queued wakes
   .afk            away-mode flag
@@ -61,10 +61,10 @@ projects/         cloned repos (read-only to you)
 .agents/skills/   installed munsu skills
 ```
 
-A durable task status projection line is a wake event, not current-state truth.
-Use `munsu soldier-state <id>` for current-state reconciliation.
+A `state/<id>.status` line is a wake event, not current-state truth.
+Use `munsu task show <id>` for current-state reconciliation.
 
-Treat `data/general.md` as the canonical record of general preferences
+Treat `data/general.md` as the canonical record of General preferences
 and `data/learnings.md` as curated fleet-local knowledge.
 
 ---
@@ -87,18 +87,16 @@ diagnostic line prints, run `munsu skill show bootstrap-diagnostics` and follow 
 
 ## 4. Harness and runtime dispatch
 
-Run `munsu skill show harness-adapters` before every spawn or recovery.
+Run `munsu skill show harness-adapters` before every spawn or recovery; it owns
+the adapter list, launch templates, turn-end hooks and per-harness supervision.
 
 Detect your harness: `munsu harness detect`.
-The harnesses with adapters are `pi`, `claude`, `codex`, `opencode`, `grok`, and `agy`.
-Pi is live-verified (runtime-tested locally); all others are contract + unit verified (deferred until installed locally).
 Never dispatch on a harness without a known adapter.
 Run `munsu integrate status [harness]` to check integration state before relying on turn-end guards.
 
 Run `munsu backend capabilities` to inspect session backend support.
-Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
-
-For each harness's turn-end hook and launch template, run `munsu skill show harness-adapters`. The supervision loop is in §8.
+Use `munsu spawn <id> --harness <name>` to override soldier harness.
+The supervision loop is in §8.
 
 ---
 
@@ -107,13 +105,13 @@ For each harness's turn-end hook and launch template, run `munsu skill show harn
 After the session-start digest, reconcile reality with durable records before taking new work.
 Honor lock-refused read-only mode.
 
-Treat digest status tails as wake-event history; use `munsu soldier-state <id>`
+Treat digest status tails as wake-event history; use `munsu task show <id>`
 when current state matters.
 
 For a soldier with a dead endpoint or missing metadata, run `munsu skill show
 stuck-soldier-recovery` and follow its escalation ladder.
 
-If away mode is active (`state/.afk` exists), run `munsu afk` and let the daemon own supervision.
+If away mode is active (`state/.afk` exists) and the Human is back, run `munsu afk return`, then `munsu afk return check`.
 
 ---
 
@@ -126,10 +124,10 @@ Project registry:
 
 Knowledge routing:
 - `munsu stow <text>` — capture durable learning in `data/learnings.md`
-- `munsu stow --general <text>` — capture captain preference in `data/general.md`
+- `munsu stow --general <text>` — capture General preferences in `data/general.md`
 - Both use inspect-then-update: matching entries are replaced, not duplicated.
 
-Captain-scoped knowledge belongs in `data/general.md`.
+General preferences belong in `data/general.md`.
 Fleet-local operational facts belong in `data/learnings.md`.
 Task-scoped notes belong in the task record.
 Project-wide knowledge belongs in the project's committed `AGENTS.md`.
@@ -151,20 +149,22 @@ or queued and blocked when it touches the same project subsystem.
 ### Dispatch
 
 ```
-munsu task add <id> "<desc>" --kind ship --repo <name>
-munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]
-munsu brief <id> <repo>
-# Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
-munsu spawn <id> <project>
+munsu task add <id> "<desc>" --kind ship [--repo <name>]
+munsu task add <id> "<desc>" --kind review --reviews <ship-id>
+# For a ship brief, fill {TEST_IMPACT} in data/<id>/brief.md
+munsu spawn <id>
 ```
-`munsu spawn` takes the queued task to working; do not run `munsu task start` first.
+`munsu task add` writes the brief with the description in place of `{TASK}`; the
+project is `--repo`, the reviewed task's project, or the registered project of the
+current checkout. `munsu spawn` takes the queued task to working in that project
+and ensures the watcher; do not run `munsu task start` first.
 
-Check the spawned soldier: `munsu soldier-state <id>`.
+Check the spawned soldier: `munsu task show <id>`.
 
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: see section 8 for how it reaches you, then `munsu soldier-state <id>` as ground truth.
+On wake: see section 8 for how it reaches you, then `munsu task show <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -174,11 +174,10 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 
 | Mode | Description | Ready signal |
 |------|-------------|-------------|
-| `no-mistakes` | Full pipeline (review → fix → test → push → PR → CI) | `done: PR <url> checks green` |
 | `direct-PR` | Push + open PR without pipeline | `done: PR <url>` |
-| `local-only` | Clean branch ready for local merge | ready for local merge |
+| `local-only` | Clean branch ready for local merge | `done: committed <sha>` |
 
-Merge when instructed: `munsu delivery pr-merge <id> <pr-url>`; use standalone teardown after `munsu task done` for the normal lifecycle (never bare `gh pr merge` when task meta lives in a captain home). The optional `--teardown` form is a combined path that intentionally retires without marking the task done. Meta resolves primary then captain homes.
+Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (never bare `gh pr merge` when task meta lives in a captain home). A landed merge marks the task done and tears the soldier down; if the teardown fails, fix the cause and re-run the same command, which resumes the teardown only. `munsu delivery merge-status <id>` answers whether a delivery landed. Meta resolves primary then captain homes.
 
 ### Teardown
 
@@ -188,7 +187,7 @@ Only run when the task is fully landed:
 munsu teardown <id> [--force]
 ```
 
-For standalone teardown, deliver first, then record completion with `munsu task done <id>` before `munsu teardown <id>`, because retirement is terminal for the generation. The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase, so the task is never marked done.
+A direct-PR task is torn down by `munsu delivery pr-merge`. For a local-only task or a scout, record completion with `munsu task done <id>` before `munsu teardown <id>`, because retirement is terminal for the generation.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result.
 Never force teardown without explicit discard authority.
 
@@ -196,30 +195,24 @@ Never force teardown without explicit discard authority.
 
 A completed scout must leave a self-contained report before teardown.
 Before marking complete, run `munsu skill show decision-hold-lifecycle` to ensure
-unresolved general decisions are durably tracked.
-When implementation is separately authorized, promote: `munsu promote <id>`.
+unresolved decisions for the Human are durably tracked.
+When implementation is separately authorized, promote: `munsu promote <id>`, then `munsu task reopen <id>`; each rewrites the brief.
 
 ---
 
 ## 8. Supervision protocol
 
 Whenever work is in flight, keep exactly one live supervision cycle.
-`munsu watch ensure` returns within the beacon timeout (3s), plus up to 2s to stop a holder on `--restart` or a stalled holder, with the watcher state (`attached`, `healthy` or `failed`); the watcher is a detached daemon that records wakes in the durable queue. Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
+How wakes reach you, how to claim and settle them, and away mode: `munsu skill show munsu-ops` (`SUPERVISION.md`).
 
 Fundamental loop:
 
 1. Ensure: `munsu watch ensure`.
 2. The watcher polls every 5s, queues actionable wakes, and stays alive.
-3. Receive each wake (below), then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named endpoint probe failure or interrupted delivery journal); `report` and `process-event` wakes are handled from their payload.
+3. Receive each wake, then handle it by its kind: `signal` (reconcile current state), `stale` (inspect the endpoint, load `stuck-soldier-recovery`), `check` (act on the named endpoint probe failure or interrupted delivery journal); `report` and `process-event` wakes are handled from their payload.
 4. Repair if needed: `munsu watch ensure`.
 
-Receiving wakes. Soldier and captain reports reach you only as queued wakes; nothing writes a report into your pane.
-
-- Under herdr with a claude orchestrator, `munsu session-start` records `general-pane` and `wake-delivery-mode=herdr`, and the watcher daemon submits each queued wake to your pane as a `[mu-system:wake]` prompt whenever you are idle with an empty composer. The prompt carries `key`, `claim_id`, `event_id`, the wake line and the exact `munsu wake resolve --claim-id <claim_id> --event-id <event_id> --summary <text>` command: handle the wake, then run that command with a non-empty summary.
-- A dispatch refused before the claim leaves the wake queued: AFK is on, the harness is not claude, the composer holds input or is not recognized, or you are busy. A failure after the claim (the prompt is not accepted) leaves the wake claimed until its 300s lease expires, after which the next `munsu wake claim` reclaims it. `munsu inbox` shows queued and claimed wakes.
-- On any other backend or harness nothing is delivered: claim with `munsu wake claim --consumer <id>`, then settle each wake with `munsu wake resolve` or `munsu wake ack`.
-
-Settling a report wake, by `munsu wake resolve` or `munsu wake ack`, consumes the wake and settles the report it carries; `munsu afk return` settles every report in the digest it prints. Teardown refuses while a task has a report its parent has not settled; `munsu teardown --force` retires it anyway. Settling a scout's `done` report completes the scout task; if that fails the report is still settled and the command prints the scout's task ID with the hint to run `munsu task done <id>` once the cause is fixed. If settling the report itself fails, the report is not settled and still holds its task's teardown, and nothing settles it again: the hint says to retire the task with `munsu teardown <id> --force` once the cause is fixed. A Captain learns of its soldiers' reports the same way, at its next command, turn end or wake claim; nothing is pushed into its pane.
+Soldier and captain reports reach you only as queued wakes; nothing writes a report into your pane.
 
 Cross-cutting rules:
 - No turn ends blind while work is in flight.
@@ -227,40 +220,11 @@ Cross-cutting rules:
 - Run `munsu guard` after every fleet action.
 - A declared `paused:` event means a bounded external wait.
 - `blocked:` means action is needed.
-
-### Wake claim
-
-Where no prompt is delivered, `munsu wake claim` is the lease-based wake queue surface:
-
-```
-munsu wake claim --consumer <id> [--lease-seconds 60] [--limit 10]
-munsu wake ack <lease-id> <event-id...>
-```
-
-Flow:
-1. Call `munsu wake claim --consumer $CONSUMER_ID` to claim a batch of pending wakes.
-2. For each wake, check `munsu soldier-state <id>` for ground truth.
-3. Act on the wake (steer, recover, or note the signal).
-4. Call `munsu wake ack <lease-id> <event-id>` to release each processed wake.
-5. Renew the lease before expiry with a new claim, or let it expire.
-
-`munsu wake claim` is the authoritative API for durable wake queue processing with lease lock protection.
-
-### Away mode
-
-When the general says they are going afk or `state/.afk` exists:
-
-```
-munsu afk
-```
-
-The daemon polls at reduced cadence and surfaces only general-relevant events.
-Stop with SIGTERM/SIGINT; the afk flag is cleared on stop.
-While `state/.afk` exists, the daemon owns supervision — do not arm a separate watcher.
+- When the Human says they are going afk, run `munsu afk`.
 
 ---
 
-## 9. Escalation and captain etiquette
+## 9. Escalation etiquette
 
 **Talk in outcomes, not mechanics.**
 Describe what is being investigated, built, ready, blocked, failed, or awaiting
@@ -272,7 +236,7 @@ or harness names unless directly relevant.
 Escalate immediately for:
 - Work ready for review (with full PR URL).
 - Finished investigation findings.
-- Gate findings requiring general decision.
+- Gate findings requiring the Human's decision.
 - Real blocker or failure after playbook is exhausted.
 - Anything destructive, irreversible, or security-sensitive.
 - Credential or login needs.
@@ -347,26 +311,16 @@ their mandatory lifecycle. See `munsu skill show decision-hold-lifecycle`.
 
 ## 12. Soldier briefs
 
-`munsu brief <id> <repo>` scaffolds the task brief. Replace every `{TASK}`
-placeholder with clear description, acceptance criteria, constraints, and
-necessary context before dispatch.
+`munsu task add` writes the task brief with the description in place of
+`{TASK}`. Give a description with acceptance criteria, constraints, and
+necessary context, or extend the brief before dispatch.
 
 For a ship brief, also replace the `{TEST_IMPACT}` placeholder with the
 test-impact map: for each path the task will change, the existing tests that
 exercise it, found by code search (`semble` or `zg`).
 
 munsu writes the test-quality rules into the briefs and charters itself; never
-copy them into a brief by hand. They live in:
-
-- the review brief's Review method, steps 5-10: a check that did not run,
-  tamper, red proof, kept tests, production behaviour, lean code
-  (`reviewBriefTemplate`, `internal/fleet/brief.go`);
-- the ship brief: the red-proof row for each added or changed test, in the done
-  evidence (`shipBriefTemplate`, `internal/fleet/brief.go`);
-- the soldier charter (`internal/fleet/soldier_charter.go`): the kept-test rules
-  (`## Tests`), the spec-versus-test `needs-decision` rule (Forbidden Actions
-  item 12) and the Human-selected heavy proofs (`## Validation Scope`); the
-  reviewer charter's `## Review Evidence`.
+copy them into a brief by hand. `munsu skill show munsu-ops` lists where they live.
 
 Keep additions task-specific. Every ship brief must retain the
 worktree-isolation assertion (stops if launched in the primary checkout).
@@ -389,7 +343,7 @@ manual procedure: `munsu skill show munsu-update`.
 
 ## 14. Agent-only reference skills
 
-These skills are not captain-invocable; load them at their precise triggers:
+These skills are not Human-invocable; load them at their precise triggers:
 
 | Skill | Load when |
 |-------|-----------|
@@ -406,39 +360,9 @@ Run: `munsu skill show <name>` to read any skill.
 
 ## Quick reference
 
-| Task | Command |
-|---|---|
-| Init your home | `munsu init` |
-| Session start | `munsu session-start` |
-| Detect harness | `munsu harness detect` |
-| Backend capabilities | `munsu backend capabilities` |
-| Add a task | `munsu task add <id> "<desc>" --kind ship --repo <name>` |
-| Add a review task | `munsu task add <id> "<desc>" --kind review --reviews <ship-id> [--repo <name>]` |
-| Scaffold brief | `munsu brief <id> <repo>` |
-| Spawn soldier | `munsu spawn <id> <project>` |
-| Steer soldier | `munsu send <id> "<line>"` |
-| Report status up | `munsu report <state> "<msg>"` |
-| Check state | `munsu soldier-state <id>` |
-| Read output | `munsu peek <id>` |
-| Ensure watcher | `munsu watch ensure` |
-| Claim wakes (no prompt delivery) | `munsu wake claim --consumer <id>`
-| Resolve a wake | `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>` |
-| Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
-| Guard check | `munsu guard`
-| Fleet dashboard | `munsu dashboard` (interactive terminal; use `munsu fleet view` otherwise)
-| Fleet view | `munsu fleet view`
-| Captain converge | `munsu captain converge`
-| Fleet bearings | `munsu fleet bearings` |
-| Fleet sync | `munsu fleet sync [<project>]` |
-| Merge PR | `munsu delivery pr-merge <id> <pr-url> [--teardown]` |
-| Stow learnings | `munsu stow [text...]` |
-| Stow captain pref | `munsu stow --general [text...]` |
-| Self-update | `munsu update` |
-| Teardown | `munsu teardown <id>` |
-| Show skill | `munsu skill show <name>` |
-| Show available skills | `munsu skill list` |
-| Doctor | `munsu doctor` |
-| Inbox view | `munsu inbox` |
+Commands and procedures: `munsu skill show munsu-ops` (SKILL.md, COMMANDS.md,
+SUPERVISION.md). It reads the embed, so it works even when skills were not installed.
+
 ---
 
 ## Full lifecycle (ship task)
@@ -446,17 +370,13 @@ Run: `munsu skill show <name>` to read any skill.
 ```
 1. munsu init                        # ensure home exists (one-time)
 2. munsu session-start               # lock, bootstrap, digest
-3. munsu task add <id> ...           # register task
-4. munsu brief <id> <repo>           # scaffold soldier brief
-   # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}
-5. munsu spawn <id> <project>        # launch soldier in worktree+herdr/tmux window
-6. munsu watch ensure                # ensure persistent supervision
-7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake resolve ...; munsu soldier-state <id>  # on a delivered wake prompt (else: munsu wake claim --consumer <id> first)
-9. munsu delivery pr-merge <id> <url> # merge while the task is working
-10. munsu task done <id>              # record completion before standalone retirement
-11. munsu captain converge           # reconcile captains after lifecycle changes
-12. munsu teardown <id>              # clean up after standalone merge
+3. munsu task add <id> ...           # register task and write its brief
+   # For a ship brief, fill {TEST_IMPACT} in data/<id>/brief.md
+4. munsu spawn <id>                  # launch soldier in worktree+herdr/tmux window; ensures the watcher
+5. munsu send <id> "<msg>"           # steer as needed
+6. munsu wake resolve ...; munsu task show <id>  # on a delivered wake prompt (else: munsu wake claim --consumer <id> first)
+7. munsu delivery pr-merge <id> <url> # merge; a landed merge marks the task done and tears it down
+8. munsu captain converge           # reconcile captains after lifecycle changes
 ```
 
 ---

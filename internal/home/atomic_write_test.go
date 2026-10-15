@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -21,10 +20,8 @@ func TestAtomicWriteReplacesWithMode(t *testing.T) {
 	if err != nil || string(got) != "new" {
 		t.Fatalf("content = %q, %v; want %q", got, err, "new")
 	}
-	if runtime.GOOS != "windows" {
-		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
-			t.Fatalf("mode = %v, %v; want 0600", info.Mode().Perm(), err)
-		}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("mode = %v, %v; want 0600", info.Mode().Perm(), err)
 	}
 	if leftovers, _ := filepath.Glob(filepath.Join(dir, ".home-write-*")); len(leftovers) != 0 {
 		t.Fatalf("temp files left behind: %v", leftovers)

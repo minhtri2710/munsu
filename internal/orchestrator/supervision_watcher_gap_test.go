@@ -1,5 +1,3 @@
-//go:build !windows
-
 package orchestrator
 
 import (
@@ -37,7 +35,7 @@ func TestRunWritesItsIdentityWhileRunning(t *testing.T) {
 	newTicker := func(time.Duration) *time.Ticker { return time.NewTicker(10 * time.Millisecond) }
 	done := make(chan error, 1)
 	go func() {
-		_, err := run(dir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, testTaskStatePort{}, nil, port)
+		_, err := run(dir, newTicker, sigCh, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, nil, port)
 		done <- err
 	}()
 	var id *WatcherIdentity
@@ -129,7 +127,7 @@ func TestScanFleetSkipsTheCaptainsOwnSignalInACaptainHome(t *testing.T) {
 		}
 	}
 	var got []string
-	for _, r := range scanFleetWithProbe(homeDir, false, testEndpointProbe{}, testTaskStatePort{}, testSeatLiveness, nil) {
+	for _, r := range scanFleetWithProbe(homeDir, false, testEndpointProbe{}, testSeatLiveness, nil) {
 		if r.Kind == "signal" {
 			got = append(got, r.TaskIDs[0])
 		}

@@ -5,12 +5,7 @@ package fleet
 import "strings"
 
 // Reading a process environment is the platform inventory's half of the orphan
-// scan, and only darwin and linux have one: orphan_inventory_other.go answers
-// ErrProcessInventoryUnsupported without ever looking at an environment. These
-// helpers carry the constraint of their only callers so the build that
-// cannot use them does not compile them either -- the reachability lane reads
-// the union over every GOOS, and a helper unreachable in one leg of that union
-// is either dead weight in that build or a hole in it. Here it is the first.
+// scan.
 
 var orphanMarkerKeys = map[string]bool{
 	MarkerMulticaTask: true, MarkerMunsuTask: true, MarkerMunsuHome: true, MarkerTmpdir: true,

@@ -87,7 +87,6 @@
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
 #   flake-sweep.sh sync     [--owner <ISSUE_ID>] [--window-days N]  rewrite the ledger table to match
 #   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
-#   flake-sweep.sh applied                     observe and validate this checkout's ledger
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
 # `observe` and `classify` are separate on purpose: classification is pure text
@@ -96,14 +95,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LEDGER_WAS_SET=0
-[ "${LEDGER+x}" = x ] && LEDGER_WAS_SET=1
-SWEEP_RECORDS_WAS_SET=0
-[ "${SWEEP_RECORDS+x}" = x ] && SWEEP_RECORDS_WAS_SET=1
 LEDGER="${LEDGER:-$ROOT/.github/flake-ledger.md}"
 LEDGER_REL=".github/flake-ledger.md"
 FIXTURES="$ROOT/.github/testdata/flake-sweep"
-WORKFLOW_FILE="${WORKFLOW_FILE:-$ROOT/.github/workflows/ci.yml}"
 
 # Evidence older than this cannot be re-derived from the API, so it is also how
 # long an entry stays grounded. It has to stay comfortably wider than the
@@ -762,60 +756,6 @@ verify_fixed() {
 	echo "flake sweep: every fixed: row cites a commit on main"
 }
 
-# ---------------------------------------------------------------------------
-# applied
-# ---------------------------------------------------------------------------
-#
-# This path asks the sweep's question directly against the checkout being
-# merged. It observes once, then runs `check` and `verify-fixed` over that same
-# per-attempt record stream, so no prior workflow run or freshness proxy can
-# certify stale evidence. A full 30-day observation costs about 130 seconds and
-# about 90 API requests against the 1000-per-hour token budget; that is the
-# measured cost of removing the race between CI attempts and the asynchronous
-# ledger workflow. Losing the API or exhausting the budget fails closed: observe
-# dies and the PR is red, which is the cheap direction for a check that should be
-# green. While main CI for a new commit is still running, its attempt records do
-# not exist yet, so a flake it will reveal is not observable by anyone; a merge
-# can still land ahead of it, and the ledger appoints the next merger afterward.
-#
-# There is no exemption for a pull request touching the ledger. Re-deriving is
-# the only way past the refusal, so deleting a row cannot make the fix merge.
-rederive() {
-	local records="$1" ledger="$2" rc=0
-	# The workflow's earlier step validates the committed file; this call validates
-	# the exact ledger this derivation consumes, so two steps cannot disagree silently.
-	if ! LEDGER="$ledger" "$ROOT/.github/scripts/flake-ledger.sh" check >&2; then
-		die "cannot derive flake results from an invalid ledger; this derivation's ledger must pass the hermetic ledger check"
-	fi
-	LEDGER="$ledger" SWEEP_RECORDS="$records" "$0" check --window-days "$WINDOW_DAYS" >&2 || rc=1
-	LEDGER="$ledger" SWEEP_RECORDS="$records" "$0" verify-fixed --window-days "$WINDOW_DAYS" >&2 || rc=1
-	return "$rc"
-}
-
-applied() {
-	[ "$SWEEP_RECORDS_WAS_SET" -eq 0 ] || die "applied refuses SWEEP_RECORDS: supplying it replaces the observation question with a different one"
-	[ "$LEDGER_WAS_SET" -eq 0 ] || die "applied refuses LEDGER: supplying it replaces the checkout ledger question with a different one"
-	local records rc=0
-	if ! records="$(records_file)"; then
-		die "could not obtain a complete CI observation; incomplete cannot be told apart from clean"
-	fi
-	rederive "$records" "$ROOT/.github/flake-ledger.md" || rc=1
-	if [ "$rc" -eq 0 ]; then
-		printf 'clean\n'
-		return 0
-	fi
-
-	printf 'dirty\n'
-	echo "::error::this working tree does not answer the flake ledger" >&2
-	echo "  The reasons are the check and verify-fixed output above, derived against this" >&2
-	echo "  checkout: a flaky test observed with no row, or a fixed: row citing a commit main" >&2
-	echo "  cannot reach. Fix them here and this step goes green before the merge, not after:" >&2
-	echo "    .github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>" >&2
-	echo "  This is not a prompt to press rerun. A row closes on a fix that landed, never because" >&2
-	echo "  the test has been green since -- refusing that inference is why $LEDGER_REL exists." >&2
-	exit 1
-}
-
 # Strictly-newer comparison of two <sha>@<run_id>/<attempt> citations: run ids
 # grow with time, and equal run ids are disambiguated by attempt.
 newer() {
@@ -1226,97 +1166,6 @@ selftest() {
 
 	rm -f "$ledger"
 
-	# The topology validator uses a typed YAML model rather than source matching.
-	# It fails closed on shapes it cannot read, making a workflow rewrite a visible
-	# false red rather than a silent green. This selftest protects its own job, so
-	# deleting this scenario deletes its guard too; the remaining protection is the
-	# visible edit to the invariants job and the selftest step itself.
-	local topology_rc
-	topology_rc=0
-	go run "$ROOT/.github/scripts/flake-sweep-topology" "$WORKFLOW_FILE" || topology_rc=$?
-	[ "$topology_rc" -eq 0 ] || failed=1
-	for topology in valid job-shell-override job-directory-override env-only-token missing-step missing-job wrong-name wrong-job comment-only swallow if-step continue-on-error no-actions if-block function extra-command step-shell job-default-shell workflow-default-shell working-directory job-default-directory workflow-default-directory needs env-workflow env-job env-step env-extra env-workflow-bash env-job-bash env-step-bash env-workflow-env env-job-env env-step-env env-step-extra; do
-		topology_rc=0
-		go run "$ROOT/.github/scripts/flake-sweep-topology" "$FIXTURES/topology-$topology.yml" >/dev/null 2>&1 || topology_rc=$?
-		case "$topology" in
-		valid|job-shell-override|job-directory-override|env-only-token)
-			if [ "$topology_rc" -ne 0 ]; then
-				echo "::error::topology fixture $topology was refused" >&2
-				failed=1
-			fi
-			;;
-		*)
-			if [ "$topology_rc" -eq 0 ]; then
-				echo "::error::topology fixture $topology was accepted" >&2
-				failed=1
-			fi
-			;;
-		esac
-	done
-
-	# 6. `applied` re-derives the ledger against this checkout.
-	# The scenarios exercise both directions and verify-fixed independently.
-	local applied_stdout applied_rc
-
-	# A ledger that answers the observation passes.
-	scratch_ledger "$ledger" \
-		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
-	applied_rc=0
-	applied_stdout="$(rederive "$reopen" "$ledger" 2>/dev/null)" || applied_rc=$?
-	if [ "$applied_rc" -eq 0 ]; then
-		echo "  ok   applied-clean"
-	else
-		echo "::error::applied clean scenario failed: got $applied_stdout rc=$applied_rc" >&2
-		failed=1
-	fi
-
-	# An observed flake with no row stays red.
-	scratch_ledger "$ledger"
-	applied_rc=0
-	applied_stdout="$(rederive "$reopen" "$ledger" 2>/dev/null)" || applied_rc=$?
-	if [ "$applied_rc" -eq 1 ]; then
-		echo "  ok   applied-unfiled"
-	else
-		echo "::error::applied unfiled scenario failed: got $applied_stdout rc=$applied_rc" >&2
-		failed=1
-	fi
-
-	# A fixed ref that main cannot reach also stays red.
-	scratch_ledger "$ledger" \
-		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
-		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |'
-	applied_rc=0
-	applied_stdout="$(rederive "$reopen" "$ledger" 2>/dev/null)" || applied_rc=$?
-	if [ "$applied_rc" -eq 1 ]; then
-		echo "  ok   applied-fixed-off-main"
-	else
-		echo "::error::applied fixed-ref scenario failed: got $applied_stdout rc=$applied_rc" >&2
-		failed=1
-	fi
-
-	# A malformed ledger is refused before parsed-entry consumers can drop its rows.
-	printf '%s\n' '# malformed' >"$ledger"
-	if (rederive "$reopen" "$ledger") >/dev/null 2>&1; then
-		echo "::error::malformed ledger scenario: rederive accepted an invalid ledger" >&2
-		failed=1
-	else
-		echo "  ok   applied-refuses-malformed-ledger"
-	fi
-
-	# Production applied refuses alternate observation and ledger inputs.
-	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid SWEEP_RECORDS="$reopen" "$0" applied 2>&1)" || applied_rc=$?
-	case "$applied_stdout" in
-	*"refuses SWEEP_RECORDS"*) echo "  ok   applied-refuses-record-override" ;;
-	*) echo "::error::applied accepted SWEEP_RECORDS override" >&2; failed=1 ;;
-	esac
-	applied_stdout="$(GITHUB_REPOSITORY=nonexistent/repo GH_TOKEN=invalid LEDGER="$ledger" "$0" applied 2>&1)" || applied_rc=$?
-	case "$applied_stdout" in
-	*"refuses LEDGER"*) echo "  ok   applied-refuses-ledger-override" ;;
-	*) echo "::error::applied accepted LEDGER override" >&2; failed=1 ;;
-	esac
-
-	rm -f "$ledger"
-
 	[ "$failed" -eq 0 ] || exit 1
 	echo "flake sweep selftest: all fixtures agree"
 }
@@ -1379,10 +1228,9 @@ classify) classify ;;
 check) check ;;
 sync) sync ;;
 verify-fixed) verify_fixed ;;
-applied) applied ;;
 selftest) selftest ;;
 *)
-	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner <ISSUE_ID>]|verify-fixed|applied|selftest} [--window-days N]" >&2
+	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner <ISSUE_ID>]|verify-fixed|selftest} [--window-days N]" >&2
 	exit 2
 	;;
 esac

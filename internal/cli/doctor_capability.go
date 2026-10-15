@@ -110,19 +110,18 @@ func (d *GeneralDiagnostic) Fix() string {
 	return ""
 }
 
-// ScopeDiagnostic reports git-worktree identity and no-mistakes gate capability.
+// ScopeDiagnostic reports git-worktree identity.
 type ScopeDiagnostic struct {
 	Identity string
-	GateCap  string
 	Path     string
 	Err      error
 }
 
 func (d *ScopeDiagnostic) String() string {
 	if d.Err != nil {
-		return fmt.Sprintf("scope: %s (%s) at %s [error: %v]", d.Identity, d.GateCap, d.Path, d.Err)
+		return fmt.Sprintf("scope: %s at %s [error: %v]", d.Identity, d.Path, d.Err)
 	}
-	return fmt.Sprintf("scope: %s (%s) at %s", d.Identity, d.GateCap, d.Path)
+	return fmt.Sprintf("scope: %s at %s", d.Identity, d.Path)
 }
 
 // CollectCapabilities populates the extended capability diagnostics for doctor.
@@ -213,7 +212,6 @@ func collectScopeDiagnostic(cwd string) *ScopeDiagnostic {
 	d := &ScopeDiagnostic{Path: cwd}
 	r := fleet.Classify(cwd)
 	d.Identity = r.Identity.String()
-	d.GateCap = r.GateCap.String()
 	d.Path = r.CanonicalPath
 	if r.Err != nil {
 		d.Err = r.Err

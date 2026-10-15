@@ -97,8 +97,8 @@ type captainPaths struct {
 
 func resolveCaptain(l Launch) (captainPaths, error) {
 	var c captainPaths
-	if l.Worktree != "" || l.Branch != "" || len(l.Files) > 0 || l.GateRepo != "" || len(l.WritableRoots) > 0 || len(l.Checkouts) > 0 {
-		return c, fmt.Errorf("fence: a captain launch has no worktree, branch, files, gate or writable roots")
+	if l.Worktree != "" || l.Branch != "" || len(l.Files) > 0 || len(l.WritableRoots) > 0 || len(l.Checkouts) > 0 {
+		return c, fmt.Errorf("fence: a captain launch has no worktree, branch, files or writable roots")
 	}
 	var err error
 	if c.home, err = realDir("home", l.Home); err != nil {

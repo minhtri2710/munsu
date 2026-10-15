@@ -71,11 +71,6 @@ func TestSurvivingTaskProcessSteps(t *testing.T) {
 			details:   known,
 			want:      []string{"could not list task processes: table unreadable"},
 		},
-		{
-			name:      "a platform without an inventory adds no step",
-			inventory: fakeMarkerInventory{err: ErrProcessInventoryUnsupported},
-			details:   known,
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useTaskProcessFakes(t, tc.inventory, tc.details)

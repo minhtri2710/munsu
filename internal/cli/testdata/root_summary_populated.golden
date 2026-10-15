@@ -5,4 +5,4 @@ fleet: 2 tasks (2 in-flight) | watcher: -- | holds: --
   task-one             [queued    ] munsu
   task-two             [queued    ] munsu
 
-Next: munsu fleet bearings | munsu peek <id> | munsu --help
+Next: munsu fleet view | munsu peek <id> | munsu --help

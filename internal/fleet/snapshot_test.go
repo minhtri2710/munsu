@@ -5,7 +5,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,42 +17,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-func captureStdout(fn func() error) (string, error) {
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		return "", err
-	}
-	os.Stdout = w
-
-	errChan := make(chan error, 1)
-	outChan := make(chan string)
-
-	go func() {
-		var buf strings.Builder
-		_, err := io.Copy(&buf, r)
-		if err != nil {
-			errChan <- err
-			return
-		}
-		outChan <- buf.String()
-	}()
-
-	fnErr := fn()
-	w.Close()
-	os.Stdout = old
-
-	select {
-	case err := <-errChan:
-		return "", err
-	case out := <-outChan:
-		return out, fnErr
-	}
-}
-
-// testSnapshotDeps returns the clean-break snapshot dependencies for tests:
-// the canonical current-state query is always present; the optional endpoint
-// probe (diagnostic only) is attached when provided.
 func testSnapshotDeps(t *testing.T, probes ...EndpointProbe) SnapshotDependencies {
 	t.Helper()
 	deps := SnapshotDependencies{CurrentState: NewCanonicalCurrentState()}
@@ -137,76 +100,6 @@ func TestPhaseFromMeta(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("PhaseFromMeta(%q, %v) = %q, want %q", tc.window, tc.paneAlive, got, tc.want)
 		}
-	}
-}
-
-func TestBearings_Idle(t *testing.T) {
-	tmpDir := t.TempDir()
-	if _, err := home.Init(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := captureStdout(func() error {
-		return Bearings(tmpDir, "", testSnapshotDeps(t))
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(out, "No in-flight ship/scout tasks. Fleet is idle.") {
-		t.Errorf("expected idle message, got: %q", out)
-	}
-}
-
-func TestBearings_WithTasks(t *testing.T) {
-	tmpDir := t.TempDir()
-	if _, err := home.Init(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-
-	// Canonical ship/scout tasks drive the bearings resume; a canonical
-	// kind=other task is filtered out of the ship/scout report.
-	mustCreateFleetTask(t, tmpDir, "task-ship", "ship")
-	mustCreateFleetTask(t, tmpDir, "task-scout", "scout")
-	mustCreateFleetTask(t, tmpDir, "task-other", "other")
-
-	out, err := captureStdout(func() error {
-		return Bearings(tmpDir, "", testSnapshotDeps(t))
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(out, "task-ship") {
-		t.Errorf("expected output to contain task-ship, got: %q", out)
-	}
-	if !strings.Contains(out, "task-scout") {
-		t.Errorf("expected output to contain task-scout, got: %q", out)
-	}
-	if strings.Contains(out, "task-other") {
-		t.Errorf("expected output not to contain task-other, got: %q", out)
-	}
-}
-
-func TestView_RegisteredPhase(t *testing.T) {
-	tmp := t.TempDir()
-	if _, err := home.Init(tmp); err != nil {
-		t.Fatal(err)
-	}
-
-	// A queued (not-yet-started) canonical task has canonical phase "queued",
-	// which must win over any diagnostic projection.
-	mustCreateFleetTask(t, tmp, "pre-spawn-task", "ship")
-
-	out, err := captureStdout(func() error {
-		return View(tmp, testSnapshotDeps(t))
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(out, "queued") {
-		t.Errorf("expected View to show canonical 'queued' phase, got: %q", out)
 	}
 }
 
@@ -573,7 +466,7 @@ func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 	}
 }
 
-// TestReadWithProbeCanonicalPhaseUnaffectedByProbe proves soldier-state keeps
+// TestReadWithProbeCanonicalPhaseUnaffectedByProbe proves task show keeps
 // the canonical phase even when an endpoint probe is dead/unknown: probe output
 // is diagnostic and never changes lifecycle state.
 func TestReadWithProbeCanonicalPhaseUnaffectedByProbe(t *testing.T) {

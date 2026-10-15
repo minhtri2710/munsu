@@ -86,11 +86,11 @@ func TestOpencodeSafetyCheckAllow(t *testing.T) {
 }
 
 // TestOpencodeSafetyCheckGateRefused verifies opencode safety-check blocks
-// when gate is active (gate_refused) — produces exit 2, stderr plaintext.
+// when the path's scope refuses (gate_refused: an unrelated directory) —
+// produces exit 2, stderr plaintext.
 func TestOpencodeSafetyCheckGateRefused(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("NO_MISTAKES_GATE", "1")
 
 	var exitCode int
 	oldExit := exitWithCode

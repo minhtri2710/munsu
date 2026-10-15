@@ -1,8 +1,7 @@
 // Package fence confines a launched seat's whole process tree to a set of
 // writable roots with an OS sandbox (macOS sandbox-exec), refuses every
-// unix-socket connect but DNS's and the one socket its launch names (a gate
-// soldier's no-mistakes daemon, a captain's seat), and refuses the removal or
-// replacement of a claude or tmux socket. It also
+// unix-socket connect but DNS's and a captain's seat socket, and refuses the
+// removal or replacement of a claude or tmux socket. It also
 // reports every outbound connect to the Sandbox log: an observe-only (allow
 // network-outbound (with report)) sits before the socket denies, which are
 // last-match-wins, so it logs seat egress and refuses nothing. It is defense
@@ -72,11 +71,6 @@ type Launch struct {
 	// home root and never overlapping the primary checkout, worktree, git dir or
 	// common dir.
 	HarnessStateDir string
-	// GateRepo is the no-mistakes write set of a soldier that drives a gate
-	// run: this project's gate repository, of which only objects/, refs/ and
-	// logs/ are writable. It lies directly under NM_HOME/repos, and the seat
-	// may connect to NM_HOME/socket. A reviewer has none.
-	GateRepo string
 	// WritableRoots are a soldier's extra writable directories from the project's
 	// config (fence-writable-roots), checked by ValidateWritableRoots. Checkouts
 	// are the other registered projects' checkout and git common dirs they must

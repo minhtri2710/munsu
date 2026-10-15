@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,11 +41,7 @@ func buildMunsuBinary(t *testing.T) string {
 		}
 	}
 
-	binName := "munsu"
-	if runtime.GOOS == "windows" {
-		binName = "munsu.exe"
-	}
-	binPath := filepath.Join(axiBuildDir, binName)
+	binPath := filepath.Join(axiBuildDir, "munsu")
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/munsu/")
 	cmd.Dir = projectRoot
 	out, err := cmd.CombinedOutput()
@@ -81,11 +76,8 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 		if !testutil.IsProcessAlive(pid) {
 			return true
 		}
-		if runtime.GOOS != "windows" {
-			out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
-			return err != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
-		}
-		return false
+		out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
+		return err != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for !dead() && time.Now().Before(deadline) {
@@ -154,12 +146,7 @@ func runMunsu(t *testing.T, homeDir string, args []string) (string, error) {
 
 func TestCleanupTestWatcher_RecordedPIDWithoutBeacon(t *testing.T) {
 	home := t.TempDir()
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("powershell", "-NoProfile", "-Command", "Start-Sleep -Seconds 30")
-	} else {
-		cmd = exec.Command("sleep", "30")
-	}
+	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper: %v", err)
 	}

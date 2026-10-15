@@ -179,12 +179,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	uhome := seatEnv(t, out)
 	l := newSplitLayout(t, out)
 	verdict := filepath.Join(out, "verdict.json")
-	gateRepo := filepath.Join(out, "gate", "repo.git")
-	// The gate's state database sits beside the gate as under NM_HOME, outside
-	// every temp root.
-	gateState := filepath.Join(out, "gate", "state.sqlite")
-	mkdirs(t, filepath.Join(gateRepo, "objects", "info"), filepath.Join(gateRepo, "refs", "heads", "mu"), filepath.Join(gateRepo, "logs", "refs", "heads", "mu"),
-		filepath.Join(gateRepo, "hooks"), filepath.Join(l.common, "objects"), filepath.Join(l.common, "hooks"),
+	mkdirs(t, filepath.Join(l.common, "objects"), filepath.Join(l.common, "hooks"),
 		filepath.Join(l.common, "refs", "remotes"), filepath.Join(l.common, "refs", "heads"),
 		filepath.Join(l.common, "logs", "refs", "remotes"), filepath.Join(l.common, "logs", "refs", "heads", "mu"), filepath.Join(l.gitDir, "logs"), filepath.Join(out, "wt2"))
 	launch := l.soldier()
@@ -199,45 +194,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch.Files = []string{verdict}
-	launch.GateRepo = gateRepo
 	f := mustNew(t, launch)
-	// The same gate under the layout's temp root, where the temp-root allow
-	// covers it and only the profile's whole-gate deny refuses.
-	tempGate := filepath.Join(l.root, "gate", "repo.git")
-	mkdirs(t, filepath.Join(tempGate, "objects", "info"), filepath.Join(tempGate, "refs", "heads", "mu"),
-		filepath.Join(tempGate, "logs", "refs", "heads", "mu"), filepath.Join(tempGate, "hooks"))
-	tempLaunch := launch
-	tempLaunch.GateRepo = tempGate
-	tempFence := mustNew(t, tempLaunch)
-	for _, gt := range []struct {
-		f    *Fence
-		repo string
-	}{{f, gateRepo}, {tempFence, tempGate}} {
-		// What a push creates in the gate: objects/ and refs/.
-		mustWrite(t, gt.f, filepath.Join(gt.repo, "objects", "f"), filepath.Join(gt.repo, "refs", "heads", "mu", "T-1"))
-		// The branch reflog (B1): munsu pre-creates it at spawn, the seat appends
-		// to it, but cannot unlink, link- or rename-swap it, nor create any other
-		// reflog under logs/. (G1168, building on G1167.)
-		reflog := filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-1")
-		if err := os.WriteFile(reflog, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		mustAppend(t, gt.f, reflog)
-		mustNotSwap(t, gt.f, reflog)
-		// Outside objects/, refs/ and its own reflog (G1151, G1168): a program,
-		// configuration and data; objects/info, the alternates (G1085); and a new
-		// reflog file or dir under logs/ a symlink swap would need.
-		mustRefuse(t, gt.f, filepath.Join(gt.repo, "hooks", "pre-receive"), filepath.Join(gt.repo, "config"),
-			filepath.Join(gt.repo, "HEAD"), filepath.Join(gt.repo, "objects", "info", "alternates"),
-			filepath.Join(gt.repo, "logs", "refs", "heads", "mu", "T-2"), filepath.Join(gt.repo, "logs", "refs", "heads", "evil"))
-	}
-
-	// Under a temp root the fence cannot tell the gate's state database from any
-	// other file, so the temp-root allow keeps it and its -wal, -shm and -journal
-	// writable. Outside a temp root the same paths are refused above (G1154).
-	tempState := filepath.Join(l.root, "gate", "state.sqlite")
-	mustWrite(t, tempFence, tempState, tempState+"-wal", tempState+"-shm", tempState+"-journal")
-
 	mustWrite(t, f,
 		filepath.Join(l.worktree, "f"),
 		filepath.Join(l.gitDir, "index.lock"),
@@ -259,44 +216,9 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(uhome, ".claude.json.tmp.123.abc1"),
 		filepath.Join(out, "wt2", "f"), filepath.Join(out, "f"),
 		verdict+"2", verdict+".tmp.abc", verdict+".tmp.1.xyz",
-		// The gate's state database (G1154).
-		gateState, gateState+"-wal", gateState+"-shm", gateState+"-journal",
-		gateState+"-x", filepath.Join(out, "gate", "f"),
 		filepath.Join(out, "gocache", "f"), filepath.Join(out, "gomod", "f"),
 		filepath.Join(out, "gopath", "pkg", "f"), filepath.Join(out, "gotel", "f"),
 	)
-	// Neither the gate root nor objects/, refs/ or logs/ can be renamed away
-	// (into a writable temp root) and replaced, and an absent logs/ cannot be
-	// planted; a rename inside the gate, as git makes for its objects and
-	// refs, still works.
-	dest, err := os.MkdirTemp("/tmp", "fence-gate-dest-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dest) })
-	bareGate := filepath.Join(out, "gate2", "repo.git")
-	mkdirs(t, filepath.Join(bareGate, "objects"), filepath.Join(bareGate, "refs"))
-	launch.GateRepo = bareGate
-	if o, err := fenced(t, mustNew(t, launch), "/bin/ln", "-s", dest, filepath.Join(bareGate, "logs")); err == nil || !strings.Contains(o, "Operation not permitted") {
-		t.Errorf("planting an absent gate logs/ was not refused by the fence: %v %s", err, o)
-	}
-	if _, err := os.Lstat(filepath.Join(bareGate, "logs")); err == nil {
-		t.Errorf("the gate's logs/ exists after a plant the fence must refuse")
-	}
-	for _, d := range []string{gateRepo, filepath.Join(gateRepo, "objects"), filepath.Join(gateRepo, "refs"), filepath.Join(gateRepo, "logs")} {
-		if o, err := fenced(t, f, "/bin/mv", d, filepath.Join(dest, "moved")); err == nil || !strings.Contains(o, "Operation not permitted") {
-			t.Errorf("renaming %s away was not refused by the fence: %v %s", d, err, o)
-		}
-		if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
-			t.Fatalf("%s is gone after a rename the fence must refuse: %v", d, err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(gateRepo, "objects", "tmp"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if o, err := fenced(t, f, "/bin/mv", filepath.Join(gateRepo, "objects", "tmp"), filepath.Join(gateRepo, "objects", "f")); err != nil {
-		t.Errorf("a rename inside the gate's objects was refused: %v %s", err, o)
-	}
 	// The seat's settings.json links the Human's file. The fence resolves the
 	// link, so a write through it is refused and the Human's file is unchanged.
 	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", filepath.Join(launch.HarnessStateDir, "settings.json")); err == nil || !strings.Contains(o, "Operation not permitted") {
@@ -368,6 +290,11 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	if err := os.WriteFile(gitFile, []byte("gitdir: "+l.gitDir+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	dest, err := os.MkdirTemp("/tmp", "fence-wt-dest-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dest) })
 	tl := newLayout(t)
 	tf := mustNew(t, tl.soldier())
 	for _, mv := range []struct {
@@ -395,14 +322,11 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 
 // The production sequence under the fence: a detached `git worktree add`
 // (internal/backend/worktree.go), munsu's unfenced pre-create of the common-dir
-// and gate branch reflogs (ensureBranchReflog), then the seat's own fenced
-// `git checkout -b mu/<id>`, commit and push (brief.go). All must succeed and
-// append to the pre-created reflogs; the fence refuses to let the seat create
-// them, so a test that used `worktree add -b` or hand-made the reflogs would
-// hide the break. The gate's hooks are stubs, so no no-mistakes binary runs;
-// pre-receive dials NM_HOME/socket as the live hook's admit-push does, and the
-// test holds it.
-func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
+// branch reflog (ensureBranchReflog), then the seat's own fenced `git checkout
+// -b mu/<id>` and commit. Both must succeed and append to the pre-created
+// reflogs; the fence refuses to let the seat create them, so a test that used
+// `worktree add -b` or hand-made the reflogs would hide the break.
+func TestFencedSoldierCommitsOnItsBranch(t *testing.T) {
 	out := outsideDir(t)
 	uhome := seatEnv(t, out)
 	env := []string{"PATH=/usr/bin:/bin", "HOME=" + uhome, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=2",
@@ -417,58 +341,25 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 		}
 		return strings.TrimSpace(string(o))
 	}
-	primary, wt, gate := filepath.Join(out, "primary"), filepath.Join(out, "wt"), filepath.Join(out, "nm", "repos", "g.git")
+	primary, wt := filepath.Join(out, "primary"), filepath.Join(out, "wt")
 	home := filepath.Join(out, "home")
 	common := filepath.Join(primary, ".git")
 	mkdirs(t, homeRoots(home)...)
 	git("init", "-q", "-b", "main", primary)
 	git("-C", primary, "commit", "-q", "--allow-empty", "-m", "init")
-	git("init", "-q", "--bare", gate)
-	sock := filepath.Join(out, "nm", "socket")
-	daemon, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer daemon.Close()
-	admitted := make(chan string, 1)
-	go func() {
-		c, err := daemon.Accept()
-		if err != nil {
-			admitted <- ""
-			return
-		}
-		defer c.Close()
-		c.SetReadDeadline(time.Now().Add(5 * time.Second))
-		b := make([]byte, len("admit"))
-		n, _ := io.ReadFull(c, b)
-		admitted <- string(b[:n])
-	}()
-	for h, body := range map[string]string{
-		"pre-receive":  "#!/bin/sh\ncat >/dev/null\nprintf admit | /usr/bin/nc -U " + sock + " || { echo 'no-mistakes: gate push refused before ref mutation'; exit 1; }\n",
-		"post-receive": "#!/bin/sh\ncat >/dev/null\n",
-	} {
-		if err := os.WriteFile(filepath.Join(gate, "hooks", h), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	git("-C", primary, "remote", "add", "no-mistakes", gate)
 	// Production creates the worktree detached, so mu/T-1 and its reflog do not
 	// exist yet; the seat makes the branch itself with a fenced `checkout -b`.
 	git("-C", primary, "worktree", "add", "--detach", "-q", wt, "main")
 	// munsu's unfenced pre-create, replicated: an empty regular reflog file and
-	// its parent dirs, in the common dir (for checkout -b) and the gate (for the
-	// push). This is exactly what ensureBranchReflog does.
-	gateReflog := filepath.Join(gate, "logs", "refs", "heads", "mu", "T-1")
+	// its parent dirs in the common dir. This is exactly what ensureBranchReflog
+	// does.
 	commonReflog := filepath.Join(common, "logs", "refs", "heads", "mu", "T-1")
-	for _, r := range []string{gateReflog, commonReflog} {
-		mkdirs(t, filepath.Dir(r))
-		if err := os.WriteFile(r, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+	mkdirs(t, filepath.Dir(commonReflog))
+	if err := os.WriteFile(commonReflog, nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	f := mustNew(t, Launch{Role: RoleSoldier, Harness: harness.Claude, Home: home, UserHome: testUserHome(), Primary: primary, Worktree: wt,
-		GitDir: filepath.Join(common, "worktrees", "wt"), CommonDir: common, Branch: "mu/T-1",
-		GateRepo: gate})
+		GitDir: filepath.Join(common, "worktrees", "wt"), CommonDir: common, Branch: "mu/T-1"})
 	fencedGit := func(args ...string) {
 		t.Helper()
 		wrapped, err := f.Wrap(append([]string{"/usr/bin/git", "-c", "user.name=t", "-c", "user.email=t@t"}, args...))
@@ -483,15 +374,11 @@ func TestFencedSoldierPushesIntoItsGate(t *testing.T) {
 	}
 	fencedGit("-C", wt, "checkout", "-b", "mu/T-1")
 	fencedGit("-C", wt, "commit", "-q", "--allow-empty", "-m", "work")
-	fencedGit("-C", wt, "push", "no-mistakes", "HEAD:refs/heads/mu/T-1")
 
-	if got := <-admitted; got != "admit" {
-		t.Errorf("the daemon socket read %q from pre-receive, want admit", got)
+	if got, want := git("-C", primary, "rev-parse", "refs/heads/mu/T-1"), git("-C", wt, "rev-parse", "HEAD"); got != want {
+		t.Errorf("mu/T-1 = %s, want the committed head %s", got, want)
 	}
-	if got, want := git("-C", gate, "rev-parse", "refs/heads/mu/T-1"), git("-C", wt, "rev-parse", "HEAD"); got != want {
-		t.Errorf("gate mu/T-1 = %s, want the pushed head %s", got, want)
-	}
-	for _, r := range []string{commonReflog, gateReflog, filepath.Join(common, "worktrees", "wt", "logs", "HEAD")} {
+	for _, r := range []string{commonReflog, filepath.Join(common, "worktrees", "wt", "logs", "HEAD")} {
 		if b, err := os.ReadFile(r); err != nil || len(b) == 0 {
 			t.Errorf("reflog %s was not appended: %q, %v", r, b, err)
 		}
@@ -941,35 +828,24 @@ func socketScratch(t *testing.T) (tmp, uhome string) {
 	return tmp, uhome
 }
 
-// A seat connects to no unix socket but DNS's and, for a soldier with a gate,
-// the no-mistakes daemon's (G1153 refining G1150; G1148; G1085): not another
-// claude session, tmux server or herdr, not a session socket whose dir it
-// renamed away, not any other socket, its own listener included, and not
-// another socket it moves onto the daemon's name. The allow rows are the
-// nearest valid connects: the daemon's socket for a soldier with a gate, a DNS
-// lookup (it needs the network) and TCP.
-func TestSeatConnectsOnlyToDNSAndItsGateSocket(t *testing.T) {
+// A seat connects to no unix socket but DNS's (G1150; G1148; G1085): not
+// another claude session, tmux server or herdr, not a session socket whose dir
+// it renamed away, not any other socket, its own listener included. The allow
+// rows are the nearest valid connects: a DNS lookup (it needs the network) and
+// TCP.
+func TestSeatConnectsOnlyToDNS(t *testing.T) {
 	tmp, uhome := socketScratch(t)
 	uid := strconv.Itoa(os.Getuid())
 	l := newLayout(t)
-	nm := filepath.Join(tmp, "nm")
-	// Set as fleet's environment holds it, so a fence that took the daemon's
-	// socket from it, not from the gate, would open it to every seat.
-	t.Setenv("NM_HOME", nm)
-	gate := l.soldier()
-	gate.GateRepo = filepath.Join(nm, "repos", "g.git")
-	mkdirs(t, gate.GateRepo)
-	const withGate = "soldier with a gate"
 	fences := []struct {
 		name string
 		f    *Fence
-	}{{withGate, mustNew(t, gate)}, {"soldier without a gate", mustNew(t, l.soldier())}, {"reviewer", mustNew(t, l.reviewer())}}
+	}{{"soldier", mustNew(t, l.soldier())}, {"reviewer", mustNew(t, l.reviewer())}}
 	perl := func(prog string, args ...string) []string {
 		return append([]string{"/usr/bin/perl", "-MSocket", "-e", prog}, args...)
 	}
 	sh := func(script string) []string { return []string{"/bin/sh", "-c", script} }
-	ccu, moved, victim, own := filepath.Join(tmp, "cc-socks-"+uid), filepath.Join(tmp, "moved"), filepath.Join(tmp, "v", "1.sock"), filepath.Join(tmp, "own.sock")
-	swap, sib := filepath.Join(tmp, "x"), filepath.Join(tmp, "sib")
+	ccu, moved, own := filepath.Join(tmp, "cc-socks-"+uid), filepath.Join(tmp, "moved"), filepath.Join(tmp, "own.sock")
 	for _, tt := range []struct {
 		name          string
 		network, addr string   // the listener the test holds; none when network is ""
@@ -984,30 +860,13 @@ func TestSeatConnectsOnlyToDNSAndItsGateSocket(t *testing.T) {
 		{"a socket in a sibling temp dir", "unix", filepath.Join(tmp, "other", "s.sock"), nil, nil},
 		{"the seat's own listener", "", "", perl(`my ($s, $c); socket($s, AF_UNIX, SOCK_STREAM, 0) && bind($s, pack_sockaddr_un($ARGV[0])) && listen($s, 1) or die "listen: $!\n"; `+
 			`socket($c, AF_UNIX, SOCK_STREAM, 0) && connect($c, pack_sockaddr_un($ARGV[0])) or die "connect: $!\n"`, own), nil},
-		{"the no-mistakes daemon's socket, after the seat renames its own files beside NM_HOME", "unix", filepath.Join(nm, "socket"),
-			append(sh(`mkdir "$0" && : > "$0/f" && mv "$0/f" "$0/g" && mv "$0" "$0.moved" && /usr/bin/nc -U "$1"`), sib, filepath.Join(nm, "socket")), []string{withGate}},
-		{"a sibling socket in NM_HOME", "unix", filepath.Join(nm, "other.sock"), nil, nil},
-		{"another socket in a dir the seat swaps in for NM_HOME", "unix", filepath.Join(swap, "socket"),
-			append(sh(`mv "$0" "$0.old" && mv "$1" "$0" && /usr/bin/nc -U "$0/socket"`), nm, swap), nil},
-		{"another socket the seat moves onto the daemon's name", "unix", victim,
-			append(sh(`mv "$0" "$1" && /usr/bin/nc -U "$1"`), victim, filepath.Join(nm, "socket")), nil},
-		{"a DNS lookup", "", "", perl(`my ($e) = Socket::getaddrinfo("github.com", "443"); die "getaddrinfo: $e\n" if $e`), []string{withGate, "soldier without a gate", "reviewer"}},
-		{"TCP to a loopback listener", "tcp", "127.0.0.1:0", nil, []string{withGate, "soldier without a gate", "reviewer"}},
+		{"a DNS lookup", "", "", perl(`my ($e) = Socket::getaddrinfo("github.com", "443"); die "getaddrinfo: $e\n" if $e`), []string{"soldier", "reviewer"}},
+		{"TCP to a loopback listener", "tcp", "127.0.0.1:0", nil, []string{"soldier", "reviewer"}},
 	} {
 		for _, fc := range fences {
 			t.Run(fc.name+"/"+tt.name, func(t *testing.T) {
 				// What an earlier row's seat moved or bound.
-				if _, err := os.Stat(nm + ".old"); err == nil {
-					os.RemoveAll(nm)
-					if err := os.Rename(nm+".old", nm); err != nil {
-						t.Fatal(err)
-					}
-				}
-				os.RemoveAll(swap)
-				os.RemoveAll(sib)
-				os.RemoveAll(sib + ".moved")
 				os.RemoveAll(moved)
-				os.Remove(filepath.Join(nm, "socket"))
 				os.Remove(own)
 				want := slices.Contains(tt.reaches, fc.name)
 				if tt.network == "" {
@@ -1261,19 +1120,12 @@ func TestProbeRecordsTheControlAndEveryRefusedWrite(t *testing.T) {
 	out := outsideDir(t)
 	seatEnv(t, out)
 	l := newLayout(t)
-	// The gate sits under a temp root, so only the profile's late gate deny
-	// refuses its hooks.
-	gate := filepath.Join(l.root, "gate", "repo.git")
-	mkdirs(t, filepath.Join(gate, "hooks"))
-	gated := l.soldier()
-	gated.GateRepo = gate
 	tests := []struct {
 		name    string
 		launch  Launch
 		refused []string
 	}{
 		{"soldier", l.soldier(), append([]string{l.primary, l.common}, homeRoots(l.home)...)},
-		{"no-mistakes soldier", gated, append(append([]string{l.primary, l.common}, homeRoots(l.home)...), filepath.Join(gate, "hooks"))},
 		{"reviewer", l.reviewer(), []string{l.primary, l.common, l.worktree, l.gitDir, l.home}},
 		{"home-less reviewer", func() Launch { x := l.reviewer(); x.Home = ""; return x }(), []string{l.primary, l.common, l.worktree, l.gitDir}},
 	}

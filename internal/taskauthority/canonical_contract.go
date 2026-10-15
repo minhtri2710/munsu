@@ -7,13 +7,12 @@ import (
 )
 
 // CanonicalRecordDeliveryContractRequest captures the resolved delivery mode
-// and the exact review and forge tools used by this task.
+// and the exact forge tool used by this task.
 type CanonicalRecordDeliveryContractRequest struct {
 	HomeID       domain.HomeID
 	TaskID       domain.TaskID
 	Precondition domain.Precondition
 	Mode         string
-	Review       DeliveryStep
 	Forge        DeliveryStep
 }
 
@@ -24,9 +23,8 @@ func (r CanonicalRecordDeliveryContractRequest) DigestBytes() ([]byte, error) {
 		Generation uint64       `json:"generation"`
 		Revision   uint64       `json:"revision"`
 		Mode       string       `json:"mode"`
-		Review     DeliveryStep `json:"review"`
 		Forge      DeliveryStep `json:"forge"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Mode, r.Review, r.Forge})
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.Mode, r.Forge})
 }
 
 // validateRecordDeliveryContractRequest checks the typed request shape: a valid
@@ -42,11 +40,11 @@ func validateRecordDeliveryContractRequest(req CanonicalRecordDeliveryContractRe
 	if !DeliveryModes[req.Mode] {
 		return validationError("delivery contract requires a valid delivery mode, got %q", req.Mode)
 	}
-	if err := validateDeliveryStepPair(req.Review, req.Forge); err != nil {
+	if err := validateForgeStep(req.Forge); err != nil {
 		return err
 	}
-	if req.Mode != DeliveryModeForSteps(req.Review, req.Forge) {
-		return validationError("delivery contract mode disagrees with captured review and forge steps")
+	if req.Mode != DeliveryModeForForge(req.Forge) {
+		return validationError("delivery contract mode disagrees with the captured forge step")
 	}
 	return nil
 }
@@ -62,7 +60,7 @@ func (c *Canonical) RecordDeliveryContract(op domain.Operation, req CanonicalRec
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.DeliveryContract != nil {
-			if cur.DeliveryContract.Matches(req.Mode, req.Review, req.Forge) {
+			if cur.DeliveryContract.Matches(req.Mode, req.Forge) {
 				return cur.clone(), nil
 			}
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already carries a different delivery contract", cur.TaskID, cur.Generation)
@@ -71,7 +69,6 @@ func (c *Canonical) RecordDeliveryContract(op domain.Operation, req CanonicalRec
 		next.DeliveryContract = &DeliveryContract{
 			OperationID: op.ID.Value(),
 			Mode:        req.Mode,
-			Review:      cloneDeliveryStep(req.Review),
 			Forge:       cloneDeliveryStep(req.Forge),
 			RecordedAt:  c.now().UnixNano(),
 		}

@@ -31,9 +31,9 @@ func captainSeatSocket(captainHome string) string {
 // chính soldier của nó qua munsu" (the seat relays send, spawn and teardown
 // into its own soldiers' sessions, under G1085).
 var captainSeatVerbs = map[string]bool{
-	"brief": true, "delivery": true, "guard": true, "inbox": true, "peek": true,
+	"delivery": true, "guard": true, "inbox": true, "peek": true,
 	"promote": true, "report": true, "send": true, "session-start": true,
-	"soldier-state": true, "spawn": true, "task": true, "teardown": true,
+	"spawn": true, "task": true, "teardown": true,
 	"turnend": true, "wake": true,
 }
 

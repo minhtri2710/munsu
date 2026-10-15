@@ -12,31 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
-// TestCheckPipelineReadiness verifies the doctor's pipeline_readiness entry
-// reports no-mistakes presence on PATH and never fails the home: the delivery
-// mode comes from each project's configured tools, not from PATH.
-func TestCheckPipelineReadiness(t *testing.T) {
-	t.Run("no-mistakes absent", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		entry := checkPipelineReadiness()
-		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "not on PATH") {
-			t.Fatalf("entry = %+v, want current with not on PATH", entry)
-		}
-	})
-
-	t.Run("no-mistakes on PATH is reported, not selected", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "no-mistakes"), []byte("#!/bin/sh\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PATH", dir)
-		entry := checkPipelineReadiness()
-		if entry.Status != StatusCurrent || !strings.Contains(entry.Detail, "unused until a project sets a review tool entry") {
-			t.Fatalf("entry = %+v, want current with the unused-until-configured suggestion", entry)
-		}
-	})
-}
-
 func TestCheckCaptainRegistry_NoInitializedHome(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "not-a-home")
 	entry := checkCaptainRegistry(missing)

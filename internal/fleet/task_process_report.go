@@ -79,12 +79,9 @@ func taskMarkedProcesses(inventory MarkerInventory, homeDir, taskID string) ([]M
 // survivingTaskProcessSteps returns one teardown step per process that still
 // carries the task's markers, ordered by pid, leaving out the processes just
 // reaped and the teardown process with its ancestors. An inventory failure is a
-// step of its own; a platform without an inventory yields no step.
+// step of its own.
 func survivingTaskProcessSteps(homeDir, taskID string, reaped map[int]bool) []string {
 	processes, err := taskMarkedProcesses(taskMarkerInventory, homeDir, taskID)
-	if errors.Is(err, ErrProcessInventoryUnsupported) {
-		return nil
-	}
 	if err != nil {
 		return []string{fmt.Sprintf("could not list task processes: %v", err)}
 	}

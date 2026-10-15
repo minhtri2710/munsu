@@ -24,11 +24,6 @@ func TestRun_PreflightBlocksBeforeWorktreeAllocation(t *testing.T) {
 	cleanPath := t.TempDir()
 	t.Setenv("PATH", cleanPath)
 
-	// Save and clear auth env for the test harness
-	origAuth := os.Getenv("OPENAI_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
-	defer os.Setenv("OPENAI_API_KEY", origAuth)
-
 	// Fake backend — should NOT be reached if preflight blocks
 	calledNewWindow := false
 	fake := &fakeBackend{
@@ -73,8 +68,7 @@ func TestRun_PreflightBlocksBeforeWorktreeAllocation(t *testing.T) {
 }
 
 func TestRun_PreflightUnknownPassesThrough(t *testing.T) {
-	// Auth env set so the known check passes; model is always unknown which passes through.
-	// Create a fake codex binary on PATH so the binary check also passes.
+	// codex has no readiness command, so its binary on PATH passes; model is always unknown.
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "codex")
 	testutil.WriteFakeExecutable(t, binPath, "#!/bin/sh\nexit 0\n")
@@ -85,10 +79,6 @@ func TestRun_PreflightUnknownPassesThrough(t *testing.T) {
 
 	os.MkdirAll(filepath.Join(homeDir, "data", "test-unknown"), 0755)
 	os.WriteFile(filepath.Join(homeDir, "data", "test-unknown", "brief.md"), []byte("# test unknown"), 0644)
-
-	origAuth := os.Getenv("OPENAI_API_KEY")
-	os.Setenv("OPENAI_API_KEY", "test-key")
-	defer os.Setenv("OPENAI_API_KEY", origAuth)
 
 	r := NewRunner(Args{
 		ID:          "test-unknown",
@@ -101,7 +91,7 @@ func TestRun_PreflightUnknownPassesThrough(t *testing.T) {
 
 	err := r.preflightHarness()
 	if err != nil {
-		t.Fatalf("preflightHarness returned error for codex with auth: %v", err)
+		t.Fatalf("preflightHarness returned error for codex on PATH: %v", err)
 	}
 	if r.harness != "codex" {
 		t.Errorf("r.harness = %q, want %q", r.harness, "codex")

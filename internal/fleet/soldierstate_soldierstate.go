@@ -1,7 +1,7 @@
 // The canonical Task Authority record is the only lifecycle authority (clean
 // break): `Status`/`Description` derive solely from the authoritative
 // `taskauthority.Aggregate.Phase`/`PhaseDetail`. `.meta`, `.status`, provider
-// PR, no-mistakes and endpoint evidence are diagnostic/evidence only and can
+// PR and endpoint evidence are diagnostic/evidence only and can
 // never change lifecycle state without a canonical record. A missing or
 // corrupt canonical record is an operation error, never a projection fallback.
 
@@ -10,7 +10,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -26,12 +25,6 @@ type State struct {
 	PaneAlive   bool   // whether the session pane is still alive (diagnostic only — not truth)
 	StatusLines int    // number of status log lines
 
-	// NoMistakesRunStep is the current run-step from the no-mistakes pipeline,
-	// when the soldier's worktree has an active or recently-completed run.
-	// Values: running, fixing, ci, awaiting_approval, checks-passed, passed,
-	// passed-with-skips, failed, cancelled.
-	NoMistakesRunStep string
-
 	// PR is the read-time PR of the task; see PRView.
 	PR PRView
 
@@ -46,90 +39,34 @@ type State struct {
 }
 
 // PRView is the PR of a task as derived at read time. It is a projection, never
-// delivery truth: no authority record or meta key is written from it.
-// State is PRDelivered when the no-mistakes run in the task worktree verifies
-// the PR (run branch is the task branch and the worktree branch, run head is
-// the worktree HEAD), PRReported when only an unverified PR URL from the status
-// log is available (Reason names the failed condition), and empty otherwise.
+// delivery truth: no authority record or meta key is written from it. URL is
+// the last PR URL the status log reports, unverified, or empty.
 type PRView struct {
-	State  string
-	URL    string
-	Head   string
-	Reason string
+	URL string
 }
-
-const (
-	PRDelivered = "delivered"
-	PRReported  = "reported"
-)
 
 // Line renders the view for display, or "" when there is no PR.
 func (v PRView) Line() string {
-	switch v.State {
-	case PRDelivered:
-		return "delivered: PR " + v.URL + " @ " + v.Head
-	case PRReported:
-		return "reported: PR " + v.URL + " (unverified: " + v.Reason + ")"
+	if v.URL == "" {
+		return ""
 	}
-	return ""
+	return "reported: PR " + v.URL + " (unverified)"
 }
 
-// ReadTaskPR derives the PRView of one task from its meta worktree and status
-// log, running the no-mistakes status read once.
+// ReadTaskPR derives the PRView of one task from its status log.
 func ReadTaskPR(homeDir, id string) PRView {
-	meta, _ := home.ReadMeta(homeDir, id)
 	lines, _ := home.ReadStatus(homeDir, id)
-	return readWorktree(meta["worktree"]).pr(id, lines)
+	return reportedPR(lines)
 }
 
-// worktreeFacts is what one read of a task worktree observes.
-type worktreeFacts struct {
-	path   string
-	branch string
-	head   string
-	run    *RunStatus
-}
-
-func readWorktree(wtPath string) worktreeFacts {
-	w := worktreeFacts{path: wtPath}
-	if wtPath == "" {
-		return w
-	}
-	w.branch = getGitBranch(wtPath)
-	w.head = getGitHead(wtPath)
-	w.run, _ = Read(wtPath)
-	return w
-}
-
-// pr is a stopgap read-time view. It is removed when teardown accepts a
-// GitHub-side merge verified through gh; the uplink then records pr_* and this
-// derivation is deleted.
-func (w worktreeFacts) pr(id string, statusLines []string) PRView {
-	var reason string
-	switch {
-	case w.path == "":
-		reason = "no worktree"
-	case w.run == nil:
-		reason = "no no-mistakes run"
-	case w.run.PR == "":
-		reason = "run has no PR"
-	case w.run.Branch != "mu/"+id:
-		reason = "run branch " + w.run.Branch + " is not the task branch mu/" + id
-	case w.run.Branch != w.branch:
-		reason = "worktree is on " + w.branch + ", not the run branch " + w.run.Branch
-	case w.run.Head != w.head:
-		reason = "run head " + w.run.Head + " is not the worktree HEAD " + w.head
-	case w.run.Status != "completed":
-		reason = "run is " + w.run.Status
-	case !w.run.passed():
-		reason = "run outcome " + w.run.Outcome + " is not passing"
-	default:
-		return PRView{State: PRDelivered, URL: w.run.PR, Head: w.head}
-	}
+// reportedPR is a stopgap read-time view. It is removed when teardown accepts
+// a GitHub-side merge verified through gh; the uplink then records pr_* and
+// this derivation is deleted.
+func reportedPR(statusLines []string) PRView {
 	for i := len(statusLines) - 1; i >= 0; i-- {
 		u := strings.TrimRight(extractPRURL(statusLines[i]), ").,;")
 		if strings.Contains(u, "/pull/") {
-			return PRView{State: PRReported, URL: u, Reason: reason}
+			return PRView{URL: u}
 		}
 	}
 	return PRView{}
@@ -166,8 +103,20 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	// always superseded display, never state truth.
 	s.StatusLogSuperseded = true
 
-	// .meta provides operational/display data (diagnostic only).
+	// .meta provides operational/display data (diagnostic only). The endpoint
+	// identity is the canonical one, bound or only acquired: a launch whose
+	// handshake failed holds a live pane but wrote no .meta. A retired task's
+	// acquired endpoint is no longer its pane.
 	meta, _ := home.ReadMeta(homeDir, id)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	if agg.Phase != tauth.PhaseRetired {
+		overlayEndpointMeta(meta, agg.Endpoint, agg.AcquiredEndpoint)
+		if agg.Launch != nil {
+			meta["harness"] = agg.Launch.Harness
+		}
+	}
 
 	// .status contributes diagnostic evidence only (never lifecycle state).
 	statusLines, _ := home.ReadStatus(homeDir, id)
@@ -178,13 +127,7 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 		s.OpenActivities = home.OpenActivities(statusPath)
 	}
 
-	// No-mistakes run-step is diagnostic evidence only; it never changes the
-	// canonical phase.
-	wt := readWorktree(meta["worktree"])
-	if step, _, ok := runStep(wt.run, wt.branch); ok {
-		s.NoMistakesRunStep = step
-	}
-	s.PR = wt.pr(id, statusLines)
+	s.PR = reportedPR(statusLines)
 
 	// Endpoint liveness is diagnostic only. It never changes the canonical
 	// lifecycle phase: a dead/unverifiable endpoint does not turn canonical
@@ -195,46 +138,4 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	}
 
 	return s, nil
-}
-
-// runStep returns the conceptual run-step, outcome, and whether the run is
-// relevant to the current branch.
-func runStep(r *RunStatus, currentBranch string) (step, outcome string, ok bool) {
-	if r == nil {
-		return "", "", false
-	}
-
-	// Only consider runs for the current branch.
-	if r.Branch != "" && r.Branch != currentBranch {
-		return "", "", false
-	}
-
-	// Determine conceptual run-step.
-	step, outcome = r.ConceptualStep()
-	if step == "" {
-		return "", "", false
-	}
-	return step, outcome, true
-}
-
-// getGitBranch returns the current git branch name from the worktree path.
-func getGitBranch(wtPath string) string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// getGitHead returns the HEAD commit sha of the worktree path.
-func getGitHead(wtPath string) string {
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }

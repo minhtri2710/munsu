@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -16,22 +15,6 @@ func TestToolDiagnostic_String_Found(t *testing.T) {
 func TestToolDiagnostic_String_Missing(t *testing.T) {
 	d := ToolDiagnostic{Tool: "tmux", Status: ToolMissing}
 	want := "MISSING: tmux (install instructions vary)"
-	if got := d.String(); got != want {
-		t.Errorf("ToolDiagnostic.String() = %q, want %q", got, want)
-	}
-}
-
-func TestToolDiagnostic_String_InstallFailed(t *testing.T) {
-	d := ToolDiagnostic{Tool: "treehouse", Status: ToolInstallFailed, Err: errors.New("timeout")}
-	want := "INSTALL_FAILED: treehouse — timeout"
-	if got := d.String(); got != want {
-		t.Errorf("ToolDiagnostic.String() = %q, want %q", got, want)
-	}
-}
-
-func TestToolDiagnostic_String_Installed(t *testing.T) {
-	d := ToolDiagnostic{Tool: "no-mistakes", Status: ToolInstalled}
-	want := "INSTALLED: no-mistakes"
 	if got := d.String(); got != want {
 		t.Errorf("ToolDiagnostic.String() = %q, want %q", got, want)
 	}

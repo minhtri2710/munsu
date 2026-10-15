@@ -4,9 +4,9 @@ This document details the soldier supervision loop. For the high-level step, see
 
 ## Watch loop (`munsu watch`)
 
-The watcher is a singleton persistent event-driven daemon. It queues actionable wake reasons and continues polling until stopped.
+The watcher is a singleton persistent event-driven daemon. It polls every 5 s, queues actionable wake reasons in the durable queue and continues polling until stopped.
 
-- **Ensure:** `munsu watch ensure [--restart]`
+- **Ensure:** `munsu watch ensure [--restart]` returns within the beacon timeout (3 s), plus up to 2 s to stop a holder on `--restart` or a stalled holder, with the watcher state (`attached`, `healthy` or `failed`). Neither `watch ensure` nor `watch run` prints `signal:`, `stale:`, `check:` or `heartbeat` lines or notifies on completion.
 - **Run once:** `munsu watch run`
 - **Status:** `munsu watch status`
 - **Stop:** `munsu watch stop`
@@ -17,7 +17,7 @@ The watcher is a singleton persistent event-driven daemon. It queues actionable 
 
 Reports from soldiers and captains reach the General only as queued wakes; nothing writes a report into the General pane.
 
-Under herdr with a claude General, `munsu session-start` records `general-pane` and `wake-delivery-mode=herdr`, and the watcher daemon submits each queued wake to the General pane as a `[mu-system:wake]` prompt when the General is idle with an empty composer. The prompt carries `key`, `claim_id`, `event_id`, the wake line and the exact command to run: handle the wake, then `munsu wake resolve --claim-id <claim_id> --event-id <event_id> --summary <text>` with a non-empty summary. Read ground truth with `munsu soldier-state <id>`, not a raw status tail.
+Under herdr with a claude General, `munsu session-start` records `general-pane` and `wake-delivery-mode=herdr`, and the watcher daemon submits each queued wake to the General pane as a `[mu-system:wake]` prompt when the General is idle with an empty composer. The prompt carries `key`, `claim_id`, `event_id`, the wake line and the exact command to run: handle the wake, then `munsu wake resolve --claim-id <claim_id> --event-id <event_id> --summary <text>` with a non-empty summary. Read ground truth with `munsu task show <id>`, not a raw status tail.
 
 A dispatch refused before the claim leaves the wake queued: AFK is on, the harness is not claude, the composer holds input or is not recognized, or the General is busy. A failure after the claim (the prompt is not accepted) leaves the wake claimed until its 300 s lease expires, after which the next `munsu wake claim` reclaims it. `munsu inbox` shows queued and claimed wakes.
 
@@ -29,7 +29,7 @@ On any other backend or harness nothing is delivered. Claim under a lease, then 
 
 ```sh
 munsu wake claim --consumer <id>     # claim a bounded batch under a lease
-munsu soldier-state <id>             # read ground truth, not a raw status tail
+munsu task show <id>                 # read ground truth, not a raw status tail
 munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>
 munsu wake ack <lease-id> <event-id> # or consume an event without a summary
 ```
@@ -48,13 +48,16 @@ Run `munsu guard` after every fleet action. It checks for:
 
 ## Away mode (`munsu afk`)
 
-When stepping away from the fleet, start the away-mode daemon:
+When the Human steps away, run `munsu afk` in its own pane. The foreground daemon takes the identity lock `state/.afk.lock`, sets the consent flag `state/.afk`, clears stale `state/.seen-*` and `state/.subsuper-*` markers, then every 30 s triages wakes into the batched digest `state/.afk-digest` (flushed every 60 s; `afk-digest-window` overrides). A stale or missing watcher beat adds one `[wedge]` entry per incident, so keep the watcher running. The daemon never repairs, merges, approves or writes to the General's pane; the watcher's wake dispatch defers every wake while `state/.afk` exists. SIGTERM/SIGINT stops it and clears the flag and lock. Every operation is scoped to one `MUNSU_HOME`.
+
+On return:
 
 ```sh
-munsu afk
+munsu afk return        # stop the daemon, print escalations and blocked items, settle drained report wakes
+munsu afk return check  # exit 0 when clean, non-zero while actionable state remains
 ```
 
-This sets an AFK flag and polls the fleet at a reduced cadence. Only general-relevant events (done, failed, needs-decision) are printed. Stop with SIGTERM/SIGINT; the flag is cleared on stop.
+`munsu afk return` is idempotent. A scout report whose task it could not complete is listed with `munsu task done <id>`, to run once the cause is fixed; a report it could not settle is listed with `munsu teardown <id> --force`.
 
 ## Stuck soldier recovery
 
@@ -63,6 +66,6 @@ If a soldier is unresponsive, do not re-implement recovery logic here. Run `muns
 1. `munsu peek <id>` — read last N lines.
 2. `munsu send <id> "<instruction>"` — steer.
 3. Interrupt (harness-specific: Ctrl+C via tmux/herdr send-keys).
-4. `munsu teardown <id> --force` then `munsu spawn <id> <project>` — relaunch.
+4. `munsu teardown <id> --force` then `munsu spawn <id>` — relaunch.
    Teardown retains the task data directory and any report under its generation-bound name.
 5. Append `failed:` only after all above exhausted.

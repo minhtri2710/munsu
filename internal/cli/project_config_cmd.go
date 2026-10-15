@@ -58,7 +58,7 @@ func toolEntryKey(get func(config.ProjectOverlay) *config.ToolEntry, set func(*c
 				set(o, &entry)
 			}
 			if err := config.ValidateProjectTools(*o); err != nil {
-				return usageError("invalid_value", "Pass a supported review or forge tool entry", err.Error())
+				return usageError("invalid_value", "Pass a supported tool entry", err.Error())
 			}
 			return nil
 		},
@@ -131,8 +131,8 @@ var projectOverlayKeys = map[string]projectOverlayKey{
 			return nil
 		},
 	},
-	"review": toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Review }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Review = entry }),
-	"forge":  toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Forge }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Forge = entry }),
+	"forge":    toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Forge }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Forge = entry }),
+	"worktree": toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Worktree }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Worktree = entry }),
 }
 
 // projectOverlayKeyNames returns the settable overlay keys in stable order for

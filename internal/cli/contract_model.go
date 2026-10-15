@@ -56,13 +56,9 @@ type TaskObserve struct {
 	Description         string `json:"description,omitempty"`
 	Branch              string `json:"branch,omitempty"`
 	PaneAlive           *bool  `json:"pane_alive,omitempty"`
-	NoMistakesStep      string `json:"no_mistakes_step,omitempty"`
 	StatusLines         int    `json:"status_lines,omitempty"`
 	StatusLogSuperseded bool   `json:"status_log_superseded,omitempty"`
-	PRState             string `json:"pr_state,omitempty"`
 	PR                  string `json:"pr,omitempty"`
-	PRHead              string `json:"pr_head,omitempty"`
-	PRUnverifiedReason  string `json:"pr_unverified_reason,omitempty"`
 }
 
 // FleetSnapshot is the fleet state with cheap aggregate counts.
@@ -76,7 +72,7 @@ type FleetSnapshot struct {
 	UnresolvedHolds int             `json:"unresolved_holds,omitempty"`
 }
 
-// CaptainGuidance is return-channel action note for renderers and bearings
+// CaptainGuidance is return-channel action note for renderers
 // (munsu captain_guidance analog).
 type CaptainGuidance struct {
 	Note              string `json:"note"`
@@ -85,10 +81,10 @@ type CaptainGuidance struct {
 	ReturnChannelNote string `json:"return_channel_note,omitempty"`
 }
 
-// DefaultCaptainGuidance returns the static General bearings note for captains.
+// DefaultCaptainGuidance returns the static General note for captains.
 func DefaultCaptainGuidance() CaptainGuidance {
 	return CaptainGuidance{
-		Note:              "For kind=captain, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority.",
+		Note:              "For kind=captain, the fleet view selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority.",
 		Watch:             "read status/doc return channel; do not routinely munsu peek a captain for answers",
 		Send:              "munsu send captain:<id> '<request>'",
 		ReturnChannelNote: "Captain answers come back through parent state/captain:<id>.status (and optional docs) after a marked munsu send request.",
@@ -445,24 +441,23 @@ type TaskEntry struct {
 
 // ProjectEntry is one row in a project list.
 type ProjectEntry struct {
-	Name        string `json:"name"`
-	Yolo        bool   `json:"yolo,omitempty"`
-	Description string `json:"description,omitempty"`
-	Added       string `json:"added,omitempty"`
-	Directory   string `json:"directory,omitempty"`
+	Name      string `json:"name"`
+	Yolo      bool   `json:"yolo,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Added     string `json:"added,omitempty"`
+	Directory string `json:"directory,omitempty"`
 }
 
 // SafetyCheckData is the structured safety assessment result.
 // Both block and gate_refused MUST always serialize (no omitempty)
 // because the TS parseSafetyCheck helper requires typeof boolean checks.
 type SafetyCheckData struct {
-	Identity       string `json:"identity"`
-	GateCapability string `json:"gate_capability"`
-	CanonicalPath  string `json:"canonical_path,omitempty"`
-	GateRefused    bool   `json:"gate_refused"`
-	Block          bool   `json:"block"`
-	Reason         string `json:"reason,omitempty"`
-	Error          string `json:"error,omitempty"`
+	Identity      string `json:"identity"`
+	CanonicalPath string `json:"canonical_path,omitempty"`
+	GateRefused   bool   `json:"gate_refused"`
+	Block         bool   `json:"block"`
+	Reason        string `json:"reason,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // WatchStatus reports the bounded watcher health and status.

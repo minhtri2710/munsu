@@ -165,7 +165,7 @@ func TestWriteMeta(t *testing.T) {
 		"harness":  "pi",
 		"model":    "claude-sonnet-4-20250515",
 		"kind":     "ship",
-		"mode":     "no-mistakes",
+		"mode":     "direct-PR",
 		"yolo":     "off",
 	}
 
@@ -201,7 +201,7 @@ func TestReadMeta(t *testing.T) {
 	dir := filepath.Join(tmp, "state")
 	os.MkdirAll(dir, 0755)
 	metaFile := filepath.Join(dir, "test-task-2.meta")
-	content := "window=@42\nworktree=/tmp/wt\nproject=munsu\nharness=pi\nmodel=claude-sonnet-4-20250515\nkind=ship\nmode=no-mistakes\nyolo=off\n"
+	content := "window=@42\nworktree=/tmp/wt\nproject=munsu\nharness=pi\nmodel=claude-sonnet-4-20250515\nkind=ship\nmode=direct-PR\nyolo=off\n"
 	if err := os.WriteFile(metaFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestReadMeta(t *testing.T) {
 		"harness":  "pi",
 		"model":    "claude-sonnet-4-20250515",
 		"kind":     "ship",
-		"mode":     "no-mistakes",
+		"mode":     "direct-PR",
 		"yolo":     "off",
 	}
 	for k, v := range expected {

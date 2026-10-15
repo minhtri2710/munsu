@@ -47,7 +47,6 @@ func TestDefaultCharter_ForbiddenActions(t *testing.T) {
 		"Never spawn",
 		"Never invent work beyond",
 		"after committing, push the task branch to `origin` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
-		"after committing, push the task branch to `no-mistakes` without `-u` or `--set-upstream` (they write Git config, which is not yours to change)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(charter, check) {
@@ -63,6 +62,9 @@ func TestDefaultCharter_ReportCommand(t *testing.T) {
 	}
 	if !strings.Contains(charter, "terminal") {
 		t.Error("DefaultCharter must mention terminal reporting")
+	}
+	if !strings.Contains(charter, `munsu report <state> "<msg>" [--key <slug>]`) {
+		t.Error("DefaultCharter must show --key as optional, as the brief and munsu report do")
 	}
 }
 
@@ -251,9 +253,6 @@ func TestSkillAuthorityClass_DeniedByList(t *testing.T) {
 	}
 	if got := SkillAuthorityClass("captain-provisioning", ""); got != "captain" {
 		t.Errorf("captain-provisioning = %q, want 'captain' (denied)", got)
-	}
-	if got := SkillAuthorityClass("no-mistakes", ""); got != "captain" {
-		t.Errorf("no-mistakes = %q, want 'captain' (denied)", got)
 	}
 	if got := SkillAuthorityClass("harness-adapters", ""); got != "captain" {
 		t.Errorf("harness-adapters = %q, want 'captain' (denied)", got)
@@ -480,11 +479,9 @@ func TestFailClosedDuringLaunch_RequiredSkillBinaryPresent(t *testing.T) {
 // only where the charter actually mandates the tool.
 func TestFailClosedDuringLaunch_RequiredSkillGateIsModeScoped(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	for _, mode := range []string{"direct-PR", "no-mistakes"} {
-		input := requiredSkillLaunchInput(t, mode, SkillEntry{Name: shipRequiredSkill, Applicable: true})
-		if err := FailClosedDuringLaunch(input); err == nil {
-			t.Errorf("mode %q: expected hard fail on missing required skill", mode)
-		}
+	direct := requiredSkillLaunchInput(t, "direct-PR", SkillEntry{Name: shipRequiredSkill, Applicable: true})
+	if err := FailClosedDuringLaunch(direct); err == nil {
+		t.Error("direct-PR: expected hard fail on missing required skill")
 	}
 
 	local := requiredSkillLaunchInput(t, "local-only", SkillEntry{Name: shipRequiredSkill, Applicable: true})
@@ -627,7 +624,7 @@ func TestBuildLaunchArgs_PiWithoutModelOrEffort(t *testing.T) {
 // =============================================================================
 
 func TestTerminalReport_ExactCommand(t *testing.T) {
-	reminder := terminalReportReminder("test-task-42", "ship", "captain-alpha")
+	reminder := terminalReportReminder("test-task-42", "ship", "direct-PR", "captain-alpha")
 	// Must contain exact command without literal brackets.
 	if !strings.Contains(reminder, `munsu report done "PR {url}" --key test-task-42`) {
 		t.Errorf("terminal report must contain exact command, got:\n%s", reminder)
@@ -636,9 +633,8 @@ func TestTerminalReport_ExactCommand(t *testing.T) {
 	if strings.Contains(reminder, "[--key") {
 		t.Error("terminal report must NOT contain literal brackets around --key")
 	}
-	// Must mention the --key is required.
-	if !strings.Contains(reminder, "REQUIRED") {
-		t.Error("terminal report must state --key is REQUIRED")
+	if !strings.Contains(reminder, `The --key flag is optional; a report without it uses the key "default".`) {
+		t.Error("terminal report must state --key is optional, as munsu report treats it")
 	}
 	// Must reference parent captain.
 	if !strings.Contains(reminder, "captain-alpha") {
@@ -646,17 +642,28 @@ func TestTerminalReport_ExactCommand(t *testing.T) {
 	}
 }
 
-func TestTerminalReport_ExactBytes(t *testing.T) {
-	// Verify exact byte output for the terminal report command.
-	note := terminalReportReminder("x-task", "ship", "x-captain")
-	expected := `munsu report done "PR {url}" --key x-task`
-	if !strings.Contains(note, expected) {
-		t.Errorf("terminal report must contain exact bytes:\nwant: %s\ngot:  %s", expected, note)
+func TestBuildLaunchPrompt_ShipDoneReportFollowsDeliveryMode(t *testing.T) {
+	for _, tc := range []struct{ mode, want, unwanted string }{
+		{"direct-PR", `munsu report done "PR {url}" --key x-task`, `"committed {sha}"`},
+		{"local-only", `munsu report done "committed {sha}" --key x-task`, "PR {url}"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			prompt, _, err := BuildLaunchPrompt(LaunchPromptInput{
+				TaskID: "x-task", TaskKind: "ship", DeliveryMode: tc.mode, ParentCaptainID: "x-captain",
+				WorktreePath: t.TempDir(), HomeDir: "/tmp/home", BriefContent: []byte("# brief\n"), HarnessName: "pi",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(prompt, tc.want) || strings.Contains(prompt, tc.unwanted) {
+				t.Errorf("prompt must contain %s and not %s:\n%s", tc.want, tc.unwanted, prompt)
+			}
+		})
 	}
 }
 
 func TestTerminalReport_ScoutUsesFindingsSummary(t *testing.T) {
-	note := terminalReportReminder("scout-task", "scout", "general")
+	note := terminalReportReminder("scout-task", "scout", "direct-PR", "general")
 	if !strings.Contains(note, `munsu report done "summary of findings location" --key scout-task`) {
 		t.Errorf("scout terminal report must use findings summary, got:\n%s", note)
 	}

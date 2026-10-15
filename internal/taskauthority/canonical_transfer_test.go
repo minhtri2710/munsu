@@ -215,7 +215,6 @@ func TestCanonicalReceiveTransferCarriesDeliveryContract(t *testing.T) {
 	contract := &DeliveryContract{
 		OperationID: "op-contract-src",
 		Mode:        "direct-PR",
-		Review:      DeliveryStep{Baseline: true, ProbeState: "baseline"},
 		Forge:       DeliveryStep{Adapter: "gitlab", Path: "/bin/glab", ProbeState: "ready"},
 		RecordedAt:  100,
 	}
@@ -236,8 +235,8 @@ func TestCanonicalReceiveTransferCarriesDeliveryContract(t *testing.T) {
 	if got.Mode != contract.Mode || got.OperationID != contract.OperationID || got.RecordedAt != contract.RecordedAt {
 		t.Fatalf("contract = %+v, want %+v", got, contract)
 	}
-	if !deliveryStepsEqual(got.Review, contract.Review) || !deliveryStepsEqual(got.Forge, contract.Forge) {
-		t.Fatalf("received steps = %+v/%+v, want %+v/%+v", got.Review, got.Forge, contract.Review, contract.Forge)
+	if !deliveryStepsEqual(got.Forge, contract.Forge) {
+		t.Fatalf("received forge step = %+v, want %+v", got.Forge, contract.Forge)
 	}
 }
 

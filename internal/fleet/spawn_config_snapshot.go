@@ -24,9 +24,10 @@ type SpawnProjectConfig struct {
 	DispatchAutonomy string
 	ProjectName      string
 	ProjectPath      string
-	ReviewStep       taskauthority.DeliveryStep
 	ForgeStep        taskauthority.DeliveryStep
-	Soldier          SpawnSoldierConfig
+	// WorktreeTool is the configured treehouse executable, or "" for git worktree.
+	WorktreeTool string
+	Soldier      SpawnSoldierConfig
 }
 
 func deliveryStep(step fleetconfig.ResolvedStep) taskauthority.DeliveryStep {
@@ -62,8 +63,8 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 // resolveSpawnProjectConfig selects the dispatch profile by taskDesc. The
 // readiness probe passes "" so no profile matches on the project's name.
 func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy, contract *taskauthority.DeliveryContract, taskDesc string) (SpawnProjectConfig, error) {
-	if contract != nil && contract.Mode != taskauthority.DeliveryModeForSteps(contract.Review, contract.Forge) {
-		return SpawnProjectConfig{}, fmt.Errorf("task delivery contract mode disagrees with captured review and forge steps")
+	if contract != nil && contract.Mode != taskauthority.DeliveryModeForForge(contract.Forge) {
+		return SpawnProjectConfig{}, fmt.Errorf("task delivery contract mode disagrees with the captured forge step")
 	}
 	var (
 		snapshot fleetconfig.ResolvedSnapshot
@@ -73,11 +74,11 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	case DispatchPolicyCaptainMediated:
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
 		if err == nil && contract != nil {
-			snapshot, err = snapshot.WithSteps(resolvedStep(contract.Review), resolvedStep(contract.Forge))
+			snapshot, err = snapshot.WithSteps(resolvedStep(contract.Forge))
 		}
 	case DispatchPolicyGeneralDirect:
 		if contract != nil {
-			snapshot, err = resolveCapturedProjectSnapshot(homeDir, args.ProjectName, resolvedStep(contract.Review), resolvedStep(contract.Forge))
+			snapshot, err = resolveCapturedProjectSnapshot(homeDir, args.ProjectName, resolvedStep(contract.Forge))
 		} else {
 			// Resolve the immutable project snapshot without substituting CLI
 			// identities. Explicit flags are assertions about the resolved snapshot,
@@ -98,15 +99,18 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 			fmt.Errorf("published snapshot project %q does not match requested project %q", resolved.Project, args.ProjectName),
 		)
 	}
+	if err := requireReadyWorktree(resolved.WorktreeStep); err != nil {
+		return SpawnProjectConfig{}, err
+	}
 	if err := validateResolvedDispatchProfiles(resolved.DispatchProfiles); err != nil {
 		return SpawnProjectConfig{}, err
 	}
 	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness); err != nil {
 		return SpawnProjectConfig{}, err
 	}
-	// The delivery mode is derived from the captured review and forge steps;
-	// no separate mode decision exists to compose.
-	mode := taskauthority.DeliveryModeForSteps(deliveryStep(resolved.ReviewStep), deliveryStep(resolved.ForgeStep))
+	// The delivery mode is derived from the captured forge step; no separate
+	// mode decision exists to compose.
+	mode := taskauthority.DeliveryModeForForge(deliveryStep(resolved.ForgeStep))
 	selection := resolveSnapshotDispatchSelection(resolved, taskDesc)
 	selection.Harness = firstNonEmpty(args.HarnessFlag, selection.Harness, resolved.SoldierHarness)
 	selection.Model = firstNonEmpty(args.ModelFlag, selection.Model, resolved.Model)
@@ -131,8 +135,8 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 		DispatchAutonomy: resolved.DispatchAutonomy,
 		ProjectName:      resolved.Project,
 		ProjectPath:      resolved.ProjectPath,
-		ReviewStep:       deliveryStep(resolved.ReviewStep),
 		ForgeStep:        deliveryStep(resolved.ForgeStep),
+		WorktreeTool:     resolved.WorktreeStep.Path,
 		Soldier: SpawnSoldierConfig{
 			Harness:  selection.Harness,
 			Model:    selection.Model,

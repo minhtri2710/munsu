@@ -19,7 +19,8 @@ type ScaffoldOptions struct {
 	Repo        string // project/repo name
 	Scout       bool   // generate scout brief instead of ship brief
 	Review      bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
-	Mode        string // delivery mode (no-mistakes / direct-PR / local-only)
+	Task        string // the task description, written in place of {TASK}
+	Mode        string // delivery mode (direct-PR / local-only)
 	Yolo        bool   // yolo mode
 	ScoutScope  string
 	ReviewTask  string // the ship task a reviewer reads
@@ -52,7 +53,15 @@ func Scaffold(opts ScaffoldOptions) error {
 	if err != nil {
 		return err
 	}
+	content = strings.ReplaceAll(content, "{TASK}", opts.Task)
 	path := filepath.Join(dir, "brief.md")
+	if old, err := os.ReadFile(path); err == nil {
+		if filled := testImpactSection(string(old)); filled != "" && !strings.Contains(filled, "{TEST_IMPACT}") {
+			if fresh := testImpactSection(content); fresh != "" {
+				content = strings.Replace(content, fresh, filled, 1)
+			}
+		}
+	}
 	// A fenced captain writes its briefs, so it can leave a link here; the
 	// rename replaces the link and never writes through it.
 	if err := home.AtomicWrite(path, []byte(content), 0o644); err != nil {
@@ -63,6 +72,22 @@ func Scaffold(opts ScaffoldOptions) error {
 		return fmt.Errorf("refreshing brief directory: %w", err)
 	}
 	return nil
+}
+
+// testImpactSection returns the ship brief's Test-impact map section, from its
+// heading up to the Definition of done heading or the end, or "" when the
+// brief has none.
+func testImpactSection(brief string) string {
+	const heading = "## Test-impact map\n"
+	start := strings.Index(brief, heading)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(brief[start+len(heading):], "\n## Definition of done\n")
+	if end < 0 {
+		return brief[start:]
+	}
+	return brief[start : start+len(heading)+end+1]
 }
 
 // buildBrief assembles the brief markdown template.
@@ -99,7 +124,7 @@ func buildBrief(opts ScaffoldOptions) (string, error) {
 
 // shipBriefTemplate returns the ship-mode brief template. The delivery rules
 // are selected by the exact delivery mode: an empty or unknown mode is a
-// resolution failure, not a licence to render no-mistakes rules, so it fails
+// resolution failure, not a licence to render another mode's rules, so it fails
 // loud instead of silently briefing the soldier for the wrong contract.
 func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 	modeLine := fmt.Sprintf("Delivery mode: %s", mode)
@@ -107,27 +132,17 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 		modeLine += " +yolo"
 	}
 
-	setupStep := ""
 	deliveryRules := ""
 	switch mode {
 	case "direct-PR":
 		deliveryRules = `## Delivery
 	Commit the completed change. Push the task branch and open a PR. Do not use ` + "`-u`" + ` or ` + "`--set-upstream`" + `; they write Git config, which is not yours to change.
-	Never run no-mistakes for this task. Never merge the PR.
+	Never merge the PR.
 `
 	case "local-only":
 		deliveryRules = `## Delivery
 	Commit locally and stop for orchestrator merge.
-	Do not push, open a PR, run no-mistakes, or merge the change yourself.
-`
-	case "no-mistakes":
-		setupStep = "2. Run `no-mistakes doctor`.\n"
-		deliveryRules = `## Delivery
-	You drive no-mistakes by responding to its gates, not by implementing fixes.
-	Follow ` + "`no-mistakes axi run --help`" + ` and the help lines in each AXI response.
-	Do not hand-edit findings while a run is active; the pipeline applies fixes.
-	Escalate ask-user findings through the task status protocol and answer gates with ` + "`no-mistakes axi respond`" + `; avoid ` + "`--yes`" + `.
-	Commit the completed change, then start the no-mistakes run by pushing ` + "`git push no-mistakes HEAD:refs/heads/mu/" + id + "`" + `; after the pipeline reports CI green, append ` + "`done: PR {url} checks green`" + ` and stop.
+	Do not push, open a PR, or merge the change yourself.
 `
 	default:
 		return "", fmt.Errorf("ship brief for %s: unknown delivery mode %q", id, mode)
@@ -140,12 +155,12 @@ func shipBriefTemplate(id, repo, mode string, yolo bool) (string, error) {
 ## Setup
 You are in a disposable git worktree of %s, at a detached HEAD on a clean default branch.
 
-**Verify isolation before anything else.** Run `+"`"+`pwd -P`+"`"+` and `+"`"+`git rev-parse --show-toplevel`+"`"+`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path, not the primary checkout munsu operates from.
+**Verify isolation before anything else.** Run `+"`"+`pwd -P`+"`"+` and `+"`"+`git rev-parse --show-toplevel`+"`"+`; both must resolve to the disposable task worktree you were launched in, not the primary checkout munsu operates from.
 The path check is authoritative: `+"`"+`git rev-parse --git-dir`+"`"+` and `+"`"+`git rev-parse --git-common-dir`+"`"+` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append `+"`"+`blocked: launched in primary checkout, not an isolated worktree`+"`"+` to the status file and stop.
 
 1. First action: create your branch, or switch to it if it already exists at this base: `+"`"+`git checkout -b mu/%[3]s || git checkout mu/%[3]s`+"`"+`
-%s
+
 %s
 
 ## Rules
@@ -158,8 +173,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
    would act on and the needs-decision/blocked/paused/done/failed states.
 5. If you hit the same obstacle twice, run `+"`"+`munsu report blocked "{why}"`+"`"+` and stop; munsu will help.
 6. If a decision belongs to a human, run `+"`"+`munsu report needs-decision "{summary of options}"`+"`"+` and stop.
-7. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
-8. Never stop, restart, or update the shared `+"`"+`no-mistakes`+"`"+` daemon - it is one instance serving every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes daemon error, append `+"`"+`blocked: {the daemon error}`+"`"+` and stop; only munsu manages the daemon.
+7. To close an open wake key, append the line `+"`"+`resolved [key=<slug>]: {summary}`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
 
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
@@ -176,7 +190,7 @@ Put the done evidence in the message body of a commit on your branch; the Review
 - For each new function, type or module, a reuse-search row: the code search you ran before writing it (`+"`"+`semble`+"`"+` or `+"`"+`zg`+"`"+`), the query and the hits, and why no hit served.
 When delivery is complete, run `+"`"+`munsu report done "{summary}"`+"`"+` and stop.
 Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`.
-`, id, repo, id, setupStep, modeLine+"\n"+deliveryRules), nil
+`, id, repo, id, modeLine+"\n"+deliveryRules), nil
 }
 
 // scoutBriefTemplate returns the scout-mode brief template. Scaffold
@@ -220,7 +234,7 @@ that answers for this generation; never read or reuse another generation's.
 2. Stay inside this worktree; modify nothing outside it.
 3. Report status via `+"`"+`munsu report`+"`"+`:
    `+"`"+`munsu report <state> "<msg>" [--key <slug>]`+"`"+`
-4. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
+4. To close an open wake key, append the line `+"`"+`resolved [key=<slug>]: {summary}`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
 `, id, scope, repo, id, ReportName(gen), modeLine), nil
@@ -315,7 +329,7 @@ func LintBrief(homeDir, id, kind string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; re-scaffold it with 'munsu brief' before spawning", id, strings.Join(missing, ", "))
+		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; restore the sections munsu task add wrote before spawning", id, strings.Join(missing, ", "))
 	}
 	return nil
 }

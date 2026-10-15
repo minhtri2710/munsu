@@ -63,12 +63,7 @@ func DefaultCharter(taskID, taskKind, deliveryMode, scaffold string) string {
 		planScaffold = guidedPlanScaffold
 	}
 	bt := "`"
-	doneMessage := "PR {url}"
-	doneDescription := "committed, pushed, and PR open (no merge)"
-	if taskKind == taskauthority.KindScout {
-		doneMessage = "summary of findings location"
-		doneDescription = "scout report complete"
-	}
+	doneMessage, doneDescription := doneReport(taskKind, deliveryMode)
 	return fmt.Sprintf(`# Soldier Charter
 
 **Version: %[1]s**
@@ -89,12 +84,11 @@ Your authority is bounded by the task brief and this charter.
 3. Create only the task-local branch %[5]smu/%[2]s%[5]s from the worktree's detached HEAD.
 4. Use `+bt+`git add`+bt+` and `+bt+`git commit`+bt+` only for task-local changes on that branch.
 5. In `+bt+`direct-PR`+bt+` mode, after committing, push the task branch to `+bt+`origin`+bt+` without `+bt+`-u`+bt+` or `+bt+`--set-upstream`+bt+` (they write Git config, which is not yours to change) and open a PR.
-6. In `+bt+`no-mistakes`+bt+` mode, after committing, push the task branch to `+bt+`no-mistakes`+bt+` without `+bt+`-u`+bt+` or `+bt+`--set-upstream`+bt+` (they write Git config, which is not yours to change) and start the pipeline.
-7. Use gh-axi for GitHub operations and never merge a PR.
-8. Use `+bt+`munsu report`+bt+` for terminal state reporting.
-8a. Use `+bt+`munsu inbox receive`+bt+` and `+bt+`munsu inbox ack`+bt+` for commands sent to you.
-9. Read `+bt+`AGENTS.md`+bt+` before making edits.
-10. Track durable progress with `+bt+`munsu report`+bt+`, not with files of your own in the munsu home's `+bt+`state/`+bt+`: your fence refuses them.
+6. Use gh-axi for GitHub operations and never merge a PR.
+7. Use `+bt+`munsu report`+bt+` for terminal state reporting.
+7a. Use `+bt+`munsu inbox receive`+bt+` and `+bt+`munsu inbox ack`+bt+` for commands sent to you.
+8. Read `+bt+`AGENTS.md`+bt+` before making edits.
+9. Track durable progress with `+bt+`munsu report`+bt+`, not with files of your own in the munsu home's `+bt+`state/`+bt+`: your fence refuses them.
 
 ## Forbidden Actions
 
@@ -106,11 +100,10 @@ You MUST NOT:
 4. Never spawn other Soldiers or Captains.
 5. Never invent work beyond the task brief.
 6. Never poll or sleep-loop waiting for input.
-7. Never run no-mistakes in direct-PR or local-only mode.
-8. Never modify runtime-owned charter, brief, or envelope files.
-9. Never run %[5]smunsu spawn%[5]s, %[5]smunsu captain%[5]s, or other orchestrator commands.
-10. Never use raw %[5]sgh pr merge%[5]s.
-11. Never run a background job. One exception: one command at a time, a check
+7. Never modify runtime-owned charter, brief, or envelope files.
+8. Never run %[5]smunsu spawn%[5]s, %[5]smunsu captain%[5]s, or other orchestrator commands.
+9. Never use raw %[5]sgh pr merge%[5]s.
+10. Never run a background job. One exception: one command at a time, a check
     this charter or your brief names, may run as your runtime's own background
     task with a runtime task id. It is never detached (no %[5]snohup%[5]s,
     %[5]ssetsid%[5]s, %[5]sdisown%[5]s, trailing %[5]s&%[5]s, or scheduler), is awaited through
@@ -118,14 +111,14 @@ You MUST NOT:
     stopped only by its own task id. Send no report until it has ended, then
     name its task id, command, how it started, end state, and exit code. Every
     other background job stays banned.
-12. When a test contradicts the spec or the brief's acceptance boundary, run
+11. When a test contradicts the spec or the brief's acceptance boundary, run
     %[5]smunsu report needs-decision%[5]s quoting both and stop; never edit that test to
     agree with the code, and never special-case production code to make it pass.
 
 ## Validation Scope
 
 Local runs are light and scoped to the change. Heavy and full suites (race,
-integration, e2e, lifecycle_integration, guards, deadcode, citations) run on
+integration, guards, deadcode) run on
 GitHub CI at the PR. This overrides any "full suite by default" instruction in
 your own context. A heavy proof outside these, such as a mutant run, a generated
 or exhaustive input sweep, an added e2e suite or a benchmark, enters acceptance
@@ -149,7 +142,7 @@ A test you add or change follows these rules:
 - Your task ID is %[5]s$MUNSU_TASK_ID%[5]s.
 - Your home is at %[5]s$MUNSU_HOME%[5]s.
 - After any context compaction, re-read %[5]s.soldier-charter.md%[5]s before your next action.
-- Terminal reporting: %[5]smunsu report <state> "<msg>" --key <slug>%[5]s
+- Terminal reporting: %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s
   - Report material phases with --key <slug> so later done/failed/resolved supersede them.
   - States: working, needs-decision, blocked, paused, done, failed, resolved.
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
@@ -204,6 +197,18 @@ The task is complete only when:
 Do not merge the PR.
 
 `, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription, keptTestRules, planScaffold)
+}
+
+// doneReport returns the message a soldier's terminal done report carries and
+// what it means, by task kind and delivery mode.
+func doneReport(taskKind, deliveryMode string) (message, meaning string) {
+	switch {
+	case taskKind == taskauthority.KindScout:
+		return "summary of findings location", "scout report complete"
+	case deliveryMode == "local-only":
+		return "committed {sha}", "committed on your branch, not pushed (the orchestrator merges it)"
+	}
+	return "PR {url}", "committed, pushed, and PR open (no merge)"
 }
 
 // reviewerCharter returns the charter of the read-only reviewer seat. The

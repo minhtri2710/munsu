@@ -19,13 +19,6 @@ import (
 )
 
 func TestInvalidClosedSetInputsRefuse(t *testing.T) {
-	t.Run("install tool", func(t *testing.T) {
-		err := installTool("unknown-tool")
-		if err == nil || !strings.Contains(err.Error(), "no automatic install") {
-			t.Fatalf("installTool error = %v, want unsupported tool refusal", err)
-		}
-	})
-
 	scopeCases := []struct {
 		name string
 		call func() error
@@ -77,7 +70,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) 
 	t.Setenv("TMUX", "/tmp/tmux-xxx/default")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +84,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +103,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 	testutil.WriteFakeExecutable(t, filepath.Join(fakeBin, "tmux"), "#!/bin/sh\nexit 0")
 	testutil.PrependPath(t, fakeBin)
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +122,7 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	// Env must not shadow the persisted typed Backend.
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,12 +149,45 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: published snapshot)")
+}
+
+func TestCheckSessionBackendReadsConfiguredBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name, backend, onPath string
+		want                  SubsystemStatus
+		detail                string
+	}{
+		{"configured and on PATH", "herdr", "herdr", StatusCurrent, "backend herdr configured, found on PATH"},
+		{"configured, missing from PATH", "herdr", "tmux", StatusAbsent, "backend herdr configured, herdr not found on PATH"},
+		{"not configured", "", "tmux", StatusAbsent, "no session backend configured"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.backend != "" {
+				if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+					SchemaVersion: config.FleetBaseSchemaVersion,
+					Config:        config.FleetBaseConfig{Backend: tc.backend},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bin := t.TempDir()
+			testutil.WriteFakeExecutable(t, filepath.Join(bin, tc.onPath), "#!/bin/sh\nexit 0")
+			t.Setenv("PATH", bin)
+			t.Setenv("HERDR_ENV", "1")
+
+			got := checkSessionBackend(home)
+			if got.Status != tc.want || !strings.Contains(got.Detail, tc.detail) {
+				t.Fatalf("checkSessionBackend = %s (%s), want %s (%s)", got.Status, got.Detail, tc.want, tc.detail)
+			}
+		})
+	}
 }
 
 func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
@@ -171,7 +197,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil, nil)
+	result, err := Run(home, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +214,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 
 func TestRun_BaseConfigErr(t *testing.T) {
 	missing := t.TempDir()
-	result, err := Run(missing, false, nil, nil)
+	result, err := Run(missing, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +234,7 @@ func TestRun_BaseConfigErr(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte(body), 0644); err != nil {
 				t.Fatal(err)
 			}
-			result, err := Run(home, false, nil, nil)
+			result, err := Run(home, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -378,7 +404,7 @@ func TestGCOrphanDataDirs_WriterInterleavingKeepsBrief(t *testing.T) {
 	setDirMtime(t, dataDir, 48*time.Hour)
 	wrapped := func(taskID string, reclaim func() error) (bool, error) {
 		if err := auth.WriteTaskDataArtifactByID(tid.Value(), func() error {
-			return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "no-mistakes"})
+			return fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "direct-PR"})
 		}); err != nil {
 			return false, err
 		}
@@ -442,7 +468,7 @@ func TestGCOrphanDataDirs_ScaffoldedBriefKeepsTerminalTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	setDirMtime(t, dataDir, 48*time.Hour)
-	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "no-mistakes"}); err != nil {
+	if err := fleet.Scaffold(fleet.ScaffoldOptions{HomeDir: homeDir, ID: id, Repo: "munsu", Mode: "direct-PR"}); err != nil {
 		t.Fatal(err)
 	}
 	cleaned := gcOrphanDataDirs(homeDir, func(id string, reclaim func() error) (bool, error) {
@@ -650,7 +676,7 @@ func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
 	}
 	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
 
-	result, err := Run(home, true, nil, nil)
+	result, err := Run(home, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

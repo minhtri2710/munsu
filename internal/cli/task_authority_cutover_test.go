@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -35,6 +36,18 @@ func initCLITestHome(t *testing.T, homeDir string) {
 	t.Helper()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// registerCLITestProject registers name, over a fleet base, as a project at
+// an empty directory, so task add can resolve it and write its brief.
+func registerCLITestProject(t *testing.T, homeDir, name string) {
+	t.Helper()
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRoot(t, "project", "add", name, t.TempDir(), "--home", homeDir); err != nil {
+		t.Fatalf("project add %s: %v\n%s", name, err, out)
 	}
 }
 
@@ -78,6 +91,7 @@ func mustCanonicalOp(t *testing.T, id string, intent domain.Intent) domain.Opera
 func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
@@ -102,11 +116,12 @@ func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "original", "--home", homeDir}); err != nil {
+	registerCLITestProject(t, homeDir, "munsu")
+	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "original", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("first add: %v\n%s", err, out)
 	}
 	beforeCurrent := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "beta", "current.json"))
-	if _, err := runTaskCommand(t, []string{"task", "add", "beta", "changed", "--home", homeDir}); err == nil {
+	if _, err := runTaskCommand(t, []string{"task", "add", "beta", "changed", "--repo", "munsu", "--home", homeDir}); err == nil {
 		t.Fatal("duplicate task add succeeded")
 	} else if !errors.Is(err, taskauthority.ErrConflict) {
 		t.Fatalf("duplicate add error = %v, want task conflict", err)
@@ -125,9 +140,11 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "proj-a")
+	registerCLITestProject(t, homeDir, "munsu")
 	for _, args := range [][]string{
 		{"task", "add", "alpha", "first", "--kind", "scout", "--scope", "investigate proj-a", "--repo", "proj-a", "--home", homeDir},
-		{"task", "add", "beta", "second", "--kind", "ship", "--home", homeDir},
+		{"task", "add", "beta", "second", "--kind", "ship", "--repo", "munsu", "--home", homeDir},
 	} {
 		if out, err := runTaskCommand(t, args); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, out)
@@ -159,7 +176,7 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 	if e := byID["alpha"]; e.Kind != "scout" || e.Project != "proj-a" || e.Status != "queued" {
 		t.Fatalf("alpha entry = %+v", e)
 	}
-	if e := byID["beta"]; e.Kind != "ship" || e.Project != "-" || e.Status != "queued" {
+	if e := byID["beta"]; e.Kind != "ship" || e.Project != "munsu" || e.Status != "queued" {
 		t.Fatalf("beta entry = %+v", e)
 	}
 	if _, ok := byID["ghost"]; ok {
@@ -172,6 +189,7 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "canonical description", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
@@ -246,6 +264,7 @@ func seedAuthorityTask(t *testing.T, auth *taskauthority.Canonical, id string) {
 		Owner:       "owner",
 		Description: "work",
 		Kind:        "ship",
+		Project:     mustProjectID(t, "munsu"),
 		Reason:      "test seed",
 	}
 	op := mustCanonicalOp(t, "op-create-seed-"+id, req)
@@ -272,4 +291,13 @@ func mustTaskIDFor(t *testing.T, value string) domain.TaskID {
 		t.Fatal(err)
 	}
 	return tid
+}
+
+func mustProjectID(t *testing.T, name string) domain.ProjectID {
+	t.Helper()
+	pid, err := domain.NewProjectID(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pid
 }

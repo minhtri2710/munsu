@@ -8,14 +8,12 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ReviewDiff runs `munsu review-diff` for the given task.
 // It compares the soldier branch against the authoritative base and prints
-// a Markdown diff summary. It uses the stored delivery identity when available
-// rather than reconstructing from the current branch state.
+// a Markdown diff summary against the worktree's default branch.
 func ReviewDiff(homeDir string, id string) error {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
@@ -46,28 +44,15 @@ func ReviewDiff(homeDir string, id string) error {
 		return fmt.Errorf("detecting current branch: %w", err)
 	}
 
-	// Resolve authoritative base using stored identity if available
-	base := ""
-
-	ident, _ := domain.IdentityFromMeta(meta)
-	if ident != nil && ident.BaseRef != "" {
-		// Diff against the stored identity's base branch as the worktree's
-		// origin remote knows it.
-		base = "origin/" + ident.BaseRef
-	} else {
-		// Use default branch
-		def, derr := backend.DefaultBranch(worktreePath)
-		if derr != nil {
-			return fmt.Errorf("cannot detect default branch: %w", derr)
-		}
-		base = def.Ref
-
-		// Warn if the local default branch, when there is one, is stale vs origin
-		if def.Ref == def.Name {
-			warn, werr := checkDefaultBranchStale(worktreePath, def.Name)
-			if werr == nil && warn != "" {
-				fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
-			}
+	def, err := backend.DefaultBranch(worktreePath)
+	if err != nil {
+		return fmt.Errorf("cannot detect default branch: %w", err)
+	}
+	base := def.Ref
+	if def.Ref == def.Name {
+		warn, werr := checkDefaultBranchStale(worktreePath, def.Name)
+		if werr == nil && warn != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
 		}
 	}
 

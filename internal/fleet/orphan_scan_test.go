@@ -150,16 +150,17 @@ func TestRuntimeTmpdirOracleResolvesOnlyRunScopedDirectories(t *testing.T) {
 	}
 }
 
-func TestInspectOrphansFailsWhenProcessInventoryUnsupported(t *testing.T) {
+func TestInspectOrphansFailsWhenProcessInventoryFails(t *testing.T) {
+	inventoryErr := errors.New("process table unreadable")
 	fence := CompositeWriterFence{
 		Artifacts: &fakeArtifactScanner{snapshots: [][]WriterArtifact{nil}},
-		Processes: fakeFailingProcessInventory{err: ErrProcessInventoryUnsupported},
+		Processes: fakeFailingProcessInventory{err: inventoryErr},
 		Verifier:  &fakeProcessVerifier{dead: true},
 		Marked:    fakeMarkerInventory{scan: MarkerScan{Total: 5}},
 		Oracle:    fakeRunOracle{},
 	}
 	_, err := fence.InspectOrphans(t.TempDir())
-	if err == nil || !errors.Is(err, ErrProcessInventoryUnsupported) {
-		t.Fatalf("expected ErrProcessInventoryUnsupported when process inventory fails, got %v", err)
+	if !errors.Is(err, inventoryErr) {
+		t.Fatalf("expected the process inventory error, got %v", err)
 	}
 }

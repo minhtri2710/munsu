@@ -1,11 +1,9 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -42,8 +40,7 @@ type gitCommandSafety struct {
 func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
-	mode := gitSafetyBackslashMode()
-	return evaluateGitScriptSafety(homeDir, taskID, command, 0, namesIFS(mode, command, 0), &gitShell{path: checkPath, functions: &shellFunctions{}})
+	return evaluateGitScriptSafety(homeDir, taskID, command, 0, namesIFS(command, 0), &gitShell{path: checkPath, functions: &shellFunctions{}})
 }
 
 // namesIFS reports whether any decoded word of command names IFS, at every
@@ -53,25 +50,25 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 // at one depth reaches a payload the same shell runs (eval, source), so the
 // guard reads it once for the whole command. A name built from a variable's
 // value is not read.
-func namesIFS(mode backslashMode, command string, depth int) bool {
+func namesIFS(command string, depth int) bool {
 	stripped, feeds := splitHeredocBodies(command)
 	var payloads []string
 	for _, feed := range feeds {
 		payloads = append(payloads, feed.text)
 	}
-	for _, segment := range tokenizeSegments(mode, stripped) {
+	for _, segment := range tokenizeSegments(backslashEscapes, stripped) {
 		for _, token := range candidateTokens(segment) {
 			if strings.Contains(token.text, "IFS") {
 				return true
 			}
-			if readsAsMoreThanItself(mode, token) {
+			if readsAsMoreThanItself(token) {
 				payloads = append(payloads, token.text)
 			}
 		}
 	}
 	if depth < maxShellPayloadDepth {
 		for _, payload := range payloads {
-			if namesIFS(mode, payload, depth+1) {
+			if namesIFS(payload, depth+1) {
 				return true
 			}
 		}
@@ -94,7 +91,6 @@ const maxShellPayloadDepth = 4
 // function set (evaluateGitPayloadSafety). A call to a
 // function whose body moves the directory leaves it unknown.
 func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs bool, shell *gitShell) (bool, string) {
-	mode := gitSafetyBackslashMode()
 	stripped, feeds := splitHeredocBodies(command)
 	var payloads []string
 	for _, feed := range feeds {
@@ -116,7 +112,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 		calls          int
 	}
 	var subshells []shellDir
-	segments := tokenizeSegments(mode, stripped)
+	segments := tokenizeSegments(backslashEscapes, stripped)
 	for _, segment := range segments {
 		if segment[0].unmodeledFunctionHead {
 			return true, "function name is not modeled; git mutation cannot be checked"
@@ -161,7 +157,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 		// or which word a parameter expansion substitutes.
 		reread := make(map[string]bool)
 		for _, token := range candidateTokens(segment) {
-			if reread[token.text] || !readsAsMoreThanItself(mode, token) {
+			if reread[token.text] || !readsAsMoreThanItself(token) {
 				continue
 			}
 			reread[token.text] = true
@@ -169,7 +165,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 				return true, reason
 			}
 		}
-		for _, command := range segmentGitCommands(shell.path, segment, mode) {
+		for _, command := range segmentGitCommands(shell.path, segment) {
 			if shell.path == "" {
 				return true, "shell directory cannot be determined; git mutation cannot be checked"
 			}
@@ -180,7 +176,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 				return true, reason
 			}
 		}
-		evals, ok := evalPayloads(mode, segment)
+		evals, ok := evalPayloads(backslashEscapes, segment)
 		if !ok {
 			return true, "shell word has too many readings; git mutation cannot be checked"
 		}
@@ -203,7 +199,7 @@ func evaluateGitScriptSafety(homeDir, taskID, command string, depth int, ifs boo
 			if move == movePush {
 				shell.stack = &dirStack[string]{top: shell.path, next: shell.stack}
 			}
-			shell.previous, shell.path = shell.path, gitCdPath(mode, shell.path, operand.text)
+			shell.previous, shell.path = shell.path, gitCdPath(shell.path, operand.text)
 		case movePrevious:
 			shell.previous, shell.path = shell.path, shell.previous
 		case movePop:
@@ -285,8 +281,8 @@ func evaluateGitEvalSafety(homeDir, taskID string, evals []shellPayload, depth i
 // expansion that substitutes a word. An expandable word is not read again for
 // its expansions, which are already its alternates. A plain word ends the
 // recursion.
-func readsAsMoreThanItself(mode backslashMode, token shellToken) bool {
-	segments := tokenizeSegments(mode, token.text)
+func readsAsMoreThanItself(token shellToken) bool {
+	segments := tokenizeSegments(backslashEscapes, token.text)
 	// A word holding a substitution that does not end reads again as itself
 	// and its unfinished rest.
 	if n := len(segments); n == 2 && segments[1][0].unfinished {
@@ -325,7 +321,7 @@ func segmentWords(segment []shellToken) []string {
 func evaluateGitArgvSafety(checkPath string, gitArgs []string) (bool, string) {
 	homeDir := strings.TrimSpace(os.Getenv("MUNSU_HOME"))
 	taskID := strings.TrimSpace(os.Getenv("MUNSU_TASK_ID"))
-	parsed := walkGitArgs(checkPath, gitArgs, gitSafetyBackslashMode())
+	parsed := walkGitArgs(checkPath, gitArgs)
 	if !parsed.mutating {
 		return false, ""
 	}
@@ -411,38 +407,11 @@ func validateGitMutationAuthority(taskID string, g gitCommandSafety, binding *ta
 			return ""
 		}
 	case "push":
-		taskHead, err := gitSafetyOutput(binding.Path, "rev-parse", "--verify", "refs/heads/"+taskBranch)
-		if err != nil {
-			return "git mutation task branch head unavailable: " + err.Error()
+		if pushTargetAllowed(taskBranch, g.args) {
+			return ""
 		}
-		remote, refspec, allowed := pushTargetAllowed(taskBranch, taskHead, g.args)
-		if !allowed {
-			return "default Ship authority permits only task-local branch, add, commit, and push"
-		}
-		if remote == "no-mistakes" {
-			if _, err := gitSafetyOutput(binding.Path, "config", "--get", "remote.no-mistakes.url"); err != nil {
-				return "no-mistakes push target unavailable: remote.no-mistakes.url is not configured"
-			}
-			if refspec == "" {
-				if err := validateNoMistakesPushMapping(binding.Path, taskBranch); err != nil {
-					return "no-mistakes push target unavailable: " + err.Error()
-				}
-			}
-		}
-		return ""
 	}
 	return "default Ship authority permits only task-local branch, add, commit, and push"
-}
-
-func validateNoMistakesPushMapping(worktree, taskBranch string) error {
-	configured, err := gitSafetyOutput(worktree, "config", "--get-all", "remote.no-mistakes.push")
-	if err != nil {
-		return fmt.Errorf("remote.no-mistakes.push must explicitly name the task branch")
-	}
-	if strings.Contains(configured, "\n") || !pushRefspecAllowed(taskBranch, configured) {
-		return fmt.Errorf("remote.no-mistakes.push must name only the current task branch")
-	}
-	return nil
 }
 
 // gitCommandPath is a git command the classifier read on some path through
@@ -476,7 +445,7 @@ const (
 // same state with different targets merge into one ambiguous path, so the
 // walk grows with positions, never with the paths through them, and both
 // readings of the words after a verb are ranges of shared arrays.
-func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMode) []gitCommandPath {
+func segmentGitCommands(checkPath string, segment []shellToken) []gitCommandPath {
 	// A redirection is no git argument, wherever it stands (`git 2>/dev/null push`).
 	segment, _ = withoutRedirections(segment)
 	nodes := segmentCandidates(segment)
@@ -531,10 +500,10 @@ func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMo
 						reach(step.next, r.state, path)
 					}
 				case gitOptionValue:
-					applyGitOptionValue(&path.g, r.state.option, word, mode)
+					applyGitOptionValue(&path.g, r.state.option, word)
 					reach(step.next, gitWalkState{phase: gitGlobalOptions}, path)
 				case gitGlobalOptions:
-					takesValue, isVerb := gitGlobalOption(&path.g, word, mode)
+					takesValue, isVerb := gitGlobalOption(&path.g, word)
 					switch {
 					case isVerb:
 						tail := written[step.from:]
@@ -569,11 +538,11 @@ func segmentGitCommands(checkPath string, segment []shellToken, mode backslashMo
 // selectors and the leading global options that take a separate value, so the
 // value is not mis-read as the git verb, then records the verb and whether it
 // mutates.
-func walkGitArgs(checkPath string, gitArgs []string, mode backslashMode) gitCommandSafety {
+func walkGitArgs(checkPath string, gitArgs []string) gitCommandSafety {
 	g := gitCommandSafety{isGit: true, targetPath: checkPath}
 	for len(gitArgs) > 0 {
 		arg := gitArgs[0]
-		takesValue, isVerb := gitGlobalOption(&g, arg, mode)
+		takesValue, isVerb := gitGlobalOption(&g, arg)
 		switch {
 		case isVerb:
 			g.verb = arg
@@ -581,7 +550,7 @@ func walkGitArgs(checkPath string, gitArgs []string, mode backslashMode) gitComm
 			fillGitCommandDetails(&g)
 			return g
 		case takesValue && len(gitArgs) > 1:
-			applyGitOptionValue(&g, arg, gitArgs[1], mode)
+			applyGitOptionValue(&g, arg, gitArgs[1])
 			gitArgs = gitArgs[2:]
 		default:
 			gitArgs = gitArgs[1:]
@@ -593,7 +562,7 @@ func walkGitArgs(checkPath string, gitArgs []string, mode backslashMode) gitComm
 // gitGlobalOption reads arg in git's global-option position. It applies an
 // option that carries its value in the same word, and reports whether arg
 // takes the next word as its value or is the verb.
-func gitGlobalOption(g *gitCommandSafety, arg string, mode backslashMode) (bool, bool) {
+func gitGlobalOption(g *gitCommandSafety, arg string) (bool, bool) {
 	switch {
 	case arg == "-C" || arg == "--git-dir" || arg == "--work-tree":
 		return true, false
@@ -604,11 +573,11 @@ func gitGlobalOption(g *gitCommandSafety, arg string, mode backslashMode) (bool,
 		// `push` and slip the mutation through as an unknown verb.
 		return true, false
 	case strings.HasPrefix(arg, "-C") && len(arg) > 2:
-		g.targetPath = resolveSafetyPathWithMode(g.targetPath, arg[2:], mode)
+		g.targetPath = resolveSafetyPath(g.targetPath, arg[2:])
 	case strings.HasPrefix(arg, "--git-dir="):
-		g.gitDir = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--git-dir="), mode)
+		g.gitDir = resolveSafetyPath(g.targetPath, strings.TrimPrefix(arg, "--git-dir="))
 	case strings.HasPrefix(arg, "--work-tree="):
-		g.workTree = resolveSafetyPathWithMode(g.targetPath, strings.TrimPrefix(arg, "--work-tree="), mode)
+		g.workTree = resolveSafetyPath(g.targetPath, strings.TrimPrefix(arg, "--work-tree="))
 		g.targetPath = g.workTree
 	case strings.HasPrefix(arg, "-"):
 	default:
@@ -619,14 +588,14 @@ func gitGlobalOption(g *gitCommandSafety, arg string, mode backslashMode) (bool,
 
 // applyGitOptionValue applies value as the separate value of the global
 // option gitGlobalOption reported takes one.
-func applyGitOptionValue(g *gitCommandSafety, option, value string, mode backslashMode) {
+func applyGitOptionValue(g *gitCommandSafety, option, value string) {
 	switch option {
 	case "-C":
-		g.targetPath = resolveSafetyPathWithMode(g.targetPath, value, mode)
+		g.targetPath = resolveSafetyPath(g.targetPath, value)
 	case "--git-dir":
-		g.gitDir = resolveSafetyPathWithMode(g.targetPath, value, mode)
+		g.gitDir = resolveSafetyPath(g.targetPath, value)
 	case "--work-tree":
-		g.workTree = resolveSafetyPathWithMode(g.targetPath, value, mode)
+		g.workTree = resolveSafetyPath(g.targetPath, value)
 		g.targetPath = g.workTree
 	}
 }
@@ -712,56 +681,32 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	return ""
 }
 
-// pushTargetAllowed reads a push argv. taskHead is the current head of the task
-// branch; only the no-mistakes gate remote may take no-mistakes. push options,
-// --no-verify, and a full-sha source refspec equal to that head.
-func pushTargetAllowed(taskBranch, taskHead string, args []string) (string, string, bool) {
+// pushTargetAllowed allows only origin, one refspec naming the task branch, and
+// the flags pushFlagAllowed names.
+// Words: Human, typed, 2026-10-15: "xóa no-mistake đi, nó chỉ là 1 plugin tích hợp rời nếu user cần thui"
+func pushTargetAllowed(taskBranch string, args []string) bool {
 	remote := ""
 	refspec := ""
-	gateOnly := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
+	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
-			switch {
-			case arg == "-o" || arg == "--push-option":
-				i++
-				if i >= len(args) || !strings.HasPrefix(args[i], "no-mistakes.") {
-					return "", "", false
-				}
-				gateOnly = true
-			case strings.HasPrefix(arg, "--push-option="):
-				if !strings.HasPrefix(strings.TrimPrefix(arg, "--push-option="), "no-mistakes.") {
-					return "", "", false
-				}
-				gateOnly = true
-			case strings.HasPrefix(arg, "-o") && !strings.HasPrefix(arg, "--"):
-				if !strings.HasPrefix(arg[2:], "no-mistakes.") {
-					return "", "", false
-				}
-				gateOnly = true
-			case arg == "--no-verify":
-				gateOnly = true
-			case !pushFlagAllowed(arg):
-				return "", "", false
+			if !pushFlagAllowed(arg) {
+				return false
 			}
 			continue
 		}
 		if remote == "" {
-			if arg != "origin" && arg != "no-mistakes" {
-				return "", "", false
+			if arg != "origin" {
+				return false
 			}
 			remote = arg
 			continue
 		}
-		if refspec != "" || !(pushRefspecAllowed(taskBranch, arg) || (remote == "no-mistakes" && pushShaRefspecAllowed(taskBranch, taskHead, arg))) {
-			return "", "", false
+		if refspec != "" || !pushRefspecAllowed(taskBranch, arg) {
+			return false
 		}
 		refspec = arg
 	}
-	if gateOnly && remote != "no-mistakes" {
-		return "", "", false
-	}
-	return remote, refspec, remote != "" && (refspec != "" || remote == "no-mistakes")
+	return remote != "" && refspec != ""
 }
 
 func pushFlagAllowed(flag string) bool {
@@ -778,13 +723,6 @@ func pushRefspecAllowed(taskBranch, refspec string) bool {
 		return true
 	}
 	return false
-}
-
-// pushShaRefspecAllowed accepts only <full-sha>:refs/heads/<task> where the sha
-// is the task branch's current head.
-func pushShaRefspecAllowed(taskBranch, taskHead, refspec string) bool {
-	sha, dest, ok := strings.Cut(refspec, ":")
-	return ok && sha == taskHead && dest == "refs/heads/"+taskBranch
 }
 
 // worktreeCommandWrites reports whether `git worktree <args>` may write. Only
@@ -884,28 +822,11 @@ func gitSafetyOutput(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func resolveSafetyPathWithMode(base, path string, mode backslashMode) string {
+func resolveSafetyPath(base, path string) string {
 	if filepath.IsAbs(path) {
-		// Under the escape reading a Windows drive/UNC path must not be
-		// short-circuited to absolute on a Windows host: backslashes stay
-		// shell escapes, so the path is relative and joined under base. This
-		// keeps the function's result determined by mode, not by GOOS.
-		if mode == backslashEscapes && isWindowsAbsolutePath(path) {
-			return filepath.Join(base, path)
-		}
-		return path
-	}
-	if mode == backslashLiteral && isWindowsAbsolutePath(path) {
 		return path
 	}
 	return filepath.Join(base, path)
-}
-
-func isWindowsAbsolutePath(path string) bool {
-	if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
-		return true
-	}
-	return strings.HasPrefix(path, `\\`)
 }
 
 func canonicalSafetyPathRuntime(path string) string {
@@ -918,13 +839,6 @@ func canonicalSafetyPathRuntime(path string) string {
 		return filepath.Clean(abs)
 	}
 	return filepath.Clean(resolved)
-}
-
-func gitSafetyBackslashMode() backslashMode {
-	if runtime.GOOS == "windows" {
-		return backslashLiteral
-	}
-	return backslashEscapes
 }
 
 // hasGitCommandSubstitution reports a command, process or bash 5.3
@@ -941,9 +855,9 @@ func hasGitCommandSubstitution(command string) bool {
 
 // gitCdPath returns the directory a cd to operand moves to from currentPath,
 // "" when currentPath is unknown and operand is relative to it.
-func gitCdPath(mode backslashMode, currentPath, operand string) string {
+func gitCdPath(currentPath, operand string) string {
 	if currentPath == "" && !filepath.IsAbs(operand) {
 		return ""
 	}
-	return resolveSafetyPathWithMode(currentPath, operand, mode)
+	return resolveSafetyPath(currentPath, operand)
 }

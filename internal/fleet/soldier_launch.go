@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,7 +94,7 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 		b.WriteString(skillSection)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(terminalReportReminder(input.TaskID, input.TaskKind, input.ParentCaptainID))
+	b.WriteString(terminalReportReminder(input.TaskID, input.TaskKind, input.DeliveryMode, input.ParentCaptainID))
 
 	prompt := b.String()
 
@@ -175,8 +177,8 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 }
 
 // terminalReportReminder returns the exact terminal report command
-// that the Soldier must use. The --key is required, not optional.
-func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
+// that the Soldier must use.
+func terminalReportReminder(taskID, taskKind, deliveryMode, parentCaptainID string) string {
 	bt := "`"
 	if taskKind == taskauthority.KindReview {
 		return `## Verdict Requirement
@@ -184,12 +186,7 @@ func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 End your work by writing the verdict file ` + bt + `$MUNSU_VERDICT_FILE` + bt + ` (one JSON object with the fields ` + verdictFileShape(bt) + `) to a sibling named ` + bt + `$MUNSU_VERDICT_FILE.tmp.<pid>.<hex>` + bt + ` (a number, then lowercase hex digits) and renaming that over the verdict file, then stop.
 You run no ` + bt + `munsu report` + bt + `; the verdict file is your whole output.`
 	}
-	doneMessage := "PR {url}"
-	doneDescription := "task complete, PR open (no merge)"
-	if taskKind == taskauthority.KindScout {
-		doneMessage = "summary of findings location"
-		doneDescription = "scout report complete"
-	}
+	doneMessage, doneDescription := doneReport(taskKind, deliveryMode)
 	return fmt.Sprintf(`## Terminal Report Requirement
 
 When the task is complete, you MUST execute exactly:
@@ -199,7 +196,7 @@ When the task is complete, you MUST execute exactly:
 This is the authoritative terminal report signal to your parent Captain (%[3]s).
 Do not use any other command or mechanism for terminal reporting.
 
-The --key flag is REQUIRED and must match the task ID exactly.
+The --key flag is optional; a report without it uses the key "default".
 
 Summary of report states:
 - %[4]smunsu report working "..." --key <slug>%[4]s — material phase
@@ -310,6 +307,9 @@ type LaunchArtifactInput struct {
 	// SeatEnv is the seat's launch environment, read once and committed with
 	// the intent: the seat temp is built from its TempDir.
 	SeatEnv taskauthority.SeatEnv
+	// HomeID is the canonical identity of the dispatching home; it keys the
+	// seat temp with the task and generation.
+	HomeID string
 }
 
 // buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
@@ -428,7 +428,7 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 	// words=selected, G1085: "Quy tắc chung (Recommended): Seat có fence không bao
 	// giờ ghi chương trình hay cấu hình mà tiến trình ngoài fence sẽ chạy, và không
 	// gửi input vào session ngoài session của nó."
-	seatTemp := filepath.Join(in.SeatEnv.TempDir, "munsu-seat-"+labelComponent(in.TaskID)+"-"+in.Generation)
+	seatTemp := seatTempDir(in.SeatEnv.TempDir, in.HomeID, in.TaskID, in.Generation)
 	caches := []struct{ name, dir string }{
 		{"npm_config_cache", "npm-cache"}, {"npm_config_store_dir", "npm-store"},
 		{"PIP_CACHE_DIR", "pip-cache"}, {"UV_CACHE_DIR", "uv-cache"}, {"XDG_CACHE_HOME", "xdg-cache"},
@@ -485,6 +485,14 @@ func prepareLaunchArtifact(in LaunchArtifactInput, createProjectSettings bool) (
 		artifact: LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity, Posture: posture},
 		bytes:    content,
 	}, nil
+}
+
+// seatTempDir is the seat's tool-cache root under its launch TMPDIR, one per
+// home, exact task ID and generation; retirement removes it. The label is for
+// reading only: the digest keys it.
+func seatTempDir(tempDir, homeID, taskID, generation string) string {
+	sum := sha256.Sum256([]byte(homeID + "\x00" + taskID))
+	return filepath.Join(tempDir, "munsu-seat-"+labelComponent(taskID)+"-"+hex.EncodeToString(sum[:16])+"-"+generation)
 }
 
 func publishPreparedFile(path string, want []byte, perm os.FileMode) error {
@@ -799,7 +807,7 @@ func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
 	if taskKind == taskauthority.KindScout || taskKind == taskauthority.KindReview {
 		return false
 	}
-	return deliveryMode == "direct-PR" || deliveryMode == "no-mistakes"
+	return deliveryMode == "direct-PR"
 }
 
 // FailClosedDuringLaunch returns an error when a pre-session-allocation check

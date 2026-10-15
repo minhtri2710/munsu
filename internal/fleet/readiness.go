@@ -11,9 +11,9 @@ import (
 )
 
 // SoldierHarnessPreflight is the harness half of a soldier launch's readiness:
-// the binary and auth preflight a fenced claude seat logs in with. Spawn refuses
-// on the same result before any worktree, endpoint, or process exists; doctor
-// asks the same question without spawning.
+// the binary check and the harness CLI's own readiness command, asked the way a
+// fenced claude seat logs in. Spawn refuses on the same result before any
+// worktree, endpoint, or process exists; doctor asks without spawning.
 func SoldierHarnessPreflight(homeDir, harnessName string) error {
 	var claudeSeat *harness.ClaudeSeat
 	if harnessName == harness.Claude && fence.Supported() == nil {
@@ -30,8 +30,8 @@ func SoldierHarnessPreflight(homeDir, harnessName string) error {
 	if result.BinaryOnPath == harness.PreflightAbsent {
 		return &harness.PreflightError{Harness: harnessName, Reason: "binary-absent"}
 	}
-	if result.AuthConfigured == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: harnessName, Reason: "auth-absent"}
+	if result.Ready == harness.PreflightAbsent {
+		return &harness.PreflightError{Harness: harnessName, Reason: "not-ready", Detail: result.ReadyDetail}
 	}
 	return nil
 }
@@ -73,8 +73,7 @@ type ProjectReadiness struct {
 }
 
 // ProbeProjectReadiness runs the preflights a General-direct spawn of project
-// would run, in spawn's order: the no-mistakes gate, the delivery mode, and the
-// harness. The dispatch profile is selected with no task, so no profile matches
+// would run, in spawn's order: the delivery mode and the harness. The dispatch profile is selected with no task, so no profile matches
 // on the project's name. It reads project configuration and probes tools; it
 // mutates nothing.
 func ProbeProjectReadiness(homeDir, project string) (ProjectReadiness, error) {
@@ -91,9 +90,6 @@ func ProbeProjectReadiness(homeDir, project string) (ProjectReadiness, error) {
 }
 
 func defaultLaunchError(homeDir string, cfg SpawnProjectConfig) error {
-	if err := reviewPreflight(cfg.Soldier.Mode, cfg.ProjectPath, cfg.ReviewStep, defaultNoMistakesPreflight); err != nil {
-		return err
-	}
 	if err := deliveryPreflight(cfg.Soldier.Mode, cfg.ProjectPath, cfg.ForgeStep); err != nil {
 		return err
 	}
@@ -101,7 +97,7 @@ func defaultLaunchError(homeDir string, cfg SpawnProjectConfig) error {
 }
 
 // launchHarnessError is the harness half of a spawn's preflight: the binary
-// and auth check, then the verified launch contract.
+// and readiness check, then the verified launch contract.
 func launchHarnessError(homeDir, harnessName string) error {
 	if err := SoldierHarnessPreflight(homeDir, harnessName); err != nil {
 		return err

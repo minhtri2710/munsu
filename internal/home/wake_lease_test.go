@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -109,8 +108,7 @@ func TestClaimWakesEmptyQueueDoesNotCreateLease(t *testing.T) {
 }
 
 // TestClaimWakesClaimsAndRemovesQueue exercises the close-before-remove path on
-// the host: after a full claim the queue file must be gone (which on Windows
-// requires the read handle to be closed first) and a second claim must find
+// the host: after a full claim the queue file must be gone and a second claim must find
 // nothing, proving the claimed wakes are not re-delivered (#549).
 func TestClaimWakesClaimsAndRemovesQueue(t *testing.T) {
 	home := t.TempDir()
@@ -218,20 +216,9 @@ func TestClaimWakesRemovalErrorPropagated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from failed queue removal, got nil")
 	}
-	// On Windows, MakeDirectoryReadOnly sets a deny-write DACL on stateDir that denies
-	// FILE_ADD_FILE (0x2). ClaimWakes opens the lock with os.OpenFile(O_CREATE|O_RDWR),
-	// and O_CREATE maps to the Win32 OPEN_ALWAYS disposition, whose create-access check is
-	// performed against the parent stateDir. That parent-directory check is refused by the
-	// FILE_ADD_FILE denial before the lock's own DACL is consulted, so the failure surfaces
-	// at "opening wake claim lock". This is independent of ACE inheritance and of whether
-	// .wake-claim.lock already existed (it was written before MakeDirectoryReadOnly). It was
-	// empirically confirmed on windows-latest in GitHub Actions run 33141246285. On POSIX,
-	// chmod 0500 on stateDir permits opening the pre-created lock file, so the refusal instead
-	// surfaces at os.Remove(qPath) with "removing claimed wake queue".
+	// chmod 0500 on stateDir permits opening the pre-created lock file, so the
+	// refusal surfaces at os.Remove(qPath) with "removing claimed wake queue".
 	wantSubstring := "removing claimed wake queue"
-	if runtime.GOOS == "windows" {
-		wantSubstring = "opening wake claim lock"
-	}
 	if !strings.Contains(err.Error(), wantSubstring) {
 		t.Fatalf("unexpected error: %v, want substring %q", err, wantSubstring)
 	}

@@ -9,13 +9,11 @@ import (
 	"testing"
 )
 
-// bootPath is PATH as it stood before any test rewrote it. Windows fake
-// installation resolves and records the shell from this path before the fake
-// is launched, so changing PATH for one fixture cannot affect another.
+// bootPath is PATH as it stood before any test rewrote it, so changing PATH
+// for one fixture cannot affect which bash another resolves.
 var bootPath = os.Getenv("PATH")
 
-// WriteFakeExecutableAt writes script as a POSIX shell program at path and
-// installs any platform-native launcher needed to resolve that fake by name.
+// WriteFakeExecutableAt writes script as a POSIX shell program at path.
 func WriteFakeExecutableAt(path, script string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -23,23 +21,17 @@ func WriteFakeExecutableAt(path, script string) error {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		return err
 	}
-	return installWindowsFake(path)
+	return nil
 }
 
-// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning the
-// platform-resolvable path that runs the fake -- see FakeExecutablePath.
+// WriteFakeExecutable is WriteFakeExecutableAt for a test, returning the path
+// that runs the fake.
 func WriteFakeExecutable(t *testing.T, path, script string) string {
 	t.Helper()
 	if err := WriteFakeExecutableAt(path, script); err != nil {
 		t.Fatalf("fake %s: %v", filepath.Base(path), err)
 	}
-	return FakeExecutablePath(path)
-}
-
-// FakeExecutablePath returns the platform-resolvable path that runs the fake
-// written at path.
-func FakeExecutablePath(path string) string {
-	return fakeExecutablePath(path)
+	return path
 }
 
 // FakeOnPath installs one fake program in a fresh directory and prepends that
@@ -61,52 +53,9 @@ func PrependPath(t *testing.T, dirs ...string) {
 
 // SetPath replaces PATH with exactly dirs for the duration of the test, for
 // fixtures that decide presence by what they installed and nothing else.
-//
-// Both helpers exist because the separator is not ":" everywhere: a fixture
-// that hardcodes it builds one unsplittable PATH entry on windows, and every
-// fake it installed is then absent for a reason that has nothing to do with
-// the contract under test (#549 group 1).
 func SetPath(t *testing.T, dirs ...string) {
 	t.Helper()
 	t.Setenv("PATH", strings.Join(dirs, string(os.PathListSeparator)))
-}
-
-// resolvePOSIXShell picks the interpreter the windows shim hands its script
-// to, searching searchPath. It prefers a shell already on that path and
-// otherwise derives one from a Git for Windows install on PATH, which ships
-// the same shell.
-// Finding none is an error rather than a skip: it means the fake would never
-// run, which is a fact about the machine, not a behaviour windows lacks.
-func resolvePOSIXShell(searchPath string) (string, error) {
-	if p := findOnPath(searchPath, "sh.exe", "bash.exe"); p != "" {
-		return p, nil
-	}
-	if git := findOnPath(searchPath, "git.exe"); git != "" {
-		root := filepath.Dir(filepath.Dir(git)) // ...\Git\cmd or ...\Git\bin -> ...\Git
-		for _, rel := range [][]string{{"usr", "bin", "sh.exe"}, {"bin", "sh.exe"}, {"usr", "bin", "bash.exe"}, {"bin", "bash.exe"}} {
-			if p := filepath.Join(append([]string{root}, rel...)...); isExecutable(p) {
-				return p, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no POSIX shell for the windows fake-binary shim on PATH=%s: %w", searchPath, errors.ErrUnsupported)
-}
-
-func resolveGitBash(searchPath string) (string, []string, bool) {
-	git := findOnPath(searchPath, "git.exe")
-	if git == "" {
-		return "", nil, false
-	}
-	root := filepath.Dir(filepath.Dir(git))
-	usrBin := filepath.Join(root, "usr", "bin")
-	bin := filepath.Join(root, "bin")
-	if bash := filepath.Join(usrBin, "bash.exe"); isExecutable(bash) {
-		return bash, existingDirs(usrBin, bin), true
-	}
-	if bash := filepath.Join(bin, "bash.exe"); isExecutable(bash) {
-		return bash, existingDirs(usrBin, bin), true
-	}
-	return "", nil, false
 }
 
 func findOnPath(searchPath string, names ...string) string {
@@ -120,33 +69,31 @@ func findOnPath(searchPath string, names ...string) string {
 	return ""
 }
 
-func existingDirs(dirs ...string) []string {
-	out := make([]string, 0, len(dirs))
-	for _, dir := range dirs {
-		if st, err := os.Stat(dir); err == nil && st.IsDir() {
-			out = append(out, dir)
-		}
+func isExecutable(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0
+}
+
+func resolveBashShell(searchPath string) (string, []string, error) {
+	candidates := []string{"/bin/bash", "/usr/bin/bash"}
+	if p := findOnPath(searchPath, "bash"); p != "" {
+		candidates = append(candidates, p)
 	}
-	return out
+	return resolveBashCandidates(searchPath, candidates, "bash", "cat", "mkdir")
 }
 
-type bashCandidate struct {
-	shell         string
-	preferredDirs []string
-}
-
-func resolveBashCandidates(searchPath string, candidates []bashCandidate, names ...string) (string, []string, error) {
+func resolveBashCandidates(searchPath string, candidates []string, names ...string) (string, []string, error) {
 	var firstErr error
-	for _, candidate := range candidates {
-		if !isExecutable(candidate.shell) {
+	for _, shell := range candidates {
+		if !isExecutable(shell) {
 			continue
 		}
-		dirs, err := completeBashDirs(searchPath, candidate.shell, candidate.preferredDirs, names...)
+		dirs, err := completeBashDirs(searchPath, shell, names...)
 		if err == nil {
-			return candidate.shell, dirs, nil
+			return shell, dirs, nil
 		}
 		if firstErr == nil {
-			firstErr = fmt.Errorf("bash candidate %s: %w", candidate.shell, err)
+			firstErr = fmt.Errorf("bash candidate %s: %w", shell, err)
 		}
 	}
 	if firstErr != nil {
@@ -155,13 +102,12 @@ func resolveBashCandidates(searchPath string, candidates []bashCandidate, names 
 	return "", nil, fmt.Errorf("no executable bash candidate on PATH=%s: %w", searchPath, errors.ErrUnsupported)
 }
 
-func completeBashDirs(searchPath, shell string, preferred []string, names ...string) ([]string, error) {
-	return completeBashDirsWithFind(searchPath, shell, preferred, findOnPath, names...)
+func completeBashDirs(searchPath, shell string, names ...string) ([]string, error) {
+	return completeBashDirsWithFind(searchPath, shell, findOnPath, names...)
 }
 
-func completeBashDirsWithFind(searchPath, shell string, preferred []string, find func(string, ...string) string, names ...string) ([]string, error) {
-	dirs := appendUnique(nil, existingDirs(preferred...)...)
-	dirs = appendUnique(dirs, filepath.Dir(shell))
+func completeBashDirsWithFind(searchPath, shell string, find func(string, ...string) string, names ...string) ([]string, error) {
+	dirs := []string{filepath.Dir(shell)}
 	lookupPath := strings.Join(append(append([]string{}, dirs...), filepath.SplitList(searchPath)...), string(os.PathListSeparator))
 	for _, name := range names {
 		path := find(lookupPath, name)
@@ -206,8 +152,7 @@ func BashShell(t *testing.T) string {
 }
 
 // BashShellDirs returns ordered, deduplicated fixture PATH directories that
-// resolve bash, cat, and mkdir while preserving preferred support-directory
-// order.
+// resolve bash, cat, and mkdir.
 func BashShellDirs(t *testing.T) []string {
 	t.Helper()
 	_, dirs, err := resolveBashShell(bootPath)

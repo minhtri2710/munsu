@@ -573,11 +573,11 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				t.Fatalf("the error does not keep the underlying cause: %v", err)
 			}
 			msg := err.Error()
-			rerun := "munsu spawn " + taskID + " test-proj"
+			rerun := "munsu spawn " + taskID + "' ("
 			for _, want := range []string{
 				taskID, "backend tmux endpoint pane-1", "may still be running",
 				"fix the cause", rerun, "refuses with its own reason", "re-adopts the pane only while the pane is live",
-				"stop pane pane-1 on backend tmux by hand",
+				"munsu teardown " + taskID, "munsu task reopen " + taskID,
 			} {
 				if !strings.Contains(msg, want) {
 					t.Fatalf("error %q does not contain %q", msg, want)
@@ -639,7 +639,6 @@ type runFixture struct {
 func newRunFixture(t *testing.T, taskID string) *runFixture {
 	t.Helper()
 	isolateHuman(t)
-	t.Setenv("OPENAI_API_KEY", "test")
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir()) // not a linked worktree, so spawn authority passes
 	homeDir := t.TempDir()
@@ -659,7 +658,7 @@ func newRunFixture(t *testing.T, taskID string) *runFixture {
 	}
 	counter := filepath.Join(t.TempDir(), "harness-launches.log")
 	harnessDir := t.TempDir()
-	testutil.WriteFakeExecutable(t, filepath.Join(harnessDir, "pi"), fmt.Sprintf("#!/bin/sh\n[ \"$1\" = --version ] || echo launch >> %q\n", counter))
+	testutil.WriteFakeExecutable(t, filepath.Join(harnessDir, "pi"), fmt.Sprintf("#!/bin/sh\ncase \"$1\" in --version|--list-models) exit 0;; esac\necho launch >> %q\n", counter))
 	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 
 	endpoints := newReentrantEndpoints()
@@ -900,11 +899,11 @@ func TestLaunchRecoveryDeadRecordedEndpointFailsClosedNoReplacement(t *testing.T
 // unreserved get.
 func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
 	f := newLaunchFixture(t, "wt-treehouse")
+	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
+	f.runner.projectConfig.WorktreeTool = fakeTreehouse(t, logPath, "[]", "")
 	if err := f.runner.beginLaunchIntent(); err != nil {
 		t.Fatalf("beginLaunchIntent: %v", err)
 	}
-	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-	fakeTreehouseOnPath(t, logPath, "[]")
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
@@ -927,27 +926,43 @@ func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
 // acquired) left no lease, so the re-entry acquires the reservation as the
 // first attempt does; a reservation a pooled worktree still holds fails closed
 // instead of allocating a replacement (the CLI has no reservation-keyed
-// get/recover — DEPENDENCY_REQUEST evidence).
+// get/recover — DEPENDENCY_REQUEST evidence). The provider is the one the
+// launch intent recorded, even when the project's worktree config has moved.
 func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		holders string // `treehouse status --json`; RES is the launch reservation
-		refused bool
+		name        string
+		holders     string // `treehouse status --json`; RES is the launch reservation
+		refused     bool
+		configMoved bool
+		failReturn  bool
 	}{
-		{"reservation still held", `[{"path":"/pool/held","lease_holder":"RES"}]`, true},
-		{"reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, false},
+		{"reservation still held", `[{"path":"/pool/held","lease_holder":"RES"}]`, true, false, false},
+		{"reservation nothing holds", `[{"path":"/pool/other","lease_holder":"other"}]`, false, false, false},
+		{"recorded treehouse after the worktree config moved", `[]`, false, true, false},
+		{"failure return through the recorded treehouse after the config moved", `[]`, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchFixture(t, "wt-treehouse-reentry")
+			res, _, _, _ := spawnReservationIdentities(f.runner.args.ID, 1)
+			logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
+			repo := ""
+			if tc.configMoved {
+				repo = f.repoPath
+			}
+			tool := fakeTreehouse(t, logPath, strings.ReplaceAll(tc.holders, "RES", res), repo)
+			f.runner.projectConfig.WorktreeTool = tool
 			if err := runLaunchPhases(f, "begin"); !errors.Is(err, errCrashSimulated) {
 				t.Fatalf("first run: %v", err)
 			}
 			if err := f.runner.beginLaunchIntent(); err != nil || !f.runner.launchReentry {
 				t.Fatalf("re-entry beginLaunchIntent = %v, reentry = %v; want the committed intent re-entered", err, f.runner.launchReentry)
 			}
-			res := f.runner.wtReservationID()
-			logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-			fakeTreehouseOnPath(t, logPath, strings.ReplaceAll(tc.holders, "RES", res))
+			if res != f.runner.wtReservationID() {
+				t.Fatalf("reservation = %q, want %q", f.runner.wtReservationID(), res)
+			}
+			if tc.configMoved {
+				f.runner.projectConfig.WorktreeTool = ""
+			}
 			err := f.runner.acquireWorktree()
 			logData, readErr := os.ReadFile(logPath)
 			if readErr != nil && !os.IsNotExist(readErr) {
@@ -969,28 +984,46 @@ func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 			if !strings.Contains(log, "get") || !strings.Contains(log, "--lease-holder "+res) {
 				t.Fatalf("re-entry did not acquire the launch reservation as lease holder: %q", log)
 			}
+			if tc.failReturn {
+				if err := f.runner.returnWorktreeOnFailure(); err != nil {
+					t.Fatalf("returnWorktreeOnFailure: %v", err)
+				}
+				if data, _ := os.ReadFile(logPath); !strings.Contains(string(data), "return --force") {
+					t.Fatalf("failure return did not go through the recorded treehouse: %q", data)
+				}
+				return
+			}
+			if tc.configMoved {
+				bound, err := f.runner.bindWorktree()
+				if err != nil {
+					t.Fatalf("bindWorktree: %v", err)
+				}
+				agg, err := f.auth.Get(mustTaskID(t, f.taskID))
+				if err != nil || agg.Worktree == nil || agg.Worktree.Treehouse != tool {
+					t.Fatalf("binding %+v (err %v, bound %+v) does not record the launch treehouse %q", agg.Worktree, err, bound, tool)
+				}
+			}
 		})
 	}
 }
 
-// fakeTreehouseOnPath installs a fake treehouse CLI that appends its arguments
-// to logPath, answers `status` with holders and every other call with an
-// existing directory as the acquired worktree, and prepends it to PATH for the
-// duration of the test.
-//
-// Without it the provider finds no treehouse on windows, falls back to real
-// `git worktree`, and the test measures git rather than the fake it installed
-// (#549 group 8); testutil.FakeOnPath owns why a shell script needs a companion
-// to be visible there. PATH is prepended to rather than replaced because the
-// fallback this test is trying not to reach still needs to find git.
-func fakeTreehouseOnPath(t *testing.T, logPath, holders string) {
+// fakeTreehouse writes a fake treehouse CLI that appends its arguments to
+// logPath, answers `status` with holders and every other call with the acquired
+// worktree, and returns its path. With repo set the worktree is a real detached
+// git worktree of repo; otherwise an existing directory.
+func fakeTreehouse(t *testing.T, logPath, holders, repo string) string {
 	t.Helper()
-	wt := t.TempDir()
-	if err := os.MkdirAll(wt, 0o755); err != nil {
-		t.Fatal(err)
+	wt := filepath.Join(t.TempDir(), "wt")
+	create := ""
+	if repo == "" {
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		create = fmt.Sprintf("git -C %q worktree add -q --detach %q HEAD >/dev/null 2>&1 || exit 1", repo, wt)
 	}
-	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = status ]; then printf '%%s\\n' '%s'; exit 0; fi\nmkdir -p %q\nprintf '%%s\\n' %q\n", logPath, holders, wt, wt)
-	testutil.FakeOnPath(t, "treehouse", content)
+	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = status ]; then printf '%%s\\n' '%s'; exit 0; fi\nif [ \"$1\" = return ]; then exit 0; fi\n%s\nprintf '%%s\\n' %q\n", logPath, holders, create, wt)
+	return testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), content)
 }
 
 // TestLaunchArtifactGuardProvesSingleProcessLaunches runs the REAL production
@@ -1022,11 +1055,11 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1106,11 +1139,11 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1167,11 +1200,11 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	testutil.SetPath(t, append([]string{harnessDir, filepath.Dir(gitBin), requiredSkillStubDir(t)}, testutil.BashShellDirs(t)...)...)
 	agg := f.aggregate()
 	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,
@@ -1201,11 +1234,12 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 
 // fakeHarnessDir creates a fake harness binary (binName) that appends a
 // marker line to counterPath, so tests can count actual Soldier process
-// launches of the real production artifact.
+// launches of the real production artifact. The preflight's readiness command
+// is not a launch.
 func fakeHarnessDir(t *testing.T, binName, counterPath string) string {
 	t.Helper()
 	dir := t.TempDir()
-	content := fmt.Sprintf("#!/bin/sh\necho launch >> %q\n", counterPath)
+	content := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in --list-models|auth) exit 0;; esac\necho launch >> %q\n", counterPath)
 	testutil.WriteFakeExecutable(t, filepath.Join(dir, binName), content)
 	return dir
 }
@@ -1330,11 +1364,11 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	}
 	agg := f.aggregate()
 	in := LaunchArtifactInput{
-		WorktreePath:   f.runner.wtPath,
-		LaunchDir:      f.runner.wtPath,
-		HomeDir:        f.homeDir,
-		PathDirs:       seatPathDirs(f.homeDir),
-		SeatEnv:        testSeatEnv(),
+		WorktreePath: f.runner.wtPath,
+		LaunchDir:    f.runner.wtPath,
+		HomeDir:      f.homeDir,
+		PathDirs:     seatPathDirs(f.homeDir),
+		HomeID:       "test-home", SeatEnv: testSeatEnv(),
 		TaskID:         f.taskID,
 		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
 		LaunchBin:      f.runner.launchBin,

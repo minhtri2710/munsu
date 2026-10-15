@@ -2,39 +2,62 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestUpdateCaptainsFlagRegistered verifies the --captains flag exists on the
-// update command. This is the one-shot D5 command: self-update + FF captains +
-// nudge. Without the flag, the update command is self-update only.
-func TestUpdateCaptainsFlagRegistered(t *testing.T) {
-	root := NewRootCommand()
-	updateCmd, _, err := root.Find([]string{"update"})
-	if err != nil {
-		t.Fatalf("Find(update): %v", err)
-	}
-	if updateCmd.Flags().Lookup("captains") == nil {
-		t.Fatal("update must register --captains (D5: one-shot self-update + captain FF + nudge)")
-	}
-}
+func TestUpdateCaptainsFlagReachesCaptainStep(t *testing.T) {
+	savedUpdateIn := doUpdateIn
+	doUpdateIn = func(string) error { return nil }
+	t.Cleanup(func() { doUpdateIn = savedUpdateIn })
 
-// TestUpdateCaptainsHelpDocuments verifies --captains is documented in help.
-func TestUpdateCaptainsHelpDocuments(t *testing.T) {
-	root := NewRootCommand()
-	root.SetArgs([]string{"update", "--help"})
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-	if err := root.Execute(); err != nil {
-		t.Fatalf("update --help failed: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "--captains") {
-		t.Errorf("update --help should document --captains, got: %s", out)
-	}
-	if !strings.Contains(out, "captain") {
-		t.Errorf("update --help should mention captain fast-forward behavior, got: %s", out)
+	for _, tc := range []struct {
+		name     string
+		captains bool
+		register bool
+		step     string
+		wantStep bool
+	}{
+		{name: "without --captains stops after self-update", step: "No captains registered", wantStep: false},
+		{name: "with --captains reaches captain step", captains: true, step: "No captains registered", wantStep: true},
+		{name: "with --captains fast-forwards a registered captain", captains: true, register: true, step: "fast-forwarded", wantStep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			if tc.register {
+				parent, _, project := seedUnlaunchedCaptain(t, "update-ff")
+				homeDir = parent
+				if err := os.WriteFile(filepath.Join(project, "NOTES.md"), []byte("advance\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				runGit(t, project, "add", "NOTES.md")
+				runGit(t, project, "commit", "-m", "advance main")
+			}
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, "main")
+			t.Setenv("MUNSU_HOME", homeDir)
+
+			args := []string{"update", "--repo", repo}
+			if tc.captains {
+				args = append(args, "--captains")
+			}
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs(args)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, buf.String())
+			}
+			out := buf.String()
+			if !strings.Contains(out, "Updated munsu to") {
+				t.Fatalf("%v did not report the self-update:\n%s", args, out)
+			}
+			if got := strings.Contains(out, tc.step); got != tc.wantStep {
+				t.Fatalf("%v: %q in output = %t, want %t\n%s", args, tc.step, got, tc.wantStep, out)
+			}
+		})
 	}
 }

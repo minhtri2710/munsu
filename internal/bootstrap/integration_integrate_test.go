@@ -1,5 +1,3 @@
-//go:build !windows
-
 package bootstrap
 
 import (
@@ -449,14 +447,6 @@ func TestSafetyCheck(t *testing.T) {
 	if result.Identity == "" && result.Error == "" {
 		t.Error("SafetyCheck should return identity or error")
 	}
-
-	// With env gate
-	dir := t.TempDir()
-	t.Setenv("NO_MISTAKES_GATE", "1")
-	result = SafetyCheck(dir)
-	if !result.GateRefused {
-		t.Errorf("expected gate refused with NO_MISTAKES_GATE, got identity=%s gate=%s", result.Identity, result.GateCapability)
-	}
 }
 
 // Test CheckPiCapability
@@ -521,20 +511,7 @@ func TestSafetyCheck_FailsClosedOnUnrelated(t *testing.T) {
 	result := SafetyCheck(t.TempDir())
 	// Temp dir with no git repo is "unrelated" and should fail closed
 	if !result.GateRefused {
-		t.Errorf("SafetyCheck(unrelated).GateRefused = false; identity=%s gate=%s", result.Identity, result.GateCapability)
-	}
-}
-
-// Test SafetyCheck with env gate
-func TestSafetyCheck_WithEnvGate(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("NO_MISTAKES_GATE", "1")
-	result := SafetyCheck(dir)
-	if !result.GateRefused {
-		t.Errorf("expected gate refused with NO_MISTAKES_GATE, got identity=%s gate=%s", result.Identity, result.GateCapability)
-	}
-	if result.GateCapability != "gate-present" {
-		t.Errorf("expected gate-present, got %s", result.GateCapability)
+		t.Errorf("SafetyCheck(unrelated).GateRefused = false; identity=%s", result.Identity)
 	}
 }
 
@@ -1974,8 +1951,7 @@ func TestHookMergeRefusesInvalidExistingJSON(t *testing.T) {
 
 // TestHookMergeRefusesUnreadableExistingFile builds an existing hooks file the
 // installer cannot read. Base overwrote it; the refusal must leave it and the
-// manifest alone. This file does not build on windows, where a POSIX mode
-// does not deny reads.
+// manifest alone.
 func TestHookMergeRefusesUnreadableExistingFile(t *testing.T) {
 	for _, name := range []string{"claude", "codex", "grok", "agy"} {
 		t.Run(name, func(t *testing.T) {

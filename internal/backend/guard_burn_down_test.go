@@ -76,23 +76,22 @@ func TestGuardBurnDownHerdrProtocolVersionCachedFailure(t *testing.T) {
 }
 
 func TestGuardBurnDownGetWorktreeReservedRejectsEmptyReservation(t *testing.T) {
-	_, err := GetWorktreeReserved("", "", false, "  ", false)
+	_, err := GetWorktreeReserved("", "", "", false, "  ", false)
 	if err == nil || !strings.Contains(err.Error(), "requires a reservation identity") {
 		t.Fatalf("GetWorktreeReserved error = %v, want empty-reservation refusal", err)
 	}
 }
 
 func TestGuardBurnDownSelectProviderRejectsEmptyHome(t *testing.T) {
-	t.Setenv("PATH", "/dev/null")
-	_, err := selectProvider("")
+	_, err := selectProvider("", "")
 	if err == nil || !strings.Contains(err.Error(), "homeDir is required") {
 		t.Fatalf("selectProvider error = %v, want empty-home refusal", err)
 	}
 }
 
 func TestGuardBurnDownTreehouseGetRefusesEmptyPath(t *testing.T) {
-	writeGuardExecutable(t, "treehouse", "#!/bin/sh\nexit 0\n")
-	_, err := (&treehouseProvider{}).GetReserved(t.TempDir(), false, "reservation", false)
+	bin := writeGuardExecutable(t, "treehouse", "#!/bin/sh\nexit 0\n")
+	_, err := (&treehouseProvider{bin: bin}).GetReserved(t.TempDir(), false, "reservation", false)
 	if err == nil || !strings.Contains(err.Error(), "returned empty path") {
 		t.Fatalf("GetReserved error = %v, want empty-path refusal", err)
 	}

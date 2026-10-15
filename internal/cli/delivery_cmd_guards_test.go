@@ -377,25 +377,24 @@ func runPRMerge(t *testing.T, flags []string, args ...string) error {
 func TestPRMergeAllowsMergedTerminalReconciliation(t *testing.T) {
 	glab, marker := installTerminalGlab(t, "merged")
 	stubGitLabTerminalSnapshot(t, "MERGED")
-	deliveryGuardHome(t, "t-prmerge-terminal-merged", deliveryGuardGitLab(glab))
-	if err := runPRMerge(t, nil, "t-prmerge-terminal-merged", deliveryGuardMRURL); err != nil {
-		t.Fatalf("pr-merge: %v", err)
+	homeDir := deliveryGuardHome(t, "t-prmerge-terminal-merged", deliveryGuardGitLab(glab))
+	err := runPRMerge(t, nil, "t-prmerge-terminal-merged", deliveryGuardMRURL)
+	if err == nil || !strings.Contains(err.Error(), "post-merge teardown t-prmerge-terminal-merged") {
+		t.Fatalf("error = %v, want the landed task torn down (the fixture has no launch manifest, so teardown refuses)", err)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("merge mutation attempted for merged terminal state")
 	}
-}
-
-func TestPRMergeReportsClosedTerminalReconciliation(t *testing.T) {
-	glab, marker := installTerminalGlab(t, "closed")
-	stubGitLabTerminalSnapshot(t, "CLOSED")
-	deliveryGuardHome(t, "t-prmerge-terminal-closed", deliveryGuardGitLab(glab))
-	err := runPRMerge(t, nil, "t-prmerge-terminal-closed", deliveryGuardMRURL)
-	if err == nil || !strings.Contains(err.Error(), "delivery did not complete") {
-		t.Fatalf("error = %v, want partial delivery refusal", err)
+	tid, err := domain.NewTaskID("t-prmerge-terminal-merged")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("merge mutation attempted for closed terminal state")
+	agg, err := cliCanonicalForHome(t, homeDir).Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Phase != taskauthority.PhaseDone {
+		t.Fatalf("task phase = %s, want done", agg.Phase)
 	}
 }
 
@@ -415,17 +414,16 @@ func TestPRMergeRefusesGitHubWithoutCapability(t *testing.T) {
 	}
 }
 
-// TestPRMergeTeardownReportsClosedWithoutRetiring proves pr-merge --teardown
-// on a CLOSED GitLab MR reports the non-completed merge-and-retire outcome
-// and retires nothing: teardown runs only after a completed outcome.
-func TestPRMergeTeardownReportsClosedWithoutRetiring(t *testing.T) {
+// TestPRMergeReportsClosedWithoutRetiring proves pr-merge on a CLOSED GitLab
+// MR reports the non-completed outcome and retires nothing.
+func TestPRMergeReportsClosedWithoutRetiring(t *testing.T) {
 	glab, marker := installTerminalGlab(t, "closed")
 	stubGitLabTerminalSnapshot(t, "CLOSED")
 	taskID := "t-prmerge-teardown-closed"
 	homeDir := deliveryGuardHome(t, taskID, deliveryGuardGitLab(glab))
 
-	err := runPRMerge(t, []string{"--teardown"}, taskID, deliveryGuardMRURL)
-	if err == nil || !strings.Contains(err.Error(), "merge-and-retire "+taskID+": partial provider reports closed but not merged") {
+	err := runPRMerge(t, nil, taskID, deliveryGuardMRURL)
+	if err == nil || !strings.Contains(err.Error(), "pr-merge "+taskID+": partial provider reports closed but not merged") {
 		t.Fatalf("error = %v, want the provider closed-but-not-merged outcome (reached only when the words were carried into the delivery)", err)
 	}
 	if strings.Contains(err.Error(), "post-merge teardown") {
@@ -442,8 +440,8 @@ func TestPRMergeTeardownReportsClosedWithoutRetiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase == taskauthority.PhaseRetired || agg.Worktree == nil || agg.Endpoint == nil {
-		t.Fatalf("task phase=%s worktree=%v endpoint=%v, want not retired with bindings intact", agg.Phase, agg.Worktree, agg.Endpoint)
+	if agg.Phase != taskauthority.PhaseWorking || agg.Worktree == nil || agg.Endpoint == nil {
+		t.Fatalf("task phase=%s worktree=%v endpoint=%v, want working with bindings intact", agg.Phase, agg.Worktree, agg.Endpoint)
 	}
 	if _, err := home.ReadMeta(homeDir, taskID); err != nil {
 		t.Fatalf("task meta after refused merge-and-retire: %v, want kept", err)

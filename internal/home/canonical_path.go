@@ -12,6 +12,7 @@ import (
 // native backslashes, absolute aliases, and volume-qualified forms before
 // native-path conversion. The join is purely lexical and does not follow
 // symlinks.
+// Words: Human, typed, 2026-10-15: "tạm thời xóa bỏ windows đi, vì hiện tại không có máy window để chạy thử"
 func joinContained(root, key string) (string, error) {
 	if key == "" {
 		return "", ErrEmptyKey
@@ -25,26 +26,11 @@ func joinContained(root, key string) (string, error) {
 	// Reject escape/current/empty components in the raw key before any
 	// cleaning, so a key cannot smuggle ".." or absolute escapes.
 	for _, part := range strings.Split(key, "/") {
-		if part == "" || part == "." || part == ".." || isWindowsDeviceName(part) {
+		if part == "" || part == "." || part == ".." {
 			return "", ErrKeyEscapes
 		}
 	}
 	return filepath.Join(root, filepath.Clean(filepath.FromSlash(key))), nil
-}
-
-func isWindowsDeviceName(component string) bool {
-	name := component
-	if dot := strings.IndexByte(name, '.'); dot >= 0 {
-		name = name[:dot]
-	}
-	name = strings.ToUpper(strings.TrimRight(name, " ."))
-	if name == "CON" || name == "PRN" || name == "AUX" || name == "NUL" {
-		return true
-	}
-	if len(name) == 4 && (strings.HasPrefix(name, "COM") || strings.HasPrefix(name, "LPT")) && name[3] >= '1' && name[3] <= '9' {
-		return true
-	}
-	return false
 }
 
 // verifyNoFollow ensures that the deepest existing ancestor of target stays

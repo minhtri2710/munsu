@@ -4,24 +4,19 @@ package fleet
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // --- CapabilityAttestation creation tests ---
 
-var noMistakesReview = taskauthority.DeliveryStep{Adapter: "no-mistakes", ProbeState: "ready"}
-
 func TestCreateCapabilityAttestation_BindsFields(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 
 	if att.Project != "test-project" {
 		t.Errorf("Project = %q, want %q", att.Project, "test-project")
@@ -32,14 +27,11 @@ func TestCreateCapabilityAttestation_BindsFields(t *testing.T) {
 	if att.Harness != "pi" {
 		t.Errorf("Harness = %q, want %q", att.Harness, "pi")
 	}
-	if att.GateAgent != "pi" {
-		t.Errorf("GateAgent = %q, want %q", att.GateAgent, "pi")
+	if att.ResolvedConfig["mode"] != "direct-PR" {
+		t.Errorf("mode = %q, want %q", att.ResolvedConfig["mode"], "direct-PR")
 	}
-	if att.ResolvedConfig["mode"] != "no-mistakes" {
-		t.Errorf("mode = %q, want %q", att.ResolvedConfig["mode"], "no-mistakes")
-	}
-	if att.Review.Adapter != noMistakesReview.Adapter || att.Forge.Adapter != githubForgeStep.Adapter {
-		t.Errorf("steps = %q / %q, want the configured review and forge", att.Review.Adapter, att.Forge.Adapter)
+	if att.Forge.Adapter != githubForgeStep.Adapter {
+		t.Errorf("forge = %q, want the configured forge", att.Forge.Adapter)
 	}
 	if att.Expiry.IsZero() {
 		t.Error("Expiry should be set")
@@ -47,10 +39,7 @@ func TestCreateCapabilityAttestation_BindsFields(t *testing.T) {
 }
 
 func TestCreateCapabilityAttestation_ProbesCapabilities(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 
 	if len(att.Capabilities) == 0 {
 		t.Fatal("expected capabilities to be probed")
@@ -60,7 +49,7 @@ func TestCreateCapabilityAttestation_ProbesCapabilities(t *testing.T) {
 	for _, c := range att.Capabilities {
 		names[c.Name] = true
 	}
-	for _, expected := range []string{"no-mistakes", "github", "git"} {
+	for _, expected := range []string{"github", "git"} {
 		if !names[expected] {
 			t.Errorf("expected capability %q in attestation", expected)
 		}
@@ -91,10 +80,7 @@ func TestCheckCapabilityAttestation_NilReturnsChanged(t *testing.T) {
 }
 
 func TestCheckCapabilityAttestation_ExpiredReturnsChanged(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 	// Force expiry.
 	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
 
@@ -105,10 +91,7 @@ func TestCheckCapabilityAttestation_ExpiredReturnsChanged(t *testing.T) {
 }
 
 func TestCheckCapabilityAttestation_ValidExpiry(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 	// Force a future expiry.
 	att.Expiry = time.Now().UTC().Add(24 * time.Hour)
 
@@ -119,10 +102,7 @@ func TestCheckCapabilityAttestation_ValidExpiry(t *testing.T) {
 }
 
 func TestCheckCapabilityAttestation_ZeroExpiryFailsClosed(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 	// An attestation carrying no expiry at all must read as expired: the
 	// field exists to fail closed, so its absence cannot mean "never expires".
 	att.Expiry = time.Time{}
@@ -137,10 +117,7 @@ func TestCheckCapabilityAttestation_ZeroExpiryFailsClosed(t *testing.T) {
 }
 
 func TestHandleLateCapabilityLoss_ZeroExpiryBlocksLaunch(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 	att.Expiry = time.Time{}
 
 	result := HandleLateCapabilityLoss(att)
@@ -160,10 +137,7 @@ func TestHandleLateCapabilityLoss_ZeroExpiryBlocksLaunch(t *testing.T) {
 }
 
 func TestHandleLateCapabilityLoss_NoChange(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 	att.Expiry = time.Now().UTC().Add(24 * time.Hour)
 
 	result := HandleLateCapabilityLoss(att)
@@ -176,10 +150,7 @@ func TestHandleLateCapabilityLoss_NoChange(t *testing.T) {
 }
 
 func TestHandleLateCapabilityLoss_LateLossBlocks(t *testing.T) {
-	att := CreateCapabilityAttestation(
-		"test-project", "/tmp/home", "pi", "pi",
-		noMistakesReview, githubForgeStep,
-	)
+	att := CreateCapabilityAttestation("test-project", "/tmp/home", "pi", githubForgeStep)
 
 	// Force expiry.
 	att.Expiry = time.Now().UTC().Add(-1 * time.Hour)
@@ -196,23 +167,21 @@ func TestHandleLateCapabilityLoss_LateLossBlocks(t *testing.T) {
 	}
 }
 
-// TestCheckCapabilityAttestationBlocksReadyToUnsupportedLoss pins the
-// Ready -> Unsupported transition: the live no-mistakes probe reports 0.5.0,
-// which is Unsupported, and that loss must count as changed rather than pass.
-func TestCheckCapabilityAttestationBlocksReadyToUnsupportedLoss(t *testing.T) {
-	testutil.PrependPath(t, createFakeNoMistakesVersion(t, "0.5.0"))
-
+// TestCheckCapabilityAttestationBlocksReadyForgeLoss pins the Ready -> lost
+// transition: the attested gitlab forge's executable is gone at re-probe, and
+// that loss must count as changed rather than pass.
+func TestCheckCapabilityAttestationBlocksReadyForgeLoss(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "glab")
 	att := &CapabilityAttestation{
-		Review: noMistakesReview,
-		Forge:  githubForgeStep,
+		Forge:  taskauthority.DeliveryStep{Adapter: "gitlab", Path: gone, ProbeState: "ready"},
 		Expiry: time.Now().UTC().Add(24 * time.Hour),
 		Capabilities: []CapabilityEntry{
-			{Name: "no-mistakes", State: backend.Ready, Path: "/usr/local/bin/no-mistakes"},
+			{Name: "gitlab", State: backend.Ready, Path: gone},
 		},
 	}
 	changed, detail := CheckCapabilityAttestation(att)
-	if !changed || !strings.Contains(detail, `capability "no-mistakes" changed from`) {
-		t.Fatalf("CheckCapabilityAttestation = %v, %q; want a Ready -> Unsupported loss", changed, detail)
+	if !changed || !strings.Contains(detail, `capability "gitlab" changed from`) {
+		t.Fatalf("CheckCapabilityAttestation = %v, %q; want a Ready forge loss", changed, detail)
 	}
 }
 
@@ -245,12 +214,12 @@ func TestResolveExecutableID_UnknownBinary(t *testing.T) {
 // --- probeDeliveryCapabilities tests ---
 
 func TestProbeDeliveryCapabilities_ContainsExpected(t *testing.T) {
-	caps := probeDeliveryCapabilities(noMistakesReview, githubForgeStep)
+	caps := probeDeliveryCapabilities(githubForgeStep)
 	found := make(map[string]bool)
 	for _, c := range caps {
 		found[c.Name] = true
 	}
-	for _, name := range []string{"no-mistakes", "github", "git"} {
+	for _, name := range []string{"github", "git"} {
 		if !found[name] {
 			t.Errorf("expected capability %q in probe results", name)
 		}
@@ -262,7 +231,7 @@ func TestProbeDeliveryCapabilities_ContainsExpected(t *testing.T) {
 func TestLateCapabilityLossResult_JSON(t *testing.T) {
 	result := &LateCapabilityLossResult{
 		Changed:     true,
-		Detail:      "capability no-mistakes changed from ready to absent",
+		Detail:      "capability github changed from ready to absent",
 		CanProceed:  false,
 		BlockReason: "requires parent Decision",
 	}

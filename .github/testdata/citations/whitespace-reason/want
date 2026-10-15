@@ -1,2 +1,0 @@
-::error::.github/testdata/citations/whitespace-reason/waiver:2: README.md: home.ReadMailboxEnvelope: entry needs a reason in the fourth column
-exit 1

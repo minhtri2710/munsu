@@ -15,15 +15,9 @@ func contractRequest(c *Canonical, taskID string, prec domain.Precondition, mode
 		Precondition: prec,
 		Mode:         mode,
 	}
-	switch mode {
-	case "no-mistakes":
-		req.Review = DeliveryStep{Adapter: "no-mistakes", Path: "/bin/no-mistakes", ProbeState: "ready"}
-		req.Forge = DeliveryStep{Adapter: "github", Path: "/bin/gh-axi", ProbeState: "ready"}
-	case "direct-PR":
-		req.Review = DeliveryStep{Baseline: true, ProbeState: "baseline"}
+	if mode == "direct-PR" {
 		req.Forge = DeliveryStep{Adapter: "gitlab", Path: "/bin/glab", ProbeState: "ready"}
-	default:
-		req.Review = DeliveryStep{Baseline: true, ProbeState: "baseline"}
+	} else {
 		req.Forge = DeliveryStep{Baseline: true, ProbeState: "baseline"}
 	}
 	return req
@@ -43,7 +37,7 @@ func TestCanonicalRecordDeliveryContract(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
 
-	out := mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "no-mistakes")
+	out := mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "direct-PR")
 	if out.Generation != 1 || out.Revision != 2 {
 		t.Fatalf("record outcome = %+v", out)
 	}
@@ -54,7 +48,7 @@ func TestCanonicalRecordDeliveryContract(t *testing.T) {
 	if agg.DeliveryContract == nil {
 		t.Fatal("no delivery contract recorded")
 	}
-	if agg.DeliveryContract.Mode != "no-mistakes" {
+	if agg.DeliveryContract.Mode != "direct-PR" {
 		t.Fatalf("contract mode = %q", agg.DeliveryContract.Mode)
 	}
 	if agg.DeliveryContract.OperationID != "op-contract-1" || agg.DeliveryContract.RecordedAt <= 0 {
@@ -67,8 +61,8 @@ func TestCanonicalRecordDeliveryContract(t *testing.T) {
 func TestCanonicalRecordDeliveryContractReplaysByOperationID(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
-	first := mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "no-mistakes")
-	replay := mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "no-mistakes")
+	first := mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "direct-PR")
+	replay := mustRecordContract(t, c, "op-contract-1", "t1", preconditionOf(1, 1), "direct-PR")
 	if replay.Revision != first.Revision || replay.Generation != first.Generation {
 		t.Fatalf("replay = %+v, first = %+v", replay, first)
 	}

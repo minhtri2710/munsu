@@ -19,20 +19,28 @@ func newWorktreeCmd() *cobra.Command {
 	return newWorktreeCmdWithStatus(backend.StatusWorktrees)
 }
 
-func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEntry, error)) *cobra.Command {
+func newWorktreeCmdWithStatus(statusWorktrees func(homeDir, treehouse string) ([]backend.WorktreeEntry, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worktree",
-		Short: "Manage pooled git worktrees",
+		Short: "Manage task worktrees",
+		Long: `Manage task worktrees. The provider is git worktree unless --project names a
+project whose worktree tool entry configures treehouse. Reclaim without
+--project walks every provider the home's projects use.`,
 	}
+	cmd.PersistentFlags().String("project", "", "Use this project's configured worktree tool")
 
 	getCmd := &cobra.Command{
 		Use:   "get <repo-path>",
-		Short: "Acquire a pooled worktree",
-		Long:  `Acquire a pooled worktree via treehouse. With --lease, pass through to treehouse for durable holds.`,
+		Short: "Acquire a worktree",
+		Long:  `Acquire a worktree. With treehouse, --lease passes through for a durable hold.`,
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			lease, _ := cmd.Flags().GetBool("lease")
-			path, err := backend.GetWorktree(ctx.Home, args[0], lease)
+			tool, err := worktreeTool(cmd, ctx.Home)
+			if err != nil {
+				return err
+			}
+			path, err := backend.GetWorktree(ctx.Home, tool, args[0], lease)
 			if err != nil {
 				return err
 			}
@@ -47,13 +55,17 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 		Short: "Return a worktree to the pool",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			tool, err := worktreeTool(cmd, ctx.Home)
+			if err != nil {
+				return err
+			}
 			poolLock, err := fleet.LockWorktreePool(ctx.Home)
 			if err != nil {
 				return err
 			}
 			defer poolLock.Release()
 
-			entries, err := statusWorktrees(ctx.Home)
+			entries, err := statusWorktrees(ctx.Home, tool)
 			if err != nil {
 				return fmt.Errorf("getting worktree status: %w", err)
 			}
@@ -71,7 +83,7 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 			if err := verifyManualWorktreeRelease(entry.Path); err != nil {
 				return err
 			}
-			return backend.ReturnWorktree(ctx.Home, entry.Path)
+			return backend.ReturnWorktree(ctx.Home, tool, entry.Path)
 		}),
 	}
 
@@ -80,7 +92,11 @@ func newWorktreeCmdWithStatus(statusWorktrees func(string) ([]backend.WorktreeEn
 		Short: "Show worktree pool status",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			out, err := backend.WorktreeStatus(ctx.Home)
+			tool, err := worktreeTool(cmd, ctx.Home)
+			if err != nil {
+				return err
+			}
+			out, err := backend.WorktreeStatus(ctx.Home, tool)
 			if err != nil {
 				return err
 			}
@@ -110,15 +126,31 @@ return pass holds the worktree-pool fence used by acquisition.`,
 			// before the snapshot shows its holder here and is spared, and a slot
 			// leased after the pass was never a candidate. This closes the
 			// spawn/reclaim reservation race a status reread alone cannot.
+			tools, err := reclaimWorktreeTools(cmd, ctx.Home)
+			if err != nil {
+				return err
+			}
 			poolLock, err := fleet.LockWorktreePool(ctx.Home)
 			if err != nil {
 				return err
 			}
 			defer poolLock.Release()
 
-			entries, err := statusWorktrees(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("getting worktree status: %w", err)
+			type toolEntry struct {
+				tool  string
+				entry backend.WorktreeEntry
+			}
+			var listed []toolEntry
+			var entries []backend.WorktreeEntry
+			for _, tool := range tools {
+				got, err := statusWorktrees(ctx.Home, tool)
+				if err != nil {
+					return fmt.Errorf("getting worktree status: %w", err)
+				}
+				for _, entry := range got {
+					listed = append(listed, toolEntry{tool, entry})
+				}
+				entries = append(entries, got...)
 			}
 			active, released, err := activeWorktreeClaims(ctx.Home, entries)
 			if err != nil {
@@ -127,8 +159,9 @@ return pass holds the worktree-pool fence used by acquisition.`,
 
 			// Preflight every unowned candidate before any provider return so a
 			// known unsafe candidate cannot follow an earlier destructive release.
-			var candidates []backend.WorktreeEntry
-			for _, entry := range entries {
+			var candidates []toolEntry
+			for _, c := range listed {
+				entry := c.entry
 				if active[worktreeClaimKey(entry.Path)] {
 					continue
 				}
@@ -138,13 +171,13 @@ return pass holds the worktree-pool fence used by acquisition.`,
 				if err := verifyManualWorktreeRelease(entry.Path); err != nil {
 					return fmt.Errorf("worktree %s is not safe to reclaim: %w", entry.Path, err)
 				}
-				candidates = append(candidates, entry)
+				candidates = append(candidates, c)
 			}
 
-			for i, entry := range candidates {
-				fmt.Printf("returning orphaned worktree: %s\n", entry.Path)
-				if err := backend.ReturnWorktree(ctx.Home, entry.Path); err != nil {
-					return fmt.Errorf("reclaim return outcome uncertain for %s: %w", entry.Path, err)
+			for i, c := range candidates {
+				fmt.Printf("returning orphaned worktree: %s\n", c.entry.Path)
+				if err := backend.ReturnWorktree(ctx.Home, c.tool, c.entry.Path); err != nil {
+					return fmt.Errorf("reclaim return outcome uncertain for %s: %w", c.entry.Path, err)
 				}
 				fmt.Printf("Reclaimed %d orphaned worktrees\n", i+1)
 			}
@@ -160,6 +193,28 @@ return pass holds the worktree-pool fence used by acquisition.`,
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(reclaimCmd)
 	return cmd
+}
+
+// reclaimWorktreeTools is the --project worktree tool, or without it every
+// provider the home's projects use.
+func reclaimWorktreeTools(cmd *cobra.Command, home string) ([]string, error) {
+	if project, _ := cmd.Flags().GetString("project"); project != "" {
+		tool, err := fleet.ProjectWorktreeTool(home, project)
+		if err != nil {
+			return nil, err
+		}
+		return []string{tool}, nil
+	}
+	return fleet.HomeWorktreeTools(home)
+}
+
+// worktreeTool resolves the --project worktree tool, or "" for git worktree.
+func worktreeTool(cmd *cobra.Command, home string) (string, error) {
+	project, _ := cmd.Flags().GetString("project")
+	if project == "" {
+		return "", nil
+	}
+	return fleet.ProjectWorktreeTool(home, project)
 }
 
 func reconciledOrphanWorktree(path string, entries []backend.WorktreeEntry) (backend.WorktreeEntry, error) {
@@ -287,11 +342,7 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 			}
 			repoPath, rerr := fleet.ResolveRepoPath(dir, agg.Launch.Project)
 			if rerr == nil {
-				path, ok, perr := backend.ReservedWorktreePath(dir, repoPath, agg.Launch.WorktreeReservationID)
-				if perr != nil {
-					return fmt.Errorf("resolving worktree reservation %q: %w", agg.Launch.WorktreeReservationID, perr)
-				}
-				if ok && path != "" {
+				if path, ok := backend.ReservedGitWorktreePath(dir, repoPath, agg.Launch.WorktreeReservationID); ok {
 					active[worktreeClaimKey(path)] = true
 				}
 			} else {

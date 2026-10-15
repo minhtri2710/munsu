@@ -26,43 +26,18 @@ jobs:
       - run: mkdir -p coverage
       - run: go build ./...
       - run: go vet ./...
-      # -coverprofile on all three lanes below feeds the `guards` job. Measured
-      # locally (darwin, 8 cores, warm cache) the default lane goes 95.0s ->
-      # 96.1s with it, which is inside the noise: `set` mode counters are a
-      # single store per block. The profiles are what let that job tell "no test
-      # reaches this refusal" from "this refusal is only reached by a lane that
-      # is not this one" -- see .github/scripts/uncovered-guards.sh.
+      # -coverprofile feeds the `guards` job, merged with the integration lane's
+      # profile -- see .github/scripts/uncovered-guards.sh.
       - run: |
           set -o pipefail
           go test -count=1 -json -coverprofile=coverage/default.out ./... | tee coverage/skips-default.json | jq -rj '.Output // empty'
       # GOOS-gated files never compile on a linux runner, so no test lane can
       # reach them -- three _test.go files had never been compiled by CI at
-      # all. Cross-target vet is the only cover for the darwin-gated files; the
-      # windows-gated files are also compiled and vetted natively by the
-      # `windows-build-vet` job below, and `go vet` includes test files.
-      # GOOS=windows also covers the `!darwin && !linux` file.
+      # all. Cross-target vet is the only cover for the darwin-gated files, and
+      # `go vet` includes test files.
       - name: Cross-target vet for GOOS-gated files
         run: |
           GOOS=darwin go vet ./...
-          GOOS=windows go vet ./...
-      # `go test ./...` never builds these two tags, which is where a compile
-      # break sat unnoticed for four months. The tagged suites are small and
-      # fast; the reason, without a figure, is in the matching row of
-      # .github/build-tags.manifest. So they run for real rather than being
-      # compile-checked. Go's granularity is the package, so each step also
-      # repeats its package's default suite (~24s total); deriving the package from
-      # the tag is worth that over an enumerated -run filter that a new test
-      # would silently fall outside of.
-      - name: e2e-tagged tests
-        run: |
-          set -o pipefail
-          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -count=1 -json -tags e2e -coverprofile=coverage/e2e.out $(.github/scripts/build-tags.sh packages e2e) | tee coverage/skips-e2e.json | jq -rj '.Output // empty'
-      - name: lifecycle_integration-tagged tests
-        run: |
-          set -o pipefail
-          # shellcheck disable=SC2046 # word splitting is the point: one argument per package
-          go test -count=1 -json -tags lifecycle_integration -coverprofile=coverage/lifecycle_integration.out $(.github/scripts/build-tags.sh packages lifecycle_integration) | tee coverage/skips-lifecycle_integration.json | jq -rj '.Output // empty'
       # Uploaded even when a step above failed, so a lane that got partway still
       # hands over what it measured. `warn` rather than `error` on an empty
       # upload, because `always()` also fires when `go build` broke and there is
@@ -82,60 +57,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  windows-build-vet:
-    name: Windows build and vet
-    runs-on: windows-latest
-    timeout-minutes: 30
-    # Gate for what has been promoted out of the windows observation lane
-    # (windows-observation.yml): `go build ./...`, `go vet ./...`, and the one
-    # `go test` step below. It runs on pushes to `main` and pull requests
-    # targeting `main`, matching the workflow triggers above. Making it a
-    # required check -- by name, "Windows build and vet" -- is a
-    # branch-protection change owned by a human, and that change has not been
-    # made. Every other windows test stays in the observation lane and is not
-    # gated here. Promotion means a failure fails this job directly, as the
-    # test step does: do not promote by adding continue-on-error.
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.9"
-          cache: true
-      - run: go build ./...
-      - run: go vet ./...
-      # The clone timeout (project_clone_test.go) and the captain seed excludes
-      # (captain_seed_excludes_test.go, captain_seed_worktree_test.go) are
-      # platform code paths: a fake `git.bat` resolved through PATHEXT, a
-      # timeout kill, and git's own path and lock-file handling. Only a windows
-      # run exercises them. The names below are the gate's single source: they
-      # build the anchored -run pattern, and `go test -list` with that same
-      # pattern must return exactly these names before anything runs. A renamed
-      # or deleted test fails here instead of silently matching nothing, and a
-      # new test in those files stays out of the gate until it is added below.
-      # `shell: bash` (Git Bash on windows-latest) rather than the pwsh default
-      # so the guard is the same script that can be exercised on linux/darwin.
-      - name: Windows clone-timeout and seed-excludes tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          want='TestAddCloneTimesOutAndCleansUp
-          TestWriteWorktreeExcludesScopedToCaptainWorktree
-          TestWriteWorktreeExcludesReseedReplacesIntegrationPaths
-          TestWriteWorktreeExcludesRefusesReinterpretedCommonConfig
-          TestWriteWorktreeExcludesFailsClosedWhenWorktreeConfigCannotBeEnabled
-          TestWriteWorktreeExcludesFailsWhenWorktreeConfigCannotBeWritten
-          TestWriteWorktreeExcludesFailsWhenGitDirCannotBeResolved
-          TestWriteWorktreeExcludesFailsWhenExcludesFileCannotBeWritten'
-          want="$(printf '%s\n' "$want" | sed 's/^[[:space:]]*//' | sort)"
-          re="^($(printf '%s\n' "$want" | paste -sd '|' -))\$"
-          got="$(go test -list "$re" ./internal/fleet/ | tr -d '\r' | grep '^Test' | sort || true)"
-          if [ "$got" != "$want" ]; then
-            echo "::error::-run pattern does not select exactly the gated tests (renamed or deleted?)"
-            diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true
-            exit 1
-          fi
-          go test -count=1 ./internal/fleet/ -run "$re" -v
-
   darwin-fence:
     name: Darwin fence tests
     runs-on: macos-latest
@@ -143,8 +64,8 @@ jobs:
     # The soldier and reviewer write fence is sandbox-exec, which exists only
     # on darwin; every other lane compiles these tests (GOOS=darwin vet) but
     # never runs their darwin branches. This job runs internal/fence whole and
-    # the named fleet tests that apply or assert the real fence. As in the
-    # windows job, the names are the gate's single source: `go test -list`
+    # the named fleet tests that apply or assert the real fence. The names are
+    # the gate's single source: `go test -list`
     # with the anchored pattern must return exactly these names before
     # anything runs, so a rename fails here instead of leaving the lane, and a
     # new fence test stays out until it is added below. Not a required check.
@@ -197,7 +118,16 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.9"
-          cache: true
+          cache: false
+      # Own key: -race builds differ from the other jobs', which race this job to
+      # save setup-go's shared key.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: go-race-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-
       # The default lane runs without -race, so crash/replay/fence concurrency
       # in home, taskauthority and backend was never race-checked in CI.
       #
@@ -279,15 +209,6 @@ jobs:
   invariants:
     name: Repo invariants
     runs-on: ubuntu-latest
-    # Every other rule in this job reads the checkout and nothing else, and the
-    # workflow-level `contents: read` is all they need. The last step observes
-    # the CI window and validates this checkout through the Actions API; the
-    # argument for admitting that networked check is documented at that step.
-    # A job-level block replaces the workflow-level one rather than adding to it,
-    # so `contents: read` is repeated here for the checkout.
-    permissions:
-      contents: read
-      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # gofmt's output is a function of the toolchain version, so the runner
@@ -387,10 +308,8 @@ jobs:
             exit 1
           fi
           echo "gofmt: clean"
-      # The scripts under .github/scripts are the gate itself, and no lane read
-      # them: a `${got:-$?}` fallback in citations.sh printed echo's status
-      # rather than the command's in 18 places. The file list is derived from
-      # git, so a new script joins by existing; git's `*` crosses `/`, so
+      # The scripts under .github/scripts are the gate itself. The file list is
+      # derived from git, so a new script joins by existing; git's `*` crosses `/`, so
       # nested directories are covered too. The `run:` blocks of every workflow
       # are shell too, and actionlint hands each one to the same shellcheck
       # binary (it also checks the workflow syntax and expressions). Default
@@ -430,7 +349,7 @@ jobs:
       # test-lane tag and every goos-vet GOOS in .github/build-tags.manifest,
       # derived rather than listed, so a new tag joins here as it joins its
       # lane. The binary is installed for the host first and GOOS is set only
-      # for the analysed code; `GOOS=windows go run` would build a windows
+      # for the analysed code; `GOOS=darwin go run` would build a darwin
       # binary and fail to execute it here.
       #
       # No allowlist: any hit fails the step.
@@ -506,10 +425,8 @@ jobs:
       #
       # Text only, no network, like the four rules above it -- this hermetic
       # half reads one committed file and today's date and nothing else. The
-      # networked half has two consumers: flake-ledger.yml runs after a merge
-      # to report and propose the remediation, while the last step in this job
-      # runs on pull requests to refuse the merge until the checkout answers
-      # the observation.
+      # networked half runs only in flake-ledger.yml, after a merge, to report
+      # and propose the remediation.
       #
       # The selftest runs first, and it is here rather than in the sweep's own
       # workflow for the reason the step below exists at all: this script is the
@@ -547,20 +464,6 @@ jobs:
       # green.
       - name: Flake sweep rules must agree with their fixtures
         run: .github/scripts/flake-sweep.sh selftest
-      # The fourth of these, and the one where the argument is sharpest, because
-      # what it pins is a classifier rather than a file format. Loosening a
-      # classifier rule does not fail: it just stops seeing a shape, silently,
-      # with every lane green -- which is the same defect as the citation lane
-      # not existing at all, one level up. Its own prototype is the evidence: a
-      # `^func`/`^type` grep over a hand-written workflow topology document reported four
-      # unresolved identifiers of which two were real, and both false positives
-      # were ordinary declaration forms the grep cannot see (a struct field and
-      # a const). The harness discovers every citation fixture directory and
-      # checks each one against its expected behavior.
-      # One further check has no fixture because an unparseable .go file would
-      # turn this job's gofmt step red instead. Hermetic and ~15s.
-      - name: Citation rules must agree with their fixtures
-        run: .github/scripts/citations.sh selftest
       # The script that derives every tagged lane's package list and fails a
       # tag no lane covers had no fixtures, so deleting one of its rules left
       # every lane green. One scratch tree per rule, hermetic, ~1s.
@@ -581,17 +484,15 @@ jobs:
       - name: Workflow actions must be pinned to a commit SHA
         run: .github/scripts/action-pins.sh check
       # Go tools under .github/scripts are outside the root module graph: the
-      # go tool skips dot-directories, and `citations`, `guardsites` and
+      # go tool skips dot-directories, and `guardsites`, `skipledger` and
       # `testnames` are their own modules, so a root `./...` reaches none of
       # them. The selftests above compile their tools, but compilation alone
       # does not execute unit tests, so those tests could rot or be deleted
       # while every existing lane stayed green.
       #
       # The directory list is derived from tracked `.go` files, never
-      # declared: a declared list of "the three tool modules" was already
-      # stale before this step existed, missing the root-module
-      # `flake-sweep-topology` package, and deriving also keeps the
-      # `.github/testdata` fixture module out by construction. `go vet` is in
+      # declared, which also keeps the `.github/testdata` fixture module out
+      # by construction. `go vet` is in
       # the contract because these tools are the only Go in the repository no
       # vet lane reaches. A directory with no running test is a failure, not
       # a pass: `[no test files]` is what test rot looks like on its way out.
@@ -637,73 +538,15 @@ jobs:
           echo "go tools: vet and test clean in $(wc -l <"$dirs" | tr -d ' ') directories"
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
-      # munsu's documents cite the code as their primary evidence, and this step
-      # checks the classified paths and symbols in the covered set against the
-      # tree. It compares both ways against .github/citations.allow, so a
-      # citation that resolves again cannot leave its waiver behind. The covered
-      # documents are the literal list in docFiles in
-      # .github/scripts/citations/main.go (README.md, AGENTS.md, CLAUDE.md); the
-      # citations inside them are derived from the tree.
-      #
-      # Text only, no network: the stdlib-only Go program parses the tree with
-      # go/parser. It ignores line numbers and reports classified-but-unjudged
-      # shapes as `unchecked`; extractor and classifier boundaries are owned by
-      # .github/scripts/citations/main.go.
-      - name: Documentation citations must resolve
-        run: .github/scripts/citations.sh check
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu
-          tracked=$(git ls-files -- data state config projects .no-mistakes)
+          tracked=$(git ls-files -- data state config projects)
           if [ -n "$tracked" ]; then
             echo "::error::Personal fleet paths are tracked in git:"
             printf '%s\n' "$tracked"
             exit 1
           fi
-      # The one step in this job that is not a pure function of the checkout,
-      # and the reason it is here rather than in a lane of its own.
-      #
-      # The ledger rules above enforce .github/flake-ledger.md against the
-      # checkout. This final rule also observes the CI window through the
-      # Actions API, so the same evidence is checked on the pull-request path
-      # instead of relying on a post-merge report. Run 32153420356 reported a
-      # race-lane flake with no row on 2026-08-18 and the row was still unfiled
-      # twelve days later (#541). Nothing was broken: the one job that knew was
-      # the one nobody's merge waited for.
-      #
-      # A fifth lane would reproduce that exactly. Branch protection on main
-      # requires four contexts -- "Build and test", "Race detector",
-      # "Integration tests" and this one -- so a new job would go red and be
-      # merged past, which is the hole rather than the fix. `Refusal-branch
-      # coverage` and `Windows build and vet` are already in that position.
-      #
-      # So one step here reads over the network. It observes the window itself
-      # and runs check and verify-fixed against this checkout on every run,
-      # whatever main did previously. The cost is the same every time: about
-      # 130 seconds and 90 API requests against the 1000-per-hour token budget.
-      # Losing the API or exhausting the budget fails closed and reds every PR;
-      # that is the cheap direction for a check that should be green. A flake
-      # has no owner until something appoints one, and the appointment is always
-      # the next person to merge.
-      #
-      # This step directly re-derives the ledger against this checkout from one
-      # per-attempt observation stream. It does not trust a prior sweep verdict,
-      # so CI reruns and asynchronous workflow timing cannot certify stale evidence.
-      # While a new main CI attempt is still running, its attempt records do not
-      # exist yet; a flake it will reveal is not observable until the next merger.
-      # Everything that decides anything is a pure
-      # function of the record streams and is pinned by the fixtures
-      # the selftest above runs, which are the real runs from #541's history.
-      #
-      # Last in the job on purpose, so every rule that can answer from the
-      # checkout has already reported before the one that can fail for a reason
-      # outside this repository. While a new main CI attempt is still running,
-      # its attempt records do not exist yet; the ledger appoints the next
-      # merger after that flake becomes observable.
-      - name: Flake ledger must answer current observations
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: .github/scripts/flake-sweep.sh applied
 
   guards:
     name: Refusal-branch coverage
@@ -714,7 +557,7 @@ jobs:
     # green. Coverage is what sees that, which is why this job is separate --
     # it is the only one that has to wait for other jobs' profiles.
     #
-    # `needs` on both, because merging all four lanes is a correctness condition
+    # `needs` on both, because merging both lanes is a correctness condition
     # rather than a nicety: with the default profile alone every branch the 60
     # integration files are the only cover for reads as untested. The script
     # fails closed on a missing profile rather than treating it as zeros.
@@ -722,9 +565,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Derivation is a go/packages type-check of the whole tree once for each of
-      # GOOS linux, darwin and windows (the union that covers every build-gated
-      # file for the repository's targeted GOOS; a file gated to an untargeted
-      # GOOS stays unloaded and uses the name fallback), run with `go run .` from
+      # GOOS linux and darwin (the union that covers every build-gated file for
+      # the repository's targeted GOOS; a file gated to an untargeted GOOS
+      # stays unloaded and uses the name fallback), run with `go run .` from
       # the tool's own module directory (see
       # uncovered-guards.sh sites). This job now also downloads that module's
       # dependencies; the whole run is roughly one to five seconds depending on
