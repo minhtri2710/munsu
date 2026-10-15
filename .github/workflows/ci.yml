@@ -597,9 +597,7 @@ jobs:
           echo "GUARDS_BASE_REF=$GUARDS_BASE_REF" >> "$GITHUB_ENV"
       - name: Every refusal branch must be tested or waived
         run: .github/scripts/uncovered-guards.sh check
-      # Report-only: prints the skipped tests with no row in .github/skips.allow
-      # and the rows no lane skips, and never fails on either. It fails only when
-      # a lane's `go test -json` stream is missing, so a lane cannot read as clean
-      # by its output being absent.
-      - name: Skip ledger (report only)
+      # Fails on a skipped test with no row in .github/skips.allow, on a row no
+      # lane skips, and on a lane whose `go test -json` stream is missing.
+      - name: Every skipped test must be listed in the skip ledger
         run: .github/scripts/skip-ledger.sh check

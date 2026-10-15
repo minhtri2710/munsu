@@ -46,11 +46,11 @@ branches covered only by the `integration` lane read as untested. When
 it goes red, write a test that builds the state the guard refuses, or add a line
 with a reason. Its rules are pinned by fixtures (`uncovered-guards.sh selftest`).
 
-The `guards` job also prints a skip ledger, report only: the tests the two coverage
-lanes skipped, compared both ways with `.github/skips.allow` (`.github/scripts/skip-ledger.sh check`).
-Unlisted skips and stale rows print and never fail the job; the job fails only when a
-lane's `go test -json` stream is missing. Each row names a test a lane skips on purpose
-and why; the reason column is documentation, matching is on package and test.
+The `guards` job also checks a skip ledger: the tests the two coverage lanes
+skipped, compared both ways with `.github/skips.allow` (`.github/scripts/skip-ledger.sh check`).
+An unlisted skip, a stale row, or a missing `go test -json` stream fails the job.
+Each row names a test a lane skips on purpose and why; the reason column is
+documentation, matching is on package and test.
 
 That job also enforces the flake ledger: a test CI caught being flaky on
 `main` has a row there with a deadline, and an `open` row past its deadline
