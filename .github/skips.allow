@@ -1,4 +1,4 @@
-# Skips the four CI coverage lanes take on purpose, one row per test:
+# Skips the CI coverage lanes take on purpose, one row per test:
 # `package test reason`. Derived from the ubuntu-latest lanes of ci.yml: no tmux or
 # herdr on PATH. The runner image ships Node.js, so no row skips
 # for a missing node. Environment skips appear here as the runner sees them.

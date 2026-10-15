@@ -21,16 +21,16 @@
 # is now covered, or has gone, is red too. The exact-base identity ratchet also
 # requires pure growth to carry an explicit disclosure and rejects mixed changes.
 #
-# --- Merging four lanes is a correctness condition, not an optimisation -------
+# --- Merging lanes is a correctness condition, not an optimisation ------------
 #
 # soldier_soldier_test.go carries `//go:build integration`, so the default lane
 # never builds it. Measured on this tree, `soldier_launch.go:474.23` -- the
 # refusal in FailClosedDuringLaunch -- reads count 0 in the default profile and
 # count 1 in the integration one. A lane that read the default profile alone
 # would call that guard untested, and would do the same to every branch those 60
-# integration files are the only cover for. Every one of the four lanes named in
+# integration files are the only cover for. Every lane named in
 # .github/build-tags.manifest is therefore required, and a missing profile is
-# fatal rather than treated as zeros. The fixture `merge-four-lanes` pins it.
+# fatal rather than treated as zeros. The fixture `merge-lanes` pins it.
 #
 # --- What is measured, and what cannot be --------------------------------------
 #
@@ -846,7 +846,7 @@ generate() {
 #   clean                  none; the tree every other fixture is a copy of
 #   open-bug               delete announce_open_bugs -- an OPEN-BUG reason must
 #                          warn on every run, an ordinary waiver must stay silent
-#   merge-four-lanes       take the default profile alone instead of the max
+#   merge-lanes            take the default profile alone instead of the max
 #                          across lanes -- the trap the design record hit while measuring
 #   statement-count-conflict merge identical ranges with conflicting statement counts
 #                          instead of failing closed at the merge boundary
