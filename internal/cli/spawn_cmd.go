@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -21,40 +20,19 @@ func newSpawnCmd() *cobra.Command {
 		harnessFlag string
 		modelFlag   string
 		effortFlag  string
-		arm         bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "spawn <id> [<project>]",
-		Short: "Spawn a soldier agent (project inferred from cwd if omitted)",
-		Long: `Spawn a soldier agent.
-
-Project can be omitted when the current working directory is inside a git
-repository that matches a registered project or can be ad-hoc inferred.
-
-Precedence: explicit project arg > registry match on cwd path > adhoc git
-remote/name heuristics.
-
-When inference fails, pass the project name explicitly or run 'munsu project add'.
+		Use:   "spawn <id>",
+		Short: "Spawn a soldier agent into its task's project",
+		Long: `Spawn a soldier agent into the project munsu task add recorded on the task.
 
 Spawn needs a queued task and performs the queued-to-working transition, so
-do not run 'munsu task start' for a task you will spawn.`,
-		Args: cobra.MatchAll(MinimumNArgs(1), cobra.MaximumNArgs(2)),
+do not run 'munsu task start' for a task you will spawn. Spawn ensures the
+watcher of the home; a failed ensure only warns.`,
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
-
-			// Resolve project name: explicit arg, or infer from cwd
-			var projectName string
-			if len(args) >= 2 {
-				projectName = args[1]
-			} else {
-				p, err := fleet.ResolveFromCwd(ctx.Home)
-				if err != nil {
-					return fmt.Errorf("no project argument and cannot infer from cwd: %w\n  Pass the project name: munsu spawn %s <project>\n  Or register this repo: munsu project add <name> <path>", err, id)
-				}
-				projectName = p.Name
-				fmt.Fprintf(os.Stderr, "info: inferred project %q from cwd\n", projectName)
-			}
 
 			// Compose the Task Authority over the exact home the Runner will
 			// use: construction is side-effect free and the Authority is passed
@@ -62,6 +40,19 @@ do not run 'munsu task start' for a task you will spawn.`,
 			taskAuthority, err := ctx.TaskAuthority()
 			if err != nil {
 				return fmt.Errorf("composing task authority for spawn: %w", err)
+			}
+			tid, err := domain.NewTaskID(id)
+			if err != nil {
+				return err
+			}
+			agg, err := taskAuthority.Get(tid)
+			if err != nil {
+				return fmt.Errorf("spawn %s: %w", id, err)
+			}
+			projectName := agg.Definition.Project
+			if projectName == "" {
+				// Words: Human, typed, 2026-10-15: "oki làm theo khuyến nghị"
+				return fmt.Errorf("spawn %s: the task records no project", id)
 			}
 
 			_, err = fleet.Spawn(fleet.Args{
@@ -75,7 +66,6 @@ do not run 'munsu task start' for a task you will spawn.`,
 				EffortFlag:  effortFlag,
 				HomeDir:     ctx.Home,
 				Endpoints:   newSpawnSessionEndpoints(),
-				Arm:         arm,
 				ArmFunc: func(homeDir string) error {
 					result := ensureWatcher(homeDir, false)
 					if result.Status != "success" {
@@ -85,14 +75,7 @@ do not run 'munsu task start' for a task you will spawn.`,
 				},
 				Authority: taskAuthority,
 			})
-			if err != nil {
-				return err
-			}
-
-			if !arm {
-				fmt.Fprintln(os.Stderr, "hint: ensure supervision with 'munsu watch ensure' or use 'munsu spawn --arm'")
-			}
-			return nil
+			return err
 		}),
 	}
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
@@ -101,7 +84,6 @@ do not run 'munsu task start' for a task you will spawn.`,
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model for the soldier harness")
 	cmd.Flags().StringVar(&effortFlag, "effort", "", "Override effort/thinking level (harness-specific)")
-	cmd.Flags().BoolVar(&arm, "arm", false, "Arm the watcher after spawn (warn-only on failure)")
 	return cmd
 }
 
@@ -247,41 +229,6 @@ func newPeekCmdWithCapture(capture BoundCapture) *cobra.Command {
 
 	cmd.Flags().IntVar(&lines, "lines", 40, "Number of lines to capture")
 
-	return cmd
-}
-
-func newSoldierStateCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "soldier-state <id>",
-		Short: "Read soldier current state",
-		Args:  ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			id := args[0]
-			if _, err := contractOutput(cmd); err != nil {
-				return err
-			}
-			state, err := fleet.ReadWithProbe(ctx.Home, id, runtimeTaskEndpointProbe())
-			if err != nil {
-				return observeReadError(ctx.Home, id, err)
-			}
-			return writeContract(cmd, Response[TaskObserve]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "task.observe",
-				Status:        "success",
-				Data: TaskObserve{
-					TaskID:              state.TaskID,
-					Status:              state.Status,
-					Description:         state.Description,
-					PaneAlive:           &state.PaneAlive,
-					StatusLines:         state.StatusLines,
-					StatusLogSuperseded: state.StatusLogSuperseded,
-					PR:                  state.PR.URL,
-				},
-				Help: []string{"Run `munsu task observe " + id + " --fields description,branch` for expanded fields"},
-			})
-		}),
-	}
-	configureContractCommand(cmd)
 	return cmd
 }
 
@@ -447,71 +394,5 @@ generation must pass its explicit generation here.
 	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")
 	cmd.Flags().UintVar(&targetGen, "generation", 0, "Bind this teardown to the exact generation it intends to retire; a delayed retry never retires a newer generation")
 
-	return cmd
-}
-
-func newSoldierFlushCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "soldier-flush <id>",
-		Short: "Flush one pending command to a soldier",
-		Long: `Read the captain's pending outbox for the given soldier and
-send the oldest pending command via SubmitPrompt, but only if the soldier
-is not busy. Nothing runs it automatically: the dispatcher runs it, or
-'munsu consume-ready <id>', by hand.
-
-Idempotent: calling when no pending exists is a no-op.
-Calling when the soldier is busy returns with "still busy".
-`,
-		Args: ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			id := args[0]
-
-			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := home.ReadHomeIdentity(ctx.Home)
-			if identErr != nil {
-				return fmt.Errorf("soldier-flush: deriving sender identity: %w", identErr)
-			}
-
-			result := fleet.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity, newSessionSoldierEndpoints())
-			if result.Err != nil {
-				return fmt.Errorf("soldier %s flush: %w", id, result.Err)
-			}
-
-			if result.Queued {
-				return writeContract(cmd, Response[MessageResult]{
-					SchemaVersion: SchemaVersion,
-					Kind:          "soldier-flush",
-					Status:        "success",
-					Data:          MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
-				})
-			}
-
-			if result.MessageID == "" {
-				return writeContract(cmd, Response[MessageResult]{
-					SchemaVersion: SchemaVersion,
-					Kind:          "soldier-flush",
-					Status:        "success",
-					Data:          MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
-				})
-			}
-
-			if result.Sent {
-				return writeContract(cmd, Response[MessageResult]{
-					SchemaVersion: SchemaVersion,
-					Kind:          "soldier-flush",
-					Status:        "success",
-					Data:          MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
-				})
-			}
-
-			return writeContract(cmd, Response[MessageResult]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "soldier-flush",
-				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("%s: cleared already-acked pending command (message=%s)", id, result.MessageID)},
-			})
-		}),
-	}
-	configureContractCommand(cmd)
 	return cmd
 }

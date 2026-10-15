@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,136 +9,10 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
-
-var recoverBriefHandoffs = fleet.RecoverTaskHandoffs
-var writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write func() error) error {
-	return auth.WriteTaskDataArtifactByID(id, write)
-}
-
-func newBriefCmd() *cobra.Command {
-	var scout bool
-	var force bool
-
-	cmd := &cobra.Command{
-		Use:   "brief <id> <repo>",
-		Short: "Scaffold a task brief",
-		Args:  ExactArgs(2),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			id := args[0]
-			repo := args[1]
-
-			// One canonical aggregate read serves mode resolution, the
-			// existence gate, and the scout contract below. A canonical task
-			// that fails to read is fatal: brief never falls back to an
-			// alternate mode source on a failed read (fail closed).
-			auth, err := ctx.TaskAuthority()
-			if err != nil {
-				return err
-			}
-			taskIDValue, err := domain.NewTaskID(id)
-			if err != nil {
-				return err
-			}
-			var agg taskauthority.Aggregate
-			canonicalExists := false
-			if a, getErr := auth.Get(taskIDValue); getErr == nil {
-				agg = a
-				canonicalExists = true
-			} else if !errors.Is(getErr, taskauthority.ErrNotFound) {
-				return getErr
-			}
-
-			// yolo stays registry-owned.
-			projYolo := false
-			if p, err := fleet.Find(ctx.Home, repo); err == nil {
-				projYolo = p.Yolo
-			}
-
-			// Delivery mode comes from the project's resolved review and forge
-			// steps, or from this generation's immutable captured contract.
-			contracted := canonicalExists && agg.DeliveryContract != nil
-			projectMode, tamperCheck, err := fleet.ResolveBriefProject(ctx.Home, repo, !contracted)
-			if err != nil {
-				return err
-			}
-			resolvedMode := projectMode
-			if contracted {
-				resolvedMode = agg.DeliveryContract.Mode
-			}
-
-			if !force && !canonicalExists {
-				return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
-			}
-
-			scoutScope := ""
-			var scoutGeneration taskauthority.Generation
-			if scout {
-				if !canonicalExists {
-					return fmt.Errorf("reading scout contract: %w", taskauthority.ErrNotFound)
-				}
-				if agg.Definition.Kind != taskauthority.KindScout {
-					return fmt.Errorf("task %q is not a scout", id)
-				}
-				scoutScope = agg.Definition.ScoutScope
-				scoutGeneration = agg.Generation
-			}
-			review := canonicalExists && agg.Definition.Kind == taskauthority.KindReview
-			opts := fleet.ScaffoldOptions{
-				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
-				Review: review, ReviewTask: agg.Definition.ReviewTaskID, ReviewHead: agg.Definition.ReviewHead,
-				Mode: resolvedMode, Yolo: projYolo,
-				ScoutScope: scoutScope,
-				Generation: scoutGeneration, TamperCheck: tamperCheck,
-			}
-
-			if err := recoverBriefHandoffs(ctx.Home); err != nil {
-				return err
-			}
-			if err := writeBriefArtifact(auth, id, func() error { return fleet.Scaffold(opts) }); err != nil {
-				return err
-			}
-
-			kind := taskauthority.KindShip
-			if scout {
-				kind = taskauthority.KindScout
-			}
-			if review {
-				kind = taskauthority.KindReview
-			}
-
-			var b strings.Builder
-			b.WriteString(fmt.Sprintf("Brief scaffolded at %s\n", fleet.Path(ctx.Home, id)))
-			b.WriteString(fmt.Sprintf("  id:    %s\n", id))
-			b.WriteString(fmt.Sprintf("  repo:  %s\n", repo))
-			b.WriteString(fmt.Sprintf("  kind:  %s\n", kind))
-			if resolvedMode != "" {
-				b.WriteString(fmt.Sprintf("  mode:  %s\n", resolvedMode))
-			}
-			if projYolo {
-				b.WriteString("  yolo:  true\n")
-			}
-
-			return writeContract(cmd, Response[MessageResult]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "brief",
-				Status:        "success",
-				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
-			})
-		}),
-	}
-	configureContractCommand(cmd)
-
-	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
-	cmd.Flags().BoolVar(&force, "force", false, "Scaffold brief without requiring existing task meta")
-
-	return cmd
-}
 
 func sessionRuntimeIdentityContract(id *bootstrap.RuntimeIdentity) *RuntimeIdentityContract {
 	if id == nil {

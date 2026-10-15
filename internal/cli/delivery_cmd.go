@@ -7,7 +7,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
@@ -173,21 +172,7 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 	}, nil
 }
 
-// projectDeliveryIdentity overlays one captured delivery identity onto the
-// task .meta projection (pr_* keys). Review-diff reads its base from it; the
-// canonical delivery authorization/outcome remains the delivery truth and is
-// never derived from these keys.
-func projectDeliveryIdentity(homeDir, taskID string, ident domain.DeliveryIdentity) error {
-	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
-		for k, v := range ident.ToMeta() {
-			meta[k] = v
-		}
-		return nil
-	})
-}
-
 func newPRMergeCmd() *cobra.Command {
-	var doTeardown bool
 	var words domain.Words
 	cmd := &cobra.Command{
 		Use:   "pr-merge <id> <pr-url> [-- --merge|--rebase]",
@@ -213,9 +198,10 @@ MR URL format: https://gitlab.com/<owner>/<repo>/-/merge_requests/<n>
 Task meta is resolved from the current home first, then each registered
 captain home (so general can merge after captain handoff + spawn).
 
-Merge does not remove soldier panes or worktrees. Pass --teardown to run
-munsu teardown on the task home after a successful merge (landed cleanup),
-resuming retirement only after a completed canonical delivery outcome.`,
+A landed delivery closes the task: it is marked done and torn down (pane,
+worktree, meta) in the task home, with the safety checks of munsu teardown.
+A non-completed outcome changes neither. When the merge landed but teardown
+failed, re-running pr-merge resumes the teardown only.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -236,33 +222,10 @@ resuming retirement only after a completed canonical delivery outcome.`,
 			if err != nil {
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}
-			if !doTeardown {
-				result, err := fleet.Deliver(taskHome, id, req)
-				if err != nil {
-					return err
-				}
-				fmt.Print(result.Render())
-				for _, note := range recoveredDeliveryNotes(result.Recovered) {
-					fmt.Println(note)
-				}
-				// Every non-completed outcome is a non-zero exit for script
-				// chaining; the rendered partial-state report is printed first so
-				// retryable/partial/remote-unknown detail stays visible.
-				if result.IsError() {
-					return fmt.Errorf("pr-merge %s: delivery did not complete (status %s)", id, result.Status)
-				}
-				if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
-					return &LifecyclePartialError{TaskID: id, State: "delivered", Cause: perr}
-				}
-				return nil
-			}
-
-			// --teardown: MergeAndRetire delivers this same request (or resumes
-			// retirement when the outcome is already committed) and retires
-			// only after a completed outcome. Teardown's merge proof reads the
-			// identity of the delivery authorization, not .meta.
-			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
 			mars := fleet.MergeAndRetire(taskHome, id, req, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
+			if mars.Delivery != nil {
+				fmt.Print(mars.Delivery.Render())
+			}
 			for _, note := range recoveredDeliveryNotes(mars.Recovered) {
 				fmt.Println(note)
 			}
@@ -274,11 +237,14 @@ resuming retirement only after a completed canonical delivery outcome.`,
 					fmt.Println(step)
 				}
 			}
+			if mars.DeliveryErr != nil {
+				return mars.DeliveryErr
+			}
 			if mars.IsError() {
 				if mars.TeardownError != nil {
 					return fmt.Errorf("post-merge teardown %s: %w", id, mars.TeardownError)
 				}
-				return fmt.Errorf("merge-and-retire %s: %s %s", id, mars.MergeOutcome, mars.MergeDetail)
+				return fmt.Errorf("pr-merge %s: %s %s", id, mars.MergeOutcome, mars.MergeDetail)
 			}
 			return nil
 		}),
@@ -286,7 +252,6 @@ resuming retirement only after a completed canonical delivery outcome.`,
 	cmd.Flags().StringVar(&words.Grantor, "grantor", "", "who gave the delivery words (required)")
 	cmd.Flags().StringVar(&words.Channel, "channel", "", "the channel the words came through (required)")
 	cmd.Flags().StringVar(&words.Quote, "quote", "", "the Human's verbatim words permitting this delivery (required)")
-	cmd.Flags().BoolVar(&doTeardown, "teardown", false, "after successful merge, teardown the soldier (pane+worktree+meta) in the task home")
 	return cmd
 }
 

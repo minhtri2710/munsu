@@ -89,7 +89,8 @@ func TestWakeSettleOutputListsAnUnacceptedReport(t *testing.T) {
 			t.Run(tc.name+"/"+name, func(t *testing.T) {
 				homeDir := t.TempDir()
 				initCLITestHome(t, homeDir)
-				if out, err := runTaskCommand(t, []string{"task", "add", "sc-1", "explore", "--kind", "scout", "--scope", "investigate report", "--home", homeDir}); err != nil {
+				registerCLITestProject(t, homeDir, "munsu")
+				if out, err := runTaskCommand(t, []string{"task", "add", "sc-1", "explore", "--kind", "scout", "--scope", "investigate report", "--repo", "munsu", "--home", homeDir}); err != nil {
 					t.Fatalf("task add: %v\n%s", err, out)
 				}
 				line := domain.ReportStatusLine("done", "findings", "default")

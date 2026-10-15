@@ -123,19 +123,16 @@ func TestSyncOrchestratorManual_Idempotent(t *testing.T) {
 func TestOrchestratorManualNamesTheTestImpactPlaceholderAtEveryBriefFillStep(t *testing.T) {
 	sites := 0
 	for _, line := range strings.Split(orchestratorManual, "\n") {
-		if strings.Contains(line, "{TASK}") && strings.HasPrefix(strings.TrimSpace(line), "#") {
+		if strings.Contains(line, "{TEST_IMPACT}") && strings.HasPrefix(strings.TrimSpace(line), "#") {
 			sites++
-			if !strings.Contains(line, "{TEST_IMPACT}") {
-				t.Errorf("brief fill step does not name {TEST_IMPACT}: %q", line)
-			}
 		}
 	}
 	if sites != 2 {
-		t.Errorf("brief fill command lines naming {TASK} = %d, want 2", sites)
+		t.Errorf("brief fill command lines naming {TEST_IMPACT} = %d, want 2", sites)
 	}
 	for _, want := range []string{
-		"munsu brief <id> <repo>\n# Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}\nmunsu spawn",
-		"# scaffold soldier brief\n   # Fill in the {TASK} placeholder in data/<id>/brief.md; for a ship brief also {TEST_IMPACT}\n5. munsu spawn",
+		"--reviews <ship-id>\n# For a ship brief, fill {TEST_IMPACT} in data/<id>/brief.md\nmunsu spawn",
+		"# register task and write its brief\n   # For a ship brief, fill {TEST_IMPACT} in data/<id>/brief.md\n4. munsu spawn",
 		"For a ship brief, also replace the `{TEST_IMPACT}` placeholder with the\ntest-impact map: for each path the task will change, the existing tests that\nexercise it, found by code search (`semble` or `zg`).\n",
 	} {
 		if !strings.Contains(orchestratorManual, want) {

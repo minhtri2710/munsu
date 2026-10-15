@@ -214,9 +214,18 @@ func TestRecoverTransferJournalsPropagatesCanonicalHomeOpenError(t *testing.T) {
 func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
+	if err := os.MkdirAll(filepath.Dir(Path(parent, "TASK-1")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(parent, "TASK-1"), []byte("brief with test impact"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Handoff(parent, captain, []string{"TASK-1"}); err != nil {
 		t.Fatalf("Handoff: %v", err)
+	}
+	if got, err := os.ReadFile(Path(captain, "TASK-1")); err != nil || string(got) != "brief with test impact" {
+		t.Fatalf("captain brief = %q (%v), want the source brief", got, err)
 	}
 
 	// The destination owns the re-created generation; the source is superseded.

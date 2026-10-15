@@ -16,16 +16,15 @@ type Args struct {
 	ID              string
 	ProjectName     string
 	Yolo            bool
-	Force           bool                 // --force flag; bypass captain task authority checks
-	Backend         string               // --backend flag value — optional assertion against the resolved project snapshot
-	HarnessFlag     string               // --harness flag value; empty = resolve from config
-	ModelFlag       string               // --model flag; empty = matched profile, then project model
-	EffortFlag      string               // --effort flag; empty = matched profile, else none
-	TaskDescription string               // optional dispatch matching text; empty = brief/id fallback
-	HomeDir         string               // if empty, resolved via home.Resolve
-	Endpoints       EndpointCapabilities // required endpoint lifecycle capability
-	Arm             bool
-	ArmFunc         func(homeDir string) error // injectable arm function; nil = no auto-arm
+	Force           bool                       // --force flag; bypass captain task authority checks
+	Backend         string                     // --backend flag value — optional assertion against the resolved project snapshot
+	HarnessFlag     string                     // --harness flag value; empty = resolve from config
+	ModelFlag       string                     // --model flag; empty = matched profile, then project model
+	EffortFlag      string                     // --effort flag; empty = matched profile, else none
+	TaskDescription string                     // optional dispatch matching text; empty = brief/id fallback
+	HomeDir         string                     // if empty, resolved via home.Resolve
+	Endpoints       EndpointCapabilities       // required endpoint lifecycle capability
+	ArmFunc         func(homeDir string) error // ensures the home's watcher after launch; nil = none
 	// Authority is the composed canonical Task Authority targeting the exact
 	// home the Runner resolves (the CLI composition root supplies it from
 	// Ctx.TaskAuthority(); tests inject a canonical home-backed Authority). It

@@ -177,54 +177,7 @@ func TestValidateIdentity_MissingCapturedAt(t *testing.T) {
 	}
 }
 
-// --- ToMeta / IdentityFromMeta round-trip tests ---
-
-func TestIdentityRoundTrip(t *testing.T) {
-	original := &domain.DeliveryIdentity{
-		Provider:   "github",
-		Owner:      "minhtri2710",
-		Repo:       "munsu",
-		Number:     42,
-		URL:        "https://github.com/minhtri2710/munsu/pull/42",
-		BaseRef:    "main",
-		HeadRef:    "feature/test",
-		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
-		CapturedAt: "2026-07-18T12:00:00Z",
-	}
-
-	meta := original.ToMeta()
-	restored, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta: %v", err)
-	}
-	if restored == nil {
-		t.Fatal("IdentityFromMeta returned nil")
-	}
-
-	// Compare fields
-	checks := []struct {
-		name string
-		got  string
-		want string
-	}{
-		{"Provider", restored.Provider, original.Provider},
-		{"Owner", restored.Owner, original.Owner},
-		{"Repo", restored.Repo, original.Repo},
-		{"URL", restored.URL, original.URL},
-		{"BaseRef", restored.BaseRef, original.BaseRef},
-		{"HeadRef", restored.HeadRef, original.HeadRef},
-		{"HeadSHA", restored.HeadSHA, original.HeadSHA},
-		{"CapturedAt", restored.CapturedAt, original.CapturedAt},
-	}
-	for _, c := range checks {
-		if c.got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name, c.got, c.want)
-		}
-	}
-	if restored.Number != original.Number {
-		t.Errorf("Number: got %d, want %d", restored.Number, original.Number)
-	}
-}
+// --- IdentityFromMeta tests ---
 
 func TestIdentityFromMeta_EmptyMeta(t *testing.T) {
 	meta := map[string]string{}

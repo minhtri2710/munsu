@@ -37,13 +37,11 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 ### 4. Spawn / brief
 
-- `munsu task add <id> "<desc>" --kind ship|scout|review [--reviews <ship-id>] --repo <name>` — register the queued task. `munsu spawn` takes it to working, so do not run `munsu task start <id>` before spawn.
-- `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
-- Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
+- `munsu task add <id> "<desc>" --kind ship|scout|review [--reviews <ship-id>] [--repo <name>]` — register the queued task and write its brief to `data/<id>/brief.md`, with the description in place of `{TASK}`. The project is `--repo`, else the reviewed task's project, else the registered project of the current checkout; it must be registered.
 - For a ship brief, replace the `{TEST_IMPACT}` placeholder with the test-impact map: for each path the task will change, the existing tests that exercise it, found by code search (`semble` or `zg`).
-- `munsu spawn <id> [<project>]` — launch the soldier; project is inferred from the current directory when omitted. Delivery mode comes from that project's configured forge step.
+- `munsu spawn <id>` — launch the soldier in the task's project and ensure the watcher. Delivery mode comes from that project's configured forge step. Do not run `munsu task start <id>` before spawn.
 
-**Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu soldier-state <id>`).
+**Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu task show <id>`, which reports `pane_alive`).
 
 **Context pointer:** The auxiliary skill `harness-adapters` describes launch templates per harness (model flags, effort flags) and turn-end hooks — run `munsu skill show harness-adapters` and consult it before spawning if harness-specific flags are needed.
 
@@ -59,10 +57,10 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 
 ### 5. Supervise
 
-- Ensure the watcher: `munsu watch ensure [--restart]`.
+- `munsu spawn` ensures the watcher; repair it with `munsu watch ensure [--restart]`.
 - On wake: a delivered `[mu-system:wake]` prompt is answered with the `munsu wake resolve` command it carries;
   without delivery, claim with `munsu wake claim --consumer <id>`. `SUPERVISION.md` owns the rule.
-- Ground truth: `munsu soldier-state <id>` (not raw status tail).
+- Ground truth: `munsu task show <id>` (not raw status tail).
 - Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
 - Report status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
 - **inbox** — preview: `munsu inbox` lists queued and claimed wakes and last captain status lines side by side.
@@ -78,14 +76,14 @@ munsu writes the test-quality rules into the briefs and charters itself; never c
 
 Delivery mode is derived from the project's configured forge step. Act according to the resolved mode:
 
-- **direct-PR**: The Soldier pushes its committed task branch and opens the PR. Then `munsu delivery review-diff <id>` to review the branch and `munsu delivery pr-merge <id> <pr-url>` once approved. `munsu delivery merge-status <id>` reports whether it landed; after it lands, run `munsu task done <id>`.
+- **direct-PR**: The Soldier pushes its committed task branch and opens the PR. Then `munsu delivery review-diff <id>` to review the branch and `munsu delivery pr-merge <id> <pr-url>` once approved. A landed merge marks the task done and tears the soldier down in the same command; re-run it to resume a failed teardown. `munsu delivery merge-status <id>` answers whether a delivery landed.
 - **local-only**: munsu registers no local merge command; land the branch outside munsu, then close the task with `munsu task done <id>`.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
 ### 7. Teardown
 
-For the standalone path, only run after the task is already done and fully landed (merged or report submitted). The combined `munsu delivery pr-merge <id> <pr-url> --teardown` path retires directly from the working phase without marking the task done.
+A direct-PR task is torn down by `munsu delivery pr-merge`. For local-only and scout tasks, run teardown only after the task is done and fully landed (merged or report submitted).
 
 ```sh
 munsu teardown <id> [--force]
@@ -102,7 +100,6 @@ Teardown stops only holders of the task worktree. A task process that survives i
 - `munsu fleet view` — see the full fleet.
 - `munsu captain converge` — validate registry entries, retry pending nudges, fast-forward Captain homes, push inherited config, refresh charters, check liveness (relaunching only when absence is proven), reconcile pending mailbox records, and report watcher status after Captain lifecycle changes.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
-- `munsu fleet bearings` — compact resume report.
 - `munsu inbox` — preview pending wakes and captain status lines in one view.
 - `munsu stow --general <text...>` — capture General preferences (`data/general.md`); created lazily if absent.
 - `munsu stow --kind general <text...>` — same as --general.

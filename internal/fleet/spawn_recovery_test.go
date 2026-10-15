@@ -573,7 +573,7 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 				t.Fatalf("the error does not keep the underlying cause: %v", err)
 			}
 			msg := err.Error()
-			rerun := "munsu spawn " + taskID + " test-proj"
+			rerun := "munsu spawn " + taskID + "' ("
 			for _, want := range []string{
 				taskID, "backend tmux endpoint pane-1", "may still be running",
 				"fix the cause", rerun, "refuses with its own reason", "re-adopts the pane only while the pane is live",

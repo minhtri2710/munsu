@@ -100,5 +100,5 @@ func renderRootSummary(w io.Writer, v rootSummaryView) {
 	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Next: munsu fleet bearings | munsu peek <id> | munsu --help")
+	fmt.Fprintln(w, "Next: munsu fleet view | munsu peek <id> | munsu --help")
 }

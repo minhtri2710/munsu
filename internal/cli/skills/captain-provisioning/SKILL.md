@@ -45,7 +45,7 @@ Source: `cmd/munsu/main.go` registers the CLI; `internal/cli/root.go` wires the 
 ## Validation / stop boundaries
 
 - **Before retiring a live captain**, verify captain fleet state (`munsu captain list`),
-  soldier state (`munsu soldier-state <id>`), pane liveness, and backlog truth — see
+  soldier state (`munsu task show <id>`), pane liveness, and backlog truth — see
   [retire preflight](REFERENCE.md#retire). Never force-retire a captain with live work.
 - **After `recover` on a seeded-only captain**, run `munsu captain launch <captain-home>`
   once; recovery intentionally leaves it stopped.

@@ -19,6 +19,7 @@ type ScaffoldOptions struct {
 	Repo        string // project/repo name
 	Scout       bool   // generate scout brief instead of ship brief
 	Review      bool   // generate the read-only reviewer brief; ReviewTask and ReviewHead are required
+	Task        string // the task description, written in place of {TASK}
 	Mode        string // delivery mode (direct-PR / local-only)
 	Yolo        bool   // yolo mode
 	ScoutScope  string
@@ -52,6 +53,7 @@ func Scaffold(opts ScaffoldOptions) error {
 	if err != nil {
 		return err
 	}
+	content = strings.ReplaceAll(content, "{TASK}", opts.Task)
 	path := filepath.Join(dir, "brief.md")
 	// A fenced captain writes its briefs, so it can leave a link here; the
 	// rename replaces the link and never writes through it.
@@ -304,7 +306,7 @@ func LintBrief(homeDir, id, kind string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; re-scaffold it with 'munsu brief' before spawning", id, strings.Join(missing, ", "))
+		return fmt.Errorf("brief for task %s is missing scaffolded sections: %s; restore the sections munsu task add wrote before spawning", id, strings.Join(missing, ", "))
 	}
 	return nil
 }

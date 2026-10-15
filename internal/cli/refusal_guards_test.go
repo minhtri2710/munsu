@@ -67,14 +67,6 @@ func TestGuardMinimumNArgsRefusesFewerThanN(t *testing.T) {
 	wantErrContains(t, MinimumNArgs(2)(cmd, []string{"a"}), "requires at least 2 arg(s), received 1", "MinimumNArgs(2) with one argument")
 }
 
-func TestGuardMaximumNArgsRefusesMoreThanN(t *testing.T) {
-	cmd := &cobra.Command{Use: "demo"}
-	if err := MaximumNArgs(1)(cmd, []string{"a"}); err != nil {
-		t.Fatalf("MaximumNArgs(1) with one argument = %v, want acceptance", err)
-	}
-	wantErrContains(t, MaximumNArgs(1)(cmd, []string{"a", "b"}), "accepts at most 1 arg(s), received 2", "MaximumNArgs(1) with two arguments")
-}
-
 // --- internal/cli/contract.go: the output-format gate -----------------------
 
 func TestGuardContractOutputRefusesAnUnsupportedFormat(t *testing.T) {
@@ -750,7 +742,7 @@ func TestGuardPromoteRefusesATaskThatIsNotAScout(t *testing.T) {
 
 // --- internal/cli/session_cmd.go -------------------------------------------
 
-func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
+func TestTaskAddBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	oldRecover, oldWrite := recoverBriefHandoffs, writeBriefArtifact
 	order := []string{}
 	recoverBriefHandoffs = func(string) error { order = append(order, "recover"); return nil }
@@ -761,15 +753,8 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	t.Cleanup(func() { recoverBriefHandoffs, writeBriefArtifact = oldRecover, oldWrite })
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	auth := testAuthorityFor(t, homeDir)
-	seedGuardTask(t, auth, "ordered", "ship")
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "brief", "ordered", "demo-repo", "--home", homeDir); err != nil {
+	registerCLITestProject(t, homeDir, "demo-repo")
+	if _, err := runRoot(t, "task", "add", "ordered", "work", "--repo", "demo-repo", "--home", homeDir); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(order, ",") != "recover,write" {
@@ -777,78 +762,17 @@ func TestBriefRecoveryPrecedesTaskFence(t *testing.T) {
 	}
 }
 
-func TestBriefRequiresCanonicalTaskRecord(t *testing.T) {
+func TestSessionStartGCUsesRawIDOwnershipForUnknownTaskBriefs(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	auth := testAuthorityFor(t, homeDir)
-	seedGuardTask(t, auth, "known", "ship")
-	oldWrite := writeBriefArtifact
-	called := false
-	writeBriefArtifact = func(auth *taskauthority.Canonical, id string, write func() error) error {
-		called = true
-		return auth.WriteTaskDataArtifactByID(id, write)
-	}
-	t.Cleanup(func() { writeBriefArtifact = oldWrite })
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(homeDir, "state", "meta-only.meta"), []byte("kind=ship\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name    string
-		id      string
-		force   bool
-		wantErr string
-	}{
-		{name: "canonical record allows", id: "known"},
-		{name: "legacy meta without a canonical record blocks", id: "meta-only", wantErr: `task "meta-only" not found`},
-		{name: "force allows a task with no record", id: "forced", force: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"brief", tc.id, "demo-repo", "--home", homeDir}
-			if tc.force {
-				args = append(args, "--force")
-			}
-			called = false
-			_, err := runRoot(t, args...)
-			_, statErr := os.Stat(filepath.Join(homeDir, "data", tc.id, "brief.md"))
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("brief error = %v, want %q", err, tc.wantErr)
-				}
-				if called || statErr == nil {
-					t.Fatalf("a refused brief reached the write fence (called=%v, brief exists=%v)", called, statErr == nil)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("brief: %v", err)
-			}
-			if statErr != nil || !called {
-				t.Fatalf("brief not written (write fence called=%v, stat=%v)", called, statErr)
-			}
-		})
-	}
-}
-
-func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-		t.Fatal(err)
-	}
 	id := "forced-unknown"
-	if _, err := runRoot(t, "brief", id, "demo-repo", "--force", "--home", homeDir); err != nil {
-		t.Fatalf("forced brief: %v", err)
-	}
 	briefDir := filepath.Join(homeDir, "data", id)
+	if err := os.MkdirAll(briefDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(briefDir, old, old); err != nil {
 		t.Fatal(err)
@@ -864,7 +788,7 @@ func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 		t.Fatalf("release session lock: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(briefDir, "brief.md")); err != nil {
-		t.Fatalf("forced brief was reclaimed: %v", err)
+		t.Fatalf("unknown task's brief was reclaimed: %v", err)
 	}
 
 	captainHome := t.TempDir()
@@ -889,45 +813,6 @@ func TestSessionStartGCUsesRawIDOwnershipForForcedBriefs(t *testing.T) {
 	if _, err := os.Stat(captainDir); !os.IsNotExist(err) {
 		t.Fatalf("empty captain directory remains, stat err: %v", err)
 	}
-}
-
-func TestGuardBriefRefusesATaskThatIsNotAScout(t *testing.T) {
-	homeDir := t.TempDir()
-	auth := testAuthorityFor(t, homeDir)
-	seedGuardTask(t, auth, "t1", "ship")
-	// The delivery-mode resolution in front of the kind check reads the typed
-	// base document and the project registry, and fails closed without both.
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.FleetBaseConfig{Backend: "tmux"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-		t.Fatalf("seeding the project registry: %v", err)
-	}
-	_, err := runRoot(t, "brief", "t1", "demo-repo", "--scout", "--home", homeDir)
-	wantErrContains(t, err, `task "t1" is not a scout`, "brief --scout for a ship task")
-}
-
-// TestGuardBriefScoutRefusesATaskWithNoCanonicalRecord enters the scout-contract
-// guard in newBriefCmd: --scout needs a canonical aggregate to read the scout
-// definition from, so a task with no canonical record refuses. --force is
-// required to pass the not-found gate ahead of it and reach this refusal.
-func TestGuardBriefScoutRefusesATaskWithNoCanonicalRecord(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.FleetBaseConfig{Backend: "tmux"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-		t.Fatalf("seeding the project registry: %v", err)
-	}
-	_, err := runRoot(t, "brief", "missing", "demo-repo", "--scout", "--force", "--home", homeDir)
-	wantErrContains(t, err, "reading scout contract", "brief --scout for a task with no canonical record")
 }
 
 // seedGuardDeliveryContract records a durable delivery contract on an existing
@@ -959,68 +844,41 @@ func seedGuardDeliveryContract(t *testing.T, auth *taskauthority.Canonical, task
 	}
 }
 
-// TestBriefResolvesModeFromDeliveryContract locks the owner-clean resolution
-// (adr-d1-briefcontract): once a task carries a canonical delivery contract,
-// `munsu brief` delivers under the CONTRACT's mode, never the project's current
-// tools. Only pre-first-spawn (no contract) does brief derive the mode from the
-// project snapshot.
-func TestBriefResolvesModeFromDeliveryContract(t *testing.T) {
-	setup := func(t *testing.T, contractMode string) string {
-		homeDir := t.TempDir()
-		auth := testAuthorityFor(t, homeDir)
-		seedGuardTask(t, auth, "t1", "ship")
-		if contractMode != "" {
-			seedGuardDeliveryContract(t, auth, "t1", contractMode, deliveryGuardGitHub)
-		}
-		if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
-			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.FleetBaseConfig{Backend: "tmux"},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := runRoot(t, "project", "add", "demo-repo", t.TempDir(), "--home", homeDir); err != nil {
-			t.Fatalf("seeding the project registry: %v", err)
-		}
-		return homeDir
+// TestTaskAddBriefTakesTheModeFromTheProject: task add refuses a project the
+// registry does not hold before creating the task, and writes a registered
+// project's brief under the mode its configured forge derives.
+func TestTaskAddBriefTakesTheModeFromTheProject(t *testing.T) {
+	for _, tc := range []struct {
+		name, repo, wantErr string
+	}{
+		{"blocks an unregistered project", "typo-repo", "register project"},
+		{"allows a registered project with a ready forge", "demo-repo", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prependFakeGitHubCLI(t)
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			registerCLITestProject(t, homeDir, "demo-repo")
+			if err := config.StoreProjectOverlay(homeDir, "demo-repo", config.ProjectOverlay{Forge: &config.ToolEntry{Adapter: "github"}}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := runRoot(t, "task", "add", "t1", "work", "--repo", tc.repo, "--home", homeDir)
+			if tc.wantErr != "" {
+				wantErrContains(t, err, tc.wantErr, "task add for an unregistered project")
+				if _, getErr := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "t1")); !errors.Is(getErr, taskauthority.ErrNotFound) {
+					t.Fatalf("refused task add left a task: %v", getErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("task add: %v", err)
+			}
+			brief, err := os.ReadFile(filepath.Join(homeDir, "data", "t1", "brief.md"))
+			if err != nil || !strings.Contains(string(brief), "Delivery mode: direct-PR") {
+				t.Fatalf("brief = %q (%v), want direct-PR from the configured forge", brief, err)
+			}
+		})
 	}
-
-	t.Run("contracted brief validates the snapshot without re-deriving the mode", func(t *testing.T) {
-		// The contract is direct-PR and the project snapshot derives local-only.
-		// A brief that re-derives from the snapshot would print local-only.
-		homeDir := setup(t, "direct-PR")
-		out, err := runRoot(t, "brief", "t1", "demo-repo", "--home", homeDir)
-		if err != nil {
-			t.Fatalf("contracted brief: %v", err)
-		}
-		if !strings.Contains(out, "direct-PR") {
-			t.Fatalf("brief did not deliver under the contract mode; output: %s", out)
-		}
-	})
-
-	t.Run("contracted brief still fails closed on an unknown project", func(t *testing.T) {
-		// The contract owns the mode, but the project snapshot still gates
-		// existence: a contracted brief for an unregistered repo must refuse.
-		homeDir := setup(t, "direct-PR")
-		_, err := runRoot(t, "brief", "t1", "typo-repo", "--home", homeDir)
-		wantErrContains(t, err, "register project", "contracted brief for an unregistered project")
-	})
-
-	t.Run("pre-first-spawn derives the mode from the snapshot tools", func(t *testing.T) {
-		// No contract recorded: brief derives the mode from the project's
-		// configured forge, which must be Ready to be part of the snapshot.
-		prependFakeGitHubCLI(t)
-		homeDir := setup(t, "")
-		if err := config.StoreProjectOverlay(homeDir, "demo-repo", config.ProjectOverlay{Forge: &config.ToolEntry{Adapter: "github"}}); err != nil {
-			t.Fatal(err)
-		}
-		out, err := runRoot(t, "brief", "t1", "demo-repo", "--home", homeDir)
-		if err != nil {
-			t.Fatalf("brief: %v", err)
-		}
-		if !strings.Contains(out, "direct-PR") {
-			t.Fatalf("brief did not derive direct-PR from the configured forge pre-first-spawn; output: %s", out)
-		}
-	})
 }
 
 // prependFakeGitHubCLI puts a gh-axi and gh that the GitHub capability probe

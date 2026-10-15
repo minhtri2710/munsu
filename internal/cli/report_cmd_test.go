@@ -185,7 +185,8 @@ func TestSettlingAReportCompletesOnlyAScoutsDone(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			initCLITestHome(t, homeDir)
-			addArgs := []string{"task", "add", "t-1", "work", "--kind", tc.kind, "--home", homeDir}
+			registerCLITestProject(t, homeDir, "munsu")
+			addArgs := []string{"task", "add", "t-1", "work", "--kind", tc.kind, "--repo", "munsu", "--home", homeDir}
 			if tc.kind == taskauthority.KindScout {
 				addArgs = append(addArgs, "--scope", "investigate report")
 			}
@@ -285,7 +286,8 @@ func TestReportResolvedRefusalReadsTheTaskKind(t *testing.T) {
 			homeDir := t.TempDir()
 			initCLITestHome(t, homeDir)
 			if tc.addArgs != nil {
-				if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--home", homeDir}, tc.addArgs...)); err != nil {
+				registerCLITestProject(t, homeDir, "munsu")
+				if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--repo", "munsu", "--home", homeDir}, tc.addArgs...)); err != nil {
 					t.Fatalf("task add: %v\n%s", err, out)
 				}
 				if err := home.WriteMeta(homeDir, "res-1", tc.meta); err != nil {

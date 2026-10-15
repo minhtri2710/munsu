@@ -31,6 +31,13 @@ type MergeAndRetireResult struct {
 	// Recovered holds non-completed outcomes of other tasks' journals the
 	// delivery phase resumed; they are reported, not failed on.
 	Recovered []DeliverResult
+
+	// DeliveryErr is the error of a delivery that committed no outcome.
+	DeliveryErr error
+
+	// Delivery is the result of the delivery this call ran; nil when the
+	// outcome was already committed or the delivery failed before one.
+	Delivery *DeliverResult
 }
 
 // IsError returns true when the composite operation has not fully succeeded.
@@ -45,8 +52,8 @@ func (r *MergeAndRetireResult) IsError() bool {
 	return r.TeardownError != nil
 }
 
-// MergeAndRetire composes the journaled delivery execution and retirement
-// into one operation.
+// MergeAndRetire composes the journaled delivery execution, the done
+// transition and retirement into one operation.
 //
 // Phase 1 - Delivery: merged truth is derived from the canonical committed
 // delivery outcome, never from the .meta projection. A
@@ -54,6 +61,8 @@ func (r *MergeAndRetireResult) IsError() bool {
 // committed retryable outcome or no committed outcome runs the journaled
 // Deliver; a committed terminal partial/remote-unknown outcome cannot be
 // re-delivered and fails closed.
+//
+// Between them a landed task still in a non-terminal phase is marked done.
 //
 // Phase 2 - Retirement: the authoritative retired phase transition commits via
 // the composed canonical Task Authority FIRST (durable receipt); RetireTask
@@ -128,22 +137,36 @@ func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardow
 
 	mergeOutcome := taskauthority.DeliveryOutcomeCompleted
 	var recovered []DeliverResult
+	var delivery *DeliverResult
 	if !alreadyMerged {
 		result, derr := Deliver(homeDir, id, req)
 		if derr != nil {
 			return &MergeAndRetireResult{
 				MergeOutcome: taskauthority.DeliveryOutcomeRetryable,
 				MergeDetail:  fmt.Sprintf("delivery execution failed: %v", derr),
+				DeliveryErr:  derr,
 			}
 		}
 		mergeOutcome = result.Status
 		recovered = result.Recovered
+		delivery = result
 		if mergeOutcome != taskauthority.DeliveryOutcomeCompleted {
 			return &MergeAndRetireResult{
 				MergeOutcome: mergeOutcome,
 				MergeDetail:  result.Detail,
 				Recovered:    recovered,
+				Delivery:     delivery,
 			}
+		}
+	}
+
+	if err := markLandedTaskDone(authority, taskID, *targetGen); err != nil {
+		return &MergeAndRetireResult{
+			MergeOutcome:  mergeOutcome,
+			MergeDetail:   "provider confirms merged",
+			TeardownError: err,
+			Recovered:     recovered,
+			Delivery:      delivery,
 		}
 	}
 
@@ -164,5 +187,38 @@ func MergeAndRetire(homeDir, id string, req DeliverRequest, backend BoundTeardow
 		TeardownResult: teardownResult,
 		TeardownError:  retireErr,
 		Recovered:      recovered,
+		Delivery:       delivery,
 	}
+}
+
+// markLandedTaskDone completes the target generation as done unless it is
+// already terminal; a retry after the commit finds it done.
+func markLandedTaskDone(authority *taskauthority.Canonical, taskID domain.TaskID, target taskauthority.Generation) error {
+	agg, err := authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("marking task %s done: %w", taskID.Value(), err)
+	}
+	switch agg.Phase {
+	case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
+		return nil
+	}
+	req := taskauthority.CanonicalCompleteRequest{
+		HomeID:       authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(uint64(target), uint64(agg.Revision)),
+		To:           taskauthority.PhaseDone,
+		Reason:       "delivery landed",
+	}
+	opID, err := domain.NewOperationID("task-done-" + newJournalID())
+	if err != nil {
+		return err
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return err
+	}
+	if _, err := authority.Complete(op, req); err != nil {
+		return fmt.Errorf("marking task %s done: %w", taskID.Value(), err)
+	}
+	return nil
 }

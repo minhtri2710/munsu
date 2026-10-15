@@ -90,7 +90,7 @@ func wordsArgs(v map[string]string) []string {
 
 // dashActions is the approved action set (plan sets A and B). The wake actions
 // are absent: no existing read exposes a claimed wake's lease and event IDs.
-// Offered nowhere: --force, --teardown, --generation.
+// Offered nowhere: --force, --generation.
 var dashActions = withBindings([]dashAction{
 	{key: "b", name: "task block", binding: bindTask,
 		fields: []dashField{{"by", "blocked by (empty for none)", false}},

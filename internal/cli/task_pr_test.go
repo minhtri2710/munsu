@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,12 +9,13 @@ import (
 
 const taskPRTestURL = "https://github.com/org/repo/pull/42"
 
-// TestTaskShowAndSoldierStateShowReportedPR proves both commands show the PR
-// the status log reports as unverified, never leave phase working, and never
-// write a pr_* meta key.
-func TestTaskShowAndSoldierStateShowReportedPR(t *testing.T) {
+// TestTaskShowShowsReportedPR proves task show shows the PR the status log
+// reports as unverified and the pane liveness, never leaves phase working, and
+// never writes a pr_* meta key.
+func TestTaskShowShowsReportedPR(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 	for _, args := range [][]string{
 		{"task", "add", "pr1", "ship it", "--kind", "ship", "--repo", "munsu", "--home", homeDir},
 		{"task", "start", "pr1", "--home", homeDir},
@@ -24,7 +24,7 @@ func TestTaskShowAndSoldierStateShowReportedPR(t *testing.T) {
 			t.Fatalf("%v: %v\n%s", args, err, out)
 		}
 	}
-	if err := home.WriteMeta(homeDir, "pr1", map[string]string{"kind": "ship"}); err != nil {
+	if err := home.WriteMeta(homeDir, "pr1", map[string]string{"kind": "ship", "window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := home.AppendStatus(homeDir, "pr1", "done: PR "+taskPRTestURL+" checks green [key=default]"); err != nil {
@@ -35,24 +35,11 @@ func TestTaskShowAndSoldierStateShowReportedPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("task show: %v\n%s", err, show)
 	}
-	out, err := runTaskCommand(t, []string{"soldier-state", "pr1", "--home", homeDir, "--output", "json"})
-	if err != nil {
-		t.Fatalf("soldier-state: %v\n%s", err, out)
+	if !strings.Contains(show, "state: working") || !strings.Contains(show, "pane_alive: false") {
+		t.Fatalf("phase must stay working:\n%s", show)
 	}
-	var resp struct {
-		Data struct {
-			Status string `json:"status"`
-			PR     string `json:"pr"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(out), &resp); err != nil {
-		t.Fatalf("soldier-state json: %v\n%s", err, out)
-	}
-	if resp.Data.Status != "working" || !strings.Contains(show, "state: working") {
-		t.Fatalf("phase must stay working:\n%s\n%s", show, out)
-	}
-	if !strings.Contains(show, "reported: PR "+taskPRTestURL+" (unverified)") || resp.Data.PR != taskPRTestURL {
-		t.Fatalf("reported PR: show=%q soldier-state=%s", show, out)
+	if !strings.Contains(show, "reported: PR "+taskPRTestURL+" (unverified)") {
+		t.Fatalf("reported PR: show=%q", show)
 	}
 
 	meta, err := home.ReadMeta(homeDir, "pr1")

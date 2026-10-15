@@ -241,7 +241,7 @@ func runCheckInstructions(homeDir string) error {
 }
 
 // buildCommandIndex walks the cobra command tree and returns a set of known
-// command paths excluding the root (e.g., "doctor", "fleet snapshot", "fleet bearings").
+// command paths excluding the root (e.g., "doctor", "fleet snapshot", "fleet view").
 func buildCommandIndex(cmd *cobra.Command) map[string]bool {
 	index := make(map[string]bool)
 	index["help"] = true // implicit cobra command

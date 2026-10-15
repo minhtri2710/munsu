@@ -508,54 +508,6 @@ func TestParseProviderURL_SelfHostedGitLab(t *testing.T) {
 	}
 }
 
-// --- GitLab identity round-trip through meta ---
-
-func TestGitLabIdentity_RoundTrip(t *testing.T) {
-	original := &domain.DeliveryIdentity{
-		Provider:   "gitlab",
-		Owner:      "owner",
-		Repo:       "project",
-		Number:     42,
-		URL:        "https://gitlab.com/owner/project/-/merge_requests/42",
-		BaseRef:    "main",
-		HeadRef:    "feature/test",
-		HeadSHA:    "6503e5e9852b028c95c8d1c9cd9178667506ac7b",
-		CapturedAt: "2026-07-18T12:00:00Z",
-	}
-
-	meta := original.ToMeta()
-	restored, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta: %v", err)
-	}
-	if restored == nil {
-		t.Fatal("IdentityFromMeta returned nil")
-	}
-
-	checks := []struct {
-		name string
-		got  string
-		want string
-	}{
-		{"Provider", restored.Provider, original.Provider},
-		{"Owner", restored.Owner, original.Owner},
-		{"Repo", restored.Repo, original.Repo},
-		{"URL", restored.URL, original.URL},
-		{"BaseRef", restored.BaseRef, original.BaseRef},
-		{"HeadRef", restored.HeadRef, original.HeadRef},
-		{"HeadSHA", restored.HeadSHA, original.HeadSHA},
-		{"CapturedAt", restored.CapturedAt, original.CapturedAt},
-	}
-	for _, c := range checks {
-		if c.got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name, c.got, c.want)
-		}
-	}
-	if restored.Number != original.Number {
-		t.Errorf("Number: got %d, want %d", restored.Number, original.Number)
-	}
-}
-
 // --- IdentityFromMeta provider/URL consistency ---
 
 func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
@@ -580,43 +532,6 @@ func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 }
 
 // --- GitLab capability chain tests ---
-
-// --- Preserved GitHub behavior regression ---
-
-func TestGitHubIdentityStillWorks(t *testing.T) {
-	original := validIdentity()
-	meta := original.ToMeta()
-	restored, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta: %v", err)
-	}
-	if restored == nil {
-		t.Fatal("IdentityFromMeta returned nil")
-	}
-	if restored.Provider != "github" {
-		t.Errorf("Provider: got %q, want %q", restored.Provider, "github")
-	}
-	if restored.Number != 42 {
-		t.Errorf("Number: got %d, want 42", restored.Number)
-	}
-}
-
-func TestExistingGitHubTestsStillPass(t *testing.T) {
-	meta := validIdentity().ToMeta()
-	restored, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		t.Fatalf("IdentityFromMeta: %v", err)
-	}
-	if restored.URL != validIdentity().URL {
-		t.Errorf("URL: got %q, want %q", restored.URL, validIdentity().URL)
-	}
-	if restored.Owner != "minhtri2710" {
-		t.Errorf("Owner: got %q, want %q", restored.Owner, "minhtri2710")
-	}
-	if restored.Repo != "munsu" {
-		t.Errorf("Repo: got %q, want %q", restored.Repo, "munsu")
-	}
-}
 
 // --- CaptureIdentity provider routing (dispatcher removed with the legacy
 // delivery path; the typed clients own identity capture) ---

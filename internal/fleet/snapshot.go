@@ -407,40 +407,6 @@ func View(homeDir string, deps SnapshotDependencies) error {
 	return nil
 }
 
-// Bearings prints a compact resume report.
-func Bearings(homeDir string, projectDir string, deps SnapshotDependencies) error {
-	snap, err := Snapshot(homeDir, deps)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("# Bearings — %s\n\n", snap.Time)
-
-	inFlight := 0
-	for _, ts := range snap.Tasks {
-		if !taskauthority.SoldierKind(ts.Kind) {
-			continue
-		}
-		inFlight++
-		phase := PhaseFromProjection(ts)
-		src := ts.Source
-		if src == "" {
-			src = "primary"
-		}
-		displayStatus := ts.CurrentDescription
-		if displayStatus == "" {
-			displayStatus = ts.LastStatus
-		}
-		fmt.Printf("- **%s** (%s) [%s] — %s [%s]\n", ts.ID, ts.Project, src, displayStatus, phase)
-	}
-
-	if inFlight == 0 {
-		fmt.Println("No in-flight ship/scout tasks. Fleet is idle.")
-	}
-
-	return nil
-}
-
 // CaptainStatus returns endpoint/meta truth for a captain.
 // Prefer the parent state durable-stem meta projection for logical
 // captain:<id> plus backend Alive when meta exists.

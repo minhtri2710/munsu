@@ -112,13 +112,13 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 
 	// The authoritative retirement transition committed through the canonical
 	// Authority: phase retired (create + bind wt + bind ep + authorize +
-	// outcome + retire + claim complete).
+	// outcome + done + retire + claim complete).
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 8 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 8", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 9 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 9", agg.Phase, agg.Revision)
 	}
 
 	// Saga-side cleanup removed the task meta.
@@ -131,6 +131,38 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	}
 	if result.IsError() {
 		t.Fatal("expected IsError=false for fully successful retirement")
+	}
+}
+
+type evidenceFailureJournals struct{ fakeRetirementJournals }
+
+func (evidenceFailureJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
+	return nil, errors.New("evidence unavailable")
+}
+
+func TestMergeAndRetireMarksLandedTaskDoneWhenTeardownFails(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-done-before-retire"
+	auth := mergedShipFixture(t, homeDir, taskID)
+
+	result := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{alive: true}, evidenceFailureJournals{}, auth)
+	if result.MergeOutcome != taskauthority.DeliveryOutcomeCompleted || result.TeardownError == nil || !strings.Contains(result.TeardownError.Error(), "evidence unavailable") {
+		t.Fatalf("result = %+v, want completed delivery with the teardown failure", result)
+	}
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Phase != taskauthority.PhaseDone {
+		t.Fatalf("phase = %q, want done", agg.Phase)
+	}
+
+	again := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
+	if again.IsError() {
+		t.Fatalf("retry = %+v, want retirement resumed", again)
+	}
+	if agg, err = auth.Get(mustTaskID(t, taskID)); err != nil || agg.Phase != taskauthority.PhaseRetired {
+		t.Fatalf("phase after retry = %q (%v), want retired", agg.Phase, err)
 	}
 }
 
@@ -167,15 +199,15 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 
 	// The committed retirement stands and the .meta projection is untouched
 	// (cleanup only removes it later); the canonical completed delivery
-	// outcome is preserved. Revision 7 = retire committed the durable claim;
-	// the failed first attempt's BeginCleanup was a no-op (claim already
-	// active), so the aggregate carries exactly the retire bump.
+	// outcome is preserved. Revision 8 = done, then retire committed the
+	// durable claim; the failed first attempt's BeginCleanup was a no-op
+	// (claim already active), so the aggregate carries exactly those bumps.
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 7", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 8 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 8", agg.Phase, agg.Revision)
 	}
 	// The exact ownership evidence is preserved durably.
 	if agg.Retirement == nil || agg.Retirement.Endpoint == nil || agg.Retirement.Worktree == nil {
@@ -198,7 +230,7 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),
 	// the retired phase is observed (no double transition, only the claim
-	// completion advances revision 7 -> 7), and the cleanup resumes to
+	// completion advances revision 8 -> 9), and the cleanup resumes to
 	// completion.
 	second := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
@@ -214,8 +246,8 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 8 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 8 (claim completion only)", agg.Revision)
+	if agg.Revision != 9 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 9 (claim completion only)", agg.Revision)
 	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("retry should complete the cleanup and remove meta")

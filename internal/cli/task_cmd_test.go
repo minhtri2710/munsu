@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -45,7 +46,8 @@ func TestTaskStatusCannotMutateAuthoritativePhase(t *testing.T) {
 func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--home", homeDir}); err != nil {
+	registerCLITestProject(t, homeDir, "munsu")
+	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
 	if out, err := runTaskCommand(t, []string{"task", "status", "beta", "working", "building the thing [key=build-1]", "--home", homeDir}); err != nil {
@@ -80,7 +82,8 @@ func TestTaskStatusHelpIsAuditOnly(t *testing.T) {
 	}
 
 	initCLITestHome(t, homeDir)
-	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--home", homeDir}); err != nil {
+	registerCLITestProject(t, homeDir, "munsu")
+	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
 	out, err = runTaskCommand(t, []string{"task", "status", "beta", "working", "building", "--output", "json", "--home", homeDir})
@@ -130,8 +133,9 @@ func TestTaskAddRejectsScoutMissingScoutContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			initCLITestHome(t, homeDir)
+			registerCLITestProject(t, homeDir, "munsu")
 
-			args := append([]string{"task", "add", "recon", "investigate the thing"}, tc.args...)
+			args := append([]string{"task", "add", "recon", "investigate the thing", "--repo", "munsu"}, tc.args...)
 			out, err := runTaskCommand(t, append(args, "--home", homeDir))
 			if err == nil {
 				t.Fatalf("task add %v succeeded, want the scout contract to refuse it\n%s", tc.args, out)
@@ -155,9 +159,10 @@ func TestTaskAddRejectsScoutMissingScoutContract(t *testing.T) {
 func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
+	registerCLITestProject(t, homeDir, "munsu")
 
 	out, err := runTaskCommand(t, []string{
-		"task", "add", "recon", "investigate the thing",
+		"task", "add", "recon", "investigate the thing", "--repo", "munsu",
 		"--kind", "scout", "--scope", "investigate the thing",
 		"--home", homeDir,
 	})
@@ -171,5 +176,53 @@ func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
 	if agg.Definition.Kind != "scout" ||
 		agg.Definition.ScoutScope != "investigate the thing" {
 		t.Fatalf("scout definition = %+v, want the --scope flag preserved", agg.Definition)
+	}
+}
+
+// TestTaskAddProjectResolution: with no --repo, task add takes the registered
+// project at the current repository root and writes its brief; outside any
+// repository no project resolves and nothing is created.
+func TestTaskAddProjectResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		inRepo  bool
+		wantErr string
+	}{
+		{"blocks when no project resolves", false, "task t1 has no project"},
+		{"allows a registered project resolved from the repository", true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			cwd := t.TempDir()
+			if tc.inRepo {
+				runGit(t, cwd, "init", "-q")
+				if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.FleetBaseConfig{Backend: "tmux"}}); err != nil {
+					t.Fatal(err)
+				}
+				if out, err := runRoot(t, "project", "add", "alpha", cwd, "--home", homeDir); err != nil {
+					t.Fatalf("project add: %v\n%s", err, out)
+				}
+			}
+			t.Chdir(cwd)
+			_, err := runTaskCommand(t, []string{"task", "add", "t1", "do the work", "--home", homeDir})
+			agg, getErr := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "t1"))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("task add error = %v, want %q", err, tc.wantErr)
+				}
+				if !errors.Is(getErr, taskauthority.ErrNotFound) {
+					t.Fatalf("refused task add left a task: %v", getErr)
+				}
+				return
+			}
+			if err != nil || getErr != nil || agg.Definition.Project != "alpha" {
+				t.Fatalf("task add = %v, get = %v, project %q, want alpha", err, getErr, agg.Definition.Project)
+			}
+			brief, err := os.ReadFile(filepath.Join(homeDir, "data", "t1", "brief.md"))
+			if err != nil || !strings.Contains(string(brief), "do the work") || strings.Contains(string(brief), "{TASK}") {
+				t.Fatalf("brief = %q (%v), want the description in place of {TASK}", brief, err)
+			}
+		})
 	}
 }

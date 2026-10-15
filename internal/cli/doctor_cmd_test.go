@@ -59,7 +59,7 @@ func TestCheckInstructions_ValidCommands(t *testing.T) {
 
 Run ` + "`" + `munsu doctor` + "`" + ` for diagnostics.
 Use ` + "`" + `munsu fleet snapshot` + "`" + ` for fleet state.
-Use ` + "`" + `munsu fleet bearings` + "`" + ` for a resume report.
+Use ` + "`" + `munsu fleet view` + "`" + ` for the fleet view.
 Spawn with ` + "`" + `munsu spawn` + "`" + `.
 `
 
@@ -175,7 +175,6 @@ func TestBuildCommandIndex_ContainsExpected(t *testing.T) {
 		"doctor",
 		"fleet",
 		"fleet snapshot",
-		"fleet bearings",
 		"fleet view",
 		"fleet sync",
 		"spawn",

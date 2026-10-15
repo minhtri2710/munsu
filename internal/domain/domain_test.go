@@ -1,8 +1,6 @@
 package domain_test
 
 import (
-	"maps"
-	"slices"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -35,28 +33,6 @@ func TestPRCanMerge(t *testing.T) {
 				t.Fatalf("CanMerge() = %t, want %t", got, tc.want)
 			}
 		})
-	}
-}
-
-// TestToMetaEmitsExactlyMetaKeys pins that ToMeta writes every key MetaKeys
-// advertises and no other, so persisted identity and the keys readers clear or
-// check cannot drift apart.
-func TestToMetaEmitsExactlyMetaKeys(t *testing.T) {
-	id := &domain.DeliveryIdentity{
-		Provider:   "github",
-		Owner:      "minhtri2710",
-		Repo:       "munsu",
-		Number:     42,
-		URL:        "https://github.com/minhtri2710/munsu/pull/42",
-		BaseRef:    "main",
-		HeadRef:    "feature/test",
-		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
-		CapturedAt: "2026-07-18T12:00:00Z",
-	}
-	got := slices.Sorted(maps.Keys(id.ToMeta()))
-	want := slices.Sorted(slices.Values(id.MetaKeys()))
-	if !slices.Equal(got, want) {
-		t.Fatalf("ToMeta keys = %v, want MetaKeys %v", got, want)
 	}
 }
 

@@ -12,11 +12,11 @@ import (
 // commands on the munsu root command. Add a new canonical command here.
 var canonicalCommands = []string{
 	"home", "init", "bootstrap", "skill", "config", "capabilities", "backend",
-	"project", "worktree", "harness", "session-start", "task", "brief", "spawn",
-	"send", "report", "peek", "soldier-state", "promote", "teardown", "delivery",
+	"project", "worktree", "harness", "session-start", "task", "spawn",
+	"send", "report", "peek", "promote", "teardown", "delivery",
 	"fleet", "herdr", "watch", "event", "wake", "guard", "doctor", "stow", "ensure-agents-md",
 	"update", "captain", "decision-hold", "afk", "integrate", "manual", "inbox",
-	"turnend", "soldier-flush", "consume-ready", "context", "dashboard",
+	"turnend", "consume-ready", "context", "dashboard",
 }
 
 // TestCanonicalCommandsRegistered fails when a canonical command is missing,
@@ -191,20 +191,5 @@ func TestExactArgsMissingProducesUsageError(t *testing.T) {
 	code := WriteContractError(&buf, err, []string{"send"})
 	if code != 2 {
 		t.Errorf("missing args on send: exit code = %d, want 2 (usageError), err=%v", code, err)
-	}
-}
-
-func TestSoldierStateMissingArgsProducesUsageError(t *testing.T) {
-	// soldier-state uses ExactArgs(1); missing should produce usageError
-	root := NewRootCommand()
-	root.SetArgs([]string{"soldier-state"}) // missing id
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected error for missing args on soldier-state")
-	}
-	var buf bytes.Buffer
-	code := WriteContractError(&buf, err, []string{"soldier-state"})
-	if code != 2 {
-		t.Errorf("missing args on soldier-state: exit code = %d, want 2 (usageError), err=%v", code, err)
 	}
 }

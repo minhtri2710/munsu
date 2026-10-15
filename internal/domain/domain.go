@@ -17,21 +17,6 @@ func (id *DeliveryIdentity) MetaKeys() []string {
 	}
 }
 
-// ToMeta serializes the identity into a task meta map.
-func (id *DeliveryIdentity) ToMeta() map[string]string {
-	return map[string]string{
-		"pr_provider":  id.Provider,
-		"pr_owner":     id.Owner,
-		"pr_repo":      id.Repo,
-		"pr_number":    fmt.Sprintf("%d", id.Number),
-		"pr_url":       id.URL,
-		"pr_base_ref":  id.BaseRef,
-		"pr_head_ref":  id.HeadRef,
-		"pr_head_sha":  id.HeadSHA,
-		"pr_timestamp": id.CapturedAt,
-	}
-}
-
 // ParseProviderURL parses a GitHub PR URL or GitLab MR URL.
 func ParseProviderURL(rawURL string) (provider, owner, repo string, num int, host string, err error) {
 	if strings.Contains(rawURL, "github.com") || strings.Contains(rawURL, "/pull/") {

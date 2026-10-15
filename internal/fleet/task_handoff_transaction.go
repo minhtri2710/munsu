@@ -567,6 +567,12 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 	}
 	handoffCrashHook("received")
 
+	for _, task := range journal.Tasks {
+		if err := carryTaskBrief(h.Root(), destinationAuth, journal.DestinationHome, task.TaskID); err != nil {
+			return fmt.Errorf("transfer %s: carrying the brief of task %s: %w", journal.ID, task.TaskID, err)
+		}
+	}
+
 	// 3. Scoped verification: the received generation must be the exact
 	// non-current generation under this reservation before the source may be
 	// superseded. The verified generation pins the destination-activation
@@ -641,6 +647,25 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 	}
 	handoffCrashHook("completed")
 	return nil
+}
+
+// carryTaskBrief copies the source brief, operator edits included, to the
+// destination. A replay after the source brief is gone leaves the copy as it is.
+func carryTaskBrief(sourceHome string, destinationAuth *taskauthority.Canonical, destinationHome, taskID string) error {
+	data, err := os.ReadFile(Path(sourceHome, taskID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	dest := Path(destinationHome, taskID)
+	return destinationAuth.WriteTaskDataArtifactByID(taskID, func() error {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		return mhome.AtomicWrite(dest, data, 0o644)
+	})
 }
 
 // verifyTransferReceived performs the scoped verification of a received

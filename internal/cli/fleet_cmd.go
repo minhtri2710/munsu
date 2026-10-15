@@ -13,12 +13,11 @@ func newFleetCmd() *cobra.Command {
 		Use:   "fleet",
 		Short: "Manage fleet operations",
 		Long: `Manage fleet operations: sync project clones, emit snapshots,
-render fleet views, and print compact resume reports.`,
+and render fleet views.`,
 	}
 	cmd.AddCommand(newFleetSyncCmd())
 	cmd.AddCommand(newFleetSnapshotCmd())
 	cmd.AddCommand(newFleetViewCmd())
-	cmd.AddCommand(newFleetBearingsCmd())
 	return cmd
 }
 
@@ -84,26 +83,6 @@ func newFleetViewCmd() *cobra.Command {
 		Short: "Render fleet view from snapshot",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return fleet.View(ctx.Home, snapshotDeps())
-		}),
-	}
-}
-
-func newFleetBearingsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "bearings [<project-dir>]",
-		Short: "Compact resume report",
-		Long: `Print a compact resume report for the fleet or a single project.
-
-The report shows the aggregate health of all registered projects, listing
-in-flight tasks with their project, phase, and last known status.
-When a project directory argument is given, only that project is shown.`,
-		Args: MaximumNArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			projectDir := ""
-			if len(args) > 0 {
-				projectDir = args[0]
-			}
-			return fleet.Bearings(ctx.Home, projectDir, snapshotDeps())
 		}),
 	}
 }

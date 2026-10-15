@@ -357,14 +357,15 @@ The canonical Task Authority is the authoritative task source:
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]smunsu task list%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>]%[6]s
+  %[6]smunsu task list%[6]s → %[6]smunsu spawn <id>%[6]s
+- A task's brief (data/<id>/brief.md) is written by %[6]smunsu task add%[6]s and arrives with a handed-off task; fill a remaining %[6]s{TEST_IMPACT}%[6]s placeholder before spawn.
 - kind: ship (default) | scout — the delivery mode comes from the project's configured review and forge tools
 - After spawning, monitor soldier progress through their task state.
 - A soldier's material report arrives in this home as a report wake. Settle it with %[6]smunsu wake resolve%[6]s or %[6]smunsu wake ack%[6]s, then report the domain result to General (see Uplink).
 - Teardown of a soldier is refused while one of its material reports is unsettled.
 - If the General sends a stop with a matching task key, stop the soldier immediately — do not wait for completion.
 - If a soldier is stuck, use the ladder: %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → interrupt → relaunch → fail.
-- After a ship PR is merged, run %[6]smunsu teardown <soldier-id>%[6]s.
+- A landed %[6]smunsu delivery pr-merge%[6]s marks the task done and tears its soldier down.
 - Never launch another Captain.
 
 ## Uplink (Captain → General)
@@ -384,8 +385,7 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 
 When a Soldier opens a PR:
 - The General authorizes merges. You do not merge without authorization.
-- When authorized: %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s
-- After merge, run %[6]smunsu teardown <soldier-id>%[6]s.
+- When authorized: %[6]smunsu delivery pr-merge <id> <url>%[6]s; a landed merge marks the task done and tears the soldier down.
 - Decision holds: if you need a decision from General, report %[6]sneeds-decision%[6]s and wait.
 - Never use bare %[6]sgh pr merge%[6]s without %[6]smunsu delivery%[6]s when meta lives here.
 - The selected delivery mode (direct-PR, local-only) is authoritative:
@@ -430,11 +430,10 @@ You MUST NOT:
 | Action | Command |
 |--------|---------|
 | Report state | %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s |
-| Brief soldier | %[6]smunsu brief <id> <project>%[6]s |
-| Spawn soldier | %[6]smunsu spawn <id> [<project>]%[6]s |
+| Spawn soldier | %[6]smunsu spawn <id>%[6]s |
 | Teardown soldier | %[6]smunsu teardown <id>%[6]s |
 | Send to soldier | %[6]smunsu send <id> <message>%[6]s |
-| Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
+| Merge PR | %[6]smunsu delivery pr-merge <id> <url>%[6]s |
 | Stuck soldier | %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → ... |
 | View tasks | %[6]smunsu task list%[6]s |
 | Mark a queued task working without spawning | %[6]smunsu task start <id>%[6]s |
