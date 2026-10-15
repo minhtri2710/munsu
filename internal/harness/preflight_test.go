@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,41 +42,43 @@ func TestPreflight_BinaryOnPath_Claude(t *testing.T) {
 	}
 }
 
-// claude readiness is decided by `claude auth status` alone. The fake answers
-// only that exact subcommand, with the exit status the row sets; any other
-// argument exits 2.
-func TestPreflight_AuthConfigured(t *testing.T) {
-	const authStatus = "#!/bin/sh\n[ \"$1 $2\" = \"auth status\" ] || exit 2\n"
+// Readiness is decided by the harness's own readiness command alone. Each fake
+// answers only that exact command; any other argument exits 2.
+func TestPreflight_Ready(t *testing.T) {
+	const claudeStatus = "#!/bin/sh\n[ \"$1 $2 $3\" = \"auth status --text\" ] || exit 2\n"
+	const piList = "#!/bin/sh\n[ \"$1\" = \"--list-models\" ] || exit 2\n"
 	// The seat's config dir must be a fresh dir directly in the seat build dir
 	// the row names, never under a temp root.
 	const seatAsks = "[ \"${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}\" = /h/claude ] && [ -d \"$CLAUDE_CONFIG_DIR\" ] && [ \"${CLAUDE_CONFIG_DIR%/*}\" = \"$WANT_BUILD_DIR\" ] || exit 1\n"
 	tests := []struct {
-		name    string
-		claude  string // fake claude script; empty leaves claude off PATH
-		apiKey  string
-		timeout time.Duration
-		seat    *ClaudeConfig
-		noBuild bool // the seat's empty config dir cannot be made
-		want    PreflightLevel
+		name       string
+		harness    string
+		script     string // fake harness script; empty leaves it off PATH
+		timeout    time.Duration
+		seat       *ClaudeConfig
+		noBuild    bool // the seat's empty config dir cannot be made
+		want       PreflightLevel
+		wantDetail string
 	}{
-		{name: "logged in, no env var", claude: authStatus + "exit 0\n", want: PreflightOK},
-		{name: "env var set, claude says no credentials", claude: authStatus + "exit 1\n", apiKey: "test-key", want: PreflightAbsent},
-		{name: "no credentials", claude: authStatus + "exit 1\n", want: PreflightAbsent},
-		{name: "probe does not finish in time", claude: authStatus + "exec sleep 30\n", timeout: 100 * time.Millisecond, want: PreflightAbsent},
-		{name: "claude not on PATH", want: PreflightAbsent},
+		{name: "claude logged in", harness: Claude, script: claudeStatus + "echo 'Login method: Claude Max account'\nexit 0\n", want: PreflightOK},
+		{name: "claude not logged in", harness: Claude, script: claudeStatus + "echo 'Not logged in. Run claude auth login to authenticate.'\nexit 1\n", want: PreflightAbsent, wantDetail: "`claude auth status --text` failed: Not logged in. Run claude auth login to authenticate."},
+		{name: "claude probe does not finish in time", harness: Claude, script: claudeStatus + "exec sleep 30\n", timeout: 100 * time.Millisecond, want: PreflightAbsent, wantDetail: "did not finish within 100ms"},
+		{name: "claude not on PATH", harness: Claude, want: PreflightUnknown},
+		{name: "pi lists models", harness: Pi, script: piList + "echo 'provider model'\necho 'anthropic claude-fable-5'\n", want: PreflightOK},
+		{name: "pi has no models", harness: Pi, script: piList + "echo 'No models available. Use /login to log into a provider via OAuth or API key.'\n", want: PreflightAbsent, wantDetail: "`pi --list-models` reported: No models available."},
+		{name: "codex has no readiness command", harness: Codex, script: "#!/bin/sh\nexit 1\n", want: PreflightUnknown},
 		// A fenced seat logs in with a config dir of its own and the Human's
 		// keychain item; the fake answers only when asked that way.
-		{name: "seat asks with its own config dir and the Human's keychain item", claude: authStatus + seatAsks + "exit 0\n", seat: &ClaudeConfig{SecureStorage: "/h/claude"}, want: PreflightOK},
-		{name: "Human's config asked where a seat is meant", claude: authStatus + seatAsks + "exit 0\n", want: PreflightAbsent},
-		{name: "seat config dir cannot be made", claude: authStatus + "exit 0\n", seat: &ClaudeConfig{}, noBuild: true, want: PreflightAbsent},
+		{name: "seat asks with its own config dir and the Human's keychain item", harness: Claude, script: claudeStatus + seatAsks + "exit 0\n", seat: &ClaudeConfig{SecureStorage: "/h/claude"}, want: PreflightOK},
+		{name: "Human's config asked where a seat is meant", harness: Claude, script: claudeStatus + seatAsks + "exit 0\n", want: PreflightAbsent},
+		{name: "seat config dir cannot be made", harness: Claude, script: claudeStatus + "exit 0\n", seat: &ClaudeConfig{}, noBuild: true, want: PreflightAbsent, wantDetail: "preparing the seat build dir"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ANTHROPIC_API_KEY", tc.apiKey)
-			if tc.claude == "" {
+			if tc.script == "" {
 				testutil.SetPath(t, t.TempDir())
 			} else {
-				testutil.FakeOnPath(t, "claude", tc.claude)
+				testutil.FakeOnPath(t, preflightBinaryNames[tc.harness], tc.script)
 			}
 			var seat *ClaudeSeat
 			if tc.seat != nil {
@@ -91,49 +94,21 @@ func TestPreflight_AuthConfigured(t *testing.T) {
 				t.Setenv("WANT_BUILD_DIR", seat.BuildDir)
 			}
 			if tc.timeout > 0 {
-				orig := claudeAuthProbeTimeout
-				claudeAuthProbeTimeout = tc.timeout
-				t.Cleanup(func() { claudeAuthProbeTimeout = orig })
+				orig := readinessProbeTimeout
+				readinessProbeTimeout = tc.timeout
+				t.Cleanup(func() { readinessProbeTimeout = orig })
 			}
-			result, err := Preflight(Claude, seat)
+			result, err := Preflight(tc.harness, seat)
 			if err != nil {
-				t.Fatalf("Preflight(%q) error = %v", Claude, err)
+				t.Fatalf("Preflight(%q) error = %v", tc.harness, err)
 			}
-			if result.AuthConfigured != tc.want {
-				t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, tc.want)
+			if result.Ready != tc.want {
+				t.Errorf("Ready = %q, want %q (detail %q)", result.Ready, tc.want, result.ReadyDetail)
+			}
+			if !strings.Contains(result.ReadyDetail, tc.wantDetail) || (tc.want == PreflightOK && result.ReadyDetail != "") {
+				t.Errorf("ReadyDetail = %q, want it to contain %q", result.ReadyDetail, tc.wantDetail)
 			}
 		})
-	}
-}
-
-func TestPreflight_AuthConfigured_AnyEnvVar(t *testing.T) {
-	origGrok := os.Getenv("GROK_API_KEY")
-	origXai := os.Getenv("XAI_API_KEY")
-	defer func() {
-		os.Setenv("GROK_API_KEY", origGrok)
-		os.Setenv("XAI_API_KEY", origXai)
-	}()
-	os.Unsetenv("GROK_API_KEY")
-	os.Unsetenv("XAI_API_KEY")
-
-	// Test with GROK_API_KEY set
-	os.Setenv("XAI_API_KEY", "test-key")
-	result, err := Preflight(Grok, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Grok, err)
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
-	}
-
-	// Test with none set
-	os.Unsetenv("XAI_API_KEY")
-	result, err = Preflight(Grok, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Grok, err)
-	}
-	if result.AuthConfigured != PreflightAbsent {
-		t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, PreflightAbsent)
 	}
 }
 
@@ -144,96 +119,6 @@ func TestPreflight_ModelValid_Unknown(t *testing.T) {
 	}
 	if result.ModelValid != PreflightUnknown {
 		t.Errorf("ModelValid = %q, want %q (can't validate without API)", result.ModelValid, PreflightUnknown)
-	}
-}
-
-func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
-	// Regression: Pi preflight should accept any Pi-supported provider
-	// env var, not just OPENAI_API_KEY. Also verifies credential store
-	// check does not interfere (uses isolated temp dir).
-	clearEnvMarkers(t)
-
-	// Isolate credential store to an empty temp dir to avoid interference
-	// from the real ~/.pi/agent/auth.json on this machine.
-	tmpDir := t.TempDir()
-	restoreCred := injectPiCredentialCheck(t, tmpDir)
-	defer restoreCred()
-
-	origPiKey := os.Getenv("OPENAI_API_KEY")
-	origXaiKey := os.Getenv("XAI_API_KEY")
-	origAnthropicKey := os.Getenv("ANTHROPIC_API_KEY")
-	origGeminiKey := os.Getenv("GEMINI_API_KEY")
-	defer func() {
-		os.Setenv("OPENAI_API_KEY", origPiKey)
-		os.Setenv("XAI_API_KEY", origXaiKey)
-		os.Setenv("ANTHROPIC_API_KEY", origAnthropicKey)
-		os.Setenv("GEMINI_API_KEY", origGeminiKey)
-	}()
-	os.Unsetenv("OPENAI_API_KEY")
-	os.Unsetenv("XAI_API_KEY")
-
-	// Pi with no API key at all should fail (absent) — empty temp dir, no env
-	result, err := Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightAbsent {
-		t.Errorf("Pi with no key: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightAbsent)
-	}
-
-	// Pi with a non-OPENAI Pi-supported key should pass
-	os.Setenv("XAI_API_KEY", "test-key")
-	result, err = Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("Pi with XAI_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
-	}
-
-	// Pi with ANTHROPIC_API_KEY should also pass
-	os.Unsetenv("XAI_API_KEY")
-	os.Setenv("ANTHROPIC_API_KEY", "test-key")
-	result, err = Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("Pi with ANTHROPIC_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
-	}
-
-	// Pi with GEMINI_API_KEY should also pass
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Setenv("GEMINI_API_KEY", "test-key")
-	result, err = Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("Pi with GEMINI_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
-	}
-}
-
-func TestPreflight_AllLevelsKnown(t *testing.T) {
-	orig := os.Getenv("OPENAI_API_KEY")
-	defer os.Setenv("OPENAI_API_KEY", orig)
-	os.Setenv("OPENAI_API_KEY", "test-key")
-
-	result, err := Preflight(Codex, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Codex, err)
-	}
-
-	if result.AdapterKnown != PreflightOK {
-		t.Errorf("AdapterKnown = %q, want %q", result.AdapterKnown, PreflightOK)
-	}
-
-	// Binary may or may not be on PATH, but it must not be Unknown
-	if result.BinaryOnPath == PreflightUnknown {
-		t.Error("BinaryOnPath should not be Unknown for codex")
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
 	}
 }
 
@@ -250,10 +135,9 @@ func TestPreflightError_ErrorMessages(t *testing.T) {
 		t.Fatal("expected non-empty error message")
 	}
 
-	err = &PreflightError{Harness: "claude", Reason: "auth-absent"}
-	msg = err.Error()
-	if msg == "" {
-		t.Fatal("expected non-empty error message")
+	err = &PreflightError{Harness: "claude", Reason: "not-ready", Detail: "`claude auth status --text` failed: Not logged in."}
+	if msg = err.Error(); msg != "harness \"claude\" cannot run: `claude auth status --text` failed: Not logged in." {
+		t.Fatalf("not-ready message = %q", msg)
 	}
 }
 
@@ -269,155 +153,5 @@ func TestPreflight_AllKnownHarnesses(t *testing.T) {
 		if result != nil && result.AdapterKnown != PreflightOK {
 			t.Errorf("Preflight(%q).AdapterKnown = %q, want %q", h, result.AdapterKnown, PreflightOK)
 		}
-	}
-}
-
-// TestPreflight_PiCredentialStore_FileExists verifies that a valid auth.json
-// in the Pi config dir causes AuthConfigured to be PreflightOK when no env
-// vars are set.
-func TestPreflight_PiCredentialStore_FileExists(t *testing.T) {
-	clearEnvMarkers(t)
-
-	tmpDir := t.TempDir()
-	authPath := filepath.Join(tmpDir, "auth.json")
-	if err := os.WriteFile(authPath, []byte(`{"test": true}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	restore := injectPiCredentialCheck(t, tmpDir)
-	defer restore()
-
-	result, err := Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("AuthConfigured = %q, want %q (auth.json present in temp dir)", result.AuthConfigured, PreflightOK)
-	}
-}
-
-// TestPreflight_PiCredentialStore_FileMissing verifies that absence of auth.json
-// causes AuthConfigured to be PreflightAbsent when no env vars are set.
-func TestPreflight_PiCredentialStore_FileMissing(t *testing.T) {
-	clearEnvMarkers(t)
-
-	tmpDir := t.TempDir()
-	// No auth.json written; temp dir is empty
-
-	restore := injectPiCredentialCheck(t, tmpDir)
-	defer restore()
-
-	result, err := Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightAbsent {
-		t.Errorf("AuthConfigured = %q, want %q (no auth.json)", result.AuthConfigured, PreflightAbsent)
-	}
-}
-
-// TestPreflight_PiCredentialStore_DirInsteadOfFile verifies that a directory
-// at the credential store path is not accepted (fails-closed).
-func TestPreflight_PiCredentialStore_DirInsteadOfFile(t *testing.T) {
-	clearEnvMarkers(t)
-
-	tmpDir := t.TempDir()
-	authPath := filepath.Join(tmpDir, "auth.json")
-	if err := os.MkdirAll(authPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	restore := injectPiCredentialCheck(t, tmpDir)
-	defer restore()
-
-	result, err := Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightAbsent {
-		t.Errorf("AuthConfigured = %q, want %q (auth.json is a directory)", result.AuthConfigured, PreflightAbsent)
-	}
-}
-
-// TestPreflight_PiCredentialStore_Unreadable verifies that an unreadable
-// auth.json file fails closed.
-func TestPreflight_PiCredentialStore_Unreadable(t *testing.T) {
-	clearEnvMarkers(t)
-
-	tmpDir := t.TempDir()
-	authPath := filepath.Join(tmpDir, "auth.json")
-	if err := os.WriteFile(authPath, []byte(`{}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	// Make auth.json unreadable
-	testutil.MakePathUnreadable(t, authPath)
-
-	restore := injectPiCredentialCheck(t, tmpDir)
-	defer restore()
-
-	result, err := Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightAbsent {
-		t.Errorf("AuthConfigured = %q, want %q (auth.json unreadable)", result.AuthConfigured, PreflightAbsent)
-	}
-}
-
-// TestPreflight_PiCredentialStore_EnvVarTakesPrecedence verifies that an env var
-// is still sufficient even when auth.json is absent.
-func TestPreflight_PiCredentialStore_EnvVarTakesPrecedence(t *testing.T) {
-	clearEnvMarkers(t)
-
-	tmpDir := t.TempDir()
-	// No auth.json
-
-	orig := os.Getenv("ANTHROPIC_API_KEY")
-	defer os.Setenv("ANTHROPIC_API_KEY", orig)
-	os.Setenv("ANTHROPIC_API_KEY", "test-key")
-
-	restore := injectPiCredentialCheck(t, tmpDir)
-	defer restore()
-
-	result, err := Preflight(Pi, nil)
-	if err != nil {
-		t.Fatalf("Preflight(%q) error = %v", Pi, err)
-	}
-	if result.AuthConfigured != PreflightOK {
-		t.Errorf("AuthConfigured = %q, want %q (ANTHROPIC_API_KEY set)", result.AuthConfigured, PreflightOK)
-	}
-}
-
-// injectPiCredentialCheck replaces piCredentialFile with a check scoped to
-// the given temp dir, so tests don't examine the real ~/.pi/agent/auth.json.
-// Returns a restore function.
-func injectPiCredentialCheck(t *testing.T, tmpDir string) func() {
-	t.Helper()
-	origConfigDir := piConfigDir
-	origCredentialFile := piCredentialFile
-
-	piConfigDir = func() string {
-		return tmpDir
-	}
-	piCredentialFile = func(path string) bool {
-		// Only honor paths under the temp dir (safety)
-		info, err := os.Stat(path)
-		if err != nil {
-			return false
-		}
-		if !info.Mode().IsRegular() {
-			return false
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return false
-		}
-		f.Close()
-		return true
-	}
-
-	return func() {
-		piConfigDir = origConfigDir
-		piCredentialFile = origCredentialFile
 	}
 }

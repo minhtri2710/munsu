@@ -76,6 +76,9 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 		narrow    = "Quick safety check: Is this a"
 		busy      = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
 		idle      = "Claude Code v2.1.289\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle)"
+		// Measured on claude 2.1.300 with no login.
+		loggedOut = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort"
+		loggedIn  = "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort"
 	)
 	for _, c := range []struct {
 		name, capture         string
@@ -85,6 +88,8 @@ func TestAdapters_FailureAndReadyPatterns(t *testing.T) {
 		{"untrusted dialog narrow", narrow, false, true, false},
 		{"busy", busy, false, false, true},
 		{"idle", idle, false, false, true},
+		{"not logged in", loggedOut, false, true, true},
+		{"logged in", loggedIn, false, false, true},
 	} {
 		if got := IsTrustPrompt(c.capture, Claude); got != c.trust {
 			t.Errorf("%s: IsTrustPrompt = %v, want %v (Enter answers \"No, exit\")", c.name, got, c.trust)

@@ -603,21 +603,34 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// The claude captures are pane text measured on claude 2.1.300 under the
+// soldier posture; the not-logged-in footer also carries the ready pattern.
 func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
-	fake := &fakeBackend{
-		capture: func(windowID string, lines int) (string, error) {
-			return "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder", nil
-		},
-	}
-	r := &Runner{
-		harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
-	}
-	err := r.waitForHarnessReady(5)
-	if err == nil {
-		t.Fatal("expected failure pattern error, got nil")
-	}
-	if !strings.Contains(err.Error(), "detected launch failure") || !strings.Contains(err.Error(), "Quick safety check") {
-		t.Errorf("error should be the early failure detection echoing the capture, got: %v", err)
+	for _, tc := range []struct {
+		name, capture, wantErr string
+	}{
+		{"folder-trust dialog", "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder", "Quick safety check"},
+		{"not logged in", "❯\n⏵⏵ bypass permissions on (shift+tab to cycle) Not logged in · Run /login\n◐ medium · /effort", "Not logged in"},
+		{"logged in", "❯\n⏵⏵ bypass permissions on (shift+tab to cycle)\n◐ medium · /effort", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeBackend{
+				capture: func(windowID string, lines int) (string, error) { return tc.capture, nil },
+			}
+			r := &Runner{
+				harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+			}
+			err := r.waitForHarnessReady(5)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ready capture refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), `harness "claude" detected launch failure`) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error should be the early failure detection echoing the capture, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -815,7 +828,6 @@ func spawnRunFixture(t *testing.T, mode string, fakeBk *fakeBackend) (string, Ar
 	binDir := t.TempDir()
 	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "pi"), "#!/bin/sh\nexit 0\n")
 	testutil.PrependPath(t, binDir)
-	t.Setenv("GEMINI_API_KEY", "test-key")
 
 	projectDir := filepath.Join(homeDir, "projects", "test-proj")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
