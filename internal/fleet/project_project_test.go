@@ -78,38 +78,37 @@ func TestListAndAdd(t *testing.T) {
 }
 
 func TestAddIdempotent(t *testing.T) {
-	tmp := t.TempDir()
-	homeDir := filepath.Join(tmp, ".munsu")
-
-	// Add the same project twice with an identical definition — the canonical
-	// Fleet Registry treats the re-registration as a successful no-op and
-	// never creates a duplicate entry.
-	if err := Add(homeDir, "dup-proj", "/path/second", false); err != nil {
-		t.Fatal(err)
-	}
-	if err := Add(homeDir, "dup-proj", "/path/second", false); err != nil {
-		t.Fatal(err)
-	}
-
-	// Should have exactly 1 entry, not 2
-	projects, err := List(homeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projects) != 1 {
-		t.Fatalf("expected 1 project after duplicate add, got %d: %+v", len(projects), projects)
-	}
-
-	// Entry should carry the registered definition.
-	p := projects[0]
-	if p.Name != "dup-proj" {
-		t.Errorf("Name = %q, want %q", p.Name, "dup-proj")
-	}
-	if p.Yolo {
-		t.Error("Yolo = true, want false")
-	}
-	if p.Path != "/path/second" {
-		t.Errorf("Path = %q, want %q", p.Path, "/path/second")
+	const refusal = "project dup-proj is already registered with path /path/first and yolo false; run `munsu project rm dup-proj` first to change it"
+	for _, tc := range []struct {
+		name    string
+		path    string
+		yolo    bool
+		wantErr string
+	}{
+		{name: "identical definition is a no-op", path: "/path/first"},
+		{name: "different path is refused", path: "/path/other", wantErr: refusal},
+		{name: "different yolo is refused", path: "/path/first", yolo: true, wantErr: refusal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := filepath.Join(t.TempDir(), ".munsu")
+			if err := Add(homeDir, "dup-proj", "/path/first", false); err != nil {
+				t.Fatal(err)
+			}
+			err := Add(homeDir, "dup-proj", tc.path, tc.yolo)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("re-add = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("re-add = %v, want error containing %q", err, tc.wantErr)
+			}
+			projects, err := List(homeDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(projects) != 1 || projects[0].Path != "/path/first" || projects[0].Yolo {
+				t.Fatalf("projects = %+v, want only the first definition", projects)
+			}
+		})
 	}
 }
 
