@@ -291,12 +291,8 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			ID:                  id,
 			Project:             agg.Definition.Project,
 			Kind:                agg.Definition.Kind,
-			Harness:             meta["harness"],
-			Model:               meta["model"],
-			Mode:                meta["mode"],
+			Harness:             launchHarness(agg),
 			Yolo:                meta["yolo"],
-			Window:              meta["window"],
-			Worktree:            meta["worktree"],
 			Home:                homeLabel,
 			Source:              source,
 			CurrentState:        info.State,
@@ -307,10 +303,20 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 		if ts.CurrentDescription == "" {
 			ts.CurrentDescription = agg.Definition.Description
 		}
+		if agg.Launch != nil {
+			ts.Model, ts.Mode = agg.Launch.Model, agg.Launch.Mode
+		}
+		if agg.Worktree != nil {
+			ts.Worktree = agg.Worktree.Path
+		}
+		ep := agg.Endpoint
+		if ep != nil {
+			ts.Window = ep.Handle
+		}
 
 		// Endpoint liveness is diagnostic only and never changes lifecycle state.
-		if ts.Window != "" && deps.Endpoint != nil {
-			status, perr := observeEndpointWith(deps.Endpoint, taskHome, meta)
+		if ep != nil && deps.Endpoint != nil {
+			status, perr := deps.Endpoint.ProbeEndpoint(EndpointRef{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: taskHome, Harness: ts.Harness})
 			if perr != nil || !status.Live() {
 				ts.PaneAlive = false
 				ts.PaneAliveUnknown = true
@@ -435,7 +441,7 @@ type EndpointProbe interface {
 	ProbeEndpoint(EndpointRef) (EndpointStatus, error)
 }
 
-// observeProbe applies an EndpointProbe to a task's meta-derived endpoint
+// observeProbe applies an EndpointProbe to a captain's meta-derived endpoint
 // identity. The probe is diagnostic only; a probe that errs or reports a
 // non-alive state yields an unknown/non-alive diagnostic, never a lifecycle
 // decision.
@@ -445,10 +451,4 @@ func observeProbe(probe EndpointProbe, parentHome string, meta map[string]string
 		ownerHome = parentHome
 	}
 	return probe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta[backend.MetaSessionOwner], WorkspaceID: meta[backend.MetaWorkspaceID], TabID: meta[backend.MetaTabID], Home: ownerHome, Harness: meta["harness"]})
-}
-
-// observeEndpointWith is the snapshot-local endpoint observation using the
-// caller-provided diagnostic probe from SnapshotDependencies.
-func observeEndpointWith(probe EndpointProbe, parentHome string, meta map[string]string) (EndpointStatus, error) {
-	return observeProbe(probe, parentHome, meta)
 }

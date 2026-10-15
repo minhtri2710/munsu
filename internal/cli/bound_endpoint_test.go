@@ -12,13 +12,13 @@ import (
 // pane's backend", and for the ownership checks that ride with it. Each adapter
 // reaches boundBackend through its own call site, so each is a column.
 func TestBoundEndpointOwnership(t *testing.T) {
-	type resolver = func(string, map[string]string) (backend.Backend, string, error)
+	type resolver = boundResolver
 	adapters := []struct {
 		name string
 		call func(resolve resolver, meta map[string]string) error
 	}{
 		{"capture", func(r resolver, meta map[string]string) error {
-			_, err := sessionBoundCapture{resolve: r}.Capture("/home", meta, 1)
+			_, err := sessionBoundCapture{resolve: r}.Capture("/home", captainBinding(meta), 1)
 			return err
 		}},
 		{"captain probe", func(r resolver, meta map[string]string) error {
@@ -33,15 +33,15 @@ func TestBoundEndpointOwnership(t *testing.T) {
 			return sessionRetireEndpoint{resolve: r}.Retire("/home", meta)
 		}},
 		{"mailbox sender", func(r resolver, meta map[string]string) error {
-			_, err := sessionMailboxSender{resolve: r}.backend("/home", meta)
+			_, err := mailboxBackend("/home", backend.MetaEndpointRef(meta), r)
 			return err
 		}},
 		{"soldier endpoints", func(r resolver, meta map[string]string) error {
-			_, err := sessionSoldierEndpoints{resolve: r}.backend("/home", meta)
+			_, err := sessionSoldierEndpoints{resolve: r}.backend("/home", captainBinding(meta))
 			return err
 		}},
 		{"bound teardown", func(r resolver, meta map[string]string) error {
-			_, _, err := sessionBoundTeardown{resolve: r}.resolveBound("/home", meta)
+			_, _, err := sessionBoundTeardown{resolve: r}.resolveBound("/home", captainBinding(meta))
 			return err
 		}},
 	}
@@ -64,7 +64,7 @@ func TestBoundEndpointOwnership(t *testing.T) {
 				resolves := 0
 				meta := boundMeta()
 				row.mutate(meta)
-				err := a.call(func(string, map[string]string) (backend.Backend, string, error) {
+				err := a.call(func(string, backend.EndpointRef) (backend.Backend, string, error) {
 					resolves++
 					return &guardBackend{}, row.resolved, nil
 				}, meta)

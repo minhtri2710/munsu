@@ -2,12 +2,13 @@ package orchestrator
 
 import (
 	"fmt"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // writeBeatFile writes a watcher liveness beat file at the given timestamp.

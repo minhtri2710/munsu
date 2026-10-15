@@ -97,7 +97,7 @@ type workflowTeardown struct {
 	returned int
 }
 
-func (w *workflowTeardown) Probe(string, map[string]string) (fleet.RetirementEndpointStatus, error) {
+func (w *workflowTeardown) Probe(string, taskauthority.EndpointBinding, string) (fleet.RetirementEndpointStatus, error) {
 	return fleet.RetirementEndpointStatus{
 		Lifecycle:      fleet.LifecycleDead,
 		Responsiveness: fleet.Unresponsive,
@@ -105,7 +105,7 @@ func (w *workflowTeardown) Probe(string, map[string]string) (fleet.RetirementEnd
 	}, nil
 }
 
-func (w *workflowTeardown) Dispose(string, map[string]string, fleet.DisposeRequest) error {
+func (w *workflowTeardown) Dispose(fleet.DisposeRequest) error {
 	w.disposed++
 	return nil
 }
@@ -643,7 +643,7 @@ func workflowSettleReports(t *testing.T, homeDir string) {
 func workflowSupervisionCycle(t *testing.T, homeDir string) bool {
 	t.Helper()
 	emitted, err := orchestrator.RunCycleWithProbeAndSender(homeDir,
-		runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(),
+		runtimeTaskEndpointProbe(), newSessionRecoverySender(), watcherHooks(),
 		fleetReviewVerdictPort{})
 	if err != nil {
 		t.Fatalf("supervision cycle on %s: %v", homeDir, err)

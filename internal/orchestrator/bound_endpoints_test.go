@@ -93,8 +93,35 @@ func TestLiveBoundEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []BoundEndpoint{{TaskID: "bound", Meta: map[string]string{"backend": "herdr", "window": "s:p1", "session_owner": "s", "workspace_id": "w1", "tab_id": "t1"}}}
+	want := []BoundEndpoint{{TaskID: "bound", Endpoint: taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:p1", SessionOwner: "s", WorkspaceID: "w1", TabID: "t1", LeaseID: "lease-ep", FenceToken: "fence-ep", Incarnation: "inc-ep", BoundAtUnix: 1}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("LiveBoundEndpoints = %+v, want %+v", got, want)
+	}
+}
+
+// taskEndpoint refuses a task whose current generation binds no endpoint and
+// returns the binding of one that does.
+func TestTaskEndpointRefusesAnUnboundTask(t *testing.T) {
+	homeDir := t.TempDir()
+	seedTask(t, homeDir, "queued")
+	seedBoundSoldier(t, homeDir, "bound", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
+	for _, tc := range []struct {
+		task, want string
+	}{
+		{"queued", "task queued has no bound endpoint"},
+		{"bound", ""},
+	} {
+		t.Run(tc.task, func(t *testing.T) {
+			got, err := taskEndpoint(homeDir, tc.task)
+			if tc.want != "" {
+				if err == nil || err.Error() != tc.want {
+					t.Fatalf("taskEndpoint(%s) = %v, want %q", tc.task, err, tc.want)
+				}
+				return
+			}
+			if err != nil || got.Endpoint.Handle != "@1" {
+				t.Fatalf("taskEndpoint(%s) = %+v, %v, want the bound endpoint", tc.task, got, err)
+			}
+		})
 	}
 }

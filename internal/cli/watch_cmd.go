@@ -237,7 +237,7 @@ func newWatchRunCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), note)
 			}
 
-			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetReviewVerdictPort{})
+			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionRecoverySender(), watcherHooks(), fleetReviewVerdictPort{})
 			if err != nil {
 				return err
 			}

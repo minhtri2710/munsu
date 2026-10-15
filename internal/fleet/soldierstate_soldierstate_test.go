@@ -79,7 +79,9 @@ func seedCanonicalPhase(t *testing.T, homeDir, taskID string, phase taskauthorit
 // deadProbe is a test endpoint probe that always reports the pane dead.
 type deadProbe struct{}
 
-func (deadProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
+func (deadProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return false, nil
+}
 
 // TestRead_MissingCanonicalFailsClosed proves a task without a canonical Task
 // Authority record is an operation error with task/home context, never a

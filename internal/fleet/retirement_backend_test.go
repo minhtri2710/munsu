@@ -22,14 +22,14 @@ type fakeTeardown struct {
 	mergeStatus          *domain.PRMergeStatus
 }
 
-func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
+func (f fakeTeardown) Probe(string, taskauthority.EndpointBinding, string) (RetirementEndpointStatus, error) {
 	lifecycle := LifecycleDead
 	if f.alive {
 		lifecycle = LifecycleAlive
 	}
 	return RetirementEndpointStatus{Lifecycle: lifecycle, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, f.probeErr
 }
-func (f fakeTeardown) Dispose(string, map[string]string, DisposeRequest) error { return f.disposeErr }
+func (f fakeTeardown) Dispose(DisposeRequest) error { return f.disposeErr }
 func (f fakeTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	if f.mergeStatus != nil {
 		return f.mergeStatus, nil

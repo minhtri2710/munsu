@@ -276,8 +276,21 @@ task reopen and task retry rewrite the brief for the new generation.`,
 			for k, v := range meta {
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
-			if meta["window"] != "" {
-				alive, perr := runtimeTaskEndpointProbe().Probe(ctx.Home, meta)
+			ep, harness, probeHome := (*taskauthority.EndpointBinding)(nil), meta["harness"], ctx.Home
+			if hasAggregate {
+				ep, harness = agg.Endpoint, ""
+				if agg.Launch != nil {
+					harness = agg.Launch.Harness
+				}
+			} else if meta["window"] != "" {
+				captain := captainBinding(meta)
+				ep = &captain
+				if meta["home"] != "" {
+					probeHome = meta["home"]
+				}
+			}
+			if ep != nil {
+				alive, perr := runtimeTaskEndpointProbe().Probe(probeHome, *ep, harness)
 				b.WriteString(fmt.Sprintf("pane_alive: %t\n", perr == nil && alive))
 			}
 

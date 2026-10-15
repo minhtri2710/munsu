@@ -22,8 +22,10 @@ func TestBackendIdentity(t *testing.T) {
 	resolve := func(name string) func() (Backend, string, error) {
 		return func() (Backend, string, error) { return Resolve(name) }
 	}
-	bound := func(meta map[string]string) func() (Backend, string, error) {
-		return func() (Backend, string, error) { return BackendForTask(home, meta) }
+	bound := func(name string) func() (Backend, string, error) {
+		return func() (Backend, string, error) {
+			return BackendForTask(home, EndpointRef{Backend: name, Handle: "@test"})
+		}
 	}
 	const supported = "(supported: herdr, tmux)"
 	const setHint = "; set one with: munsu config set backend herdr|tmux"
@@ -42,16 +44,14 @@ func TestBackendIdentity(t *testing.T) {
 		{"Resolve orca", resolve("orca"), `unknown session backend: "orca" ` + supported + setHint, ""},
 		{"Resolve tmux", resolve("tmux"), "", "tmux"},
 		{"Resolve herdr", resolve("herdr"), "", "herdr"},
-		{"BackendForTask nil meta", bound(nil), `meta["backend"]: no session backend identity: ""`, ""},
-		{"BackendForTask meta without backend", bound(map[string]string{"window": "@test"}), `meta["backend"]: no session backend identity: ""`, ""},
-		{"BackendForTask empty backend", bound(map[string]string{"backend": ""}), `meta["backend"]: no session backend identity: "" is not an explicit backend ` + supported + "; no auto-detection", ""},
-		{"BackendForTask auto", bound(map[string]string{"backend": "auto"}), `meta["backend"]: no session backend identity: "auto"`, ""},
-		{"BackendForTask unknown", bound(map[string]string{"backend": "nonexistent"}), `unknown bound session backend: "nonexistent" ` + supported + unbound, ""},
-		{"BackendForTask zellij", bound(map[string]string{"backend": "zellij"}), `unknown bound session backend: "zellij" ` + supported + unbound, ""},
-		{"BackendForTask cmux", bound(map[string]string{"backend": "cmux"}), `unknown bound session backend: "cmux" ` + supported + unbound, ""},
-		{"BackendForTask orca", bound(map[string]string{"backend": "orca"}), `unknown bound session backend: "orca" ` + supported + unbound, ""},
-		{"BackendForTask tmux", bound(map[string]string{"backend": "tmux"}), "", "tmux"},
-		{"BackendForTask herdr", bound(map[string]string{"backend": "herdr"}), "", "herdr"},
+		{"BackendForTask empty backend", bound(""), `bound endpoint backend: no session backend identity: "" is not an explicit backend ` + supported + "; no auto-detection", ""},
+		{"BackendForTask auto", bound("auto"), `bound endpoint backend: no session backend identity: "auto"`, ""},
+		{"BackendForTask unknown", bound("nonexistent"), `unknown bound session backend: "nonexistent" ` + supported + unbound, ""},
+		{"BackendForTask zellij", bound("zellij"), `unknown bound session backend: "zellij" ` + supported + unbound, ""},
+		{"BackendForTask cmux", bound("cmux"), `unknown bound session backend: "cmux" ` + supported + unbound, ""},
+		{"BackendForTask orca", bound("orca"), `unknown bound session backend: "orca" ` + supported + unbound, ""},
+		{"BackendForTask tmux", bound("tmux"), "", "tmux"},
+		{"BackendForTask herdr", bound("herdr"), "", "herdr"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -85,12 +85,7 @@ func TestBackendForTask_BoundHerdrSessionBinding(t *testing.T) {
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	tmpDir := t.TempDir()
-	meta := map[string]string{
-		"backend":       "herdr",
-		"session_owner": "my-lab-session",
-		"window":        "w1",
-	}
-	bk, name, err := BackendForTask(tmpDir, meta)
+	bk, name, err := BackendForTask(tmpDir, EndpointRef{Backend: "herdr", SessionOwner: "my-lab-session", Handle: "w1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +112,7 @@ func TestBackendForTask_HerdrSessionFromHandle(t *testing.T) {
 		{"lab:w1:p1", "lab"},
 		{"w1:p1", "default"},
 	} {
-		bk, _, err := BackendForTask(t.TempDir(), map[string]string{"backend": "herdr", "window": tc.window})
+		bk, _, err := BackendForTask(t.TempDir(), EndpointRef{Backend: "herdr", Handle: tc.window})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,12 +132,7 @@ func TestBackendForTask_HerdrFailsClosedWhenAbsent(t *testing.T) {
 	os.Setenv("PATH", "/dev/null")
 
 	tmpDir := t.TempDir()
-	meta := map[string]string{
-		"backend":       "herdr",
-		"session_owner": "bound-session",
-		"window":        "w1",
-	}
-	bk, name, err := BackendForTask(tmpDir, meta)
+	bk, name, err := BackendForTask(tmpDir, EndpointRef{Backend: "herdr", SessionOwner: "bound-session", Handle: "w1"})
 	if err == nil {
 		t.Fatalf("BackendForTask(herdr) succeeded (%T) with herdr absent from PATH — must fail closed", bk)
 	}
@@ -168,15 +158,7 @@ func TestBackendForTask_HerdrVerifiesBeforeSessionBinding(t *testing.T) {
 	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	tmpDir := t.TempDir()
-	meta := map[string]string{
-		"backend":       "herdr",
-		"session_owner": "bound-session",
-		"window":        "w1",
-		"tab_id":        "tab-1",
-		"workspace_id":  "ws-1",
-		"home":          tmpDir,
-	}
-	bk, name, err := BackendForTask(tmpDir, meta)
+	bk, name, err := BackendForTask(tmpDir, EndpointRef{Backend: "herdr", SessionOwner: "bound-session", Handle: "w1", TabID: "tab-1", WorkspaceID: "ws-1"})
 	if err != nil {
 		t.Fatal(err)
 	}

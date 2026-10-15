@@ -240,7 +240,7 @@ func newWatchCmd() *cobra.Command {
 		Short: "Run the persistent watcher daemon",
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			reason, err := orchestrator.RunWithProbeSenderAndEvents(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetReviewVerdictPort{}, runtimeObservationEventPort(), fleetActiveDeliveryPort{})
+			reason, err := orchestrator.RunWithProbeSenderAndEvents(ctx.Home, runtimeTaskEndpointProbe(), newSessionRecoverySender(), watcherHooks(), fleetReviewVerdictPort{}, runtimeObservationEventPort(), fleetActiveDeliveryPort{})
 			if err != nil {
 				return err
 			}

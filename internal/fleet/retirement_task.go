@@ -203,27 +203,20 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		return fmt.Errorf("cleanup claim for %s generation %s is not active", taskID, claimGen)
 	}
 	var endpointProof *exactEndpointProof
-	meta := map[string]string{}
+	var probed *taskauthority.EndpointBinding
 	if cur.Retirement != nil {
-		if cur.Retirement.Worktree != nil {
-			meta["worktree"] = cur.Retirement.Worktree.Path
-			if cur.Retirement.Worktree.LaunchManifest != nil {
-				meta["launch_manifest_sha256"] = cur.Retirement.Worktree.LaunchManifest.ManifestSHA256
-			}
-		}
+		probed = endpointOrAcquired(cur.Retirement.Endpoint, cur.Retirement.Acquired)
 		switch {
 		case cur.Retirement.Endpoint != nil:
 			ep := cur.Retirement.Endpoint
-			meta = retirementMetaForEvidence(meta, cur.Retirement)
 			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
 		case cur.Retirement.Acquired != nil:
 			ep := cur.Retirement.Acquired
-			meta = retirementMetaForEvidence(meta, cur.Retirement)
 			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
 		}
 	}
 	if endpointProof != nil {
-		status, err := backend.Probe(homeDir, meta)
+		status, err := backend.Probe(homeDir, *probed, launchHarness(cur))
 		if err != nil {
 			return fmt.Errorf("probing endpoint before aborting cleanup for %s: %w", taskID, err)
 		}
@@ -526,43 +519,22 @@ func resolveRetiredCleanupEvidence(authority *taskauthority.Canonical, taskID do
 // evidence preserves: releasing it would dispose/return a resource now owned
 // by the reopened generation. When the current generation differs, cleanup
 // may complete only evidence-pinned releases with no identity overlap.
-func retirementMetaForEvidence(meta map[string]string, ev *taskauthority.RetirementEvidence) map[string]string {
-	out := make(map[string]string, len(meta)+7)
-	for key, value := range meta {
-		out[key] = value
-	}
-	if ev == nil {
-		return out
-	}
-	if ev.Worktree != nil {
-		out["worktree"] = ev.Worktree.Path
-		if ev.Worktree.LaunchManifest != nil {
-			out["launch_manifest_sha256"] = ev.Worktree.LaunchManifest.ManifestSHA256
-		} else {
-			delete(out, "launch_manifest_sha256")
-		}
-	}
-	overlayEndpointMeta(out, ev.Endpoint, ev.Acquired)
-	return out
-}
-
-// overlayEndpointMeta writes the backend identity of the bound endpoint, else
-// of the acquired one, into meta.
-func overlayEndpointMeta(meta map[string]string, bound *taskauthority.EndpointBinding, acquired *taskauthority.AcquiredEndpoint) {
+// endpointOrAcquired is the bound endpoint, else the acquired one, or nil.
+func endpointOrAcquired(bound *taskauthority.EndpointBinding, acquired *taskauthority.AcquiredEndpoint) *taskauthority.EndpointBinding {
 	switch {
 	case bound != nil:
-		putEndpointMeta(meta, bound.Backend, bound.Handle, bound.SessionOwner, bound.WorkspaceID, bound.TabID)
+		ep := *bound
+		return &ep
 	case acquired != nil:
-		putEndpointMeta(meta, acquired.Backend, acquired.Handle, acquired.SessionOwner, acquired.WorkspaceID, acquired.TabID)
+		ep := acquiredBinding(*acquired)
+		return &ep
 	}
+	return nil
 }
 
-func putEndpointMeta(meta map[string]string, backendName, handle, sessionOwner, workspaceID, tabID string) {
-	meta["backend"] = backendName
-	meta["window"] = handle
-	meta[backend.MetaSessionOwner] = sessionOwner
-	meta[backend.MetaWorkspaceID] = workspaceID
-	meta[backend.MetaTabID] = tabID
+// acquiredBinding is the endpoint identity a launch acquired but never bound.
+func acquiredBinding(a taskauthority.AcquiredEndpoint) taskauthority.EndpointBinding {
+	return taskauthority.EndpointBinding{Backend: a.Backend, Handle: a.Handle, LeaseID: a.LeaseID, FenceToken: a.FenceToken, SessionOwner: a.SessionOwner, WorkspaceID: a.WorkspaceID, TabID: a.TabID, Incarnation: a.Incarnation}
 }
 
 func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthority.RetirementEvidence) error {
@@ -886,7 +858,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return cleanupPending(fmt.Errorf("teardown %s: resolving retirement evidence: %w", opts.ID, err))
 	}
 	ev := evidence.evidence
-	meta = retirementMetaForEvidence(meta, ev)
+	harness := launchHarness(retired)
 	fullCleanup := evidence.currentIsRetired
 	if !fullCleanup {
 		result.Steps = append(result.Steps, fmt.Sprintf("resuming retirement of generation %s (current generation %s untouched)", committed.Generation, evidence.current.Generation))
@@ -901,7 +873,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(err)
 		}
 		ep := ev.Endpoint
-		status, err := backend.Probe(opts.HomeDir, meta)
+		status, err := backend.Probe(opts.HomeDir, *ep, harness)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
@@ -948,11 +920,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
 				}
-				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Endpoint: *ep, Home: opts.HomeDir, TaskID: opts.ID})
 				if err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
-				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
+				if err := backend.Dispose(request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", ep.Handle))
@@ -978,7 +950,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(err)
 		}
 		ae := ev.Acquired
-		status, err := backend.Probe(opts.HomeDir, meta)
+		status, err := backend.Probe(opts.HomeDir, acquiredBinding(*ae), harness)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying acquired endpoint: %w", opts.ID, err))
 		}
@@ -1014,11 +986,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint dispose fence: %w", opts.ID, err))
 				}
-				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ae.Backend, Handle: ae.Handle, SessionOwner: ae.SessionOwner, WorkspaceID: ae.WorkspaceID, TabID: ae.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Endpoint: acquiredBinding(*ae), Home: opts.HomeDir, TaskID: opts.ID})
 				if err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
-				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
+				if err := backend.Dispose(request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing acquired endpoint: %w", opts.ID, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("acquired endpoint %s disposed", ae.Handle))
@@ -1982,10 +1954,10 @@ func parsePorcelainFilename(line string) string {
 // when another task references the same shared workspace. A read error is
 // returned because the workspace ownership decision is unknowable.
 func withWorkspaceCloseGuard(homeDir, excludeID string, request DisposeRequest) (DisposeRequest, error) {
-	if request.WorkspaceID == "" {
+	if request.Endpoint.WorkspaceID == "" {
 		return request, nil
 	}
-	refs, err := otherWorkspaceRefs(homeDir, excludeID, request.WorkspaceID)
+	refs, err := otherWorkspaceRefs(homeDir, excludeID, request.Endpoint.WorkspaceID)
 	if err != nil {
 		return DisposeRequest{}, err
 	}

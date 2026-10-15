@@ -282,7 +282,7 @@ type recordingTeardown struct {
 	returnErr  error
 }
 
-func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
+func (r *recordingTeardown) Probe(string, taskauthority.EndpointBinding, string) (RetirementEndpointStatus, error) {
 	if r.onProbe != nil {
 		r.onProbe()
 	}
@@ -295,7 +295,7 @@ func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpoint
 	}
 	return RetirementEndpointStatus{Lifecycle: lifecycle, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, nil
 }
-func (r *recordingTeardown) Dispose(_ string, _ map[string]string, req DisposeRequest) error {
+func (r *recordingTeardown) Dispose(req DisposeRequest) error {
 	if r.onDispose != nil {
 		r.onDispose()
 	}
@@ -402,7 +402,7 @@ func retireEvidenceOwnedResources(t *testing.T, treehouse string) {
 	if len(rec.disposed) != 1 {
 		t.Fatalf("dispose calls=%d, want 1 (evidence-owned endpoint only)", len(rec.disposed))
 	}
-	if rec.disposed[0].Handle != "@1" || rec.disposed[0].Backend != "tmux" {
+	if rec.disposed[0].Endpoint.Handle != "@1" || rec.disposed[0].Endpoint.Backend != "tmux" {
 		t.Fatalf("disposed=%+v, want evidence endpoint @1/tmux", rec.disposed[0])
 	}
 	if len(rec.returned) != 1 || rec.returned[0] != wtDir {
@@ -671,7 +671,7 @@ func TestRetirementClaimBarrierBetweenProbeAndDispose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleanup with claim barrier: %v", err)
 	}
-	if len(second.disposed) != 1 || second.disposed[0].Handle != "@1" {
+	if len(second.disposed) != 1 || second.disposed[0].Endpoint.Handle != "@1" {
 		t.Fatalf("disposed=%+v, want evidence endpoint @1 only", second.disposed)
 	}
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
@@ -803,7 +803,7 @@ func TestRetirementMetaSubstitutionCannotRedirectCleanup(t *testing.T) {
 	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("retirement: %v", err)
 	}
-	if len(rec.disposed) != 1 || rec.disposed[0].Handle != "@1" {
+	if len(rec.disposed) != 1 || rec.disposed[0].Endpoint.Handle != "@1" {
 		t.Fatalf("disposed=%+v, want evidence handle @1 (not the substituted %q)", rec.disposed, "@999")
 	}
 	if len(rec.returned) != 1 || rec.returned[0] != realWT {
@@ -1058,7 +1058,7 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("fresh teardown of reopened generation: %v", err)
 	}
-	if len(second.disposed) != 1 || second.disposed[0].Handle != "@1" {
+	if len(second.disposed) != 1 || second.disposed[0].Endpoint.Handle != "@1" {
 		t.Fatalf("disposed=%+v, want exactly the reopened generation's own endpoint @1 (its cleanup, not the aborted generation-1 resume)", second.disposed)
 	}
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
@@ -1175,7 +1175,7 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("fresh teardown of reopened generation: %v", err)
 	}
-	if len(second.disposed) != 1 || second.disposed[0].Handle != "@2" {
+	if len(second.disposed) != 1 || second.disposed[0].Endpoint.Handle != "@2" {
 		t.Fatalf("disposed=%+v, want reopened generation's own endpoint @2 only (never the aborted generation-1 endpoint)", second.disposed)
 	}
 	if len(second.returned) != 1 || second.returned[0] != newWT {
@@ -1378,7 +1378,7 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("fresh teardown of reopened generation: %v", err)
 	}
-	if len(second.disposed) != 1 || second.disposed[0].Handle != "@1" || second.disposed[0].Backend != "tmux" {
+	if len(second.disposed) != 1 || second.disposed[0].Endpoint.Handle != "@1" || second.disposed[0].Endpoint.Backend != "tmux" {
 		t.Fatalf("disposed=%+v, want exactly the reopened generation's own acquired endpoint @1 (its cleanup, never the aborted generation-1 resume)", second.disposed)
 	}
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
@@ -1687,7 +1687,7 @@ func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
 	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("fresh teardown: %v", err)
 	}
-	if len(rec.disposed) != 1 || rec.disposed[0].Handle != "@1" || rec.disposed[0].Backend != "tmux" {
+	if len(rec.disposed) != 1 || rec.disposed[0].Endpoint.Handle != "@1" || rec.disposed[0].Endpoint.Backend != "tmux" {
 		t.Fatalf("disposed=%+v, want the acquired endpoint @1 disposed (never completed-unresolved)", rec.disposed)
 	}
 	if len(rec.returned) != 0 {
@@ -1786,7 +1786,7 @@ func explicitGenerationAllow(t *testing.T) {
 	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("fresh teardown of reopened generation: %v", err)
 	}
-	if len(second.disposed) != 1 || second.disposed[0].Handle != "@2" {
+	if len(second.disposed) != 1 || second.disposed[0].Endpoint.Handle != "@2" {
 		t.Fatalf("disposed=%+v, want the reopened generation's own endpoint @2", second.disposed)
 	}
 	agg, err := auth.Get(mustTaskID(t, taskID))
@@ -1977,7 +1977,7 @@ func TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration(t *testing.T) {
 	if _, err := RetireTask(secondOpts, resume, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("generation-2 cleanup resume: %v", err)
 	}
-	if len(resume.disposed) != 1 || resume.disposed[0].Handle != "@2" {
+	if len(resume.disposed) != 1 || resume.disposed[0].Endpoint.Handle != "@2" {
 		t.Fatalf("resume disposed=%+v, want generation-2 endpoint @2", resume.disposed)
 	}
 	agg3, err := auth.Get(mustTaskID(t, taskID))

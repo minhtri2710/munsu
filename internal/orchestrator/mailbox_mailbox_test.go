@@ -12,19 +12,22 @@ import (
 	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // --- Envelope creation and validation ---
 
-// deliverySender is an inert BoundSender: the recovery tests below reach it
+// deliverySender is an inert RecoverySender: the recovery tests below reach it
 // only on paths that must skip before any send happens.
 type deliverySender struct {
 	alive  bool
 	result mhome.BoundSendResult
 }
 
-func (s *deliverySender) Alive(string, map[string]string) (bool, error) { return s.alive, nil }
-func (s *deliverySender) Send(string, map[string]string, string) mhome.BoundSendResult {
+func (s *deliverySender) Alive(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return s.alive, nil
+}
+func (s *deliverySender) Send(string, taskauthority.EndpointBinding, string) mhome.BoundSendResult {
 	return s.result
 }
 

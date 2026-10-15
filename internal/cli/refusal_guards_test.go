@@ -272,10 +272,10 @@ func boundMeta() map[string]string {
 
 func TestGuardMailboxSenderRefusesAnIncompleteBoundIdentity(t *testing.T) {
 	resolved := 0
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	resolve := func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "herdr", nil
-	}}
+	}
 	for _, tc := range []struct {
 		name string
 		home string
@@ -285,21 +285,21 @@ func TestGuardMailboxSenderRefusesAnIncompleteBoundIdentity(t *testing.T) {
 		{"no window", "/home", map[string]string{"backend": "herdr"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := sender.backend(tc.home, tc.meta)
-			wantErrContains(t, err, "bound sender identity is incomplete", "sender.backend with "+tc.name)
+			_, err := mailboxBackend(tc.home, backend.MetaEndpointRef(tc.meta), resolve)
+			wantErrContains(t, err, "bound sender identity is incomplete", "mailboxBackend with "+tc.name)
 		})
 	}
 	if resolved != 0 {
 		t.Fatalf("resolve was called %d times; the guard must refuse before any backend is resolved", resolved)
 	}
-	if _, err := sender.backend("/home", boundMeta()); err != nil {
-		t.Fatalf("sender.backend with a complete identity = %v, want acceptance", err)
+	if _, err := mailboxBackend("/home", backend.MetaEndpointRef(boundMeta()), resolve); err != nil {
+		t.Fatalf("mailboxBackend with a complete identity = %v, want acceptance", err)
 	}
 }
 
 func TestGuardSoldierEndpointsRefuseAnIncompleteBoundIdentity(t *testing.T) {
 	resolved := 0
-	eps := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	eps := sessionSoldierEndpoints{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "herdr", nil
 	}}
@@ -312,21 +312,21 @@ func TestGuardSoldierEndpointsRefuseAnIncompleteBoundIdentity(t *testing.T) {
 		{"no window", "/home", map[string]string{"backend": "herdr"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := eps.backend(tc.home, tc.meta)
+			_, err := eps.backend(tc.home, captainBinding(tc.meta))
 			wantErrContains(t, err, "soldier endpoint identity is incomplete", "soldier backend with "+tc.name)
 		})
 	}
 	if resolved != 0 {
 		t.Fatalf("resolve was called %d times; the guard must refuse before any backend is resolved", resolved)
 	}
-	if _, err := eps.backend("/home", boundMeta()); err != nil {
+	if _, err := eps.backend("/home", captainBinding(boundMeta())); err != nil {
 		t.Fatalf("soldier backend with a complete identity = %v, want acceptance", err)
 	}
 }
 
 func TestGuardBoundTeardownRefusesAnIncompleteBoundIdentity(t *testing.T) {
 	resolved := 0
-	td := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	td := sessionBoundTeardown{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		resolved++
 		return &guardBackend{}, "herdr", nil
 	}}
@@ -339,95 +339,46 @@ func TestGuardBoundTeardownRefusesAnIncompleteBoundIdentity(t *testing.T) {
 		{"no window", "/home", map[string]string{"backend": "herdr"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := td.resolveBound(tc.home, tc.meta)
+			_, _, err := td.resolveBound(tc.home, captainBinding(tc.meta))
 			wantErrContains(t, err, "bound teardown identity is incomplete", "resolveBound with "+tc.name)
 		})
 	}
 	if resolved != 0 {
 		t.Fatalf("resolve was called %d times; the guard must refuse before any backend is resolved", resolved)
 	}
-	if _, _, err := td.resolveBound("/home", boundMeta()); err != nil {
+	if _, _, err := td.resolveBound("/home", captainBinding(boundMeta())); err != nil {
 		t.Fatalf("resolveBound with a complete identity = %v, want acceptance", err)
 	}
 }
 
-func TestGuardDisposeRefusesARequestThatDoesNotMatchTheBoundEndpoint(t *testing.T) {
-	bk := &guardBackend{}
-	td := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
-		return bk, "herdr", nil
-	}}
-	match := fleet.DisposeRequest{
-		Home: "/home", Backend: "herdr", Handle: "sess:w1:p1",
-		SessionOwner: "sess", WorkspaceID: "ws1", TabID: "tab1",
-	}
-	for _, tc := range []struct {
-		name   string
-		mutate func(r fleet.DisposeRequest) fleet.DisposeRequest
-	}{
-		{"a different home", func(r fleet.DisposeRequest) fleet.DisposeRequest { r.Home = "/other"; return r }},
-		{"a different backend", func(r fleet.DisposeRequest) fleet.DisposeRequest { r.Backend = "tmux"; return r }},
-		{"a different handle", func(r fleet.DisposeRequest) fleet.DisposeRequest { r.Handle = "sess:p9"; return r }},
-		{"a different session owner", func(r fleet.DisposeRequest) fleet.DisposeRequest { r.SessionOwner = "other"; return r }},
-		{"a different workspace", func(r fleet.DisposeRequest) fleet.DisposeRequest { r.WorkspaceID = "ws9"; return r }},
-		{"a different tab", func(r fleet.DisposeRequest) fleet.DisposeRequest { r.TabID = "tab9"; return r }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := td.Dispose("/home", boundMeta(), tc.mutate(match))
-			wantErrContains(t, err, "dispose request does not match bound endpoint metadata", "Dispose with "+tc.name)
-		})
-	}
-	if len(bk.tornDown) != 0 {
-		t.Fatalf("Teardown ran %v; a mismatched dispose must never reach the backend", bk.tornDown)
-	}
-	if err := td.Dispose("/home", boundMeta(), match); err != nil {
-		t.Fatalf("Dispose with the matching request = %v, want acceptance", err)
-	}
-	if len(bk.tornDown) != 1 || bk.tornDown[0] != "sess:w1:p1" {
-		t.Fatalf("Teardown calls = %v, want exactly the bound handle", bk.tornDown)
-	}
-}
-
 func TestGuardDisposeRefusesWorkspaceCloseDenialOutsideHerdrWithAWorkspace(t *testing.T) {
-	req := fleet.DisposeRequest{
-		Home: "/home", Backend: "herdr", Handle: "sess:w1:p1",
-		SessionOwner: "sess", WorkspaceID: "ws1", TabID: "tab1",
-		DenyWorkspaceClose: true,
-	}
+	req := fleet.DisposeRequest{Home: "/home", Endpoint: captainBinding(boundMeta()), DenyWorkspaceClose: true}
 
 	// Denial on a non-herdr backend: the policy has no meaning there.
-	tmuxMeta := boundMeta()
-	tmuxMeta["backend"] = "tmux"
 	tmuxReq := req
-	tmuxReq.Backend = "tmux"
-	tmux := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	tmuxReq.Endpoint.Backend = "tmux"
+	tmux := sessionBoundTeardown{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return &guardBackend{}, "tmux", nil
 	}}
-	wantErrContains(t, tmux.Dispose("/home", tmuxMeta, tmuxReq), `workspace-close denial is invalid for backend "tmux"`, "Dispose denying workspace close on tmux")
+	wantErrContains(t, tmux.Dispose(tmuxReq), `workspace-close denial is invalid for backend "tmux"`, "Dispose denying workspace close on tmux")
 
 	// Denial on herdr with no workspace to deny.
-	noWorkspaceMeta := boundMeta()
-	noWorkspaceMeta["workspace_id"] = ""
 	noWorkspaceReq := req
-	noWorkspaceReq.WorkspaceID = ""
-	herdr := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	noWorkspaceReq.Endpoint.WorkspaceID = ""
+	herdr := sessionBoundTeardown{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return &guardBackend{}, "herdr", nil
 	}}
-	wantErrContains(t, herdr.Dispose("/home", noWorkspaceMeta, noWorkspaceReq), `workspace-close denial is invalid for backend "herdr"`, "Dispose denying workspace close with no workspace id")
+	wantErrContains(t, herdr.Dispose(noWorkspaceReq), `workspace-close denial is invalid for backend "herdr"`, "Dispose denying workspace close with no workspace id")
 }
 
 func TestGuardDisposeRefusesWorkspaceClosePolicyOnAnAdapterThatCannotCarryIt(t *testing.T) {
 	// name "herdr" with a resolved adapter that is not the herdr adapter: the
 	// policy cannot be attached, so disposal fails closed instead of tearing
 	// the endpoint down with the policy silently dropped.
-	td := sessionBoundTeardown{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	td := sessionBoundTeardown{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return &guardBackend{}, "herdr", nil
 	}}
-	req := fleet.DisposeRequest{
-		Home: "/home", Backend: "herdr", Handle: "sess:w1:p1",
-		SessionOwner: "sess", WorkspaceID: "ws1", TabID: "tab1",
-		DenyWorkspaceClose: true,
-	}
-	err := td.Dispose("/home", boundMeta(), req)
+	err := td.Dispose(fleet.DisposeRequest{Home: "/home", Endpoint: captainBinding(boundMeta()), DenyWorkspaceClose: true})
 	wantErrContains(t, err, "herdr workspace-close policy is unsupported by resolved adapter", "Dispose with a herdr policy on a non-herdr adapter")
 	if strings.Contains(err.Error(), "denial is invalid for backend") {
 		t.Fatalf("Dispose = %v, which is the denial-validity refusal in front of it", err)
@@ -642,7 +593,7 @@ func TestGuardSendRefusesUplinkToTheGeneral(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	// The allow row names a task nobody recorded: it passes the uplink guard
-	// and stops at the next stage, reading the receiver's meta. send refuses
+	// and stops at the next stage, reading the receiver's canonical task. send refuses
 	// gate agents between the two, so run from the temp home, not a checkout.
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -658,7 +609,7 @@ func TestGuardSendRefusesUplinkToTheGeneral(t *testing.T) {
 		want     string
 	}{
 		{"receiver is the general", "general", "uplink use munsu report; send is downlink only"},
-		{"receiver is another id", "t1", "reading task t1"},
+		{"receiver is another id", "t1", "reading soldier task"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := runRoot(t, "send", tc.receiver, "status?", "--home", homeDir)
@@ -690,14 +641,35 @@ func TestGuardSendRefusesACaptainWithNoHomeRecorded(t *testing.T) {
 func TestGuardPeekRefusesATaskWithNoWindowEndpoint(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	if err := mhome.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship"}); err != nil {
+	cliSeedCanonicalTask(t, homeDir, "t1", "ship")
+	if err := mhome.WriteMeta(homeDir, "captain:c1", map[string]string{"kind": "captain"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := runRoot(t, "peek", "t1", "--home", homeDir)
-	wantErrContains(t, err, "task t1 has no window endpoint", "peek at a task with no window in meta")
-	// The read above it fails with its own wrapper when the task is unknown.
-	if strings.Contains(err.Error(), "reading task") {
-		t.Fatalf("peek = %v, which is the meta-read failure rather than the missing-window refusal", err)
+	if err := mhome.WriteMeta(homeDir, "captain:c2", map[string]string{"kind": "captain", "window": "sess:p1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, id string
+		blocked  bool
+	}{
+		{"blocks a task with no bound endpoint", "t1", true},
+		{"blocks a captain whose meta records no window", "captain:c1", true},
+		{"allows a captain whose meta records a window", "captain:c2", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runRoot(t, "peek", tc.id, "--home", homeDir)
+			if !tc.blocked {
+				if err == nil || strings.Contains(err.Error(), "has no window endpoint") {
+					t.Fatalf("peek %s = %v, want it past the missing-window refusal", tc.id, err)
+				}
+				return
+			}
+			wantErrContains(t, err, "task "+tc.id+" has no window endpoint", "peek at "+tc.id)
+			// The read above it fails with its own wrapper when the task is unknown.
+			if strings.Contains(err.Error(), "reading task") {
+				t.Fatalf("peek = %v, which is the task-read failure rather than the missing-window refusal", err)
+			}
+		})
 	}
 }
 
@@ -707,9 +679,7 @@ func TestGuardPeekRefusesATaskWithNoWindowEndpoint(t *testing.T) {
 func TestGuardPeekRefusesWhenNoCapturePortIsConfigured(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	if err := mhome.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship", "window": "sess:p1"}); err != nil {
-		t.Fatal(err)
-	}
+	mustBindCLIEndpoint(t, homeDir, "t1", taskauthority.EndpointBinding{Backend: "fake", Handle: "sess:p1"})
 	// The registered `peek` always carries the real capture port, so the
 	// command is composed here with a nil port instead — that composition is
 	// the only state this guard exists for.
