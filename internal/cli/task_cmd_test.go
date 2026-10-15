@@ -185,7 +185,8 @@ func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
 // TestTaskAddProjectResolution: with no --repo, task add takes the registered
 // project at the current repository root and writes its brief; outside any
 // repository no project resolves and nothing is created. On an interactive
-// terminal task add asks for missing args and for a registered project.
+// terminal task add asks for missing args and for a registered project, with
+// no validation the args path lacks; an aborted prompt returns "aborted".
 func TestTaskAddProjectResolution(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -194,14 +195,17 @@ func TestTaskAddProjectResolution(t *testing.T) {
 		tty        bool
 		args       []string
 		answers    string
+		desc       string
 		wantErr    string
 	}{
-		{"blocks when no project resolves", false, true, false, []string{"t1", "do the work"}, "", "task t1 has no project"},
-		{"allows a registered project resolved from the repository", true, true, false, []string{"t1", "do the work"}, "", ""},
-		{"blocks missing args off a terminal", true, true, false, []string{"t1"}, "", "add accepts 2 arg(s), received 1"},
-		{"allows missing args asked at the terminal", true, true, true, nil, "t1\ndo the work\n", ""},
-		{"blocks at the terminal when no project is registered", false, false, true, []string{"t1", "do the work"}, "", "task t1 has no project"},
-		{"allows a project picked at the terminal", false, true, true, []string{"t1", "do the work"}, "1\n", ""},
+		{"blocks when no project resolves", false, true, false, []string{"t1", "do the work"}, "", "", "task t1 has no project"},
+		{"allows a registered project resolved from the repository", true, true, false, []string{"t1", "do the work"}, "", "do the work", ""},
+		{"blocks missing args off a terminal", true, true, false, []string{"t1"}, "", "", "add accepts 2 arg(s), received 1"},
+		{"allows missing args asked at the terminal", true, true, true, nil, "t1\ndo the work\n", "do the work", ""},
+		{"allows an empty description asked at the terminal, as the args path does", true, true, true, nil, "t1\n\nre-asked\n", "", ""},
+		{"blocks at the terminal when no project is registered", false, false, true, []string{"t1", "do the work"}, "", "", "task t1 has no project"},
+		{"allows a project picked at the terminal", false, true, true, []string{"t1", "do the work"}, "1\n", "do the work", ""},
+		{"blocks with a plain error when the project prompt is aborted", false, true, true, []string{"t1", "do the work"}, "abort", "", "aborted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -228,12 +232,15 @@ func TestTaskAddProjectResolution(t *testing.T) {
 				if tc.answers == "" {
 					t.Error("task add prompted where it must not")
 				}
+				if tc.answers == "abort" {
+					return huh.ErrUserAborted
+				}
 				return f.WithAccessible(true).WithInput(iotest.OneByteReader(strings.NewReader(tc.answers))).WithOutput(io.Discard).Run()
 			}
 			_, err := runTaskCommand(t, append([]string{"task", "add"}, append(tc.args, "--home", homeDir)...))
 			agg, getErr := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "t1"))
 			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				if err == nil || !strings.HasPrefix(err.Error(), tc.wantErr) {
 					t.Fatalf("task add error = %v, want %q", err, tc.wantErr)
 				}
 				if !errors.Is(getErr, taskauthority.ErrNotFound) {
@@ -241,8 +248,11 @@ func TestTaskAddProjectResolution(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || getErr != nil || agg.Definition.Project != "alpha" {
-				t.Fatalf("task add = %v, get = %v, project %q, want alpha", err, getErr, agg.Definition.Project)
+			if err != nil || getErr != nil || agg.Definition.Project != "alpha" || agg.Definition.Description != tc.desc {
+				t.Fatalf("task add = %v, get = %v, definition %+v, want project alpha, description %q", err, getErr, agg.Definition, tc.desc)
+			}
+			if tc.desc == "" {
+				return
 			}
 			brief, err := os.ReadFile(filepath.Join(homeDir, "data", "t1", "brief.md"))
 			if err != nil || !strings.Contains(string(brief), "do the work") || strings.Contains(string(brief), "{TASK}") {

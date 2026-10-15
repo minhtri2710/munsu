@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 
 	"charm.land/huh/v2"
@@ -21,6 +22,16 @@ func interactive() bool {
 
 // runPrompt runs a huh form. Tests replace it.
 var runPrompt = func(form *huh.Form) error { return form.Run() }
+
+var errAborted = errors.New("aborted")
+
+func prompt(form *huh.Form) error {
+	err := runPrompt(form)
+	if errors.Is(err, huh.ErrUserAborted) {
+		return errAborted
+	}
+	return err
+}
 
 // exactArgsOrPrompt is ExactArgs(n), except that on an interactive terminal
 // fewer args pass so promptArgs can ask for the rest.
@@ -43,9 +54,9 @@ func promptArgs(args []string, titles ...string) ([]string, error) {
 	copy(values, args)
 	var fields []huh.Field
 	for i := len(args); i < len(titles); i++ {
-		fields = append(fields, huh.NewInput().Title(titles[i]).Value(&values[i]).Validate(huh.ValidateNotEmpty()))
+		fields = append(fields, huh.NewInput().Title(titles[i]).Value(&values[i]))
 	}
-	if err := runPrompt(huh.NewForm(huh.NewGroup(fields...))); err != nil {
+	if err := prompt(huh.NewForm(huh.NewGroup(fields...))); err != nil {
 		return nil, err
 	}
 	return values, nil
@@ -65,7 +76,7 @@ func promptProject(homeDir string, cause error) (string, error) {
 		options[i] = huh.NewOption(p.Name, p.Name)
 	}
 	var name string
-	if err := runPrompt(huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title("Project").Options(options...).Value(&name)))); err != nil {
+	if err := prompt(huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title("Project").Options(options...).Value(&name)))); err != nil {
 		return "", err
 	}
 	return name, nil

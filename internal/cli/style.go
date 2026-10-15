@@ -75,11 +75,14 @@ const (
 	markColor
 )
 
+// isTerminal is term.IsTerminal. Tests replace it.
+var isTerminal = term.IsTerminal
+
 // outputMarks picks the mode for w: plain unless w is a terminal, and no color
 // when NO_COLOR is set. Tests replace it.
 var outputMarks = func(w io.Writer) markMode {
 	f, ok := w.(*os.File)
-	if !ok || !term.IsTerminal(int(f.Fd())) {
+	if !ok || !isTerminal(int(f.Fd())) {
 		return markPlain
 	}
 	if os.Getenv("NO_COLOR") != "" {

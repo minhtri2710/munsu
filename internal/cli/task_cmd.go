@@ -120,7 +120,9 @@ task reopen and task retry rewrite the brief for the new generation.`,
 				p, err := fleet.ResolveFromCwd(ctx.Home)
 				if err == nil {
 					repo = p.Name
-				} else if repo, err = promptProject(ctx.Home, err); err != nil {
+				} else if repo, err = promptProject(ctx.Home, err); errors.Is(err, errAborted) {
+					return err
+				} else if err != nil {
 					// Words: Human, typed, 2026-10-15: "oki làm theo khuyến nghị"
 					return fmt.Errorf("task %s has no project: pass --repo <project> or run from a project repository: %w", id, err)
 				}

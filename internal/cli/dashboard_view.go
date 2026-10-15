@@ -341,7 +341,7 @@ func (m dashboardModel) chips() string {
 	case !m.beat.Exists:
 		watcher = styleFail.Render("watcher absent")
 	case m.beat.Stale:
-		watcher = styleFail.Render("watcher stale " + m.beat.Age.Round(time.Second).String())
+		watcher = markFor("stale").style.Render("watcher stale " + m.beat.Age.Round(time.Second).String())
 	}
 	captains := map[string]bool{}
 	working := 0

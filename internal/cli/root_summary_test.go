@@ -170,6 +170,36 @@ SOLDIER_HARNESS: pi
 	}
 }
 
+func TestOutputMarksFollowTerminalAndNoColor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tty     bool
+		noColor string
+		want    markMode
+	}{
+		{"plain on a file that is not a terminal", false, "", markPlain},
+		{"icons without color under NO_COLOR", true, "1", markIcons},
+		{"color on a terminal", true, "", markColor},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NO_COLOR", tc.noColor)
+			if tc.tty {
+				old := isTerminal
+				t.Cleanup(func() { isTerminal = old })
+				isTerminal = func(int) bool { return true }
+			}
+			f, err := os.Create(filepath.Join(t.TempDir(), "out"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if got := outputMarks(f); got != tc.want {
+				t.Errorf("outputMarks = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFleetViewShowsCanonicalQueuedPhase(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", homeDir)
