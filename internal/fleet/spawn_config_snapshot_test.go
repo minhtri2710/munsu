@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	homepkg "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func TestResolveSpawnProjectConfigRejectsUnresolvedPolicy(t *testing.T) {
@@ -363,6 +365,88 @@ func TestYoloDoesNotRelaxConfiguredForgeTool(t *testing.T) {
 	_, err := ResolveProjectSnapshot(home, "alpha")
 	if err == nil || !strings.Contains(err.Error(), "forge adapter gitlab") {
 		t.Fatalf("+yolo project resolved a not-Ready configured forge tool: %v", err)
+	}
+}
+
+// TestWorktreeToolResolution pins the worktree port: git worktree unless the
+// project configures treehouse, and a configured treehouse refuses unless Ready.
+func TestWorktreeToolResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure bool
+		ready     bool
+		policy    DispatchPolicy
+		wantErr   string
+	}{
+		{name: "configured treehouse not Ready is refused", configure: true, policy: DispatchPolicyGeneralDirect, wantErr: "resolved worktree adapter treehouse probe missing"},
+		{name: "configured Ready treehouse is allowed", configure: true, ready: true, policy: DispatchPolicyGeneralDirect},
+		{name: "published treehouse no longer Ready is refused", configure: true, policy: DispatchPolicyCaptainMediated, wantErr: "configured worktree tool is not Ready"},
+		{name: "published Ready treehouse is allowed", configure: true, ready: true, policy: DispatchPolicyCaptainMediated},
+		{name: "unconfigured uses git worktree with treehouse on PATH", policy: DispatchPolicyGeneralDirect},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if _, err := homepkg.Init(home); err != nil {
+				t.Fatal(err)
+			}
+			if err := fleetconfig.StoreFleetBase(home, fleetconfig.FleetBaseDocument{
+				SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+				Config:        fleetconfig.FleetBaseConfig{SoldierHarness: "pi", Backend: "tmux"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := Add(home, "alpha", filepath.Join(home, "projects", "alpha"), true); err != nil {
+				t.Fatal(err)
+			}
+			pathTrace := filepath.Join(t.TempDir(), "path-treehouse")
+			testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n: > "+pathTrace+"\n")
+			toolTrace := filepath.Join(t.TempDir(), "configured-treehouse")
+			tool := filepath.Join(t.TempDir(), "treehouse")
+			var overlay fleetconfig.ProjectOverlay
+			if tc.configure {
+				overlay.Worktree = &fleetconfig.ToolEntry{Adapter: "treehouse", Path: tool}
+			}
+			if err := fleetconfig.StoreProjectOverlay(home, "alpha", overlay); err != nil {
+				t.Fatal(err)
+			}
+			if tc.ready || tc.policy == DispatchPolicyCaptainMediated {
+				testutil.WriteFakeExecutable(t, tool, "#!/bin/sh\n: > "+toolTrace+"\n")
+			}
+			if tc.policy == DispatchPolicyCaptainMediated {
+				snap, err := ResolveProjectSnapshot(home, "alpha")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := fleetconfig.StorePublishedSnapshot(home, snap.Config()); err != nil {
+					t.Fatal(err)
+				}
+				if !tc.ready {
+					if err := os.Remove(tool); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			got, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, tc.policy, nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := backend.WorktreeStatus(home, got.WorktreeTool); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(pathTrace); !os.IsNotExist(err) {
+				t.Fatalf("treehouse on PATH was invoked (stat %v)", err)
+			}
+			if _, err := os.Stat(toolTrace); tc.configure != (err == nil) {
+				t.Fatalf("configured treehouse invoked = %v, want %v", err == nil, tc.configure)
+			}
+		})
 	}
 }
 

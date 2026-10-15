@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -81,7 +82,7 @@ func resolveCapturedProjectSnapshot(homeDir, projectName string, forge config.Re
 	if err != nil {
 		return config.ResolvedSnapshot{}, err
 	}
-	return config.NewResolvedSnapshotWithCapturedSteps(base, facts, forge)
+	return config.NewResolvedSnapshotWithCapturedSteps(base, facts, forge, configuredToolProbe)
 }
 
 func loadProjectFacts(homeDir, projectName string) (config.FleetBaseDocument, config.ProjectFacts, error) {
@@ -144,7 +145,52 @@ func configuredToolProbe(entry config.ToolEntry) config.ResolvedStep {
 		path, _ := ghAxiLookPath()
 		reason := fmt.Sprintf("gh-axi and gh probe state: %s", state)
 		return config.ResolvedStep{Path: path, ProbeState: strings.ToLower(state.String()), Reason: reason}
+	case "treehouse":
+		path, err := exec.LookPath(entry.Path)
+		if err != nil {
+			return config.ResolvedStep{Path: entry.Path, ProbeState: "missing", Reason: fmt.Sprintf("treehouse executable: %v", err)}
+		}
+		return config.ResolvedStep{Path: path, ProbeState: "ready", Reason: "treehouse executable is Ready"}
 	default:
 		return config.ResolvedStep{ProbeState: "failed", Reason: "unsupported configured tool"}
 	}
+}
+
+// ProjectWorktreeTool resolves the treehouse executable project configures in
+// homeDir, or "" for git worktree. A captain home reads its published snapshot.
+func ProjectWorktreeTool(homeDir, project string) (string, error) {
+	var (
+		snap config.ResolvedSnapshot
+		err  error
+	)
+	if config.PublishedSnapshotAvailable(homeDir) {
+		snap, err = config.LoadPublishedSnapshot(homeDir)
+		if err == nil && snap.Config().Project != project {
+			err = fmt.Errorf("published snapshot project %q does not match project %q", snap.Config().Project, project)
+		}
+	} else {
+		snap, err = ResolveProjectSnapshot(homeDir, project)
+	}
+	if err != nil {
+		return "", err
+	}
+	step := snap.Config().WorktreeStep
+	if err := requireReadyWorktree(step); err != nil {
+		return "", err
+	}
+	return step.Path, nil
+}
+
+// requireReadyWorktree re-probes a configured worktree step and refuses unless
+// it is Ready, so a published snapshot's treehouse is checked before any task
+// mutation the same way its forge is.
+func requireReadyWorktree(step config.ResolvedStep) error {
+	if step.Baseline {
+		return nil
+	}
+	// Human words: quoted at config.ResolveProjectWithSteps.
+	if probed := configuredToolProbe(config.ToolEntry{Adapter: step.Adapter, Path: step.Path}); probed.ProbeState != "ready" {
+		return fmt.Errorf("worktree adapter %s probe %s: configured worktree tool is not Ready: %s", step.Adapter, probed.ProbeState, probed.Reason)
+	}
+	return nil
 }

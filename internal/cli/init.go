@@ -74,7 +74,7 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 			// Run bootstrap diagnostics and print
 			fmt.Println()
 			fmt.Println("--- Diagnostics ---")
-			result, err := bootstrap.Run(ctx.Home, false, nil, nil)
+			result, err := bootstrap.Run(ctx.Home, false, nil)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "bootstrap diagnostics: %v\n", err)
 			} else {

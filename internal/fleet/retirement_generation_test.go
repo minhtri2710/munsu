@@ -290,7 +290,7 @@ func (r *recordingTeardown) Dispose(_ string, _ map[string]string, req DisposeRe
 func (r *recordingTeardown) QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return QueryDeliveryMergeStatus(forge, ident)
 }
-func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
+func (r *recordingTeardown) ReturnWorktree(_, _, path string) error {
 	if r.onReturn != nil {
 		r.onReturn()
 	}

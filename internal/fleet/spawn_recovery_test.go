@@ -904,7 +904,7 @@ func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
 		t.Fatalf("beginLaunchIntent: %v", err)
 	}
 	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-	fakeTreehouseOnPath(t, logPath, "[]")
+	f.runner.projectConfig.WorktreeTool = fakeTreehouse(t, logPath, "[]")
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
@@ -947,7 +947,7 @@ func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 			}
 			res := f.runner.wtReservationID()
 			logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
-			fakeTreehouseOnPath(t, logPath, strings.ReplaceAll(tc.holders, "RES", res))
+			f.runner.projectConfig.WorktreeTool = fakeTreehouse(t, logPath, strings.ReplaceAll(tc.holders, "RES", res))
 			err := f.runner.acquireWorktree()
 			logData, readErr := os.ReadFile(logPath)
 			if readErr != nil && !os.IsNotExist(readErr) {
@@ -973,19 +973,17 @@ func TestLaunchWorktreeTreehouseReentry(t *testing.T) {
 	}
 }
 
-// fakeTreehouseOnPath installs a fake treehouse CLI that appends its arguments
-// to logPath, answers `status` with holders and every other call with an
-// existing directory as the acquired worktree, and prepends it to PATH for the
-// duration of the test. PATH is prepended to rather than replaced because the
-// fallback this test is trying not to reach still needs to find git.
-func fakeTreehouseOnPath(t *testing.T, logPath, holders string) {
+// fakeTreehouse writes a fake treehouse CLI that appends its arguments to
+// logPath, answers `status` with holders and every other call with an existing
+// directory as the acquired worktree, and returns its path.
+func fakeTreehouse(t *testing.T, logPath, holders string) string {
 	t.Helper()
 	wt := t.TempDir()
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	content := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = status ]; then printf '%%s\\n' '%s'; exit 0; fi\nmkdir -p %q\nprintf '%%s\\n' %q\n", logPath, holders, wt, wt)
-	testutil.FakeOnPath(t, "treehouse", content)
+	return testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "treehouse"), content)
 }
 
 // TestLaunchArtifactGuardProvesSingleProcessLaunches runs the REAL production

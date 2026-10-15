@@ -17,7 +17,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -33,8 +32,6 @@ import (
 // bufio.ErrTooLong while the file stays a readable regular file the reclaim
 // path could otherwise act on.
 func TestWorktreeReclaimRefusesUnreadableMeta(t *testing.T) {
-	// Pin the git worktree fallback provider: no treehouse on PATH.
-	testutil.SetPath(t, t.TempDir())
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
@@ -169,14 +166,14 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 		Reason:  "reclaim test",
 	}
 	var reservedPath, reservedGit string
-	statusWorktrees := func(homeDir string) ([]backend.WorktreeEntry, error) {
+	statusWorktrees := func(homeDir, treehouse string) ([]backend.WorktreeEntry, error) {
 		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "reclaim-reserved-launch", launchReq), launchReq); err != nil {
 			return nil, fmt.Errorf("committing launch intent: %w", err)
 		}
 		var ok bool
-		reservedPath, ok, err = backend.ReservedWorktreePath(homeDir, repoPath, reservationID)
-		if err != nil || !ok {
-			return nil, fmt.Errorf("resolving reserved worktree path: path=%q ok=%v err=%v", reservedPath, ok, err)
+		reservedPath, ok = backend.ReservedGitWorktreePath(homeDir, repoPath, reservationID)
+		if !ok {
+			return nil, fmt.Errorf("resolving reserved worktree path: path=%q ok=%v", reservedPath, ok)
 		}
 		reservedGit = filepath.Join(reservedPath, ".git")
 		if err := os.MkdirAll(reservedPath, 0o755); err != nil {
@@ -185,7 +182,7 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 		if err := os.WriteFile(reservedGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
 			return nil, fmt.Errorf("seeding reserved worktree: %w", err)
 		}
-		return backend.StatusWorktrees(homeDir)
+		return backend.StatusWorktrees(homeDir, treehouse)
 	}
 
 	root := &cobra.Command{Use: "test"}
@@ -326,9 +323,9 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
 	}
-	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
-	if err != nil || !ok {
-		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	reservedPath, ok := backend.ReservedGitWorktreePath(tmpDir, repoPath, reservationID)
+	if !ok {
+		t.Fatalf("reserved path = %q, ok=%v", reservedPath, ok)
 	}
 	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -420,9 +417,9 @@ func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.T
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "held-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
-	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, heldReservationID)
-	if err != nil || !ok {
-		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	reservedPath, ok := backend.ReservedGitWorktreePath(tmpDir, repoPath, heldReservationID)
+	if !ok {
+		t.Fatalf("reserved path = %q, ok=%v", reservedPath, ok)
 	}
 	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -449,7 +446,7 @@ func installHeldTreehouse(t *testing.T, reservedPath, reservationID string) stri
 		`fi` + "\n" +
 		`>&2 echo "fake treehouse: unexpected args: $*"` + "\n" +
 		`exit 1` + "\n"
-	testutil.FakeOnPath(t, "treehouse", script)
+	fakeTreehouseProject(t, os.Getenv("MUNSU_HOME"), script)
 	return tracePath
 }
 
@@ -478,12 +475,12 @@ func runWorktreeReclaimOutput(t *testing.T) string {
 
 // runWorktreeReclaim runs `munsu worktree reclaim` and returns its stdout and
 // the command error.
-func runWorktreeReclaim(t *testing.T) (string, error) {
+func runWorktreeReclaim(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim"})
+	root.SetArgs(append([]string{"worktree", "reclaim"}, args...))
 	stdout, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -584,7 +581,7 @@ func TestWorktreeReclaimLeaseHolderGuard(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path, holder := tc.setup(t)
 			tracePath := installHeldTreehouse(t, path, holder)
-			output, err := runWorktreeReclaim(t)
+			output, err := runWorktreeReclaim(t, "--project", treehouseProject)
 			if tc.refused != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.refused) {
 					t.Fatalf("reclaim error = %v, want %q", err, tc.refused)
@@ -627,7 +624,7 @@ func TestWorktreeReclaimSparesTreehouseLeaseHolderBeforeCleanupCompletes(t *test
 		t.Fatalf("retired aggregate cleanup claim = %+v, want active", agg.CleanupClaim)
 	}
 	tracePath := installHeldTreehouse(t, reservedPath, heldReservationID)
-	output, err := runWorktreeReclaim(t)
+	output, err := runWorktreeReclaim(t, "--project", treehouseProject)
 	if err != nil {
 		t.Fatalf("reclaim: %v", err)
 	}
@@ -704,9 +701,9 @@ func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
-	reservedPath, ok, err := backend.ReservedWorktreePath(tmpDir, repoPath, reservationID)
-	if err != nil || !ok {
-		t.Fatalf("reserved path = %q, ok=%v, err=%v", reservedPath, ok, err)
+	reservedPath, ok := backend.ReservedGitWorktreePath(tmpDir, repoPath, reservationID)
+	if !ok {
+		t.Fatalf("reserved path = %q, ok=%v", reservedPath, ok)
 	}
 	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -805,7 +802,7 @@ func TestWorktreeReclaimReturnsCleanUnownedOrphan(t *testing.T) {
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim"})
+	root.SetArgs([]string{"worktree", "reclaim", "--project", treehouseProject})
 	stdout, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -840,13 +837,13 @@ func TestWorktreeReclaimReturnsCleanUnownedOrphan(t *testing.T) {
 
 func TestWorktreeReclaimStopsOnUncertainProviderReturn(t *testing.T) {
 	_, _, worktreePath, tracePath := setupCleanOrphanWorktree(t)
-	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
+	fakeTreehouseProject(t, os.Getenv("MUNSU_HOME"), "#!/bin/sh\n"+
 		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then printf '%s\\n' '[{\"path\":\""+worktreePath+"\",\"lease_holder\":\"\"}]'; exit 0; fi\n"+
 		"if [ \"$1\" = \"return\" ]; then echo \"$3\" >> \""+tracePath+"\"; exit 1; fi\nexit 1\n")
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim"})
+	root.SetArgs([]string{"worktree", "reclaim", "--project", treehouseProject})
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "return outcome uncertain") {
 		t.Fatalf("reclaim error = %v, want uncertain provider outcome", err)
 	}
@@ -874,13 +871,13 @@ func TestWorktreeReclaimPreflightsBeforeReturningAnyCandidate(t *testing.T) {
 	if err := os.WriteFile(statusFile, entries, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	testutil.FakeOnPath(t, "treehouse", "#!/bin/sh\n"+
+	fakeTreehouseProject(t, os.Getenv("MUNSU_HOME"), "#!/bin/sh\n"+
 		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then cat \""+statusFile+"\"; exit 0; fi\n"+
 		"if [ \"$1\" = \"return\" ]; then echo \"$3\" >> \""+tracePath+"\"; exit 0; fi\nexit 1\n")
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim"})
+	root.SetArgs([]string{"worktree", "reclaim", "--project", treehouseProject})
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "not safe to reclaim") {
 		t.Fatalf("reclaim error = %v, want unsafe-candidate preflight refusal", err)
 	}
@@ -901,7 +898,7 @@ func TestWorktreeReclaimPreservesDirtyOrphan(t *testing.T) {
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))
 	root.SetErr(new(strings.Builder))
-	root.SetArgs([]string{"worktree", "reclaim"})
+	root.SetArgs([]string{"worktree", "reclaim", "--project", treehouseProject})
 	stdout, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -937,8 +934,6 @@ func TestWorktreeReclaimPreservesDirtyOrphan(t *testing.T) {
 }
 
 func TestWorktreeReclaimSparesAuthoritativelyBoundWorktree(t *testing.T) {
-	// Pin the git worktree fallback provider: no treehouse on PATH.
-	testutil.SetPath(t, t.TempDir())
 
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)

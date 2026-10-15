@@ -112,7 +112,7 @@ func (w *workflowTeardown) Dispose(string, map[string]string, fleet.DisposeReque
 	return nil
 }
 
-func (w *workflowTeardown) ReturnWorktree(string, string) error { w.returned++; return nil }
+func (w *workflowTeardown) ReturnWorktree(string, string, string) error { w.returned++; return nil }
 
 func (w *workflowTeardown) QueryMergeStatus(taskauthority.DeliveryStep, *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	return nil, nil
