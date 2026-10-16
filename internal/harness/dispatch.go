@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -26,6 +27,9 @@ type DispatchConfig struct {
 	Profiles []DispatchProfile `json:"profiles,omitempty"`
 	// Rules is an alternate ordered rule list; normalized into Profiles on load.
 	Rules []DispatchProfile `json:"rules,omitempty"`
+	// QuotaTool is the project's Ready quota-axi executable, or "" when the
+	// project configures no quota tool.
+	QuotaTool string `json:"-"`
 }
 
 // DispatchSelection is the concrete harness/model/effort chosen for a spawn,
@@ -39,10 +43,10 @@ type DispatchSelection struct {
 
 // ResolveDispatchSelection returns harness + model + effort for a task description.
 // Precedence for model/effort: matched profile → config defaults → empty.
-// Scaffold comes only from a matched profile.
-func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSelection {
+// Scaffold comes only from a matched profile. A quota-axi failure is returned.
+func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) (DispatchSelection, error) {
 	if cfg == nil {
-		return DispatchSelection{}
+		return DispatchSelection{}, nil
 	}
 	sel := DispatchSelection{
 		Harness: cfg.DefaultHarness,
@@ -54,57 +58,14 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 	taskWords := strings.Fields(taskLower)
 
 	if taskDesc == "" {
-		return sel
+		return sel, nil
 	}
 
 	for _, p := range cfg.Profiles {
-		matchRules := p.Match
-		if len(matchRules) == 0 && p.When != "" {
-			matchRules = []string{p.When}
-		}
-		if !matchesProfile(matchRules, taskLower, taskWords) {
+		if !matchesProfile(p.Match, taskLower, taskWords) {
 			continue
 		}
 		sel.Scaffold = p.Scaffold
-		if p.SelectStrategy == "quota-balanced" {
-			// Prefer candidates from this profile's Use list; else all profiles.
-			if len(p.Use) > 0 {
-				selQuota := newQuotaSelector("quota-balanced")
-				picked := selQuota.selectCandidate(p.Use)
-				sel.Harness = picked.Harness
-				if picked.Model != "" {
-					sel.Model = picked.Model
-				} else if p.Model != "" {
-					sel.Model = p.Model
-				}
-				if picked.Effort != "" {
-					sel.Effort = picked.Effort
-				} else if p.Effort != "" {
-					sel.Effort = p.Effort
-				}
-				return sel
-			}
-			// No Use list: resolve across all profiles.
-			cands := make([]DispatchCandidate, 0, len(cfg.Profiles))
-			for _, q := range cfg.Profiles {
-				cands = append(cands, DispatchCandidate{
-					Harness: q.Harness,
-					Model:   q.Model,
-					Effort:  q.Effort,
-				})
-			}
-			selQuota := newQuotaSelector("quota-balanced")
-			picked := selQuota.selectCandidate(cands)
-			sel.Harness = picked.Harness
-			// Fill model/effort from the pick directly.
-			if picked.Model != "" {
-				sel.Model = picked.Model
-			}
-			if picked.Effort != "" {
-				sel.Effort = picked.Effort
-			}
-			return sel
-		}
 		sel.Harness = p.Harness
 		if p.Model != "" {
 			sel.Model = p.Model
@@ -112,9 +73,16 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 		if p.Effort != "" {
 			sel.Effort = p.Effort
 		}
-		// Multi-candidate use without select strategy: first candidate.
-		if len(p.Use) > 0 && p.Harness == "" {
+		// A configured quota tool orders the use candidates; without one a
+		// profile with no harness of its own takes the first.
+		if len(p.Use) > 0 && (cfg.QuotaTool != "" || p.Harness == "") {
 			c := p.Use[0]
+			if cfg.QuotaTool != "" {
+				var err error
+				if c, err = quotaBalanced(cfg.QuotaTool, p.Use); err != nil {
+					return DispatchSelection{}, fmt.Errorf("dispatch profile %q: %w", p.Name, err)
+				}
+			}
 			sel.Harness = c.Harness
 			if c.Model != "" {
 				sel.Model = c.Model
@@ -123,9 +91,9 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 				sel.Effort = c.Effort
 			}
 		}
-		return sel
+		return sel, nil
 	}
-	return sel
+	return sel, nil
 }
 
 // matchesProfile checks if the profile's match rules apply to the task.
@@ -153,7 +121,7 @@ func matchesProfile(rules []string, taskLower string, taskWords []string) bool {
 			return true
 		}
 
-		// Long "when" prose: match any contiguous 3+ word phrase so distinctive
+		// Long prose rule: match any contiguous 3+ word phrase so distinctive
 		// clauses like "deep architectural redesign" still hit.
 		ruleWords := strings.Fields(rule)
 		if len(ruleWords) >= 3 {

@@ -4,14 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"sort"
 )
-
-// QuotaAxiProvider sources quota data for balanced selection.
-type QuotaAxiProvider interface {
-	// Run executes the quota provider and returns raw JSON output.
-	Run() (string, error)
-}
 
 // quotaProvider maps harness names to their quota-axi provider identifiers.
 var quotaProvider = map[string]string{
@@ -54,70 +47,38 @@ type quotaWindowData struct {
 	PercentRemaining float64 `json:"percentRemaining"`
 }
 
-// defaultQuotaProvider runs quota-axi --json via the real CLI tool.
-type defaultQuotaProvider struct{}
-
-func (p *defaultQuotaProvider) Run() (string, error) {
-	cmd := exec.Command("quota-axi", "--json")
-	output, err := cmd.Output()
+// quotaBalanced runs the configured quota-axi and picks a candidate from its
+// report. Any failure is returned, never answered with the first candidate.
+func quotaBalanced(tool string, candidates []DispatchCandidate) (DispatchCandidate, error) {
+	output, err := exec.Command(tool, "--json").Output()
 	if err != nil {
-		return "", fmt.Errorf("quota-axi: %w", err)
+		return DispatchCandidate{}, fmt.Errorf("quota-axi %s: %w", tool, err)
 	}
-	return string(output), nil
+	return pickByQuota(candidates, output)
 }
 
-// quotaSelector selects a provider harness from candidates using quota data.
-// Unexported until two real provider adapters validate the interface shape.
-type quotaSelector interface {
-	// selectCandidate returns the best candidate from the list.
-	// Returns empty DispatchCandidate if the list is empty.
-	selectCandidate(candidates []DispatchCandidate) DispatchCandidate
-}
-
-// quotaBalancedSelector selects candidates based on quota-axi data,
-// preferring the provider with the highest minimum remaining GENERAL quota.
-// Falls back to first candidate when quota data is unavailable.
-type quotaBalancedSelector struct {
-	provider QuotaAxiProvider
-}
-
-// selectCandidate picks the best candidate using quota-axi data.
-// Falls back to first candidate on any error or when no data is available.
-func (s *quotaBalancedSelector) selectCandidate(candidates []DispatchCandidate) DispatchCandidate {
-	if len(candidates) == 0 {
-		return DispatchCandidate{}
-	}
-
-	quotaJSON, err := s.provider.Run()
-	if err != nil {
-		return candidates[0]
-	}
-
+// pickByQuota prefers the candidate with the highest minimum remaining GENERAL
+// quota, earliest on a tie. A stale report wins over a fresh one only when its
+// minimum is at least staleClearMargin points higher.
+func pickByQuota(candidates []DispatchCandidate, quotaJSON []byte) (DispatchCandidate, error) {
 	var qd quotaData
-	if err := json.Unmarshal([]byte(quotaJSON), &qd); err != nil {
-		return candidates[0]
+	if err := json.Unmarshal(quotaJSON, &qd); err != nil {
+		return DispatchCandidate{}, fmt.Errorf("quota-axi output: %w", err)
 	}
 
-	if len(qd.Providers) == 0 {
-		return candidates[0]
-	}
-
-	type candidate struct {
+	type scored struct {
 		index int
 		min   float64
-		fresh bool
 	}
-
-	var scored []candidate
+	var fresh, stale *scored
 	for i, c := range candidates {
-		providerName, ok := quotaProvider[c.Harness]
+		name, ok := quotaProvider[c.Harness]
 		if !ok {
 			continue
 		}
-
 		var provider *quotaProviderData
 		for j := range qd.Providers {
-			if qd.Providers[j].Provider == providerName {
+			if qd.Providers[j].Provider == name {
 				provider = &qd.Providers[j]
 				break
 			}
@@ -125,106 +86,37 @@ func (s *quotaBalancedSelector) selectCandidate(candidates []DispatchCandidate) 
 		if provider == nil {
 			continue
 		}
-
-		genIDs := generalWindowIDs[c.Harness]
-		if len(genIDs) == 0 {
-			continue
-		}
-
-		var remaining []float64
+		found := false
+		var min float64
 		for _, w := range provider.Windows {
 			if w.Kind == "model" {
 				continue
 			}
-			for _, gid := range genIDs {
-				if w.ID == gid {
-					remaining = append(remaining, w.PercentRemaining)
-					break
+			for _, gid := range generalWindowIDs[c.Harness] {
+				if w.ID == gid && (!found || w.PercentRemaining < min) {
+					found, min = true, w.PercentRemaining
 				}
 			}
 		}
-
-		if len(remaining) == 0 {
+		if !found {
 			continue
 		}
-
-		min := remaining[0]
-		for _, r := range remaining[1:] {
-			if r < min {
-				min = r
-			}
+		best := &stale
+		if provider.State.Status == "fresh" {
+			best = &fresh
 		}
-
-		scored = append(scored, candidate{
-			index: i,
-			min:   min,
-			fresh: provider.State.Status == "fresh",
-		})
-	}
-
-	if len(scored) == 0 {
-		return candidates[0]
-	}
-
-	var freshCands, staleCands []candidate
-	for _, c := range scored {
-		if c.fresh {
-			freshCands = append(freshCands, c)
-		} else {
-			staleCands = append(staleCands, c)
+		if *best == nil || min > (*best).min {
+			*best = &scored{index: i, min: min}
 		}
 	}
-
-	sort.Slice(freshCands, func(i, j int) bool {
-		if freshCands[i].min != freshCands[j].min {
-			return freshCands[i].min > freshCands[j].min
-		}
-		return freshCands[i].index < freshCands[j].index
-	})
-
-	sort.Slice(staleCands, func(i, j int) bool {
-		if staleCands[i].min != staleCands[j].min {
-			return staleCands[i].min > staleCands[j].min
-		}
-		return staleCands[i].index < staleCands[j].index
-	})
 
 	const staleClearMargin = 20.0
-
-	var best candidate
-	if len(freshCands) > 0 && len(staleCands) > 0 {
-		if staleCands[0].min >= freshCands[0].min+staleClearMargin {
-			best = staleCands[0]
-		} else {
-			best = freshCands[0]
-		}
-	} else if len(freshCands) > 0 {
-		best = freshCands[0]
-	} else if len(staleCands) > 0 {
-		best = staleCands[0]
-	} else {
-		return candidates[0]
+	pick := fresh
+	if pick == nil || (stale != nil && stale.min >= fresh.min+staleClearMargin) {
+		pick = stale
 	}
-
-	return candidates[best.index]
-}
-
-// firstMatchSelector always picks the first candidate (deterministic fallback).
-type firstMatchSelector struct{}
-
-func (s *firstMatchSelector) selectCandidate(candidates []DispatchCandidate) DispatchCandidate {
-	if len(candidates) == 0 {
-		return DispatchCandidate{}
+	if pick == nil {
+		return DispatchCandidate{}, fmt.Errorf("quota-axi reported no general quota window for any candidate harness")
 	}
-	return candidates[0]
-}
-
-// newQuotaSelector creates the appropriate selector for the given strategy.
-func newQuotaSelector(strategy string) quotaSelector {
-	switch strategy {
-	case "quota-balanced":
-		return &quotaBalancedSelector{provider: &defaultQuotaProvider{}}
-	default:
-		return &firstMatchSelector{}
-	}
+	return candidates[pick.index], nil
 }

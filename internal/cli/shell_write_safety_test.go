@@ -108,7 +108,7 @@ func assertShapes(t *testing.T, wantBlocked bool, checkPath, command, filePath s
 // TestShellWriteTrailingBackslashExtendsSpan pins the root-cause span fix (#664):
 // the POSIX backslash reading must touch the trailing backslash position so the
 // word span covers the whole `\foo\`. Without it the span ends one short and the
-// literal (Windows) reading never groups with the POSIX reading, defeating the
+// literal reading never groups with the POSIX reading, defeating the
 // dual-reading classification for trailing-separator rooted targets.
 func TestShellWriteTrailingBackslashExtendsSpan(t *testing.T) {
 	const word = `\foo\`
@@ -496,7 +496,7 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"cat <<-\\END > notes.md\n\tEND\nrm -rf " + abs, absWithPrefix(filepath.Join(base, "notes.md"))},
 
 		// A lone backslash is read both ways (#664). munsu does not know which
-		// shell will interpret the command, so the Windows reading — `\` is an
+		// shell will interpret the command, so the literal reading — `\` is an
 		// ordinary path separator — has to yield a candidate even on a platform
 		// whose shell would dissolve it, and the POSIX reading has to keep
 		// yielding one on a platform whose shell would not. Both appear here on
@@ -554,7 +554,7 @@ func shellWriteTargetsUnderForTest(mode backslashMode, checkPath, command string
 // TestShellWriteHeredocBackslashDelimiterBothReadings pins the heredoc fix:
 // a backslash-quoted delimiter (<<\EOF, <<-\END) must end the body at the bare
 // delimiter in BOTH backslash readings, so a write named after the terminator —
-// including a Windows-path one — is classified by the literal (Windows) reading
+// including a backslash-path one — is classified by the literal reading
 // instead of being swallowed (#664 v2). It calls the readings directly because
 // the dual union already masks a swallowed literal reading on a POSIX host.
 func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
@@ -578,8 +578,8 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 		if !slices.Contains(escapeTargets, resolveSafetyPath(base, "sharedREADME.md")) {
 			t.Errorf("escape reading dropped post-heredoc write: %q → %v", command, escapeTargets)
 		}
-		// The Windows reading keeps the backslash as a separator and must end
-		// the body at EOF/END, so it sees the real Windows path.
+		// The literal reading keeps the backslash as a separator and must end
+		// the body at EOF/END, so it sees the backslash path.
 		if !slices.Contains(literalTargets, resolveSafetyPath(base, target)) {
 			t.Errorf("literal reading swallowed post-heredoc write: %q → %v", command, literalTargets)
 		}
@@ -587,7 +587,7 @@ func TestShellWriteHeredocBackslashDelimiterBothReadings(t *testing.T) {
 }
 
 // TestShellWriteRefusedIfEitherCandidateIsProtected asserts that if either the
-// POSIX-escape or the Windows-literal candidate targets a protected checkout,
+// POSIX-escape or the literal candidate targets a protected checkout,
 // the command is refused even if the other candidate is safe (#664 v4).
 func TestShellWriteRefusedIfEitherCandidateIsProtected(t *testing.T) {
 	primary, worktree := boundTaskFixture(t, "ship-shell-either-protected")
@@ -805,7 +805,7 @@ func TestShellWriteRefusesLiteralBacktickInProtectedPath(t *testing.T) {
 // TestTokenizeSegmentsLineContinuationAndANSICQuoting pins how the shared
 // tokenizer reads a backslash-newline and a bash `$'...'` word, the two literal
 // forms that let git text past both guards before. A POSIX backslash-newline
-// outside single quotes is removed and joins the text around it; the Windows
+// outside single quotes is removed and joins the text around it; the literal
 // reading keeps the backslash. `$'...'` is one word in either reading, with its
 // escapes decoded, and a word holding an escape the tokenizer does not decode
 // is marked undecodable.
