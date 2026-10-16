@@ -496,7 +496,6 @@ func TestSubmitLaunchRefusesMissingPreparedArtifacts(t *testing.T) {
 }
 
 func TestLaunchManifestAnchorPrecedesArtifactPublication(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "manifest-anchor-before-publication")
 	agg, prepared := prepareLaunchWithRecordedManifestAnchor(t, f)
 	if agg.Worktree == nil || agg.Worktree.LaunchManifest == nil || agg.LaunchEvidence != nil || agg.AcquiredEndpoint != nil {
@@ -528,7 +527,6 @@ func TestLaunchManifestAnchorPrecedesArtifactPublication(t *testing.T) {
 }
 
 func TestLaunchManifestAnchorRefusesConflictingPartialArtifact(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "manifest-anchor-conflicting-artifact")
 	agg, _ := prepareLaunchWithRecordedManifestAnchor(t, f)
 	conflict := []byte("partial crash-left artifact")
@@ -831,7 +829,6 @@ func TestLaunchIntentStaleGenerationFailsClosed(t *testing.T) {
 // carries the seat: the harness argv without the prompt, the prompt's digest,
 // and the fence outcome the probe phase produced.
 func TestLaunchRecordsTheSeatOfTheLaunch(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "seat-record")
 	if err := runLaunchPhases(f, ""); err != nil {
 		t.Fatal(err)
@@ -880,7 +877,6 @@ func TestLaunchWritesTheManifestOfTheLaunchingHarness(t *testing.T) {
 		{"claude", "bypass permissions on", append(append([]string{}, core...), ".soldier-launch-guard-manifest-claude-1/identity")},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
-			isolateHuman(t)
 			f := newLaunchFixture(t, "manifest-"+tc.harness)
 			f.runner.harness = tc.harness
 			f.runner.projectConfig.Soldier.Harness = tc.harness
@@ -915,7 +911,6 @@ func TestLaunchLeavesTheTargetWorktreeClean(t *testing.T) {
 		{"claude", "bypass permissions on"},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
-			isolateHuman(t)
 			f := newLaunchFixture(t, "clean-"+tc.harness)
 			f.runner.harness = tc.harness
 			f.runner.projectConfig.Soldier.Harness = tc.harness
@@ -940,7 +935,6 @@ func TestLaunchLeavesTheTargetWorktreeClean(t *testing.T) {
 // config git would read differently under worktree config stops the launch
 // before any launch file is written or anything is submitted.
 func TestRefusedExcludesLeaveNoPaneOrEndpoint(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "excludes-refused")
 	gitTestRun(t, f.repoPath, "config", "--local", "core.bare", "true")
 	err := runLaunchPhases(f, "")
@@ -958,7 +952,6 @@ func TestRefusedExcludesLeaveNoPaneOrEndpoint(t *testing.T) {
 // TestRefusedFenceProbeLeavesNoPaneOrEndpoint proves a fence refusal stops the
 // launch before any pane or endpoint is allocated.
 func TestRefusedFenceProbeLeavesNoPaneOrEndpoint(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "fence-refused")
 	// A symlinked parent of the seat's branch reflog makes the fence refuse
 	// to pre-create it.

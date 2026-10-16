@@ -86,8 +86,6 @@ func TestBuildLaunchArtifactRefusesAnArgvTheFenceCannotWrap(t *testing.T) {
 // A fenced claude seat runs from its own config dir and logs in with the
 // Human's keychain item; an unfenced one keeps the Human's config.
 func TestFencedClaudeLaunchRunsFromItsOwnConfigDir(t *testing.T) {
-	isolateHuman(t)
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	for _, tc := range []struct {
 		name   string
 		fenced bool

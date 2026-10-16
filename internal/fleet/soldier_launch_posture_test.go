@@ -13,16 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
-// isolateHuman points the Human's home at an empty temp dir, so a pi agent dir
-// built for a launch never reads the developer's real ~/.pi/agent.
-func isolateHuman(t *testing.T) {
-	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
-	t.Setenv("PI_CODING_AGENT_DIR", "")
-}
-
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -79,7 +69,6 @@ func TestBuildLaunchArgsRefusals(t *testing.T) {
 }
 
 func TestLaunchArtifactPostureAndPiAgentDir(t *testing.T) {
-	isolateHuman(t)
 	for _, tc := range []struct {
 		name string
 		bin  string
@@ -156,7 +145,6 @@ func requireBuiltInSeatBuildDir(t *testing.T, leftover, dst string) {
 }
 
 func TestLaunchScriptTurnsOffGitBackgroundMaintenance(t *testing.T) {
-	isolateHuman(t)
 	art, err := buildLaunchArtifact(launchArtifactInputForGuards(t))
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +171,6 @@ func TestLaunchScriptTurnsOffGitBackgroundMaintenance(t *testing.T) {
 }
 
 func TestReviewLaunchExportsTheVerdictFileAndNeverWritesTheCheckout(t *testing.T) {
-	isolateHuman(t)
 	newInput := func(t *testing.T) LaunchArtifactInput {
 		in := launchArtifactInputForGuards(t)
 		in.LaunchDir = t.TempDir()
@@ -353,7 +340,6 @@ func TestWritePiProjectSettings(t *testing.T) {
 }
 
 func TestProvisionPiSkillBlockRefusals(t *testing.T) {
-	isolateHuman(t)
 	wt := t.TempDir()
 	if _, err := provisionPiSkillBlock(t.TempDir(), "a/b", wt, true); err == nil || !strings.Contains(err.Error(), `soldier launch: invalid task ID "a/b"`) {
 		t.Fatalf("invalid task id error = %v, want the launch refusal", err)
@@ -366,7 +352,6 @@ func TestProvisionPiSkillBlockRefusals(t *testing.T) {
 		t.Fatalf("file home error = %v, want the launch refusal", err)
 	}
 	t.Setenv("HOME", "")
-	t.Setenv("USERPROFILE", "")
 	if _, err := provisionPiSkillBlock(t.TempDir(), "t1", wt, true); err == nil || !strings.Contains(err.Error(), "the Human's pi agent dir") {
 		t.Fatalf("no human home error = %v, want the agent dir refusal", err)
 	}

@@ -21,7 +21,6 @@ import (
 )
 
 func TestProbeFenceRecordsTheProjectsWritableRoots(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	cache, err := canonicalPath(t.TempDir())
 	if err != nil {
@@ -73,7 +72,6 @@ func TestProbeFenceRecordsTheProjectsWritableRoots(t *testing.T) {
 // and a link planted where one belongs refuses the launch.
 func TestProbeFencePreCreatesTheRemoteReflogs(t *testing.T) {
 	t.Run("each remote-tracking ref's reflog exists after the probe", func(t *testing.T) {
-		isolateHuman(t)
 		f := newFenceFixture(t)
 		gitInWorktree(t, f.primary, "-c", "core.logAllRefUpdates=false", "update-ref", "refs/remotes/origin/main", "HEAD")
 		r := f.runner("direct-PR")
@@ -86,7 +84,6 @@ func TestProbeFencePreCreatesTheRemoteReflogs(t *testing.T) {
 		}
 	})
 	t.Run("a link planted at a remote's reflog dir refuses the launch", func(t *testing.T) {
-		isolateHuman(t)
 		f := newFenceFixture(t)
 		gitInWorktree(t, f.primary, "-c", "core.logAllRefUpdates=false", "update-ref", "refs/remotes/origin/main", "HEAD")
 		victim := t.TempDir()
@@ -110,7 +107,6 @@ func TestProbeFencePreCreatesTheRemoteReflogs(t *testing.T) {
 // The launch hands the fence the PATH its script builds: the shim dir and every
 // inherited directory are refused, and the seat's own worktree still is not.
 func TestProbeFenceRefusesTheSeatsPathDirs(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	inherited, err := canonicalPath(t.TempDir())
 	if err != nil {
@@ -195,7 +191,6 @@ func homeTree(t *testing.T, dir string) map[string]string {
 // private state dir's mode alone (a chmod of it, even to its own mode, is
 // refused; TestSoldierFenceHomeWrites).
 func TestFencedSoldierWritesOnlyItsOwnFiles(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	if _, err := home.Init(f.home); err != nil {
 		t.Fatal(err)
@@ -269,7 +264,6 @@ const fencedHomeOpened = "munsu-test: fenced home opened"
 // temp root, so the roots-included case is the one checked; the git shim
 // locks the home itself against a chmod.
 func TestFencedSoldierReadsCommittedTaskDocuments(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	if _, err := home.Init(f.home); err != nil {
 		t.Fatal(err)
@@ -311,7 +305,6 @@ func TestFencedSoldierReadsCommittedTaskDocuments(t *testing.T) {
 // chmod'ed to hide it; the state dir holding the seat's own files is not above the shim. The home sits directly in /private/tmp, a
 // writable root, so that root is itself an ancestor of the shim.
 func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	tmpHome, err := os.MkdirTemp("/private/tmp", "munsu-shim-home-")
 	if err != nil {
@@ -375,7 +368,6 @@ func TestFencedSoldierCannotTakeTheGitShimOffItsPath(t *testing.T) {
 // own sessions there, while every other path in the home stays refused. A
 // soldier's home writes are pinned by TestSoldierFenceHomeWrites (fence).
 func TestFencedClaudeReviewerWritesItsOwnConfigDir(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	launchDir := filepath.Join(f.home, "review", "task-1", "1")
 	for _, d := range []string{filepath.Join(f.home, "state"), launchDir} {
@@ -427,7 +419,6 @@ func TestFencedClaudeReviewerWritesItsOwnConfigDir(t *testing.T) {
 // the Human's keychain item, from an empty config dir that is not the seat's,
 // made in the home's seat build dir, which no fence root covers.
 func TestFencedClaudePreflightAsksForTheSeatsLogin(t *testing.T) {
-	isolateHuman(t)
 	homeDir := t.TempDir()
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+":/usr/bin:/bin")

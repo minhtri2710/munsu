@@ -209,7 +209,6 @@ func TestBuildBeginSpawnRequestReservesNoWorktreeForAReview(t *testing.T) {
 // the home, records the review tree in its launch evidence, and leaves the
 // reviewed checkout untouched and unbound to the review.
 func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "unused-ship")
 	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
 	settings := harness.PiProjectSettings() // the ship launch wrote it; a reviewer only reads it
@@ -297,7 +296,6 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 // A reviewer's launch script is built at submit from the seat PATH its launch
 // intent committed at begin, whatever PATH the process has by then.
 func TestReviewSubmitUsesTheCommittedSeatPath(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "unused-ship")
 	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
 	writePiSettingsInWorktree(t, worktree, harness.PiProjectSettings())
@@ -352,7 +350,6 @@ func TestReviewSubmitUsesTheCommittedSeatPath(t *testing.T) {
 }
 
 func TestReviewCreateSessionReentryAfterSubmitBeforeConfirmUsesRecordedEndpoint(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "unused-ship")
 	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
 	writePiSettingsInWorktree(t, worktree, harness.PiProjectSettings())
@@ -471,7 +468,6 @@ func TestReviewCreateSessionReentryAfterSubmitBeforeConfirmUsesRecordedEndpoint(
 // shared repository config. Without the r.review guard the excludes write
 // would run git inside the home (not a repository) and fail the phase.
 func TestReviewPromptWritesNothingIntoTheReviewedWorktreeGitDir(t *testing.T) {
-	isolateHuman(t)
 	f := newLaunchFixture(t, "unused-ship")
 	worktree := mustWorkingShipTaskAt(t, f.auth, "ship-1", newLinkedDeliveryWorktree(t))
 	r := createReviewTask(t, f.auth, f.homeDir, "ship-1", "review-1", deliveryTestHead)

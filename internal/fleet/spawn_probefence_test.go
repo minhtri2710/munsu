@@ -73,7 +73,6 @@ func allowUnfenced(t *testing.T, r *Runner) {
 }
 
 func TestProbeFenceRefusals(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 
 	t.Run("bound path is not a git checkout", func(t *testing.T) {
@@ -110,7 +109,6 @@ func TestProbeFenceRefusals(t *testing.T) {
 }
 
 func TestProbeFenceRecordsTheSeatFence(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 
 	for _, tc := range []struct {
@@ -153,7 +151,6 @@ func TestProbeFenceRecordsTheSeatFence(t *testing.T) {
 }
 
 func TestProbeFenceOnAHostWithoutAFence(t *testing.T) {
-	isolateHuman(t)
 	f := newFenceFixture(t)
 	for _, tc := range []struct {
 		name    string

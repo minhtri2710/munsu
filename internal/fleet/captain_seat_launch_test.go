@@ -16,7 +16,6 @@ import (
 // exactly the PATH the fence denies and from its own pi agent dir, and records
 // the fence; elsewhere it launches as before and records why it is unfenced.
 func TestLaunchRunsTheCaptainUnderItsSeat(t *testing.T) {
-	isolateHuman(t)
 	parent, captainHome := launchableCaptain(t)
 	if err := Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{}); err != nil {
 		t.Fatalf("Launch: %v", err)
