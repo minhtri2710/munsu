@@ -297,7 +297,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // 3. Turn-end resolves model-produced wake markers, then performs only
-  //    non-delivery guard/UI work. agent_settled is the sole claim producer.
+  //    non-delivery UI work. agent_settled is the sole claim producer.
   pi.on("turn_end", async (event, ctx) => {
     const message = event && event.message;
     if (message && message.role === "assistant") {
@@ -308,13 +308,14 @@ export default function (pi: ExtensionAPI) {
     }
     if (!ctx.isIdle() || pendingWake) return;
 
-    // Check scope/gate safety before guard (fail closed).
+    // Check scope/gate safety before the nudge (fail closed).
     const safetyCheck = await pi.exec(MUNSU_BIN, [
       "integrate", "safety-check", ctx.cwd || ".",
       "--output", "json",
     ]);
     if (safetyCheck.code !== 0) return;
     const safety = parseSafetyCheck(safetyCheck.stdout);
+    if (!safety.ok || safety.gate_refused) return;
 
     // 3a. MUNSU_ROLE nudge: remind captain/soldier to report material outcomes.
     //     NEVER auto-fabricate a status line from chat content.
@@ -326,8 +327,6 @@ export default function (pi: ExtensionAPI) {
         "info"
       );
     }
-
-    await pi.exec(MUNSU_BIN, ["guard", "--output", "json"]);
   });
 
   // 4. Pre-tool safety checks — block unsafe operations. Fail closed on any error.

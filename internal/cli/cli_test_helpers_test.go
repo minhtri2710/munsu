@@ -8,10 +8,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// writeTaskMeta seeds a canonical queued task with the given kind into the
+// initHomeWithTask seeds a canonical queued task with the given kind into the
 // home (clean break: guards and snapshots read only authoritative Task
 // Authority records).
-func writeTaskMeta(t *testing.T, homeDir, id, kind string) {
+func initHomeWithTask(t *testing.T, homeDir, id, kind string) {
 	t.Helper()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatalf("home.Init: %v", err)

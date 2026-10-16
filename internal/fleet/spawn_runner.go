@@ -374,9 +374,6 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
 		return taskauthority.Outcome{}, err
 	}
-	if err := r.writeTaskMeta(); err != nil {
-		return taskauthority.Outcome{}, err
-	}
 	return r.confirmSpawn()
 }
 
@@ -498,6 +495,10 @@ var tmuxWindowForPane = func(pane string) (string, error) {
 	return window, nil
 }
 
+// currentEndpointKind is the kind of the task or captain whose pane this
+// process runs in: a soldier's from its canonical binding, a captain's from
+// its .meta.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func currentEndpointKind(homeDir string) (string, bool, error) {
 	herdrPane := strings.TrimSpace(os.Getenv("HERDR_PANE_ID"))
 	tmuxPane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
@@ -512,33 +513,35 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 			return "", false, err
 		}
 	}
-	entries, err := os.ReadDir(home.StateDir(homeDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", false, nil
+	runsIn := func(backendName, handle string) bool {
+		if herdrPane != "" && backendName == "herdr" && strings.HasSuffix(handle, ":"+herdrPane) {
+			return true
 		}
+		return tmuxWindow != "" && (handle == tmuxWindow || strings.HasSuffix(handle, ":"+tmuxWindow))
+	}
+	held, err := heldEndpoints(homeDir, home.OpenCommitted)
+	if err != nil {
 		return "", false, err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
+	for _, h := range held {
+		if runsIn(h.Endpoint.Backend, h.Endpoint.Handle) {
+			return h.Kind, true, nil
 		}
-		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
+	}
+	ids, err := home.ListMetaIDs(homeDir)
+	if err != nil {
+		return "", false, err
+	}
+	for _, id := range ids {
+		if !strings.HasPrefix(id, "captain:") {
 			continue
 		}
 		meta, err := home.ReadMeta(homeDir, id)
 		if err != nil {
 			continue
 		}
-		if herdrPane != "" && meta["backend"] == "herdr" && strings.HasSuffix(meta["window"], ":"+herdrPane) {
+		if runsIn(meta["backend"], meta["window"]) {
 			return meta["kind"], true, nil
-		}
-		if tmuxWindow != "" {
-			window := meta["window"]
-			if window == tmuxWindow || strings.HasSuffix(window, ":"+tmuxWindow) {
-				return meta["kind"], true, nil
-			}
 		}
 	}
 	return "", false, nil
@@ -2552,46 +2555,6 @@ func newEndpointToken() string {
 	// process instead of reporting failure, so there is no branch to take.
 	rand.Read(buf)
 	return fmt.Sprintf("%x", buf)
-}
-
-// Phase 14: writeTaskMeta writes the task metadata file. The side file is a
-// pre-transition runtime observation projection (Task 4.2, Task 7.8
-// adjudication): it carries the runtime-only fields that describe the live
-// soldier session (window, worktree, harness, backend, mode, yolo, model,
-// endpoint metadata) and never
-// acts as a writer of record for authoritative Task Aggregate fields (kind,
-// project, description, owner, generation, state). Existing projection
-// fields are preserved; runtime fields are overlaid. Nothing reconciles
-// Authoritative fields into it: readers take them from the canonical aggregate.
-func (r *Runner) writeTaskMeta() error {
-	yoloVal := "off"
-	if r.args.Yolo {
-		yoloVal = "on"
-	}
-	err := home.UpdateMeta(r.homeDir, r.args.ID, func(meta map[string]string) error {
-		put := func(k, v string) {
-			if v != "" {
-				meta[k] = v
-			}
-		}
-		put("window", r.windowID)
-		put("worktree", r.wtPath)
-		put("harness", r.harness)
-		put("backend", r.endpoint.Backend)
-		put("mode", r.effectiveMode)
-		put("yolo", yoloVal)
-		if r.model != "" {
-			put("model", r.model)
-		}
-		put(backend.MetaSessionOwner, r.endpoint.SessionOwner)
-		put(backend.MetaWorkspaceID, r.endpoint.WorkspaceID)
-		put(backend.MetaTabID, r.endpoint.TabID)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("writing task meta: %w", err)
-	}
-	return nil
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

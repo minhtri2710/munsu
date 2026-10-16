@@ -1,3 +1,4 @@
-::error::.github/testdata/flake-ledger/header-reordered.md:6: first table row must be the header `| test|lane|first_seen|last_seen|deadline|owner_issue|state |`
-::error::.github/testdata/flake-ledger/header-reordered.md:8: TestAlpha: deadline must be YYYY-MM-DD, got "BEO-79"
+::error::.github/testdata/flake-ledger/header-reordered.md:6: first table row must be the header `| test|lane|first_seen|last_seen|deadline|state |`
+::error::.github/testdata/flake-ledger/header-reordered.md:8: TestAlpha: last_seen must be <sha>@<run_id>/<attempt>, got "9999-12-31"
+::error::.github/testdata/flake-ledger/header-reordered.md:8: TestAlpha: deadline must be YYYY-MM-DD, got "869319d8@31805867146/1"
 exit 1

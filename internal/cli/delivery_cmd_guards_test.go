@@ -13,7 +13,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -164,12 +163,7 @@ func deliveryGuardHome(t *testing.T, taskID string, forge taskauthority.Delivery
 func deliveryGuardShip(t *testing.T, taskID string) string {
 	t.Helper()
 	homeDir := t.TempDir()
-	writeTaskMeta(t, homeDir, taskID, "ship")
-	// pr-merge resolves the task home through the .meta projection, which the
-	// canonical record does not write.
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{"id": taskID, "kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	initHomeWithTask(t, homeDir, taskID, "ship")
 
 	auth := cliCanonicalForHome(t, homeDir)
 	tid, err := domain.NewTaskID(taskID)
@@ -270,6 +264,8 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 		state   string
 		checks  []domain.CheckRun
 		reviews []domain.Review
+		extra   []string
+		method  string
 		wantErr string
 	}{
 		{name: "open failed check", state: "OPEN", checks: failed, wantErr: "delivery provider state is not mergeable"},
@@ -278,6 +274,8 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 		{name: "merged terminal", state: "MERGED"},
 		{name: "closed terminal", state: "CLOSED"},
 		{name: "unknown", state: "UNKNOWN", wantErr: "delivery provider state is unknown"},
+		{name: "misspelled method extra", state: "OPEN", checks: passed, extra: []string{"--rebse"}, wantErr: `unknown merge method "--rebse"`},
+		{name: "rebase method extra", state: "OPEN", checks: passed, extra: []string{"--rebase"}, method: "rebase"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			taskID := "t-state-" + strings.ReplaceAll(strings.ToLower(tc.name), " ", "-")
@@ -288,9 +286,12 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 				return &fleet.ProviderSnapshot{Provider: "github", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: tc.state, Checks: tc.checks, Reviews: tc.reviews, ObservedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 			}
 			t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
-			_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil, deliveryGuardWords())
+			req, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, tc.extra, deliveryGuardWords())
 			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+			if tc.method != "" && req.Method != tc.method {
+				t.Fatalf("method = %q, want %q", req.Method, tc.method)
 			}
 		})
 	}
@@ -438,9 +439,6 @@ func TestPRMergeReportsClosedWithoutRetiring(t *testing.T) {
 	}
 	if agg.Phase != taskauthority.PhaseWorking || agg.Worktree == nil || agg.Endpoint == nil {
 		t.Fatalf("task phase=%s worktree=%v endpoint=%v, want working with bindings intact", agg.Phase, agg.Worktree, agg.Endpoint)
-	}
-	if _, err := home.ReadMeta(homeDir, taskID); err != nil {
-		t.Fatalf("task meta after refused merge-and-retire: %v, want kept", err)
 	}
 }
 

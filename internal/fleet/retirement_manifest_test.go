@@ -534,11 +534,6 @@ func retireScoutFixture(t *testing.T, anchor bool) (Options, *taskauthority.Cano
 	os.MkdirAll(dataDir, 0755)
 	os.WriteFile(ReportPath(tmp, "scout-manifest", 1), []byte("# Report\n"), 0644)
 
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	meta := "worktree=" + wt + "\n"
-	os.WriteFile(filepath.Join(stateDir, "scout-manifest.meta"), []byte(meta), 0644)
-
 	return Options{HomeDir: tmp, ID: "scout-manifest", Force: false}, auth, wt
 }
 

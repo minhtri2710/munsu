@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -39,21 +40,6 @@ func agyHooksDir(scope Scope, cwd string) (string, error) {
 	}
 }
 
-// agyHookCommand wraps a munsu command for agy hooks.
-// agy expands the raw command string via shell, so we pass the
-// absolute munsu path with arguments directly.
-func agyHookCommand(munsuBin string, args ...string) string {
-	binJSON, err := json.Marshal(munsuBin)
-	if err != nil {
-		binJSON = []byte(fmt.Sprintf("%q", munsuBin))
-	}
-	full := string(binJSON)
-	for _, arg := range args {
-		full += " " + arg
-	}
-	return full
-}
-
 // agyHooksFileNames lists the munsu-owned hook name keys in .agents/hooks.json.
 var agyHooksFileNames = []string{
 	"munsu-safety-check",
@@ -70,7 +56,7 @@ func agyBuildHookJSON(munsuBin string) string {
 	// Safety check: PreToolUse for run_command plus the native file-write
 	// tools, which bypass the shell entirely and would otherwise reach the
 	// filesystem with no guard at all.
-	safetyCommand := agyHookCommand(munsuBin, "integrate", "safety-check", "--harness", "agy")
+	safetyCommand := hookCommand(munsuBin, "integrate", "safety-check", "--harness", "agy")
 	hooks["munsu-safety-check"] = map[string]interface{}{
 		"PreToolUse": []map[string]interface{}{
 			{
@@ -93,7 +79,7 @@ func agyBuildHookJSON(munsuBin string) string {
 	}
 
 	// Turn-end guard: Stop (no matcher needed)
-	guardCommand := agyHookCommand(munsuBin, "guard", "--harness", "agy")
+	guardCommand := hookCommand(munsuBin, "guard", "--harness", "agy")
 	hooks["munsu-turnend-guard"] = map[string]interface{}{
 		"Stop": []map[string]interface{}{
 			{
@@ -103,7 +89,7 @@ func agyBuildHookJSON(munsuBin string) string {
 	}
 
 	// Session-start nudge: PreInvocation (no matcher needed)
-	nudgeCommand := agyHookCommand(munsuBin, "integrate", "sessionstart-nudge")
+	nudgeCommand := hookCommand(munsuBin, "integrate", "sessionstart-nudge")
 	hooks["munsu-sessionstart-nudge"] = map[string]interface{}{
 		"PreInvocation": []map[string]interface{}{
 			{
@@ -124,13 +110,6 @@ func AgyHooksContent(munsuBinPath string) string {
 	return agyBuildHookJSON(munsuBinPath)
 }
 
-// AgyHooksDigest returns the SHA-256 hex digest of the hooks content.
-func AgyHooksDigest(munsuBinPath string) string {
-	content := AgyHooksContent(munsuBinPath)
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
 // AgyHooksTargetPath returns the expected path to .agents/hooks.json for the given scope+cwd.
 func AgyHooksTargetPath(scope Scope, cwd string) (string, error) {
 	dir, err := agyHooksDir(scope, cwd)
@@ -140,99 +119,81 @@ func AgyHooksTargetPath(scope Scope, cwd string) (string, error) {
 	return filepath.Join(dir, "hooks.json"), nil
 }
 
-// AgyHooksHasOwnedHooks checks whether the .agents/hooks.json file contains
-// all munsu-owned hook names with commands anchored to the given munsu binary path.
-// Returns true when all expected hooks are present, along with a descriptive message.
-func AgyHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
-	var missing []string
+// agyHookEvents is the on-disk shape of one munsu-owned agy hook: event name
+// to entries, each carrying its command directly or nested in hooks[].
+type agyHookEvents map[string][]struct {
+	Matcher string `json:"matcher"`
+	Command string `json:"command"`
+	Hooks   []struct {
+		Command string `json:"command"`
+	} `json:"hooks"`
+}
 
-	path := filepath.Join(hooksDir, "hooks.json")
-	data, err := os.ReadFile(path)
+// agyHookEntries flattens the munsu-owned hooks of an agy hooks.json into
+// comparable "name|event|matcher|command" keys. User-owned keys are never
+// decoded, so their shape cannot fail the check.
+func agyHookEntries(data []byte) ([]string, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	var entries []string
+	for _, name := range agyHooksFileNames {
+		raw, ok := doc[name]
+		if !ok {
+			continue
+		}
+		var events agyHookEvents
+		if err := json.Unmarshal(raw, &events); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		for event, list := range events {
+			for _, e := range list {
+				if e.Command != "" {
+					entries = append(entries, name+"|"+event+"|"+e.Matcher+"|"+e.Command)
+				}
+				for _, h := range e.Hooks {
+					entries = append(entries, name+"|"+event+"|"+e.Matcher+"|"+h.Command)
+				}
+			}
+		}
+	}
+	return entries, nil
+}
+
+// AgyHooksHasOwnedHooks checks whether hooks.json in hooksDir carries every
+// munsu-owned event+matcher+command entry that AgyHooksContent generates for
+// munsuBin. A command that merely mentions the binary path (another
+// --harness, a sibling binary) is drift and gets repaired.
+func AgyHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
+	data, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
 	if err != nil {
 		return false, "hooks.json not found or unreadable", nil
 	}
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return false, "hooks.json is invalid JSON", nil
+	actual, err := agyHookEntries(data)
+	if err != nil {
+		return false, "hooks.json is invalid JSON: " + err.Error(), nil
+	}
+	expected, err := agyHookEntries([]byte(AgyHooksContent(munsuBin)))
+	if err != nil {
+		return false, "", fmt.Errorf("parsing generated agy hooks: %w", err)
 	}
 
-	for _, name := range agyHooksFileNames {
-		hookConfig, ok := parsed[name].(map[string]interface{})
-		if !ok {
-			missing = append(missing, name+" (not found)")
-			continue
-		}
-
-		// Walk through all event entries looking for a command that references munsuBin
-		foundMunsu := false
-		for _, eventValue := range hookConfig {
-			entries, ok := eventValue.([]interface{})
-			if !ok {
-				continue
-			}
-			for _, entry := range entries {
-				entryMap, ok := entry.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				// For PreToolUse/PostToolUse, command is nested in hooks[]
-				if hooks, ok := entryMap["hooks"].([]interface{}); ok {
-					for _, h := range hooks {
-						hMap, ok := h.(map[string]interface{})
-						if !ok {
-							continue
-						}
-						if cmd, ok := hMap["command"].(string); ok && strings.Contains(cmd, munsuBin) {
-							foundMunsu = true
-						}
-					}
-				}
-				// For Stop/PreInvocation/PostInvocation, command is directly on the entry
-				if cmd, ok := entryMap["command"].(string); ok && strings.Contains(cmd, munsuBin) {
-					foundMunsu = true
-				}
-			}
-		}
-
-		if !foundMunsu {
-			missing = append(missing, name+" (command does not reference munsu)")
-			continue
-		}
-
-		// The safety-check hook must carry BOTH PreToolUse matchers. Accepting
-		// the run_command one alone reports an installation that predates the
-		// native-write matcher as healthy, so it is never repaired and the
-		// write path stays unguarded on machines already running munsu.
-		if name == "munsu-safety-check" && !agyHasWriteToolMatcher(hookConfig) {
-			missing = append(missing, name+" (missing native file-write matcher)")
+	present := make(map[string]bool)
+	for _, entry := range actual {
+		present[entry] = true
+	}
+	var missing []string
+	for _, want := range expected {
+		if !present[want] {
+			missing = append(missing, want)
 		}
 	}
-
 	if len(missing) > 0 {
+		sort.Strings(missing)
 		return false, fmt.Sprintf("missing or mismatched munsu-owned hooks: %s", strings.Join(missing, ", ")), nil
 	}
 	return true, "all munsu-owned agy hooks present", nil
-}
-
-// agyHasWriteToolMatcher reports whether the hook config carries a PreToolUse
-// entry matching the native file-write tools.
-func agyHasWriteToolMatcher(hookConfig map[string]interface{}) bool {
-	want := writeToolMatcher(agyWriteToolNames)
-	entries, ok := hookConfig["PreToolUse"].([]interface{})
-	if !ok {
-		return false
-	}
-	for _, entry := range entries {
-		entryMap, ok := entry.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if matcher, ok := entryMap["matcher"].(string); ok && matcher == want {
-			return true
-		}
-	}
-	return false
 }
 
 // AgyAdapter implements hook generation and installation for the Agy harness.
@@ -274,7 +235,8 @@ func (a *AgyAdapter) InstallAgyHooks() (targetPaths []string, written bool, comb
 		}
 	}
 
-	combinedDigest = AgyHooksDigest(munsuBin)
+	sum := sha256.Sum256([]byte(content))
+	combinedDigest = hex.EncodeToString(sum[:])
 
 	if a.DryRun {
 		return targetPaths, false, combinedDigest, nil

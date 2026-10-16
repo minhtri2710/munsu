@@ -137,26 +137,6 @@ func TestDrainWakesOfKindTakesOnlyThatKindAndKeepsOrder(t *testing.T) {
 	}
 }
 
-func TestDrainWakesExcludingKindLeavesThatKindQueued(t *testing.T) {
-	home := t.TempDir()
-	writeWakeQueueForTest(t, home, "100\t1\tsignal\ta\tpa\n200\t2\t"+ProcessEventWakeKind+"\tev-1\tpe1\n300\t3\tcheck\tb\tpb\n")
-
-	got, err := DrainWakesExcludingKind(home, ProcessEventWakeKind)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0].Key != "a" || got[1].Key != "b" {
-		t.Fatalf("drained = %#v, want signal a and check b", got)
-	}
-	rest, err := readWakeQueue(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rest) != 1 || rest[0].Kind != ProcessEventWakeKind || rest[0].Key != "ev-1" {
-		t.Fatalf("remaining queue = %#v, want only the process-event wake", rest)
-	}
-}
-
 func TestDrainWakesOfKindRemovesQueueFileWhenNothingRemains(t *testing.T) {
 	home := t.TempDir()
 	writeWakeQueueForTest(t, home, "200\t2\t"+ProcessEventWakeKind+"\tev-1\tpe1\n")
