@@ -91,14 +91,10 @@ type shellToken struct {
 // under the git guard's rule `git commit -m "rm <shared>/x"` would be refused.
 //
 // A lone backslash has no single meaning here, so the command is resolved twice
-// (#664). munsu never runs this string: the only call site is the harness hook
-// in integrate_cmd.go, which inspects a command the harness proposes to run.
-// Which shell interprets it depends on the harness and the platform, and
-// neither is on the wire — so the guard cannot know whether `\` quotes the next
-// character and disappears, as POSIX shells read it, or is an ordinary path
-// separator, as Windows shells do. Reading it only as an escape deleted every
-// separator in a Windows absolute path: the target stopped naming the shared
-// checkout, and the write proceeded unopposed.
+// (#664). The hook payload never names the shell, and a supported harness can
+// run the command under PowerShell on any platform (Codex exec_command
+// `shell`=pwsh, or a pwsh login shell), where `\` is literal and a path
+// separator; POSIX shells read it as an escape.
 //
 // Both readings are therefore extracted and their resolved candidates unioned;
 // ambiguity is decided independently for each target span. There is no platform
@@ -179,7 +175,7 @@ const (
 	// backslashEscapes is the POSIX shell reading: `\` quotes the character
 	// after it and is itself removed.
 	backslashEscapes backslashMode = iota
-	// backslashLiteral is the Windows shell reading: `\` is an ordinary
+	// backslashLiteral is the PowerShell reading: `\` is an ordinary
 	// character that quotes nothing, and separates path components.
 	backslashLiteral
 )
@@ -429,7 +425,7 @@ func (c shellCwd) under(chdirs []shellToken, chroot bool) (shellCwd, bool) {
 func (w *shellWriteWalk) walk(command string, depth int, within string) {
 	// Heredoc syntax is POSIX grammar. Bodies are split off once with POSIX
 	// delimiter rules, before either backslash reading tokenizes, so the
-	// literal (Windows) reading differs from the POSIX reading only in how it
+	// literal reading differs from the POSIX reading only in how it
 	// reads path backslashes — never in where a heredoc ends. That keeps
 	// <<\EOF / <<-\END terminating at the bare delimiter on every OS and stops
 	// the literal reading from swallowing a write named after the terminator.
@@ -2802,7 +2798,7 @@ func readHeredocRedirect(runes []rune, i int) (heredocSpec, int, bool) {
 		if r == '\\' {
 			// A backslash quotes the next character in the delimiter word, so
 			// `<<\EOF` opens a body that ends at `EOF`. Both backslash readings
-			// must agree on the delimiter, or the literal (Windows) reading would
+			// must agree on the delimiter, or the literal reading would
 			// read the backslash into the delimiter, never match the bare
 			// terminator, and swallow every command named after it (#664 v2).
 			j++

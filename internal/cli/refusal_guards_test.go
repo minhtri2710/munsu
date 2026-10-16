@@ -715,9 +715,7 @@ func TestGuardPeekRefusesWhenNoCapturePortIsConfigured(t *testing.T) {
 	// the only state this guard exists for.
 	cmd := newPeekCmdWithCapture(nil)
 	cmd.SetArgs([]string{"t1"})
-	previous := homeOverride
-	homeOverride = homeDir
-	t.Cleanup(func() { homeOverride = previous })
+	t.Setenv("MUNSU_HOME", homeDir)
 	err := cmd.Execute()
 	wantErrContains(t, err, "task-bound capture is not configured", "peek composed with no capture port")
 	if strings.Contains(err.Error(), "has no window endpoint") {

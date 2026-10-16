@@ -17,9 +17,7 @@ func TestBootstrapCmdRefusesUnprobeableSessionLock(t *testing.T) {
 	if err := os.MkdirAll(home.SessionLockPath(homeDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	previous := homeOverride
-	homeOverride = homeDir
-	t.Cleanup(func() { homeOverride = previous })
+	t.Setenv("MUNSU_HOME", homeDir)
 
 	cmd := newBootstrapCmd()
 	err := cmd.RunE(cmd, nil)

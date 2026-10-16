@@ -24,7 +24,7 @@ that will fix the flake. No pull-request check observes the window: the
 workflow stays red after each `main` run until someone applies the diff. The
 sweep is not a sampler: it never re-runs anything and it computes no failure
 rate. Four pushes to `main` on 2026-08-14 13:40-13:41 produced three red
-`integration` lanes; two of those runs read `success` today,
+"Integration tests" jobs; two of those runs read `success` today,
 because a rerun overwrites a run's conclusion. `gh run list` says that cluster
 was 2 red out of 4. It was 3, and `/actions/runs/<id>/attempts/<n>/jobs` still
 says so. That erasure -- not a shortage of signal -- is what this exists for.
@@ -67,7 +67,7 @@ to make its re-flakes silent.
 | column | meaning |
 | --- | --- |
 | `test` | Go test name, top level (a subtest is filed under its parent) |
-| `lane` | `build`, `race` or `integration` |
+| `lane` | `build` or `race` |
 | `first_seen` | `<sha>@<run_id>/<attempt>` -- the attempt is the part a later rerun cannot invalidate |
 | `last_seen` | the newest observation the sweep has seen, same `<sha>@<run_id>/<attempt>` format as `first_seen`; bot-maintained, and the sweep is red while it lags the evidence |
 | `deadline` | `YYYY-MM-DD`, 14 days from filing by default |
@@ -113,9 +113,6 @@ two issues, the second one is moved here, by hand, and stays moved.
 <!-- flake-ledger:begin -->
 | test | lane | first_seen | last_seen | deadline | owner_issue | state |
 | --- | --- | --- | --- | --- | --- | --- |
-| TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets | integration | 869319d8@31805867146/1 | 869319d8@31805867146/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
-| TestRegistryBindingScaleBound | integration | 665c301e@31805801020/1 | 665c301e@31805801020/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 | TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 282f6cfb@31680287927/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 | TestStoreWriteAckRefusesUnusableAckRecords | race | e31d83a1@32094709771/1 | e31d83a1@32094709771/1 | 2026-09-01 | BEO-115 | fixed:8eafcd37 |
-| TestTmux_Alive_UnknownWindow | integration | 6c408310@31805831782/1 | 6c408310@31805831782/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 <!-- flake-ledger:end -->

@@ -72,7 +72,8 @@ func (r *Registry) RegisterProject(op domain.Operation, req RegisterProjectReque
 		if doc.Projects[i].Name == req.Name && doc.Projects[i].Path == req.Path && doc.Projects[i].Yolo == req.Yolo {
 			return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, nil
 		}
-		return Outcome{}, conflictError(ErrConflict, "project %s already exists with a different definition", req.ProjectID.Value())
+		existing := doc.Projects[i]
+		return Outcome{}, conflictError(ErrConflict, "project %s is already registered with path %s and yolo %t; run `munsu project rm %s` first to change it", existing.ID, existing.Path, existing.Yolo, existing.ID)
 	}
 	next := doc
 	next.HomeRevision++
