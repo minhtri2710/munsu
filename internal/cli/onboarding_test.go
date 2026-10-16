@@ -19,10 +19,7 @@ func TestAutoDetectConfig_OnlyWhenAbsent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Set reconfigure false (the init default)
-	reconfigure = false
-
-	if err := autoDetectConfig(tmpDir); err != nil {
+	if err := autoDetectConfig(tmpDir, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,10 +43,7 @@ func TestAutoDetectConfig_Reconfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Set reconfigure true (--reconfigure flag)
-	reconfigure = true
-
-	if err := autoDetectConfig(tmpDir); err != nil {
+	if err := autoDetectConfig(tmpDir, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -73,9 +67,7 @@ func TestAutoDetectConfig_InitHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reconfigure = false
-
-	if err := autoDetectConfig(tmpDir); err != nil {
+	if err := autoDetectConfig(tmpDir, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,8 +90,7 @@ func TestAutoDetectConfig_Idempotent(t *testing.T) {
 	}
 
 	// First run
-	reconfigure = false
-	if err := autoDetectConfig(tmpDir); err != nil {
+	if err := autoDetectConfig(tmpDir, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,7 +98,7 @@ func TestAutoDetectConfig_Idempotent(t *testing.T) {
 	originalBackend, _ := config.Get(tmpDir, "backend")
 
 	// Second run (without --reconfigure)
-	if err := autoDetectConfig(tmpDir); err != nil {
+	if err := autoDetectConfig(tmpDir, false); err != nil {
 		t.Fatal(err)
 	}
 

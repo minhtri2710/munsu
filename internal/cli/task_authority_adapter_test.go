@@ -169,9 +169,7 @@ func TestTaskAuthorityForExactHome(t *testing.T) {
 // that never requests the Authority leaves the resolved home untouched.
 func TestWithHomeDoesNotComposeTaskAuthority(t *testing.T) {
 	homeDir := t.TempDir()
-	prev := homeOverride
-	homeOverride = homeDir
-	defer func() { homeOverride = prev }()
+	t.Setenv("MUNSU_HOME", homeDir)
 
 	handled := false
 	fn := withHome(func(_ *cobra.Command, _ []string, _ Ctx) error {
