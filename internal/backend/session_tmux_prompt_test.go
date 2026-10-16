@@ -26,7 +26,15 @@ list-panes)
     *) echo "$3: 1" ;;
   esac ;;
 display-message)
-  case "$4" in shell) echo 99999999 zsh ;; *) echo 99999999 claude ;; esac ;;
+  if [ "$5" = '#{pane_tty}' ]; then
+    if [ "$4" = linebuffered ]; then echo icanon > "$D/tty"; else echo -icanon > "$D/tty"; fi
+    echo "$D/tty"; exit 0
+  fi
+  case "$4" in
+    shell) echo 99999999 zsh ;;
+    turnsshell) if [ -f "$D/screen.$4" ]; then echo 99999999 zsh; else echo 99999999 claude; fi ;;
+    *) echo 99999999 claude ;;
+  esac ;;
 capture-pane) cat "$D/screen.$3" 2>/dev/null ;;
 set-buffer) printf '%s' "$5" > "$D/buf" ;;
 paste-buffer) cat "$D/buf" >> "$D/screen.$8"; rm -f "$D/buf" ;;
@@ -36,6 +44,7 @@ esac
 exit 0
 `
 	testutil.WriteFakeExecutable(t, filepath.Join(dir, "tmux"), script)
+	testutil.WriteFakeExecutable(t, filepath.Join(dir, "stty"), "#!/bin/sh\ncat\n")
 	testutil.PrependPath(t, dir)
 	old := tmuxPromptSettle
 	tmuxPromptSettle = time.Millisecond
@@ -45,14 +54,16 @@ exit 0
 
 func TestTmuxAgentPrompt(t *testing.T) {
 	for _, tc := range []struct {
-		pane  string
-		want  PromptStatus
-		typed bool
+		pane           string
+		want           PromptStatus
+		typed, entered bool
 	}{
-		{"agent", PromptSubmitted, true},
-		{"noturn", PromptStalled, true},
-		{"shell", PromptUnsupported, false},
-		{"dead", PromptEndpointDead, false},
+		{"agent", PromptSubmitted, true, true},
+		{"noturn", PromptStalled, true, true},
+		{"shell", PromptUnsupported, false, false},
+		{"linebuffered", PromptUnsupported, false, false},
+		{"turnsshell", PromptUnsupported, true, false},
+		{"dead", PromptEndpointDead, false, false},
 	} {
 		t.Run(tc.pane, func(t *testing.T) {
 			log := writePromptFakeTmux(t)
@@ -63,6 +74,11 @@ func TestTmuxAgentPrompt(t *testing.T) {
 			calls, _ := os.ReadFile(log)
 			if typed := strings.Contains(string(calls), "paste-buffer"); typed != tc.typed {
 				t.Fatalf("pane %s typed=%v, want %v; calls:\n%s", tc.pane, typed, tc.typed, calls)
+			}
+			entered := strings.Contains(string(calls), "send-keys -t "+tc.pane+" Enter")
+			cleared := strings.Contains(string(calls), "send-keys -t "+tc.pane+" C-u")
+			if entered != tc.entered || cleared != (tc.typed && !tc.entered) {
+				t.Fatalf("pane %s entered=%v cleared=%v, want entered=%v; calls:\n%s", tc.pane, entered, cleared, tc.entered, calls)
 			}
 		})
 	}
