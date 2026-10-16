@@ -679,6 +679,17 @@ func ValidateStrict(m Manifest, expectedHarness, expectedScope, expectedVersion 
 // Hook JSON merge — shared by the Claude, Codex, Grok and agy adapters
 // ---------------------------------------------------------------------------
 
+// shellQuote quotes s as one POSIX shell word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// hookCommand builds a shell hook command: the quoted munsu path followed by
+// the arguments, which are fixed literals that need no quoting.
+func hookCommand(munsuBin string, args ...string) string {
+	return strings.Join(append([]string{shellQuote(munsuBin)}, args...), " ")
+}
+
 // readExistingHookFile returns the content of an existing hooks file, or ""
 // when there is none to merge into.
 func readExistingHookFile(path string) (string, error) {

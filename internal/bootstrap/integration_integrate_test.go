@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // Test capabilities for Pi
@@ -960,21 +962,40 @@ func TestClaudeStatusDriftDetection(t *testing.T) {
 
 // -- Grok adapter tests --
 
-// TestGrokHookCommand verifies the bash -lc wrapper for Grok commands.
-func TestGrokHookCommand(t *testing.T) {
-	cmd := grokHookCommand("/usr/local/bin/munsu", "integrate", "safety-check", "--harness", "grok")
-	expected := "bash -lc 'exec \"/usr/local/bin/munsu\" integrate safety-check --harness grok'"
-	if cmd != expected {
-		t.Errorf("grokHookCommand() = %q, want %q", cmd, expected)
+// TestHookCommandsRunUnderShell runs each generated hook command through sh -c
+// against a stub munsu whose path carries shell metacharacters, and checks the
+// stub ran from that exact path with the hook's arguments.
+func TestHookCommandsRunUnderShell(t *testing.T) {
+	builders := []struct {
+		name    string
+		command func(bin string) string
+		args    []string
+	}{
+		{"claude", claudeHooks.guardCommand, []string{"guard", "--harness", "claude"}},
+		{"agy", func(bin string) string { return hookCommand(bin, "guard", "--harness", "agy") }, []string{"guard", "--harness", "agy"}},
+		{"grok", func(bin string) string { return grokHookCommand(bin, "guard", "--harness", "grok") }, []string{"guard", "--harness", "grok"}},
 	}
-}
-
-// TestGrokHookCommandSpaceInPath verifies JSON marshaling for paths with spaces.
-func TestGrokHookCommandSpaceInPath(t *testing.T) {
-	cmd := grokHookCommand("/opt/munsu v2/bin/munsu", "integrate", "sessionstart-nudge")
-	expected := "bash -lc 'exec \"/opt/munsu v2/bin/munsu\" integrate sessionstart-nudge'"
-	if cmd != expected {
-		t.Errorf("grokHookCommand with space = %q, want %q", cmd, expected)
+	for _, dirName := range []string{"it's", "$x", "a b"} {
+		for _, b := range builders {
+			t.Run(b.name+"/"+dirName, func(t *testing.T) {
+				root := t.TempDir()
+				bin := testutil.WriteFakeExecutable(t, filepath.Join(root, dirName, "munsu"), "#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"$OUT\"\n")
+				out := filepath.Join(root, "out")
+				cmd := exec.Command("sh", "-c", b.command(bin))
+				cmd.Env = append(os.Environ(), "OUT="+out, "x=EXPANDED", "HOME="+root)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s: %v\n%s", b.command(bin), err, output)
+				}
+				got, err := os.ReadFile(out)
+				if err != nil {
+					t.Fatalf("%s did not run the stub: %v", b.command(bin), err)
+				}
+				want := strings.Join(append([]string{bin}, b.args...), "\n") + "\n"
+				if string(got) != want {
+					t.Errorf("%s ran %q, want %q", b.command(bin), got, want)
+				}
+			})
+		}
 	}
 }
 
@@ -1812,6 +1833,37 @@ func TestAgyStatusDriftDetection(t *testing.T) {
 	}
 }
 
+// TestAgyHooksHasOwnedHooks: a munsu hook whose command still names the
+// binary but carries another --harness is drift; the exact hooks beside a
+// user-owned key of any shape are healthy.
+func TestAgyHooksHasOwnedHooks(t *testing.T) {
+	const bin = "/x/munsu"
+	exact := AgyHooksContent(bin)
+	rows := []struct {
+		name    string
+		content string
+		ok      bool
+	}{
+		{"drifted --harness", strings.Replace(exact, "--harness agy", "--harness claude", 1), false},
+		{"exact hooks", strings.Replace(exact, "{", `{"user-hook": ["kept"],`, 1), true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(row.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ok, msg, err := AgyHooksHasOwnedHooks(dir, bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != row.ok {
+				t.Fatalf("ok=%v (%s), want %v", ok, msg, row.ok)
+			}
+		})
+	}
+}
+
 // hookFileTargets names, per merging harness, the hooks file a user may
 // already own at project scope.
 var hookFileTargets = map[string]string{
@@ -1863,14 +1915,13 @@ func TestHookMergeReinstallKeepsOneMunsuEntry(t *testing.T) {
 			if err := json.Unmarshal(data, &parsed); err != nil {
 				t.Fatal(err)
 			}
-			binJSON, _ := json.Marshal(munsuBin)
 			userEntries := 0
 			for event, matchers := range parsed.Hooks {
 				munsuEntries := 0
 				for _, m := range matchers {
 					for _, h := range m.Hooks {
 						switch {
-						case strings.Contains(h.Command, string(binJSON)):
+						case strings.Contains(h.Command, munsuBin):
 							munsuEntries++
 						case h.Command == "user-command":
 							userEntries++
