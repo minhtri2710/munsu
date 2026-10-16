@@ -184,12 +184,10 @@ func TestSoldierBranch(t *testing.T) {
 }
 
 func TestGitBranchRefFilesAreExactlyTheRefWriteSet(t *testing.T) {
-	// The refs tree only: the branch reflog under logs/ is append-only
-	// (allowData), not a create-allowed literal.
+	// The ref and its lock only: the namespace dir is pre-created at spawn and
+	// refused, and the branch reflog under logs/ is append-only (allowData).
 	got := gitBranchRefFiles("/c", "mu/T-1")
-	want := []string{
-		"/c/refs/heads/mu", "/c/refs/heads/mu/T-1", "/c/refs/heads/mu/T-1.lock",
-	}
+	want := []string{"/c/refs/heads/mu/T-1", "/c/refs/heads/mu/T-1.lock"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("gitBranchRefFiles = %q, want %q", got, want)
 	}
@@ -213,6 +211,10 @@ func TestHarnessStateRefusals(t *testing.T) {
 }
 
 func TestPathDirDenies(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name string
 		in   []string
@@ -223,7 +225,8 @@ func TestPathDirDenies(t *testing.T) {
 		{"an empty entry", []string{""}, "", `PATH directory "" is not absolute`},
 		{"a dot entry", []string{"."}, "", `PATH directory "." is not absolute`},
 		{"a relative shim dir", []string{"/usr/bin"}, "git-shim/bin", `PATH directory "git-shim/bin" is not absolute`},
-		{"absolute entries", []string{"/usr/bin", "/usr/local/bin/"}, "", ""},
+		{"an entry that does not resolve", []string{"/usr/bin", filepath.Join(file, "bin")}, "", "PATH directory " + filepath.Join(file, "bin")},
+		{"absolute entries", []string{"/usr/bin", "/usr/local/bin/", "/fence-no-such-top-dir/bin"}, "", ""},
 		{"an absolute shim dir", []string{"/usr/bin", "/usr/local/bin/"}, "/usr/local/git-shim/bin", ""},
 	}
 	for _, tt := range tests {
@@ -354,6 +357,49 @@ func TestResolvePathRefusals(t *testing.T) {
 	}
 	if _, err := resolvePath(filepath.Join(root, "missing", "deeper"), false); err != nil {
 		t.Errorf("a missing path resolved through its nearest ancestor failed: %v", err)
+	}
+}
+
+// A dangling link resolves to its target, where a write through it lands. A
+// target whose lexical clean could name a directory the kernel does not reach,
+// or a chain past the hop bound, is refused.
+func TestResolvePathFollowsDanglingLinks(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := func(name, target string) string {
+		p := filepath.Join(root, name)
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// c0 -> c1 -> ... -> c<maxLinkHops> -> c<maxLinkHops+1>, which is missing.
+	for i := 0; i <= maxLinkHops; i++ {
+		link("c"+strconv.Itoa(i), "c"+strconv.Itoa(i+1))
+	}
+	for _, tt := range []struct {
+		name, path, want, wantErr string
+	}{
+		{"a relative target", link("rel", "a/b"), filepath.Join(root, "a", "b"), ""},
+		{"a leading .. in the target", link("up", "../"+filepath.Base(root)+"-up"), root + "-up", ""},
+		{"a .. past the target's first name", link("mid", "a/../x"), "", "past its first name"},
+		{"a chain at the hop bound", filepath.Join(root, "c1"), filepath.Join(root, "c"+strconv.Itoa(maxLinkHops+1)), ""},
+		{"a chain past the hop bound", filepath.Join(root, "c0"), "", "too many links"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolvePath(tt.path, false)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("resolvePath = %q, %v; want an error containing %q", got, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("resolvePath = %q, %v; want %q", got, err, tt.want)
+			}
+		})
 	}
 }
 

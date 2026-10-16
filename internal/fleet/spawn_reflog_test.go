@@ -11,8 +11,9 @@ import (
 // ensureBranchReflog pre-creates a branch reflog as an empty regular file so the
 // fence can allow the seat to append to it while refusing the create the first
 // checkout -b would otherwise need (B1, fence-reflog-symlink-deputy). It
-// fails closed when the reflog or any parent under logs/ is a symlink or not the
-// expected type, and never follows a planted link to write the victim.
+// fails closed when the reflog, any parent under logs/ or the branch's namespace
+// dir under refs/heads is a symlink or not the expected type, and never follows
+// a planted link to write the victim.
 func TestEnsureBranchReflog(t *testing.T) {
 	victim := filepath.Join(t.TempDir(), "victim")
 	if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
@@ -66,6 +67,22 @@ func TestEnsureBranchReflog(t *testing.T) {
 				}
 			})
 		}},
+		{name: "symlinked ref namespace dir: refused, nothing created in the target", wantErr: "not a directory", seed: func(t *testing.T, gitDir string) {
+			// refs/heads/mu is a symlink to a real dir; the seat's ref would
+			// land in that dir.
+			target := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(gitDir, "refs", "heads"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(gitDir, "refs", "heads", "mu")); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if ents, _ := os.ReadDir(target); len(ents) != 0 {
+					t.Errorf("an entry was created through the symlinked ref namespace dir: %v", ents)
+				}
+			})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gitDir := filepath.Join(t.TempDir(), "g.git")
@@ -86,6 +103,9 @@ func TestEnsureBranchReflog(t *testing.T) {
 			if tc.wantErr == "" {
 				if fi, err := os.Lstat(reflogIn(gitDir)); err != nil || !fi.Mode().IsRegular() {
 					t.Fatalf("reflog is not a regular file: %v", err)
+				}
+				if fi, err := os.Lstat(filepath.Join(gitDir, "refs", "heads", "mu")); err != nil || !fi.IsDir() {
+					t.Fatalf("ref namespace dir is not a directory: %v", err)
 				}
 			}
 			// Fail-closed must never follow a planted link and write the victim.
