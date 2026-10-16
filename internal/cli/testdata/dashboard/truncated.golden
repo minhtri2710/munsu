@@ -2,10 +2,10 @@
 unresolved 30  Human-needed 0  failed sources 0
 Nothing needs you.
 ╭─ Tasks - Showing 4 of 30 (page 1 of 8) ──────────────────────────────────────────────────────────╮
-│ ▌   general      t-00                 ● working          -     -     ship   implementing         │
-│                  t-01                 ● working          -     -     ship   implementing         │
-│                  t-02                 ● working          -     -     ship   implementing         │
-│                  t-03                 ● working          -     -     ship   implementing         │
+│ ▌   general      t-00                 ● working          -     -     -    ship   implementing    │
+│                  t-01                 ● working          -     -     -    ship   implementing    │
+│                  t-02                 ● working          -     -     -    ship   implementing    │
+│                  t-03                 ● working          -     -     -    ship   implementing    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Detail ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ t-00  ship  project munsu  working  general                                                      │

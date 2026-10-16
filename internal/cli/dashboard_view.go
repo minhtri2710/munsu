@@ -633,8 +633,8 @@ func (m dashboardModel) body() []dashLine {
 	}
 	th := m.theme()
 	l := m.list
-	age, seat := m.listW() >= dashAgeMin, m.listW() >= dashSeatMin
-	l.SetDelegate(dashRows{stale: m.state() == stateStale, age: age, seat: seat, now: m.now(), th: th})
+	age, ctx, seat := m.listW() >= dashAgeMin, m.listW() >= dashCtxMin, m.listW() >= dashSeatMin
+	l.SetDelegate(dashRows{stale: m.state() == stateStale, age: age, ctx: ctx, seat: seat, now: m.now(), th: th})
 	drawn := 0
 	var rows []string
 	if m.listH > 1+m.border() {
@@ -645,8 +645,8 @@ func (m dashboardModel) body() []dashLine {
 	title := dashLine{keep: keepListTitle(len(m.failures) > 0, drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)}
 	var head []string
 	if c := m.columnRows(); c > 0 {
-		head = append(head, th.subtle.Bold(true).Render("    "+dashSeatLine(age, seat, func(_ int, s string) string { return s },
-			"GROUP", "NAME", "STATE", "AGE", "SINCE", "ROLE", "HARNESS", "MODEL", "STATUS")))
+		head = append(head, th.subtle.Bold(true).Render("    "+dashSeatLine(age, ctx, seat, func(_ int, s string) string { return s },
+			"GROUP", "NAME", "STATE", "AGE", "SINCE", "CTX", "ROLE", "HARNESS", "MODEL", "STATUS")))
 		if c > 1 {
 			head = append(head, th.border.Render(strings.Repeat("─", max(0, m.listW()))))
 		}
@@ -723,24 +723,28 @@ func (m dashboardModel) detailSection(w, n int) []dashLine {
 }
 
 // dashColW are the seat columns' widths, STATUS last and open.
-var dashColW = [...]int{12, 20, 18, 5, 5, 6, 7, 14}
+var dashColW = [...]int{12, 20, 18, 5, 5, 4, 6, 7, 14}
 
 // dashSeatMin is the list width from which the HARNESS and MODEL columns are
 // drawn: the lead and every column, with 25 cells left for STATUS. Detail
 // shows both either way.
-const dashSeatMin = 4 + 12 + 20 + 18 + 5 + 5 + 6 + 7 + 14 + 8 + 25
+const dashSeatMin = 4 + 12 + 20 + 18 + 5 + 5 + 4 + 6 + 7 + 14 + 9 + 25
 
 // dashAgeMin is the list width from which the AGE and SINCE columns are drawn:
-// the lead and the columns before HARNESS, with 15 cells left for STATUS.
+// the lead and the columns before CTX and ROLE, with 15 cells left for STATUS.
 const dashAgeMin = 4 + 12 + 20 + 18 + 5 + 5 + 6 + 6 + 15
 
+// dashCtxMin is the list width from which the CTX column is drawn: the AGE
+// and SINCE rule with CTX added, so STATUS keeps its 15 cells.
+const dashCtxMin = dashAgeMin + 4 + 1
+
 // dashSeatLine lays a seat row out: each cell padded to its column and
-// painted, AGE and SINCE only with age, HARNESS and MODEL only with seat, then
-// the status.
-func dashSeatLine(age, seat bool, paint func(col int, s string) string, cells ...string) string {
+// painted, AGE and SINCE only with age, CTX only with ctx, HARNESS and MODEL
+// only with seat, then the status.
+func dashSeatLine(age, ctx, seat bool, paint func(col int, s string) string, cells ...string) string {
 	var b strings.Builder
 	for i, w := range dashColW {
-		if !age && (i == 3 || i == 4) || !seat && (i == 6 || i == 7) {
+		if !age && (i == 3 || i == 4) || !ctx && i == 5 || !seat && (i == 7 || i == 8) {
 			continue
 		}
 		b.WriteString(paint(i, pad(cells[i], w)+" "))
@@ -756,6 +760,7 @@ func dashSeatLine(age, seat bool, paint func(col int, s string) string, cells ..
 type dashRows struct {
 	stale bool
 	age   bool // draw the AGE and SINCE columns
+	ctx   bool // draw the CTX column
 	seat  bool // draw the HARNESS and MODEL columns
 	now   time.Time
 	th    dashTheme
@@ -829,10 +834,10 @@ func (d dashRows) task(m list.Model, index int, it dashItem, paint func(*lipglos
 		}
 	}
 	sub := &d.th.subtle
-	styles := [...]*lipgloss.Style{groupStyle, nil, state, sub, sub, sub, sub, sub, nil}
-	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.age, d.seat, func(col int, s string) string { return paint(styles[col], s) },
+	styles := [...]*lipgloss.Style{groupStyle, nil, state, sub, sub, sub, sub, sub, sub, nil}
+	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.age, d.ctx, d.seat, func(col int, s string) string { return paint(styles[col], s) },
 		group, dashText(ts.ID), mark.icon+" "+phase, dashAge(d.now, ts.LaunchedAt), dashAge(d.now, ts.PhaseChangedAt),
-		dashText(ts.Kind), dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model)), status)
+		dashCtx(ts.ContextUsed, ts.ContextWindow), dashText(ts.Kind), dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model)), status)
 }
 
 // dashAge is the time from at (unix nanoseconds) to now in its largest whole
@@ -851,6 +856,27 @@ func dashAge(now time.Time, at int64) string {
 		return fmt.Sprintf("%dh", d/time.Hour)
 	}
 	return fmt.Sprintf("%dd", d/(24*time.Hour))
+}
+
+// dashCtx is a seat's context use: the share of a known window, else the
+// tokens in pi's compact form, "-" when unknown. It is at most 4 cells below
+// 100M tokens.
+func dashCtx(used, window int) string {
+	switch {
+	case used <= 0:
+		return "-"
+	case window > 0:
+		return fmt.Sprintf("%d%%", (used*100+window/2)/window)
+	case used < 1000:
+		return fmt.Sprint(used)
+	case used < 9950:
+		return fmt.Sprintf("%.1fk", float64(used)/1e3)
+	case used < 999_500:
+		return fmt.Sprintf("%dk", (used+500)/1000)
+	case used < 9_950_000:
+		return fmt.Sprintf("%.1fM", float64(used)/1e6)
+	}
+	return fmt.Sprintf("%dM", (used+500_000)/1_000_000)
 }
 
 // dashPhase is a row's phase mark and escaped word. A working or blocked row

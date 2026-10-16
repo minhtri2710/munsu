@@ -4,9 +4,9 @@ unresolved 2  Human-needed 0  failed sources 1
 │ failed   captain:beta         reading canonical task authority state for /h/captains/beta: home… │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Failed sources and tasks ───────────────────────────────────────────────────────────────────────╮
-│     GROUP        NAME                 STATE              AGE   SINCE ROLE   STATUS               │
+│     GROUP        NAME                 STATE              AGE   SINCE CTX  ROLE   STATUS          │
 │ ▌ ✗ captain:beta  reading canonical task authority state for /h/captains/beta: home: not initia… │
-│     general      t-work               ● working          -     -     ship   implementing         │
+│     general      t-work               ● working          -     -     -    ship   implementing    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Failed source ──────────────────────────────────────────────────────────────────────────────────╮
 │ source captain:beta  home /h/captains/beta                                                       │
