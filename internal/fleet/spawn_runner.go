@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -162,8 +161,8 @@ func (r *Runner) authorizeEndpoint(obs SpawnEndpointObservation, ep CreatedEndpo
 		backend:     ep.Backend,
 		handle:      ep.Handle,
 		incarnation: ep.Incarnation,
-		leaseID:     r.epReservationID(),
-		fenceToken:  r.epFenceToken(),
+		leaseID:     r.launch.EndpointReservationID,
+		fenceToken:  r.launch.EndpointFenceToken,
 		generation:  gen,
 		revision:    rev,
 		acquired:    true, // in-process creation receipt or durable AcquiredEndpoint
@@ -1337,7 +1336,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 	}
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	if agg.Worktree != nil {
-		if r.launch != nil && (agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken) {
+		if agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken {
 			return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: committed worktree binding does not match the launch worktree reservation fence; refuse")
 		}
 		// The adopted path is re-classified, not trusted. The fence proves the
@@ -1354,13 +1353,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 		r.cwd, r.launchDir = bw.Path(), bw.Path()
 		return bw, nil
 	}
-	var leaseID, fenceToken string
-	if r.launch != nil {
-		leaseID, fenceToken = r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken
-	} else {
-		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
-	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken, r.launchWorktreeTool())
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken, r.launchWorktreeTool())
 	if err != nil {
 		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
@@ -1595,8 +1588,8 @@ func (r *Runner) createSession() error {
 		PreferredBackend: backendName,
 		TabName:          tabName,
 		Cwd:              r.cwd,
-		ReservationID:    r.epReservationID(),
-		FenceToken:       r.epFenceToken(),
+		ReservationID:    r.launch.EndpointReservationID,
+		FenceToken:       r.launch.EndpointFenceToken,
 	}
 	// The mandatory reservation-aware create contract find-or-creates the
 	// endpoint under the exact reservation on EVERY call (first attempt AND
@@ -1741,7 +1734,7 @@ func (r *Runner) attachEndpoint() error {
 			a.SessionOwner != r.endpoint.SessionOwner || a.WorkspaceID != r.endpoint.WorkspaceID || a.TabID != r.endpoint.TabID || a.Incarnation != r.endpoint.Incarnation {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint %s/%s does not match created endpoint %s/%s; refuse", a.Backend, a.Handle, r.endpoint.Backend, r.endpoint.Handle)
 		}
-		if r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken) {
+		if a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint does not match the launch endpoint reservation fence; refuse")
 		}
 		return nil
@@ -1752,8 +1745,8 @@ func (r *Runner) attachEndpoint() error {
 		Precondition: prec,
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      r.epReservationID(),
-		FenceToken:   r.epFenceToken(),
+		LeaseID:      r.launch.EndpointReservationID,
+		FenceToken:   r.launch.EndpointFenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
@@ -2136,7 +2129,7 @@ func (r *Runner) submitLaunch() error {
 			WorktreePath: r.cwd, LaunchDir: r.launchDir, Review: r.review, HomeDir: r.homeDir,
 			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
-			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
+			EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence, PathDirs: r.seatPath,
 			SeatEnv: r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
@@ -2253,7 +2246,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID, TaskKind: r.kind,
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
-		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence,
 		PathDirs: r.seatPath,
 		SeatEnv:  r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 	})
@@ -2378,7 +2371,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			// Ambiguous readings are never "died" (unknown != dead).
 			if dead := authorizeAbsence(status, exactEndpointProof{
 				backend: r.endpoint.Backend, handle: r.endpoint.Handle, incarnation: r.endpoint.Incarnation,
-				leaseID: r.epReservationID(), fenceToken: r.epFenceToken(),
+				leaseID: r.launch.EndpointReservationID, fenceToken: r.launch.EndpointFenceToken,
 				generation: gen, revision: rev,
 			}); dead.Absent() {
 				return fmt.Errorf("window died while waiting for ready")
@@ -2495,20 +2488,16 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
-		if r.launch != nil && (agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken) {
+		if agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken {
 			return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: committed endpoint binding does not match the launch endpoint reservation fence; refuse")
 		}
 		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
 	}
-	leaseID, fenceToken := r.epReservationID(), r.epFenceToken()
-	if r.launch == nil {
-		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
-	}
 	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      leaseID,
-		FenceToken:   fenceToken,
+		LeaseID:      r.launch.EndpointReservationID,
+		FenceToken:   r.launch.EndpointFenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
@@ -2531,30 +2520,6 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	return out, nil
-}
-
-// epReservationID and epFenceToken return the launch intent's one-time
-// endpoint reservation identities (empty when no intent is committed).
-func (r *Runner) epReservationID() string {
-	if r.launch != nil {
-		return r.launch.EndpointReservationID
-	}
-	return ""
-}
-
-func (r *Runner) epFenceToken() string {
-	if r.launch != nil {
-		return r.launch.EndpointFenceToken
-	}
-	return ""
-}
-
-func newEndpointToken() string {
-	buf := make([]byte, 16)
-	// crypto/rand.Read cannot return an error: since Go 1.24 it terminates the
-	// process instead of reporting failure, so there is no branch to take.
-	rand.Read(buf)
-	return fmt.Sprintf("%x", buf)
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.
