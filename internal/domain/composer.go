@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Verdict indicates whether a composer row is safe to inject into.
 type Verdict int
@@ -24,11 +27,24 @@ const glyphClaude = "❯" // ❯
 // composerRuleMinRunes is the shortest run of U+2500 that counts as a rule line.
 const composerRuleMinRunes = 10
 
-// composerBetweenRules returns the rows between the capture's lowest rule line
-// and the rule line above it. ok is false when the lower rule is missing or has
-// more than footerRows rows below it, the upper rule is missing, or no row lies
-// between them.
-func composerBetweenRules(capture string, footerRows int) (between []string, ok bool) {
+// composerBox is a capture split at its lowest rule line and the rule line
+// above it.
+type composerBox struct {
+	upper, lower    string
+	between, footer []string
+}
+
+// sameWidth reports whether both rules span the same width, as the two
+// borders of one composer box do.
+func (b composerBox) sameWidth() bool {
+	return utf8.RuneCountInString(trimComposerSpace(b.upper)) == utf8.RuneCountInString(trimComposerSpace(b.lower))
+}
+
+// findComposerBox splits the capture at its lowest rule line and the rule line
+// above it. ok is false when the lower rule is missing or has more than
+// footerRows rows below it, the upper rule is missing, or no row lies between
+// them.
+func findComposerBox(capture string, footerRows int) (box composerBox, ok bool) {
 	rows := strings.Split(strings.TrimRight(capture, " \t\r\n"), "\n")
 	lower := -1
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -38,7 +54,7 @@ func composerBetweenRules(capture string, footerRows int) (between []string, ok 
 		}
 	}
 	if lower < 0 || len(rows)-1-lower > footerRows {
-		return nil, false
+		return composerBox{}, false
 	}
 	upper := -1
 	for i := lower - 1; i >= 0; i-- {
@@ -48,9 +64,9 @@ func composerBetweenRules(capture string, footerRows int) (between []string, ok 
 		}
 	}
 	if upper < 0 || upper+1 == lower {
-		return nil, false
+		return composerBox{}, false
 	}
-	return rows[upper+1 : lower], true
+	return composerBox{upper: rows[upper], lower: rows[lower], between: rows[upper+1 : lower], footer: rows[lower+1:]}, true
 }
 
 // trimComposerSpace trims U+0020 and U+00A0 only: the words approved for the

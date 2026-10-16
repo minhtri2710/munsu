@@ -1,24 +1,28 @@
 package domain
 
+import "regexp"
+
 // glyphAgy is the Antigravity CLI prompt glyph.
 const glyphAgy = ">"
 
-// agyFooterRows is how many rows agy shows below the lower rule.
-const agyFooterRows = 1
+// agyFooter matches agy's one footer row by its trailing "<model> · <effort>"
+// segment: the only part every captured footer row carries, whether the
+// prefix is "? for shortcuts", "esc to cancel" or blank.
+var agyFooter = regexp.MustCompile(`\S · [a-z]+$`)
 
 // ClassifyAgyComposer judges a capture of the bottom rows of an agy pane.
 // Empty means a rule line, one row that is exactly the prompt glyph (spaces
-// and NBSP ignored), a rule line, and at most agyFooterRows further rows. A
-// single blank row between the rules is Unknown. Any other content between
-// the rules is Pending; every other capture is Unknown.
+// and NBSP ignored), a rule line of the same width, and one footer row ending
+// in the model segment. A single blank row between the rules is Unknown. Any
+// other content between such rules is Pending; every other capture is Unknown.
 func ClassifyAgyComposer(capture string) Verdict {
-	between, ok := composerBetweenRules(capture, agyFooterRows)
+	box, ok := findComposerBox(capture, 1)
 	switch {
-	case !ok:
+	case !ok, !box.sameWidth(), len(box.footer) != 1, !agyFooter.MatchString(trimComposerSpace(box.footer[0])):
 		return Unknown
-	case len(between) == 1 && trimComposerSpace(between[0]) == glyphAgy:
+	case len(box.between) == 1 && trimComposerSpace(box.between[0]) == glyphAgy:
 		return Empty
-	case len(between) == 1 && trimComposerSpace(between[0]) == "":
+	case len(box.between) == 1 && trimComposerSpace(box.between[0]) == "":
 		return Unknown
 	default:
 		return Pending

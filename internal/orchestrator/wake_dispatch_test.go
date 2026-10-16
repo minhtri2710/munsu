@@ -1387,14 +1387,26 @@ func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
 	}
 }
 
-func TestDispatchWake_CapturesTheBottomTwelveRowsOfAnIdleClaudePane(t *testing.T) {
-	req, _ := setupMockRequest(t, WakeDeliveryHerdr, true)
-	result, err := DispatchWake(req)
-	if err != nil || result.Outcome != WakeSubmitted {
-		t.Fatalf("got outcome=%q err=%v, want submitted", result.Outcome, err)
-	}
-	if got := req.Composer.(*mockComposerPort).captured; got != 12 {
-		t.Errorf("captured %d rows, want 12", got)
+func TestDispatchWake_CapturesTheBottomTwelveRowsOfAnIdlePane(t *testing.T) {
+	for _, agent := range []string{"claude", "agy", "pi"} {
+		t.Run(agent, func(t *testing.T) {
+			req, _ := setupMockRequest(t, WakeDeliveryHerdr, true)
+			composer := req.Composer.(*mockComposerPort)
+			if agent != "claude" {
+				data, err := os.ReadFile(filepath.Join("..", "domain", "testdata", "composer", agent+"-empty.txt"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				composer.agent, composer.capture = agent, string(data)
+			}
+			result, err := DispatchWake(req)
+			if err != nil || result.Outcome != WakeSubmitted {
+				t.Fatalf("got outcome=%q err=%v, want submitted", result.Outcome, err)
+			}
+			if composer.captured != 12 {
+				t.Errorf("captured %d rows, want 12", composer.captured)
+			}
+		})
 	}
 }
 

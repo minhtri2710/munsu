@@ -11,11 +11,11 @@ const claudeFooterRows = 3
 // including a missing or cut-off rule, is Unknown. Only Empty is safe; nothing
 // here reads ANSI, so styled text fails closed.
 func ClassifyClaudeComposer(capture string) Verdict {
-	between, ok := composerBetweenRules(capture, claudeFooterRows)
+	box, ok := findComposerBox(capture, claudeFooterRows)
 	switch {
 	case !ok:
 		return Unknown
-	case len(between) == 1 && trimComposerSpace(between[0]) == glyphClaude:
+	case len(box.between) == 1 && trimComposerSpace(box.between[0]) == glyphClaude:
 		return Empty
 	default:
 		return Pending
