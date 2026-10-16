@@ -1,0 +1,5 @@
+a.go	BothRefuse	1	!(kind == "a")	19.8-21.3	19.8,20.3
+a.go	BothRefuse	1	kind == "a"	17.17-19.3	17.17,18.3
+a.go	ElseIfChain	1	!(kind == "b")	39.8-41.3	39.8,40.3
+a.go	ElseRefuses	1	!(kind == "captain")	11.8-13.3	11.8,12.3
+exit 0

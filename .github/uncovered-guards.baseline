@@ -28,7 +28,8 @@
 # Data rows are exactly five tab-separated columns:
 # file <TAB> func <TAB> nth <TAB> predicate <TAB> reason. Every field is
 # non-empty, and `nth` must be a positive decimal ordinal. `predicate` is the if
-# condition, or the literal `default` for a refusing switch default. The same
+# condition, `!(<condition>)` for a refusing else block, or the literal
+# `default` for a refusing switch default. The same
 # format validation applies to the exact base baseline used by the ratchet.
 #
 # `nth` is the 1-based occurrence of that exact predicate in that owner identity;
