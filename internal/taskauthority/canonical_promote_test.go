@@ -27,7 +27,6 @@ func mustDoneScout(t *testing.T, c *Canonical, taskID string) domain.Preconditio
 	create := createRequest(c, taskID)
 	create.Kind = "scout"
 	create.ScoutScope = "investigate the requested question"
-	create.ScoutScope = "investigate the requested question"
 	op := mustOperation(t, "op-create-"+taskID, create)
 	if _, err := c.Create(op, create); err != nil {
 		t.Fatal(err)
@@ -63,6 +62,9 @@ func TestCanonicalPromoteFlipsTerminalScoutToShip(t *testing.T) {
 	}
 	if agg.Definition.Kind != "ship" {
 		t.Fatalf("promoted kind = %q, want ship", agg.Definition.Kind)
+	}
+	if agg.Definition.ScoutScope != "" {
+		t.Fatalf("promoted scout scope = %q, want it cleared with the scout kind", agg.Definition.ScoutScope)
 	}
 	if agg.Phase != PhaseDone || agg.Revision != 3 {
 		t.Fatalf("aggregate after promote = phase %s rev %d, want done rev 3", agg.Phase, uint64(agg.Revision))

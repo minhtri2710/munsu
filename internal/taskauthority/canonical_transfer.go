@@ -336,9 +336,6 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 			SourceGeneration: req.SourceGeneration,
 		},
 	}
-	if err := validateAggregate(agg); err != nil {
-		return Outcome{}, err
-	}
 	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
 	items, err := genItems(req.TaskID.Value(), uint64(agg.Generation), doc, rec)
@@ -430,7 +427,7 @@ func (c *Canonical) ActivateTransfer(op domain.Operation, req CanonicalActivateT
 	next.Current = true
 	next.Revision++
 	rec := receiptFor(op, next)
-	docData, err := json.Marshal(taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: next})
+	docData, err := encodeTaskDoc(taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: next})
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -451,7 +448,7 @@ func (c *Canonical) ActivateTransfer(op domain.Operation, req CanonicalActivateT
 // genItems builds the change-set that writes a non-current generation document
 // and its operation receipt together (used by the destination receive path).
 func genItems(taskID string, gen uint64, doc taskDoc, rec receipt) ([]home.ChangeItem, error) {
-	docData, err := json.Marshal(doc)
+	docData, err := encodeTaskDoc(doc)
 	if err != nil {
 		return nil, err
 	}
