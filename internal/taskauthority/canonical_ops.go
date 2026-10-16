@@ -60,12 +60,6 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	if strings.TrimSpace(req.Owner) == "" {
 		return Outcome{}, validationError("create requires an owner")
 	}
-	if err := validateScoutContract(TaskDefinition{Kind: req.Kind, ScoutScope: req.ScoutScope}); err != nil {
-		return Outcome{}, err
-	}
-	if err := validateReviewContract(TaskDefinition{Kind: req.Kind, ReviewTaskID: req.ReviewTaskID, ReviewHead: req.ReviewHead}); err != nil {
-		return Outcome{}, err
-	}
 
 	lk, err := c.h.Lock(taskScope(req.TaskID.Value()))
 	if err != nil {
@@ -93,16 +87,16 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 			return Outcome{}, err
 		}
 	}
-	agg, err := NewAggregate(req.TaskID.Value(), req.Owner, req.Description, req.Kind, req.Project.Value(), req.ParentTaskID.Value())
-	if err == nil {
-		agg.Definition.ScoutScope = strings.TrimSpace(req.ScoutScope)
-		agg.Definition.ReviewTaskID = req.ReviewTaskID
-		agg.Definition.ReviewHead = req.ReviewHead
-		err = validateScoutContract(agg.Definition)
-		if err == nil {
-			err = validateReviewContract(agg.Definition)
-		}
-	}
+	agg, err := NewAggregate(req.TaskID.Value(), TaskDefinition{
+		Owner:        req.Owner,
+		Description:  req.Description,
+		Kind:         req.Kind,
+		Project:      req.Project.Value(),
+		ParentTaskID: req.ParentTaskID.Value(),
+		ScoutScope:   strings.TrimSpace(req.ScoutScope),
+		ReviewTaskID: req.ReviewTaskID,
+		ReviewHead:   req.ReviewHead,
+	})
 	if err != nil {
 		return Outcome{}, err
 	}

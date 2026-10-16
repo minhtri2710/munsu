@@ -64,6 +64,9 @@ func TestCanonicalPromoteFlipsTerminalScoutToShip(t *testing.T) {
 	if agg.Definition.Kind != "ship" {
 		t.Fatalf("promoted kind = %q, want ship", agg.Definition.Kind)
 	}
+	if agg.Definition.ScoutScope != "" {
+		t.Fatalf("promoted scout scope = %q, want it cleared with the scout kind", agg.Definition.ScoutScope)
+	}
 	if agg.Phase != PhaseDone || agg.Revision != 3 {
 		t.Fatalf("aggregate after promote = phase %s rev %d, want done rev 3", agg.Phase, uint64(agg.Revision))
 	}

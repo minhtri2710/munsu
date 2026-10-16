@@ -58,6 +58,7 @@ func (c *Canonical) Promote(op domain.Operation, req CanonicalPromoteRequest) (O
 		}
 		next := cur.clone()
 		next.Definition.Kind = req.TargetKind
+		next.Definition.ScoutScope = ""
 		next.Revision++
 		return next, nil
 	})

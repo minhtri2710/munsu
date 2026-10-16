@@ -286,6 +286,12 @@ func TestTransferRefusals(t *testing.T) {
 		_, err := c.ReceiveTransfer(mustOperation(t, "op-receive-"+reservationID, req), req)
 		return err
 	}
+	receiveDefinition := func(t *testing.T, c *Canonical, def TaskDefinition) error {
+		req := receiveTransferRequest(t, c, "t1", "res-t1", "source-home", 3)
+		req.Definition = def
+		_, err := c.ReceiveTransfer(mustOperation(t, "op-receive-def", req), req)
+		return err
+	}
 	activate := func(t *testing.T, c *Canonical) {
 		req := CanonicalActivateTransferRequest{
 			HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"),
@@ -312,6 +318,12 @@ func TestTransferRefusals(t *testing.T) {
 		}},
 		{name: "receive allows a destination with no history of the task", run: func(t *testing.T, c *Canonical) error {
 			return receive(t, c, "res-t1")
+		}},
+		{name: "receive refuses a scout definition with no scope", class: ErrInvalidInput, want: "scout task requires non-empty scope", run: func(t *testing.T, c *Canonical) error {
+			return receiveDefinition(t, c, TaskDefinition{Owner: "owner", Description: "work", Kind: KindScout})
+		}},
+		{name: "receive allows a scout definition with a scope", run: func(t *testing.T, c *Canonical) error {
+			return receiveDefinition(t, c, TaskDefinition{Owner: "owner", Description: "work", Kind: KindScout, ScoutScope: "map the repo"})
 		}},
 
 		{name: "reserve refuses an inbound record that is still attached", class: ErrConflict, want: "already reserved for transfer", run: func(t *testing.T, c *Canonical) error {
