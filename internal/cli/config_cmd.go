@@ -98,17 +98,9 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key, value := args[0], args[1]
-			// Launch-profile keys carry fleet-base semantics and are authored
-			// only in the General home. A Captain home is identified by its
-			// durable config/parent-home pointer (written at provision time,
-			// before its first published snapshot); the General home has none.
-			if isLaunchProfileKey(key) {
-				parentPath := filepath.Join(config.ConfigDir(ctx.Home), "parent-home")
-				if _, err := os.Lstat(parentPath); err == nil {
-					parent, _ := config.Get(ctx.Home, "parent-home")
-					return fmt.Errorf("cannot set %s from a Captain home; set it in parent General home %s", key, parent)
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return fmt.Errorf("checking Captain home parent pointer %s: %w", parentPath, err)
+			if isFleetBaseKey(key) {
+				if err := refuseFleetBaseWriteInCaptainHome(ctx.Home, "set "+key); err != nil {
+					return err
 				}
 			}
 			// Validate harness pins. captain-harness accepts multi-token
@@ -177,13 +169,29 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 	return cmd
 }
 
-func isLaunchProfileKey(key string) bool {
+func isFleetBaseKey(key string) bool {
 	switch key {
-	case "soldier-harness", "model", "captain-harness":
+	case "soldier-harness", "model", "captain-harness", "backend":
 		return true
 	default:
 		return false
 	}
+}
+
+// refuseFleetBaseWriteInCaptainHome refuses every config/base.json mutation in
+// a Captain home: the fleet base is authored only in the General home. A
+// Captain home is identified by its durable config/parent-home pointer
+// (written at provision time, before its first published snapshot).
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: one parent-home check for every fleet-base mutator)
+func refuseFleetBaseWriteInCaptainHome(home, action string) error {
+	parentPath := filepath.Join(config.ConfigDir(home), "parent-home")
+	if _, err := os.Lstat(parentPath); err == nil {
+		parent, _ := config.Get(home, "parent-home")
+		return fmt.Errorf("cannot %s from a Captain home; run it in parent General home %s", action, parent)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("checking Captain home parent pointer %s: %w", parentPath, err)
+	}
+	return nil
 }
 
 // setCaptainProfileInBase writes the captain launch profile into the fleet

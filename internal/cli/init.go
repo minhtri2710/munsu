@@ -44,6 +44,9 @@ Without either, skill install is skipped.
 
 Use --reconfigure to re-run auto-detection and overwrite existing config files and the orchestrator operating manual (AGENTS.md).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseFleetBaseWriteInCaptainHome(ctx.Home, "init"); err != nil {
+				return err
+			}
 			if _, err := home.Init(ctx.Home); err != nil {
 				return fmt.Errorf("creating home tree: %w", err)
 			}
