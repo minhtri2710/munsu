@@ -26,7 +26,6 @@ func TestHumanPiAgentDir(t *testing.T) {
 	home := t.TempDir()
 	state := filepath.Join(home, "munsu", "state")
 	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
 	def := filepath.Join(home, ".pi", "agent")
 	tests := []struct {
 		name, env, want string
@@ -183,7 +182,6 @@ func agentDirFixture(t *testing.T) (home, src, dst string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
 	src = filepath.Join(home, ".pi", "agent")
 	if err := os.MkdirAll(filepath.Join(src, "extensions"), 0o755); err != nil {
 		t.Fatal(err)
