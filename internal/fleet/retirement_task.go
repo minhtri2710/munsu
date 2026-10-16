@@ -719,11 +719,12 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
 		var evidenceErr error
-		worktree, partialLaunch, evidenceErr = retirementSafetyEvidenceForGeneration(authority, taskID, safetyGen)
+		var disposing bool
+		worktree, partialLaunch, disposing, evidenceErr = retirementSafetyEvidenceForGeneration(authority, taskID, safetyGen)
 		if evidenceErr != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, evidenceErr)
 		}
-		proofs, err := safetyCheck(opts, kind, backend, authority, safetyGen, worktree, partialLaunch)
+		proofs, err := safetyCheck(opts, kind, backend, authority, safetyGen, worktree, partialLaunch, disposing)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
@@ -1224,20 +1225,24 @@ func refreshDataDir(homeDir, id string) (bool, error) {
 
 // safetyCheck verifies that work is landed before allowing
 // Returns proof strings alongside any error. Proofs are only populated on success.
-func retirementSafetyEvidenceForGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, gen taskauthority.Generation) (*taskauthority.WorktreeBinding, bool, error) {
+// The third result reports a retired generation whose active cleanup claim
+// records artifact disposal: its launch artifacts may already be gone.
+func retirementSafetyEvidenceForGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, gen taskauthority.Generation) (*taskauthority.WorktreeBinding, bool, bool, error) {
 	agg, err := authority.GetGeneration(taskID, gen)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	if agg.Worktree != nil {
 		binding := *agg.Worktree
-		return &binding, partialLaunchRetirement(agg), nil
+		return &binding, partialLaunchRetirement(agg), false, nil
 	}
 	if agg.Retirement != nil && agg.Retirement.Worktree != nil {
 		binding := *agg.Retirement.Worktree
-		return &binding, partialLaunchRetirement(agg), nil
+		disposing := agg.Phase == taskauthority.PhaseRetired && agg.CleanupClaim != nil &&
+			agg.CleanupClaim.Status == taskauthority.CleanupActive && agg.CleanupClaim.ArtifactsDisposing
+		return &binding, partialLaunchRetirement(agg), disposing, nil
 	}
-	return nil, false, nil
+	return nil, false, false, nil
 }
 
 // neverLaunched reports whether the task's current generation neither began a
@@ -1261,7 +1266,7 @@ func partialLaunchRetirement(agg taskauthority.Aggregate) bool {
 	return false
 }
 
-func safetyCheck(opts Options, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+func safetyCheck(opts Options, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation, binding *taskauthority.WorktreeBinding, partialLaunch, disposing bool) ([]string, error) {
 	switch kind {
 	case taskauthority.KindScout:
 		if err := scoutSafetyCheck(opts, gen); err != nil {
@@ -1280,6 +1285,9 @@ func safetyCheck(opts Options, kind string, backend BoundTeardown, authority *ta
 		ident, err := deliveryIdentity(authority, opts.ID)
 		if err != nil {
 			return nil, fmt.Errorf("reading delivery identity: %w", err)
+		}
+		if disposing {
+			return disposingShipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
 		}
 		return shipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
 	}
@@ -1461,7 +1469,39 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 	if len(remaining) > 0 {
 		return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)\n  %s", wtPath, strings.Join(remaining, "\n  "))
 	}
+	return shipLandedCheck(opts, wtPath, ident, backend, authority, partialLaunch)
+}
 
+// disposingShipSafetyCheck is shipSafetyCheck for a retired generation whose
+// cleanup claim records artifact disposal. The artifacts were verified before
+// that record and disposal removes them, so it checks only the worktree's
+// unlisted content and the landed work.
+func disposingShipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+	if binding == nil || binding.Path == "" {
+		return nil, fmt.Errorf("no canonical worktree path for %s", opts.ID)
+	}
+	if partialLaunch && ident != nil {
+		return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
+	}
+	wtPath := binding.Path
+	manifest, err := disposingManifest(wtPath, binding)
+	if err != nil {
+		return nil, fmt.Errorf("worktree %s: %w (use --force to override)", wtPath, err)
+	}
+	declared := map[string]bool{}
+	if manifest != nil {
+		declared = manifest.ArtifactPaths()
+		declared[ManifestName] = true
+	}
+	if err := verifyUnlistedWorktreeClean(wtPath, declared); err != nil {
+		return nil, fmt.Errorf("worktree %s: %w (use --force to override)", wtPath, err)
+	}
+	return shipLandedCheck(opts, wtPath, ident, backend, authority, partialLaunch)
+}
+
+// shipLandedCheck proves a ship task's work is landed: the delivery identity's
+// provider-confirmed merge, else the local or remote branch.
+func shipLandedCheck(opts Options, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, partialLaunch bool) ([]string, error) {
 	// --- Merge-proof checks (topology-aware) ---
 
 	// If the task has a delivery identity, use provider-confirmed PR status
@@ -1831,12 +1871,39 @@ func verifyWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.W
 	return verifyUnlistedWorktreeClean(worktreePath, manifestPaths)
 }
 
+// disposingManifest returns the launch manifest a recorded disposal finds: nil
+// once removed, else the manifest carrying the canonical digest. Any other
+// manifest refuses and stays, with its artifacts, for a Human to inspect.
+func disposingManifest(worktreePath string, binding *taskauthority.WorktreeBinding) (*LaunchManifest, error) {
+	root, err := os.OpenRoot(worktreePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening worktree root for artifact disposal: %w", err)
+	}
+	data, err := root.ReadFile(ManifestName)
+	root.Close()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading launch manifest for disposal: %w", err)
+	}
+	if binding == nil || binding.LaunchManifest == nil || binding.LaunchManifest.ManifestSHA256 == "" {
+		return nil, fmt.Errorf("launch manifest exists without canonical digest evidence")
+	}
+	if sha256Content(data) != binding.LaunchManifest.ManifestSHA256 {
+		return nil, fmt.Errorf("launch manifest does not match its canonical digest; it and the launch artifacts are left in place for inspection")
+	}
+	return ReadManifest(worktreePath)
+}
+
 // removeWorktreeLaunchArtifacts removes the launch artifacts once disposal is
 // recorded, the manifest last. It is idempotent: an absent path is already
-// removed, so an interrupted removal re-runs. Only a manifest carrying the
-// canonical digest names what to remove; any other manifest is removed alone,
-// and whatever it leaves behind makes the worktree return refuse.
+// removed, so an interrupted removal re-runs.
 func removeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.WorktreeBinding) error {
+	manifest, err := disposingManifest(worktreePath, binding)
+	if err != nil || manifest == nil {
+		return err
+	}
 	root, err := os.OpenRoot(worktreePath)
 	if err != nil {
 		return fmt.Errorf("opening worktree root for artifact disposal: %w", err)
@@ -1848,35 +1915,22 @@ func removeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.W
 		}
 		return nil
 	}
-	data, err := root.ReadFile(ManifestName)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("reading launch manifest for disposal: %w", err)
-	}
-	if binding != nil && binding.LaunchManifest != nil && sha256Content(data) == binding.LaunchManifest.ManifestSHA256 {
-		manifest, err := ReadManifest(worktreePath)
-		if err != nil {
+	var guardDir string
+	for _, entry := range manifest.Artifacts {
+		if isDeferredGuardIdentityPath(entry.Path) {
+			guardDir = filepath.ToSlash(filepath.Dir(filepath.FromSlash(entry.Path)))
+			continue
+		}
+		if err := remove(entry.Path, "proven launch artifact "+entry.Path); err != nil {
 			return err
 		}
-		var guardDir string
-		for _, entry := range manifest.Artifacts {
-			if isDeferredGuardIdentityPath(entry.Path) {
-				guardDir = filepath.ToSlash(filepath.Dir(filepath.FromSlash(entry.Path)))
-				continue
-			}
-			if err := remove(entry.Path, "proven launch artifact "+entry.Path); err != nil {
-				return err
-			}
+	}
+	if guardDir != "" {
+		if err := remove(guardDir+"/identity", "proven launch guard identity"); err != nil {
+			return err
 		}
-		if guardDir != "" {
-			if err := remove(guardDir+"/identity", "proven launch guard identity"); err != nil {
-				return err
-			}
-			if err := remove(guardDir, "empty launch guard directory"); err != nil {
-				return err
-			}
+		if err := remove(guardDir, "empty launch guard directory"); err != nil {
+			return err
 		}
 	}
 	return remove(ManifestName, "launch manifest")

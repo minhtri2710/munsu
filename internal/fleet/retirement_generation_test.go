@@ -853,11 +853,18 @@ func TestRetirementResumeAcrossArtifactDisposal(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "recorded with a stale manifest left", recorded: true, interrupt: func(t *testing.T, wtDir string, binding *taskauthority.WorktreeBinding) {
+		{name: "recorded with a corrupted manifest over the artifacts refuses", recorded: true, interrupt: func(t *testing.T, wtDir string, _ *taskauthority.WorktreeBinding) {
+			writeTestManifestRaw(t, wtDir, `{"manifest_version":"stale","artifacts":[]}`)
+		}, want: "launch manifest does not match its canonical digest"},
+		{name: "recorded with only the canonical manifest left", recorded: true, interrupt: func(t *testing.T, wtDir string, binding *taskauthority.WorktreeBinding) {
+			data, err := os.ReadFile(filepath.Join(wtDir, ManifestName))
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := removeWorktreeLaunchArtifacts(wtDir, binding); err != nil {
 				t.Fatal(err)
 			}
-			writeTestManifestRaw(t, wtDir, `{"manifest_version":"stale","artifacts":[]}`)
+			writeTestManifestRaw(t, wtDir, string(data))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -884,12 +891,23 @@ func TestRetirementResumeAcrossArtifactDisposal(t *testing.T) {
 				t.Fatal(err)
 			}
 			tc.interrupt(t, wtDir, agg.Retirement.Worktree)
+			var present []string
+			for _, name := range append([]string{ManifestName}, CoreLaunchArtifactNames...) {
+				if _, err := os.Lstat(filepath.Join(wtDir, name)); err == nil {
+					present = append(present, name)
+				}
+			}
 
 			resume := &recordingTeardown{alive: true}
 			_, err = RetireTask(opts, resume, fakeRetirementJournals{}, auth)
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) || len(resume.returned) != 0 {
 					t.Fatalf("resume = %v returned=%v, want refusal %q and no return", err, resume.returned, tc.want)
+				}
+				for _, name := range present {
+					if _, err := os.Lstat(filepath.Join(wtDir, name)); err != nil {
+						t.Fatalf("refused resume removed %s: %v", name, err)
+					}
 				}
 				return
 			}
@@ -905,6 +923,39 @@ func TestRetirementResumeAcrossArtifactDisposal(t *testing.T) {
 				}
 			}
 			assertClaimCompleted(t, auth, taskID, taskauthority.Generation(1))
+		})
+	}
+}
+
+// A binding with no anchored manifest digest names nothing disposal may
+// remove, so a manifest that appears there refuses and stays.
+func TestDisposalRefusesAnUnanchoredManifest(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		manifest bool
+		want     string
+	}{
+		{name: "unanchored manifest present refuses", manifest: true, want: "launch manifest exists without canonical digest evidence"},
+		{name: "unanchored binding with no manifest is already disposed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wtDir := t.TempDir()
+			if tc.manifest {
+				writeTestManifestRaw(t, wtDir, `{"manifest_version":"1","artifacts":[]}`)
+			}
+			err := removeWorktreeLaunchArtifacts(wtDir, &taskauthority.WorktreeBinding{Path: wtDir})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("disposal: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("disposal = %v, want %q", err, tc.want)
+			}
+			if _, err := os.Lstat(filepath.Join(wtDir, ManifestName)); err != nil {
+				t.Fatalf("refused disposal removed the manifest: %v", err)
+			}
 		})
 	}
 }

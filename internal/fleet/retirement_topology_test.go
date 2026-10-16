@@ -1007,7 +1007,7 @@ func canonicalIdentitySafetyCheck(t *testing.T, authorized, reopened bool) error
 	}
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{State: "OPEN", HeadSHA: deliveryTestHead}, nil)
 	defer cleanup()
-	_, err = safetyCheck(Options{HomeDir: homeDir, ID: "t1"}, taskauthority.KindShip, fakeTeardown{}, c, 0, testWorktreeBinding(wt, md), false)
+	_, err = safetyCheck(Options{HomeDir: homeDir, ID: "t1"}, taskauthority.KindShip, fakeTeardown{}, c, 0, testWorktreeBinding(wt, md), false, false)
 	return err
 }
 
