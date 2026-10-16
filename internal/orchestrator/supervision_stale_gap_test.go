@@ -5,11 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type staleGapProbe bool
 
-func (a staleGapProbe) Probe(string, map[string]string) (bool, error) { return bool(a), nil }
+func (a staleGapProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return bool(a), nil
+}
 
 func writeAgedStatus(t *testing.T, home, id, line string, age time.Duration) {
 	t.Helper()
@@ -30,7 +34,6 @@ func writeAgedStatus(t *testing.T, home, id, line string, age time.Duration) {
 // An alive pane is stale only when its status is older than SilentAfter, and
 // an old working line is absorbed rather than surfaced.
 func TestScanTaskIdleThreshold(t *testing.T) {
-	meta := map[string]string{"window": "w1"}
 	for _, tc := range []struct {
 		name  string
 		line  string
@@ -44,7 +47,7 @@ func TestScanTaskIdleThreshold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			writeAgedStatus(t, home, "t1", tc.line, tc.age)
-			got := scanTaskWithProbe(home, "t1", meta, staleGapProbe(true), testSeatLiveness)
+			got := scanTaskWithProbe(home, BoundEndpoint{TaskID: "t1", Endpoint: taskauthority.EndpointBinding{Handle: "w1"}}, staleGapProbe(true), testSeatLiveness)
 			if (got != nil) != tc.stale {
 				t.Fatalf("scanTaskWithProbe = %+v, want stale=%v", got, tc.stale)
 			}

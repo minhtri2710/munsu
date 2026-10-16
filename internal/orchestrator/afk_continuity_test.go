@@ -2,11 +2,12 @@ package orchestrator_test
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // TestReliablePath_WakeSurvivesCaptainRecovery proves wake survives drain/re-read.

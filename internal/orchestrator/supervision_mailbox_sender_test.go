@@ -6,12 +6,15 @@ import (
 	"testing"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type testMailboxSender struct{ payloads []string }
 
-func (*testMailboxSender) Alive(string, map[string]string) (bool, error) { return true, nil }
-func (s *testMailboxSender) Send(_ string, _ map[string]string, payload string) mhome.BoundSendResult {
+func (*testMailboxSender) Alive(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return true, nil
+}
+func (s *testMailboxSender) Send(_ string, _ taskauthority.EndpointBinding, payload string) mhome.BoundSendResult {
 	s.payloads = append(s.payloads, payload)
 	return mhome.BoundSendResult{Status: "submitted", Acknowledged: true}
 }
@@ -73,10 +76,8 @@ func TestRunCycleRecoveryUsesExplicitSenderAndWritesMarker(t *testing.T) {
 		SenderIdentity: "general", ReceiverRank: mhome.RankCaptain, ReceiverID: "captain-1",
 		Kind: "command", TaskID: "task-1", Payload: "wake", PayloadHash: mhome.PayloadHashHex("wake"), CreatedAt: 1,
 	}
+	seedBoundSoldier(t, home, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "pane-1"})
 	if err := mhome.NewStore(home).WriteEnvelope(env); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state", "task-1.meta"), []byte("backend=tmux\nwindow=pane-1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	sender := &testMailboxSender{}

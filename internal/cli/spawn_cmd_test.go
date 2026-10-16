@@ -45,10 +45,11 @@ func writeTaskStatus(t *testing.T, homeDir, id, content string) {
 	}
 }
 
-// TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
-// instead of using the global config when meta has backend set.
-func TestSendCmd_UsesMetaBackend(t *testing.T) {
+// TestSendCmd_UsesBoundBackend verifies that send reads the backend from the
+// task's canonical endpoint binding instead of using the global config.
+func TestSendCmd_UsesBoundBackend(t *testing.T) {
 	tmpDir := t.TempDir()
+	mustBindCLIEndpoint(t, tmpDir, "test-task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@0"})
 
 	// Write global config saying "herdr"
 	configDir := filepath.Join(tmpDir, "config")
@@ -59,8 +60,6 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write task meta with backend=tmux (overrides global config)
-	writeRawTaskMeta(t, tmpDir, "test-task", "window=@0\nbackend=tmux\nkind=ship\n")
 	writeTaskStatus(t, tmpDir, "test-task", "working: spawned\n")
 
 	// Leave only git on PATH so whichever backend is attempted will fail
@@ -74,21 +73,22 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error (tmux not on PATH), got nil")
 	}
-	// send resolves the session backend from task meta (backend=tmux, not the
+	// send resolves the session backend from the binding (tmux, not the
 	// global config herdr). The shared constructBackend fails closed when tmux
 	// is absent on PATH with a typed "<name>: not found on PATH" error.
 	if !strings.Contains(err.Error(), "tmux: not found on PATH") {
-		t.Errorf("expected error mentioning 'tmux: not found on PATH' (from meta backend), got: %v", err)
+		t.Errorf("expected error mentioning 'tmux: not found on PATH' (from the bound backend), got: %v", err)
 	}
 	if strings.Contains(err.Error(), "herdr") {
-		t.Errorf("send must use the meta backend (tmux), not the global config (herdr), got: %v", err)
+		t.Errorf("send must use the bound backend (tmux), not the global config (herdr), got: %v", err)
 	}
 }
 
-// TestSendCmd_UnknownMetaBackendFallsThroughToResolve verifies that an unknown backend name
-// in task meta falls through to config/auto-detection (it does not hard-error on unknown names).
-func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
+// TestSendCmd_UnknownBoundBackendFailsClosed verifies that an unknown bound
+// backend name fails closed instead of falling through to the global config.
+func TestSendCmd_UnknownBoundBackendFailsClosed(t *testing.T) {
 	tmpDir := t.TempDir()
+	mustBindCLIEndpoint(t, tmpDir, "test-task", taskauthority.EndpointBinding{Backend: "nonexistent", Handle: "@0"})
 
 	// Write global config saying "herdr"
 	configDir := filepath.Join(tmpDir, "config")
@@ -98,10 +98,6 @@ func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
-	// Write task meta with backend=nonexistent (falls through to config/resolve)
-	metaContent := "window=@0\nbackend=nonexistent\nkind=ship\n"
-	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	// Leave only git on PATH so backend resolution fails
 	gitOnlyPath(t)
@@ -120,10 +116,11 @@ func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 	}
 }
 
-// TestPeekCmd_UsesMetaBackend verifies that peek reads the backend from task meta
-// instead of using the global config when meta has backend set.
-func TestPeekCmd_UsesMetaBackend(t *testing.T) {
+// TestPeekCmd_UsesBoundBackend verifies that peek reads the backend from the
+// task's canonical endpoint binding instead of using the global config.
+func TestPeekCmd_UsesBoundBackend(t *testing.T) {
 	tmpDir := t.TempDir()
+	mustBindCLIEndpoint(t, tmpDir, "test-task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@0"})
 
 	// Write global config saying "herdr"
 	configDir := filepath.Join(tmpDir, "config")
@@ -133,10 +130,6 @@ func TestPeekCmd_UsesMetaBackend(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
-	// Write task meta with backend=tmux (overrides global config)
-	metaContent := "window=@0\nbackend=tmux\nkind=ship\n"
-	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
 
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", "/dev/null")
@@ -150,12 +143,12 @@ func TestPeekCmd_UsesMetaBackend(t *testing.T) {
 		t.Fatal("expected error (tmux not on PATH), got nil")
 	}
 	if !strings.Contains(err.Error(), "tmux") {
-		t.Errorf("expected error mentioning 'tmux' (from meta backend), got: %v", err)
+		t.Errorf("expected error mentioning 'tmux' (from the bound backend), got: %v", err)
 	}
 }
 
 // TestPeekCmd_RejectsMetaWithoutBoundBackend verifies that peek does not fall
-// back to mutable global config for an existing bound endpoint.
+// back to mutable global config for a captain whose meta records no backend.
 func TestPeekCmd_RejectsMetaWithoutBoundBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -168,16 +161,15 @@ func TestPeekCmd_RejectsMetaWithoutBoundBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write task meta with NO backend field (uses global config)
-	metaContent := "window=@0\nkind=ship\n" // no backend field
-	writeRawTaskMeta(t, tmpDir, "test-task", metaContent)
+	metaContent := "window=@0\nkind=captain\n" // no backend field
+	writeRawTaskMeta(t, tmpDir, "captain:c1", metaContent)
 
 	oldPath := os.Getenv("PATH")
 	os.Setenv("PATH", "/dev/null")
 	defer os.Setenv("PATH", oldPath)
 
 	root := NewRootCommand()
-	root.SetArgs([]string{"peek", "test-task", "--home", tmpDir})
+	root.SetArgs([]string{"peek", "captain:c1", "--home", tmpDir})
 	err := root.Execute()
 
 	if err == nil {

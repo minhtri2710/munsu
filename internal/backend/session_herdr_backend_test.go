@@ -506,13 +506,7 @@ func TestBackendForTask_HerdrSessionFromMeta(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// With session_owner in meta
-	meta := map[string]string{
-		"backend":       "herdr",
-		"session_owner": "my-lab-session",
-		"window":        "default:w1:p1",
-	}
-	bk, name, err := BackendForTask(tmpDir, meta)
+	bk, name, err := BackendForTask(tmpDir, EndpointRef{Backend: "herdr", SessionOwner: "my-lab-session", Handle: "default:w1:p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,12 +529,7 @@ func TestBackendForTask_HerdrSessionFromWindow(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// With window session prefix but no session_owner
-	meta := map[string]string{
-		"backend": "herdr",
-		"window":  "my-session:w1:p1",
-	}
-	bk, name, err := BackendForTask(tmpDir, meta)
+	bk, name, err := BackendForTask(tmpDir, EndpointRef{Backend: "herdr", Handle: "my-session:w1:p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,12 +552,7 @@ func TestBackendForTask_HerdrSessionFallsBackToDefault(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// No session_owner, no window session prefix
-	meta := map[string]string{
-		"backend": "herdr",
-		"window":  "bare-pane",
-	}
-	bk, name, err := BackendForTask(tmpDir, meta)
+	bk, name, err := BackendForTask(tmpDir, EndpointRef{Backend: "herdr", Handle: "bare-pane"})
 	if err != nil {
 		t.Fatal(err)
 	}

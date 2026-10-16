@@ -73,7 +73,7 @@ func reportedPR(statusLines []string) PRView {
 }
 
 type StateEndpointProbe interface {
-	Probe(homeDir string, meta map[string]string) (bool, error)
+	Probe(homeDir string, ep tauth.EndpointBinding, harness string) (bool, error)
 }
 
 func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State, error) {
@@ -103,19 +103,12 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	// always superseded display, never state truth.
 	s.StatusLogSuperseded = true
 
-	// .meta provides operational/display data (diagnostic only). The endpoint
-	// identity is the canonical one, bound or only acquired: a launch whose
-	// handshake failed holds a live pane but wrote no .meta. A retired task's
-	// acquired endpoint is no longer its pane.
-	meta, _ := home.ReadMeta(homeDir, id)
-	if meta == nil {
-		meta = map[string]string{}
-	}
+	// The endpoint identity is the canonical one, bound or only acquired: a
+	// launch whose handshake failed holds a live pane it never bound. A retired
+	// task's acquired endpoint is no longer its pane.
+	var ep *tauth.EndpointBinding
 	if agg.Phase != tauth.PhaseRetired {
-		overlayEndpointMeta(meta, agg.Endpoint, agg.AcquiredEndpoint)
-		if agg.Launch != nil {
-			meta["harness"] = agg.Launch.Harness
-		}
+		ep = endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint)
 	}
 
 	// .status contributes diagnostic evidence only (never lifecycle state).
@@ -132,8 +125,8 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	// Endpoint liveness is diagnostic only. It never changes the canonical
 	// lifecycle phase: a dead/unverifiable endpoint does not turn canonical
 	// working into dead/unknown.
-	if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
-		alive, err := probe.Probe(homeDir, meta)
+	if ep != nil && ep.Handle != "" && probe != nil {
+		alive, err := probe.Probe(homeDir, *ep, launchHarness(agg))
 		s.PaneAlive = err == nil && alive
 	}
 

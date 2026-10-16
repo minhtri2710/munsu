@@ -345,10 +345,7 @@ func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
 	if _, err := home.Init(tmp); err != nil {
 		t.Fatal(err)
 	}
-	mustCreateFleetTask(t, tmp, "t1", "ship")
-	if err := home.WriteMeta(tmp, "t1", map[string]string{"window": "@win", "project": "munsu", "kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	bindSoldier(t, mustCreateFleetTask(t, tmp, "t1", "ship"), "t1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@win"})
 
 	snap, err := Snapshot(tmp, testSnapshotDeps(t, snapshotProbe{status: endpointStatusFromState(EndpointAlive)}))
 	if err != nil {
@@ -364,9 +361,9 @@ func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
 	if ts.PaneAliveUnknown {
 		t.Errorf("PaneAliveUnknown = true, want false")
 	}
-	// Pane liveness is diagnostic only: a queued canonical phase stays queued.
-	if ts.CurrentState != string(taskauthority.PhaseQueued) {
-		t.Errorf("CurrentState = %q, want %q (probe must not change lifecycle state)", ts.CurrentState, taskauthority.PhaseQueued)
+	// Pane liveness is diagnostic only: a working canonical phase stays working.
+	if ts.CurrentState != string(taskauthority.PhaseWorking) {
+		t.Errorf("CurrentState = %q, want %q (probe must not change lifecycle state)", ts.CurrentState, taskauthority.PhaseWorking)
 	}
 }
 
@@ -375,10 +372,7 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 	if _, err := home.Init(tmp); err != nil {
 		t.Fatal(err)
 	}
-	mustCreateFleetTask(t, tmp, "t1", "ship")
-	if err := home.WriteMeta(tmp, "t1", map[string]string{"window": "@win", "project": "munsu", "kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	bindSoldier(t, mustCreateFleetTask(t, tmp, "t1", "ship"), "t1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@win"})
 
 	snap, err := Snapshot(tmp, testSnapshotDeps(t, snapshotProbe{status: endpointStatusFromState(EndpointDead)}))
 	if err != nil {
@@ -395,8 +389,8 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 		t.Errorf("PaneAliveUnknown = false, want true for non-alive typed observation")
 	}
 	// A dead pane is diagnostic only and must not change the canonical phase.
-	if ts.CurrentState != string(taskauthority.PhaseQueued) {
-		t.Errorf("CurrentState = %q, want %q (dead probe must not change lifecycle state)", ts.CurrentState, taskauthority.PhaseQueued)
+	if ts.CurrentState != string(taskauthority.PhaseWorking) {
+		t.Errorf("CurrentState = %q, want %q (dead probe must not change lifecycle state)", ts.CurrentState, taskauthority.PhaseWorking)
 	}
 }
 
@@ -407,10 +401,7 @@ func TestSnapshot_PaneAliveUnknownWhenNoProbe(t *testing.T) {
 	if _, err := home.Init(tmp); err != nil {
 		t.Fatal(err)
 	}
-	mustCreateFleetTask(t, tmp, "t1", "ship")
-	if err := home.WriteMeta(tmp, "t1", map[string]string{"window": "@win", "project": "munsu", "kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	bindSoldier(t, mustCreateFleetTask(t, tmp, "t1", "ship"), "t1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@win"})
 
 	snap, err := Snapshot(tmp, testSnapshotDeps(t))
 	if err != nil {
@@ -494,7 +485,9 @@ func TestReadWithProbeCanonicalPhaseUnaffectedByProbe(t *testing.T) {
 // boolProbe is a StateEndpointProbe returning a fixed alive flag.
 type boolProbe struct{ v bool }
 
-func (p *boolProbe) Probe(homeDir string, meta map[string]string) (bool, error) { return p.v, nil }
+func (p *boolProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return p.v, nil
+}
 
 // TestSnapshotDisplay_FailedCaptainHomeIsNamedFailure proves a captain home
 // that cannot be read becomes one named failure with no rows, the healthy

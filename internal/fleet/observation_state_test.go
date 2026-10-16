@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -14,19 +15,46 @@ import (
 
 type fixedProbe struct{ alive bool }
 
-func (p fixedProbe) Probe(string, map[string]string) (bool, error) { return p.alive, nil }
+func (p fixedProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return p.alive, nil
+}
 
-// setupObservationHome seeds a canonical home with a task authority record
-// (via the real Home-backed canonical Task Authority), meta, and the
-// canonical working phase for working states. Observation reads the canonical
-// record as state truth and the meta/status projections as display.
+// bindSoldier binds a worktree and then ep to the task's current generation,
+// which makes it working.
+func bindSoldier(t *testing.T, c *taskauthority.Canonical, taskID string, ep taskauthority.EndpointBinding) {
+	t.Helper()
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	precondition := func() domain.Precondition {
+		agg, err := c.Get(tid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+	}
+	wt := taskauthority.CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Reason: "bind", Binding: taskauthority.WorktreeBinding{
+		RepositoryIdentity: "repo", Path: "/wt/" + taskID, GitDir: "/repo/.git/worktrees/" + taskID, CommonDir: "/repo/.git",
+		BaseHead: strings.Repeat("a", 40), LeaseID: "lease-wt-" + taskID, FenceToken: "fence-wt", BoundAtUnix: 1,
+	}}
+	if _, err := c.BindWorktree(mustFleetOperation(t, "op-bind-wt-"+taskID, wt), wt); err != nil {
+		t.Fatal(err)
+	}
+	ep.LeaseID, ep.FenceToken, ep.Incarnation, ep.BoundAtUnix = "lease-ep-"+taskID, "fence-ep", "inc-"+taskID, 1
+	bind := taskauthority.CanonicalBindEndpointRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Binding: ep, Reason: "bind"}
+	if _, err := c.BindEndpoint(mustFleetOperation(t, "op-bind-ep-"+taskID, bind), bind); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setupObservationHome seeds a canonical home with a task bound to a tmux
+// pane (working), completed to done for the done state. Observation reads the
+// canonical record as state truth.
 func setupObservationHome(t *testing.T, homeDir, state string) {
 	t.Helper()
 	h, err := home.Init(homeDir)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(homeDir, "task", map[string]string{"window": "w1:p1", "backend": "tmux"}); err != nil {
 		t.Fatal(err)
 	}
 	c, err := taskauthority.NewCanonical(h)
@@ -44,17 +72,16 @@ func setupObservationHome(t *testing.T, homeDir, state string) {
 	if _, err := c.Create(mustFleetOperation(t, "op-create-task", create), create); err != nil {
 		t.Fatal(err)
 	}
-	start := taskauthority.CanonicalStartRequest{
-		HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(1, 1), Reason: "spawned",
-	}
-	if _, err := c.Start(mustFleetOperation(t, "op-start-task", start), start); err != nil {
-		t.Fatal(err)
-	}
+	bindSoldier(t, c, "task", taskauthority.EndpointBinding{Backend: "tmux", Handle: "w1:p1"})
 	if state == "working" {
 		return
 	}
+	agg, err := c.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	complete := taskauthority.CanonicalCompleteRequest{
-		HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(1, 2),
+		HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 		To: taskauthority.PhaseDone, Reason: "done",
 	}
 	if _, err := c.Complete(mustFleetOperation(t, "op-complete-task", complete), complete); err != nil {

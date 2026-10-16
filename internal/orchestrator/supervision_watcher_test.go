@@ -21,12 +21,16 @@ var testSeatLiveness = config.SeatLiveness{SilentAfter: StaleThreshold(), Repeat
 
 type testEndpointProbe struct{}
 
-func (testEndpointProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
+func (testEndpointProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return false, nil
+}
 
 type testCycleSender struct{}
 
-func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (testCycleSender) Send(string, map[string]string, string) mhome.BoundSendResult {
+func (testCycleSender) Alive(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return false, nil
+}
+func (testCycleSender) Send(string, taskauthority.EndpointBinding, string) mhome.BoundSendResult {
 	return mhome.BoundSendResult{}
 }
 

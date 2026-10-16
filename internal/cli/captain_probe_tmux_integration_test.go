@@ -92,8 +92,7 @@ func TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat(t *testing.T) {
 				return strings.Count(screen, "ping") == 2
 			})
 
-			meta := map[string]string{"window": wid, "harness": "claude"}
-			got, err := probeCaptainBackend(tk, meta)
+			got, err := probeCaptainBackend(tk, wid, "claude")
 			if err != nil || !got.PaneAlive || got.AgentAlive != tc.alive || got.ReadyForPrompt != tc.alive {
 				t.Fatalf("probeCaptainBackend = %+v, %v; want a present pane with AgentAlive %v", got, err, tc.alive)
 			}
