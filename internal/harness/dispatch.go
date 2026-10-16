@@ -11,25 +11,19 @@ type DispatchCandidate = config.DispatchCandidate
 
 type DispatchProfile = config.DispatchProfile
 
-// DispatchConfig is the top-level structure for soldier-dispatch.json.
-// Supports defaultHarness/profiles and default/rules shapes.
+// DispatchConfig is the resolved dispatch input for one spawn.
 type DispatchConfig struct {
-	// DefaultHarness is used when no profile matches (munsu shape).
-	DefaultHarness string `json:"defaultHarness,omitempty"`
+	// DefaultHarness is used when no profile matches.
+	DefaultHarness string
 	// DefaultModel is the default model when no profile supplies one.
-	DefaultModel string `json:"defaultModel,omitempty"`
+	DefaultModel string
 	// DefaultEffort is the default effort when no profile supplies one.
-	DefaultEffort string `json:"defaultEffort,omitempty"`
-	// Default is the object form: {"harness","model","effort"}.
-	// Normalized into DefaultHarness/DefaultModel/DefaultEffort on load.
-	Default *DispatchCandidate `json:"default,omitempty"`
-	// Profiles is the ordered list of dispatch profiles (munsu shape).
-	Profiles []DispatchProfile `json:"profiles,omitempty"`
-	// Rules is an alternate ordered rule list; normalized into Profiles on load.
-	Rules []DispatchProfile `json:"rules,omitempty"`
+	DefaultEffort string
+	// Profiles is the ordered list of dispatch profiles.
+	Profiles []DispatchProfile
 	// QuotaTool is the project's Ready quota-axi executable, or "" when the
 	// project configures no quota tool.
-	QuotaTool string `json:"-"`
+	QuotaTool string
 }
 
 // DispatchSelection is the concrete harness/model/effort chosen for a spawn,
