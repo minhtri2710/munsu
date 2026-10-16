@@ -338,7 +338,7 @@ func (c *Canonical) ReceiveTransfer(op domain.Operation, req CanonicalReceiveTra
 	}
 	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
-	items, err := genItems(req.TaskID.Value(), uint64(agg.Generation), doc, rec)
+	items, err := c.genItems(req.TaskID.Value(), uint64(agg.Generation), doc, rec)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -427,7 +427,7 @@ func (c *Canonical) ActivateTransfer(op domain.Operation, req CanonicalActivateT
 	next.Current = true
 	next.Revision++
 	rec := receiptFor(op, next)
-	docData, err := encodeTaskDoc(taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: next})
+	docData, err := c.encodeTaskDoc(&cur, taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: next})
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -447,8 +447,8 @@ func (c *Canonical) ActivateTransfer(op domain.Operation, req CanonicalActivateT
 
 // genItems builds the change-set that writes a non-current generation document
 // and its operation receipt together (used by the destination receive path).
-func genItems(taskID string, gen uint64, doc taskDoc, rec receipt) ([]home.ChangeItem, error) {
-	docData, err := encodeTaskDoc(doc)
+func (c *Canonical) genItems(taskID string, gen uint64, doc taskDoc, rec receipt) ([]home.ChangeItem, error) {
+	docData, err := c.encodeTaskDoc(nil, doc)
 	if err != nil {
 		return nil, err
 	}

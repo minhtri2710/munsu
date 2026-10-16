@@ -46,6 +46,11 @@ type TaskSnapshot struct {
 	CurrentDescription  string            `json:"current_description,omitempty"`
 	StatusLogSuperseded bool              `json:"status_log_superseded"`
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
+
+	// LaunchedAt and PhaseChangedAt are unix nanoseconds, 0 when unknown: the
+	// launch submission and the canonical phase change. Display only.
+	LaunchedAt     int64 `json:"-"`
+	PhaseChangedAt int64 `json:"-"`
 }
 
 // CurrentStateInfo carries the authoritative current state for a task. The
@@ -272,6 +277,10 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			CurrentDescription:  info.Description,
 			StatusLogSuperseded: true,
 			OpenActivities:      info.OpenActivities,
+			PhaseChangedAt:      agg.PhaseChangedAt,
+		}
+		if agg.LaunchEvidence != nil {
+			ts.LaunchedAt = agg.LaunchEvidence.SubmittedAt
 		}
 		if ts.CurrentDescription == "" {
 			ts.CurrentDescription = agg.Definition.Description

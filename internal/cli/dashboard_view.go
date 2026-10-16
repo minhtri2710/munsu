@@ -633,8 +633,8 @@ func (m dashboardModel) body() []dashLine {
 	}
 	th := m.theme()
 	l := m.list
-	seat := m.listW() >= dashSeatMin
-	l.SetDelegate(dashRows{stale: m.state() == stateStale, seat: seat, th: th})
+	age, seat := m.listW() >= dashAgeMin, m.listW() >= dashSeatMin
+	l.SetDelegate(dashRows{stale: m.state() == stateStale, age: age, seat: seat, now: m.now(), th: th})
 	drawn := 0
 	var rows []string
 	if m.listH > 1+m.border() {
@@ -645,8 +645,8 @@ func (m dashboardModel) body() []dashLine {
 	title := dashLine{keep: keepListTitle(len(m.failures) > 0, drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)}
 	var head []string
 	if c := m.columnRows(); c > 0 {
-		head = append(head, th.subtle.Bold(true).Render("    "+dashSeatLine(seat, func(_ int, s string) string { return s },
-			"GROUP", "NAME", "STATE", "ROLE", "HARNESS", "MODEL", "STATUS")))
+		head = append(head, th.subtle.Bold(true).Render("    "+dashSeatLine(age, seat, func(_ int, s string) string { return s },
+			"GROUP", "NAME", "STATE", "AGE", "SINCE", "ROLE", "HARNESS", "MODEL", "STATUS")))
 		if c > 1 {
 			head = append(head, th.border.Render(strings.Repeat("─", max(0, m.listW()))))
 		}
@@ -723,19 +723,24 @@ func (m dashboardModel) detailSection(w, n int) []dashLine {
 }
 
 // dashColW are the seat columns' widths, STATUS last and open.
-var dashColW = [...]int{12, 20, 18, 6, 7, 14}
+var dashColW = [...]int{12, 20, 18, 5, 5, 6, 7, 14}
 
 // dashSeatMin is the list width from which the HARNESS and MODEL columns are
 // drawn: the lead and every column, with 25 cells left for STATUS. Detail
 // shows both either way.
-const dashSeatMin = 4 + 12 + 20 + 18 + 6 + 7 + 14 + 6 + 25
+const dashSeatMin = 4 + 12 + 20 + 18 + 5 + 5 + 6 + 7 + 14 + 8 + 25
+
+// dashAgeMin is the list width from which the AGE and SINCE columns are drawn:
+// the lead and the columns before HARNESS, with 15 cells left for STATUS.
+const dashAgeMin = 4 + 12 + 20 + 18 + 5 + 5 + 6 + 6 + 15
 
 // dashSeatLine lays a seat row out: each cell padded to its column and
-// painted, HARNESS and MODEL only with seat, then the status.
-func dashSeatLine(seat bool, paint func(col int, s string) string, cells ...string) string {
+// painted, AGE and SINCE only with age, HARNESS and MODEL only with seat, then
+// the status.
+func dashSeatLine(age, seat bool, paint func(col int, s string) string, cells ...string) string {
 	var b strings.Builder
 	for i, w := range dashColW {
-		if !seat && (i == 4 || i == 5) {
+		if !age && (i == 3 || i == 4) || !seat && (i == 6 || i == 7) {
 			continue
 		}
 		b.WriteString(paint(i, pad(cells[i], w)+" "))
@@ -750,7 +755,9 @@ func dashSeatLine(seat bool, paint func(col int, s string) string, cells ...stri
 // has no state colour.
 type dashRows struct {
 	stale bool
+	age   bool // draw the AGE and SINCE columns
 	seat  bool // draw the HARNESS and MODEL columns
+	now   time.Time
 	th    dashTheme
 }
 
@@ -822,9 +829,28 @@ func (d dashRows) task(m list.Model, index int, it dashItem, paint func(*lipglos
 		}
 	}
 	sub := &d.th.subtle
-	styles := [...]*lipgloss.Style{groupStyle, nil, state, sub, sub, sub, nil}
-	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.seat, func(col int, s string) string { return paint(styles[col], s) },
-		group, dashText(ts.ID), mark.icon+" "+phase, dashText(ts.Kind), dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model)), status)
+	styles := [...]*lipgloss.Style{groupStyle, nil, state, sub, sub, sub, sub, sub, nil}
+	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.age, d.seat, func(col int, s string) string { return paint(styles[col], s) },
+		group, dashText(ts.ID), mark.icon+" "+phase, dashAge(d.now, ts.LaunchedAt), dashAge(d.now, ts.PhaseChangedAt),
+		dashText(ts.Kind), dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model)), status)
+}
+
+// dashAge is the time from at (unix nanoseconds) to now in its largest whole
+// unit, "-" when at is unknown.
+func dashAge(now time.Time, at int64) string {
+	if at == 0 {
+		return "-"
+	}
+	d := max(0, now.Sub(time.Unix(0, at)))
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", d/time.Second)
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", d/time.Hour)
+	}
+	return fmt.Sprintf("%dd", d/(24*time.Hour))
 }
 
 // dashPhase is a row's phase mark and escaped word. A working or blocked row

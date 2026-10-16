@@ -3,9 +3,9 @@ unresolved 2  Human-needed 0  failed sources 0
 Last read failed: reading authoritative current state: no current-state query provided
 Nothing needs you.
 ╭─ Tasks ──────────────────────────────────────────────────────────────────────────────────────────╮
-│     GROUP        NAME                 STATE              ROLE   STATUS                           │
-│ ▌   general      t-work               ● working [stale]  ship   implementing                     │
-│                  t-q                  ○ queued [stale]   ship   waiting                          │
+│     GROUP        NAME                 STATE              AGE   SINCE ROLE   STATUS               │
+│ ▌   general      t-work               ● working [stale]  -     -     ship   implementing         │
+│                  t-q                  ○ queued [stale]   -     -     ship   waiting              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Detail ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ t-work  ship  project munsu  working [stale]  general                                            │

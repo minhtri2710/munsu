@@ -125,8 +125,10 @@ func dashUnbox(l string) string {
 
 func healthyModel(w, h int) dashboardModel {
 	m := resized(testDashModel(), w, h)
+	work := row("t-work", "working", "implementing", "primary", "")
+	work.LaunchedAt, work.PhaseChangedAt = dashNow.Add(-3*time.Hour).UnixNano(), dashNow.Add(-12*time.Minute).UnixNano()
 	m = send(m, goodRead(dashNow.Add(-3*time.Second), []fleet.TaskSnapshot{
-		row("t-work", "working", "implementing", "primary", ""),
+		work,
 		row("t-human", "blocked", "needs a decision", "primary", ""),
 		row("t-cap", "working", "in captain home", "captain:alpha", "/h/captains/alpha"),
 		row("t-cap2", "queued", "waiting for a slot", "captain:alpha", "/h/captains/alpha"),
@@ -1028,6 +1030,32 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		assertNoRaw(t, "result", f)
 		assertShown(t, "result", f, `n\x00`, `"/bin/mu\x00" "a\u202e"`, `er\x00`, `o\x1b[8m`, `line\u202e`)
 	})
+}
+
+// AGE and SINCE are the time to now in its largest whole unit, and "-" for a
+// time the snapshot does not know.
+func TestDashboardAge(t *testing.T) {
+	for _, tc := range []struct {
+		ago  time.Duration
+		want string
+	}{
+		{-time.Second, "0s"},
+		{45 * time.Second, "45s"},
+		{59*time.Second + 999*time.Millisecond, "59s"},
+		{time.Minute, "1m"},
+		{12*time.Minute + 59*time.Second, "12m"},
+		{time.Hour, "1h"},
+		{23*time.Hour + 59*time.Minute, "23h"},
+		{24 * time.Hour, "1d"},
+		{50 * time.Hour, "2d"},
+	} {
+		if got := dashAge(dashNow, dashNow.Add(-tc.ago).UnixNano()); got != tc.want {
+			t.Errorf("dashAge(%v ago) = %q, want %q", tc.ago, got, tc.want)
+		}
+	}
+	if got := dashAge(dashNow, 0); got != "-" {
+		t.Errorf("dashAge(unknown) = %q, want -", got)
+	}
 }
 
 // A row whose seat health the snapshot could not determine reads "unknown"

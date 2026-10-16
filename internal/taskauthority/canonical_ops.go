@@ -102,7 +102,7 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	}
 	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
-	items, err := taskItems(req.TaskID.Value(), doc, rec)
+	items, err := c.taskItems(req.TaskID.Value(), nil, doc, rec)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -712,11 +712,11 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	// GetGeneration can reread its historical evidence (retirement/transfer)
 	// after reopen.
 	histDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: historical}
-	histData, err := encodeTaskDoc(histDoc)
+	histData, err := c.encodeTaskDoc(&cur, histDoc)
 	if err != nil {
 		return Outcome{}, err
 	}
-	docData, err := encodeTaskDoc(newDoc)
+	docData, err := c.encodeTaskDoc(&cur, newDoc)
 	if err != nil {
 		return Outcome{}, err
 	}
