@@ -14,7 +14,8 @@
 //	nth        1-based occurrence of this exact predicate in this owner
 //	predicate  the `if` condition, `!(<condition>)` for a refusing `else` block,
 //	           or `default` for a refusing switch default
-//	body       source range of the refusal body, `start-end` as `line.col`
+//	body       source range of the refusal body, `start-end` as `line.col`; an
+//	           `else` body starts at the end of its `else` keyword
 //	entries    body-start and first-statement coordinates, comma-separated
 //
 // The first four columns are the identity of a site and are what the baseline
@@ -318,10 +319,15 @@ func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockS
 				return true
 			}
 			cond := exprText(src, fset, stmt.Cond)
-			appendIfSite(rows, stmt.Body, owner, file, cond, fset)
+			appendIfSite(rows, stmt.Body, stmt.Body.Lbrace, owner, file, cond, fset)
 			// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: guardsites registers refusing else-blocks)
 			if elseBody, ok := stmt.Else.(*ast.BlockStmt); ok {
-				appendIfSite(rows, elseBody, owner, file, "!("+cond+")", fset)
+				// Go 1.26 cover opens an else counter at the end of the `else`
+				// keyword, not at the brace, so the body range starts there.
+				tf := fset.File(elseBody.Lbrace)
+				gap := src[tf.Offset(stmt.Body.End()):tf.Offset(elseBody.Lbrace)]
+				entry := stmt.Body.End() + token.Pos(bytes.LastIndex(gap, []byte("else"))+len("else"))
+				appendIfSite(rows, elseBody, entry, owner, file, "!("+cond+")", fset)
 			}
 		case *ast.SwitchStmt:
 			if switchSelfOriginating(r, abs, fset, stmt) {
@@ -336,7 +342,7 @@ func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockS
 	})
 }
 
-func appendIfSite(rows *[]site, body *ast.BlockStmt, owner, file, predicate string, fset *token.FileSet) {
+func appendIfSite(rows *[]site, body *ast.BlockStmt, entry token.Pos, owner, file, predicate string, fset *token.FileSet) {
 	if !isLegacyRefusal(body) {
 		return
 	}
@@ -345,8 +351,8 @@ func appendIfSite(rows *[]site, body *ast.BlockStmt, owner, file, predicate stri
 		File:      file,
 		Func:      owner,
 		Predicate: predicate,
-		Body:      sourceRange(fset, body),
-		Entries:   entryPoints(fset, body),
+		Body:      sourceRange(fset, entry, body),
+		Entries:   entryPoints(fset, entry, body),
 		line:      pos.Line,
 		col:       pos.Column,
 	})
@@ -400,14 +406,14 @@ func funcName(fn *ast.FuncDecl) string {
 	return fn.Name.Name
 }
 
-func sourceRange(fset *token.FileSet, body *ast.BlockStmt) string {
-	start := fset.Position(body.Lbrace)
+func sourceRange(fset *token.FileSet, entry token.Pos, body *ast.BlockStmt) string {
+	start := fset.Position(entry)
 	end := fset.Position(body.End())
 	return fmt.Sprintf("%d.%d-%d.%d", start.Line, start.Column, end.Line, end.Column)
 }
 
-func entryPoints(fset *token.FileSet, body *ast.BlockStmt) string {
-	brace := fset.Position(body.Lbrace)
+func entryPoints(fset *token.FileSet, entry token.Pos, body *ast.BlockStmt) string {
+	brace := fset.Position(entry)
 	first := fset.Position(body.List[0].Pos())
 	return fmt.Sprintf("%d.%d,%d.%d", brace.Line, brace.Column, first.Line, first.Column)
 }
