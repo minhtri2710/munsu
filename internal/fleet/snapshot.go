@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -51,6 +52,10 @@ type TaskSnapshot struct {
 	// launch submission and the canonical phase change. Display only.
 	LaunchedAt     int64 `json:"-"`
 	PhaseChangedAt int64 `json:"-"`
+	// ContextUsed and ContextWindow are a live seat's context tokens and its
+	// model's window (harness.ContextUsage), 0 when unknown. Display only.
+	ContextUsed   int `json:"-"`
+	ContextWindow int `json:"-"`
 }
 
 // CurrentStateInfo carries the authoritative current state for a task. The
@@ -310,6 +315,9 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			ts.PaneAlive = false
 			ts.PaneAliveUnknown = true
 		}
+		if ts.PaneAlive && agg.LaunchEvidence != nil && ts.Worktree != "" {
+			ts.ContextUsed, ts.ContextWindow = seatContextUsage(taskHome, id, ts.Harness, agg.LaunchEvidence.Seat.Fence.Applied, ts.Worktree)
+		}
 
 		// LastStatus is a diagnostic display line (never state truth).
 		if statusPath, err := mhome.StatusFilePath(taskHome, id); err == nil {
@@ -347,6 +355,30 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 	}
 
 	return tasks, nil
+}
+
+// seatContextUsage reads a seat's context use from the dir its harness writes
+// sessions to: pi's per-task agent dir, a fenced claude seat's config dir, or
+// the Human's claude config dir an unfenced claude seat runs with.
+func seatContextUsage(taskHome, id, harnessName string, fenced bool, cwd string) (used, window int) {
+	var dir string
+	var err error
+	switch {
+	case harnessName == harness.Pi:
+		dir, err = piAgentDirPath(taskHome, id)
+	case harnessName == harness.Claude && fenced:
+		dir, err = claudeConfigDirPath(taskHome, id)
+	case harnessName == harness.Claude:
+		var c harness.ClaudeConfig
+		c, err = harness.HumanClaudeConfig(mhome.StateDir(taskHome))
+		dir = c.Dir
+	default:
+		return 0, 0
+	}
+	if err != nil {
+		return 0, 0
+	}
+	return harness.ContextUsage(harnessName, dir, cwd)
 }
 
 // CaptainStatus returns endpoint/meta truth for a captain.
