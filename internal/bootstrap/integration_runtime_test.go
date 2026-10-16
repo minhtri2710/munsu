@@ -431,10 +431,13 @@ await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
 
 // Try mismatched key
 const resolveCountBeforeMismatch = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
-await cmdHandler("resolved [key=wrong-key]: Some summary", cmdCtx);
+await cmdHandler("resolved: Some summary [key=wrong-key]", cmdCtx);
 const resolveCountAfterMismatch = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (resolveCountAfterMismatch !== resolveCountBeforeMismatch) throw new Error("mismatched key must not ACK the pending wake");
-await cmdHandler("resolved [key=test-wake]: Clear before empty-key case", cmdCtx);
+// Only the trailing marker is a key: a marker inside the summary is summary text.
+await cmdHandler("resolved: Clear the [key=wrong-key] note before empty-key case", cmdCtx);
+const resolveCountAfterInlineMarker = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
+if (resolveCountAfterInlineMarker !== resolveCountAfterMismatch + 1) throw new Error("an inline [key=...] in the summary must not be read as the key");
 
 // An empty key is valid and must remain the exact resolve identity, not fall back to the event ID.
 mock.wakeKey = "";
@@ -453,7 +456,7 @@ if (!emptyKeyAck || emptyKeyAck.args[emptyKeyAck.args.indexOf("--event-id") + 1]
 mock.userMessages = [];
 await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
 const emptyKeyCommandAckBefore = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
-await cmdHandler("resolved [key=]: Clear empty-key wake", cmdCtx);
+await cmdHandler("resolved: Clear empty-key wake [key=]", cmdCtx);
 const emptyKeyCommandAckAfter = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (emptyKeyCommandAckAfter !== emptyKeyCommandAckBefore + 1) throw new Error("empty-key slash resolution should ACK exactly once");
 
@@ -491,7 +494,7 @@ for (const row of modeRows) {
   await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
   const claimed = claimCount() - claimsBefore;
   if (claimed !== (row.claims ? 1 : 0)) throw new Error("wake-delivery-mode " + row.name + ": claims=" + claimed + ", want " + (row.claims ? 1 : 0));
-  if (row.claims) await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
+  if (row.claims) await cmdHandler("resolved: clear the claimed wake [key=test-wake]", cmdCtx);
 }
 
 // --- Test 10: a soldier seat runs no session-start and claims no wakes ---
@@ -509,7 +512,7 @@ for (const row of roleRows) {
   await mock.fire(row.event, { reason: "startup" }, { ...mockCtx, sessionManager: { getEntries: () => [] }, isIdle: () => true });
   const ran = execCount(row.cmd) - before;
   if (ran !== (row.runs ? 1 : 0)) throw new Error(row.role + " " + row.event + ": " + row.cmd.join(" ") + " ran " + ran + " times, want " + (row.runs ? 1 : 0));
-  if (row.runs && row.event === "agent_settled") await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
+  if (row.runs && row.event === "agent_settled") await cmdHandler("resolved: clear the claimed wake [key=test-wake]", cmdCtx);
 }
 delete process.env.MUNSU_ROLE;
 

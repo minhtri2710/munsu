@@ -246,10 +246,10 @@ export default function (pi: ExtensionAPI) {
 
   async function resolvePendingWake(text: string, ctx: any): Promise<boolean> {
     if (!pendingWake || !text) return false;
-    const match = text.match(/(?:^|\n)\s*\/munsu:wake\s+resolved\s+\[key=([^\]]*)\]\s*:\s*(\S[^\n]*)/);
-    if (!match || match[1] !== pendingWake.key || !match[2].trim()) return false;
+    const match = text.match(/(?:^|\n)\s*\/munsu:wake\s+resolved:\s*(\S[^\n]*?)\s+\[key=([^\]\n]*)\][ \t]*(?:\n|$)/);
+    if (!match || match[2] !== pendingWake.key || !match[1].trim()) return false;
     if (pendingWake.eventIds.length !== 1) return false;
-    const ackArgs = ["wake", "resolve", "--claim-id", pendingWake.leaseId, "--event-id", pendingWake.eventIds[0], "--summary", match[2].trim(), "--output", "json"];
+    const ackArgs = ["wake", "resolve", "--claim-id", pendingWake.leaseId, "--event-id", pendingWake.eventIds[0], "--summary", match[1].trim(), "--output", "json"];
     const ackResult = await pi.exec(MUNSU_BIN, ackArgs);
     if (ackResult.code !== 0) return false;
     const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.resolve");
@@ -261,7 +261,7 @@ export default function (pi: ExtensionAPI) {
       leaseExpiry: 0,
       deliveryState: "acknowledged",
     });
-    ctx.ui.notify("Wake " + pendingWake.key + " resolved: " + match[2].trim(), "info");
+    ctx.ui.notify("Wake " + pendingWake.key + " resolved: " + match[1].trim(), "info");
     pendingWake = null;
     return true;
   }
@@ -286,7 +286,7 @@ export default function (pi: ExtensionAPI) {
       if (params.key !== pendingWake.key || !params.summary.trim()) {
         return { content: [{ type: "text", text: "Wake key mismatch or empty summary." }], details: {}, isError: true };
       }
-      const marker = "/munsu:wake resolved [key=" + params.key + "]: " + params.summary.trim();
+      const marker = "/munsu:wake resolved: " + params.summary.trim() + " [key=" + params.key + "]";
       const resolved = await resolvePendingWake(marker, ctx);
       return {
         content: [{ type: "text", text: resolved ? "Wake acknowledged." : "Wake acknowledgment failed; lease preserved." }],
@@ -377,11 +377,11 @@ export default function (pi: ExtensionAPI) {
 
   // 5. /munsu:wake resolved command — lease-based ack with key syntax.
   pi.registerCommand("munsu:wake", {
-    description: "Manage munsu wakes from within Pi. Usage: /munsu:wake resolved [key=<key>]: <summary>",
+    description: "Manage munsu wakes from within Pi. Usage: /munsu:wake resolved: <summary> [key=<key>]",
     handler: async (args: string, ctx: any) => {
       const trimmed = args.trim();
-      if (!trimmed.startsWith("resolved")) {
-        ctx.ui.notify("Usage: /munsu:wake resolved [key=<key>]: <summary>", "warning");
+      if (!trimmed.startsWith("resolved:")) {
+        ctx.ui.notify("Usage: /munsu:wake resolved: <summary> [key=<key>]", "warning");
         return;
       }
       if (!pendingWake) {
@@ -389,8 +389,9 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // An omitted marker uses the pending key; a present marker must match it exactly.
-      const keyMatch = trimmed.match(/\[key=([^\]]*)\]/);
+      // An omitted trailing marker uses the pending key; a present one must match it exactly.
+      const body = trimmed.slice("resolved:".length);
+      const keyMatch = body.match(/\s\[key=([^\]]*)\]$/);
       const providedKey = keyMatch ? keyMatch[1] : pendingWake.key;
 
       // Verify key matches pending wake key.
@@ -399,17 +400,9 @@ export default function (pi: ExtensionAPI) {
         return; // Fail without ack.
       }
 
-      // Extract summary after "resolved" and the required key marker.
-      // Required format: "resolved [key=<key>]: <summary>"
-      // The colon separator is required.
-      let rest = trimmed.replace(/^resolved\s*/, "").replace(/\[key=[^\]]*\]\s*/, "").trim();
-      if (!rest.startsWith(":")) {
-        ctx.ui.notify("Syntax error: missing ':' after key. Usage: resolved [key=<key>]: <summary>", "warning");
-        return;
-      }
-      let summary = rest.slice(1).trim();
+      const summary = (keyMatch ? body.slice(0, keyMatch.index) : body).trim();
       if (!summary) {
-        ctx.ui.notify("Syntax error: non-empty summary required after ':'. Usage: resolved [key=<key>]: <summary>", "warning");
+        ctx.ui.notify("Syntax error: non-empty summary required after ':'. Usage: resolved: <summary> [key=<key>]", "warning");
         return;
       }
 
