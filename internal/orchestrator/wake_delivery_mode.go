@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -45,7 +46,7 @@ func defaultWakeDeliveryMode(homeDir string) WakeDeliveryMode {
 		return WakeDeliveryNative
 	}
 	meta, err := captainPane(homeDir)
-	if err != nil || meta["backend"] != "herdr" || meta["harness"] != wakeDispatchComposerAgent {
+	if err != nil || meta["backend"] != "herdr" || meta["harness"] != harness.Claude {
 		return WakeDeliveryNative
 	}
 	return WakeDeliveryHerdr

@@ -8,6 +8,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -15,9 +16,6 @@ import (
 // munsu:herdr: the MaterialWakeAgeThreshold, so a General still working on the
 // prompt is not re-prompted with the same Wake.
 const wakeDispatchLeaseSeconds = 300
-
-// wakeDispatchComposerAgent is the only agent whose composer the gate can read.
-const wakeDispatchComposerAgent = "claude"
 
 // DispatchWakeOutcome enumerates the typed outcomes from a Wake dispatch attempt.
 type DispatchWakeOutcome string
@@ -213,14 +211,17 @@ func dispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 	if req.Composer == nil {
 		return DispatchWakeResult{}, fmt.Errorf("composer port is nil")
 	}
-	if agent := req.Composer.Agent(req.Target.Handle); agent != wakeDispatchComposerAgent {
-		return DeferredResult("composer-harness", fmt.Sprintf("agent %q is not %s", agent, wakeDispatchComposerAgent)), nil
+	agent := req.Composer.Agent(req.Target.Handle)
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 2026-10-16: per-harness composer classifier once a live capture exists; agy and pi captured 2026-10-16)
+	composer := harness.Adapters[agent].Composer
+	if composer.Classify == nil {
+		return DeferredResult("composer-harness", fmt.Sprintf("agent %q has no composer classifier", agent)), nil
 	}
-	capture, err := req.Composer.Capture(req.Target.Handle, domain.ClaudeComposerRows)
+	capture, err := req.Composer.Capture(req.Target.Handle, composer.Rows)
 	if err != nil {
 		return DeferredResult("composer-capture-error", err.Error()), nil
 	}
-	switch domain.ClassifyClaudeComposer(capture) {
+	switch composer.Classify(capture) {
 	case domain.Empty:
 	case domain.Pending:
 		return DeferredResult("composer-pending", "composer holds input"), nil

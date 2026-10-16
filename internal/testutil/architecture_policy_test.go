@@ -23,7 +23,7 @@ type listedPackage struct {
 //	config        — configuration resolution authority: imports no internal package.
 //	home          — domain-neutral durable mechanics: imports domain only.
 //	backend       — terminal/worktree/repo/provider capabilities: imports home only.
-//	harness       — coding-agent runtime capabilities: imports config only.
+//	harness       — coding-agent runtime capabilities: imports config and domain only.
 //	fence         — OS sandbox for a launched seat's process tree: imports harness only.
 //	taskauthority — Task truth and invariant operations: imports domain and home only.
 //	orchestrator  — supervision policy and Uplink lifecycle: never imports fleet.
@@ -115,7 +115,7 @@ func TestPackageTopology(t *testing.T) {
 		case "backend":
 			onlyImports(t, path, "home")
 		case "harness":
-			onlyImports(t, path, "config")
+			onlyImports(t, path, "config", "domain")
 		case "fence":
 			onlyImports(t, path, "harness")
 		case "taskauthority":

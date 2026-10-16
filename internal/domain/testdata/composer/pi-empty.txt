@@ -1,0 +1,12 @@
+ ▀▀█  v1.2.0
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/ld/_87cbjv92b97mzw2z2g_z0dr0000gp/T/tmp.47ISwCNk5N
+0.0%/256k (auto) • xp                                                                                                                    gpt-6-luna • xhigh

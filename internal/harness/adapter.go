@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // ProcessNameMatcher describes how to match a process name for harness detection.
@@ -41,6 +43,17 @@ type SoldierLaunchContract struct {
 	// the worktree.
 	WorktreeFiles []string
 }
+
+// ComposerReader is how the wake push gate reads a harness's input box: a
+// capture of the bottom Rows pane rows, judged by Classify.
+type ComposerReader struct {
+	Rows     int
+	Classify func(capture string) domain.Verdict
+}
+
+// composerCaptureRows is the row count of the live captures the composer
+// classifiers are tested on.
+const composerCaptureRows = 12
 
 // Adapter describes a verified agent harness with detection, launch,
 // supervision facts, and state artifact cleanup. Each adapter is populated
@@ -90,6 +103,10 @@ type Adapter struct {
 	// that this harness creates in the munsu state directory.
 	// These are cleaned up during teardown alongside munsu-native artifacts.
 	StateArtifacts []string
+
+	// Composer is set only for a harness whose composer layout a live capture
+	// backs; wake push to any other harness defers.
+	Composer ComposerReader
 }
 
 // Adapters is the registry and the authoritative source of harness metadata.
@@ -127,6 +144,7 @@ var Adapters = map[string]Adapter{
 		},
 		QuestionDeny:   []string{"--disallowedTools", "AskUserQuestion"},
 		StateArtifacts: []string{ClaudeConfigDirSuffix},
+		Composer:       ComposerReader{Rows: composerCaptureRows, Classify: domain.ClassifyClaudeComposer},
 	},
 	Codex: {
 		Name:       Codex,
@@ -178,6 +196,7 @@ var Adapters = map[string]Adapter{
 		// rpiv-ask-user-question extension.
 		QuestionDeny:   []string{"--exclude-tools", "ask_user_question"},
 		StateArtifacts: []string{"pi-ext.ts", PiAgentDirSuffix},
+		Composer:       ComposerReader{Rows: composerCaptureRows, Classify: domain.ClassifyPiComposer},
 	},
 	Grok: {
 		Name:       Grok,
@@ -200,6 +219,7 @@ var Adapters = map[string]Adapter{
 		ReadyPatterns:   []string{"esc to cancel", "Ready for your prompt", "What would you like"},
 		TrustPatterns:   []string{"Do you trust", "Yes, I trust this folder"},
 		FailurePatterns: []string{"Failed to authenticate"},
+		Composer:        ComposerReader{Rows: composerCaptureRows, Classify: domain.ClassifyAgyComposer},
 	},
 }
 

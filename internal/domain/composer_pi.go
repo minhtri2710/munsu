@@ -1,0 +1,43 @@
+package domain
+
+import (
+	"regexp"
+	"strings"
+)
+
+// piFooterRows bounds the rows pi shows below the lower rule: the captures
+// show at most 3 (cwd, stats, one extension status row), plus one row for a
+// second extension status row.
+const piFooterRows = 4
+
+// piStats matches pi 1.2.0's stats row: the usage tokens its footer can print
+// (↑input ↓output Rcache-read Wcache-write CHcache-hit% $cost), the context
+// stat with the window, optional " (auto)" and " • xp", then the end of the
+// row or at least two spaces of padding before the right side, e.g.
+// "↑9.2k ↓5 3.6%/256k (auto) • xp      gpt-6-luna • xhigh" or "?/0".
+var piStats = regexp.MustCompile(`^(?:(?:[↑↓RW]\d+(?:\.\d)?[kM]?|CH\d+\.\d%|\$\d+\.\d{3}(?: \(sub\))?) )*(?:\d+(\.\d+)?%|\?)/\d+(?:\.\d)?[kM]?(?: \(auto\))?(?: • xp)?(?:$| {2,}\S)`)
+
+// ClassifyPiComposer judges a capture of the bottom rows of a pi pane. Empty
+// means a blank row, a rule line, one blank row (spaces and NBSP ignored), a
+// rule line of the same width, then 2 to piFooterRows footer rows: the cwd (an
+// absolute or ~ path), the stats row, and extension status rows. Any other
+// content between such rules is Pending; every other capture is Unknown.
+func ClassifyPiComposer(capture string) Verdict {
+	box, ok := findComposerBox(capture, piFooterRows)
+	switch {
+	case !ok, !box.spacedAbove, !box.sameWidth(), !isPiFooter(box.footer):
+		return Unknown
+	case len(box.between) == 1 && trimComposerSpace(box.between[0]) == "":
+		return Empty
+	default:
+		return Pending
+	}
+}
+
+func isPiFooter(rows []string) bool {
+	if len(rows) < 2 {
+		return false
+	}
+	cwd, stats := trimComposerSpace(rows[0]), trimComposerSpace(rows[1])
+	return (strings.HasPrefix(cwd, "/") || strings.HasPrefix(cwd, "~")) && piStats.MatchString(stats)
+}
