@@ -283,12 +283,22 @@ func reclaimExpiredLeasesLocked(homeDir string, now func() time.Time) (int, erro
 			}
 			return reclaimed, err
 		}
-		// The header ends "<expires>\t<claimed>" whatever the consumer holds; a
-		// header whose expiry does not parse is expired, so its wakes requeue.
-		if fields := strings.Split(header, "\t"); len(fields) >= 4 {
-			if expiresAt, err := strconv.ParseInt(strings.TrimSpace(fields[len(fields)-2]), 10, 64); err == nil && reclaimNow < expiresAt {
-				continue
+		parts := strings.SplitN(header, "\t", 4)
+		if len(parts) < 3 {
+			if err := applyWakeMutationLocked(homeDir, wakeMutation{leaseAction: wakeLeaseActionRemove, leaseID: leaseID}); err != nil {
+				return reclaimed, err
 			}
+			continue
+		}
+		expiresAt, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+		if err != nil {
+			if err := applyWakeMutationLocked(homeDir, wakeMutation{leaseAction: wakeLeaseActionRemove, leaseID: leaseID}); err != nil {
+				return reclaimed, err
+			}
+			continue
+		}
+		if reclaimNow < expiresAt {
+			continue
 		}
 
 		var requeued []WakeRecord

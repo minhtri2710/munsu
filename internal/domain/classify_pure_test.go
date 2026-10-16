@@ -159,3 +159,20 @@ func TestGeneralRelevantIsOnlyWhatNeedsTheHuman(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitStatusKey(t *testing.T) {
+	for _, tc := range []struct {
+		line, rest, key string
+	}{
+		{"working: started", "working: started", ""},
+		{"needs-decision: pick approach [key=approach]", "needs-decision: pick approach", "approach"},
+		{ReportStatusLine("done", "all done", "task-1"), "done: all done", "task-1"},
+		{"needs-decision: see [key=fake] in docs", "needs-decision: see [key=fake] in docs", ""},
+		{"key only [key=]", "key only [key=]", ""},
+		{"bad key [key=a b]", "bad key [key=a b]", ""},
+	} {
+		if rest, key := SplitStatusKey(tc.line); rest != tc.rest || key != tc.key {
+			t.Errorf("SplitStatusKey(%q) = %q, %q, want %q, %q", tc.line, rest, key, tc.rest, tc.key)
+		}
+	}
+}

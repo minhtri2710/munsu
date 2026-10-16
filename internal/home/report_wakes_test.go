@@ -22,7 +22,7 @@ func TestReportMarkIsInvisibleToStatusParsers(t *testing.T) {
 	}{
 		{"report line", domain.ReportStatusLine("needs-decision", "pick a db", "db"), true, "needs-decision", "needs-decision: pick a db", "db"},
 		{"unmarked line", "needs-decision: pick a db [key=db]", false, "needs-decision", "needs-decision: pick a db", "db"},
-		{"mark with no key", "needs-decision: pick a db [report]", false, "needs-decision", "", ""},
+		{"mark with no key", "needs-decision: pick a db [report]", false, "needs-decision", "needs-decision: pick a db [report]", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := domain.IsReportLine(tc.line); got != tc.report {
@@ -31,11 +31,8 @@ func TestReportMarkIsInvisibleToStatusParsers(t *testing.T) {
 			if got := domain.LineVerb(tc.line); got != tc.verb {
 				t.Errorf("LineVerb(%q) = %q, want %q", tc.line, got, tc.verb)
 			}
-			if tc.key == "" {
-				return
-			}
-			if message, key := ParseStatusKey(tc.line); message != tc.message || key != tc.key {
-				t.Errorf("ParseStatusKey(%q) = %q, %q, want %q, %q", tc.line, message, key, tc.message, tc.key)
+			if message, key := domain.SplitStatusKey(tc.line); message != tc.message || key != tc.key {
+				t.Errorf("SplitStatusKey(%q) = %q, %q, want %q, %q", tc.line, message, key, tc.message, tc.key)
 			}
 		})
 	}

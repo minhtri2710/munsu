@@ -113,13 +113,16 @@ func LineVerb(line string) string {
 	return strings.TrimSpace(before)
 }
 
-// splitStatusKey splits the trailing " [key=<key>]" ReportStatusLine writes,
-// before any report mark, off line. A line without one returns key "".
-func splitStatusKey(line string) (rest, key string) {
+// SplitStatusKey splits the trailing " [key=<key>]" ReportStatusLine writes,
+// before any report mark, off line. A line without a valid trailing key
+// returns itself and key "".
+func SplitStatusKey(line string) (rest, key string) {
 	body := strings.TrimSuffix(line, reportMark)
 	if strings.HasSuffix(body, "]") {
 		if i := strings.LastIndex(body, " [key="); i >= 0 {
-			return body[:i], body[i+len(" [key=") : len(body)-1]
+			if key := body[i+len(" [key=") : len(body)-1]; isValidKey(key) {
+				return body[:i], key
+			}
 		}
 	}
 	return line, ""
@@ -127,7 +130,7 @@ func splitStatusKey(line string) (rest, key string) {
 
 // lineNote extracts the text after the first colon, without its key, trimmed.
 func lineNote(line string) string {
-	rest, _ := splitStatusKey(line)
+	rest, _ := SplitStatusKey(line)
 	_, note, found := strings.Cut(rest, ":")
 	if found {
 		return strings.TrimSpace(note)
@@ -137,7 +140,7 @@ func lineNote(line string) string {
 
 // decisionKey extracts the trailing [key=<slug>] from a status line, or "default".
 func decisionKey(line string) string {
-	if _, key := splitStatusKey(line); isValidKey(key) {
+	if _, key := SplitStatusKey(line); key != "" {
 		return key
 	}
 	return "default"

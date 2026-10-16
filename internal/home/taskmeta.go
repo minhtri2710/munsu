@@ -13,6 +13,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // StateDir returns the path to the state directory under the given homeDir.
@@ -376,33 +378,6 @@ func ReadRegularFile(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.
-// Returns the cleaned message and the key (empty if none).
-func ParseStatusKey(line string) (message, key string) {
-	// Format: state: message [key=<slug>]
-	// Or just [key=<slug>] at the end.
-	// Try with space prefix first: " [key="
-	startMarker := " [key="
-	idx := strings.LastIndex(line, startMarker)
-	if idx < 0 {
-		// Try without space: "[key=" at start
-		startMarker = "[key="
-		idx = strings.LastIndex(line, startMarker)
-	}
-	if idx >= 0 {
-		end := strings.Index(line[idx+len(startMarker):], "]")
-		if end >= 0 {
-			keyVal := line[idx+len(startMarker) : idx+len(startMarker)+end]
-			if keyVal != "" {
-				key = keyVal
-				message = strings.TrimSpace(line[:idx])
-				return
-			}
-		}
-	}
-	return line, ""
-}
-
 // MetaEntry represents a single task entry from state meta files.
 type MetaEntry struct {
 	ID         string
@@ -475,7 +450,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		lastStatus := ""
 		if statusLines, err := ReadStatus(homeDir, id); err == nil && len(statusLines) > 0 {
 			lastLine := statusLines[len(statusLines)-1]
-			msg, _ := ParseStatusKey(lastLine)
+			msg, _ := domain.SplitStatusKey(lastLine)
 			lastStatus = msg
 		}
 
