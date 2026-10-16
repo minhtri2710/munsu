@@ -13,7 +13,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -164,12 +163,7 @@ func deliveryGuardHome(t *testing.T, taskID string, forge taskauthority.Delivery
 func deliveryGuardShip(t *testing.T, taskID string) string {
 	t.Helper()
 	homeDir := t.TempDir()
-	writeTaskMeta(t, homeDir, taskID, "ship")
-	// pr-merge resolves the task home through the .meta projection, which the
-	// canonical record does not write.
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{"id": taskID, "kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	initHomeWithTask(t, homeDir, taskID, "ship")
 
 	auth := cliCanonicalForHome(t, homeDir)
 	tid, err := domain.NewTaskID(taskID)
@@ -231,11 +225,7 @@ func deliveryGuardShip(t *testing.T, taskID string) string {
 	} else if agg3.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("phase after binding = %s, want working", agg3.Phase)
 	}
-	// Another test in this package can leave homeOverride set, and it wins
-	// over MUNSU_HOME; pin it explicitly rather than depending on run order.
-	previous := homeOverride
-	homeOverride = homeDir
-	t.Cleanup(func() { homeOverride = previous })
+	t.Setenv("MUNSU_HOME", homeDir)
 	return homeDir
 }
 
@@ -442,9 +432,6 @@ func TestPRMergeReportsClosedWithoutRetiring(t *testing.T) {
 	}
 	if agg.Phase != taskauthority.PhaseWorking || agg.Worktree == nil || agg.Endpoint == nil {
 		t.Fatalf("task phase=%s worktree=%v endpoint=%v, want working with bindings intact", agg.Phase, agg.Worktree, agg.Endpoint)
-	}
-	if _, err := home.ReadMeta(homeDir, taskID); err != nil {
-		t.Fatalf("task meta after refused merge-and-retire: %v, want kept", err)
 	}
 }
 

@@ -158,7 +158,7 @@ func TestDispatchConfig_JSONRoundTrip(t *testing.T) {
 		DefaultModel:   "flash",
 		DefaultEffort:  "low",
 		Profiles: []harness.DispatchProfile{
-			{Name: "hard", When: "deep architectural redesign", Harness: "pi", Model: "glm", Effort: "high"},
+			{Name: "hard", Match: []string{"deep architectural redesign"}, Harness: "pi", Model: "glm", Effort: "high"},
 		},
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -179,8 +179,8 @@ func TestDispatchConfig_JSONRoundTrip(t *testing.T) {
 	if persisted.DefaultHarness != "pi" || persisted.DefaultModel != "flash" || persisted.DefaultEffort != "low" {
 		t.Fatalf("persisted config = %+v", persisted)
 	}
-	sel := harness.ResolveDispatchSelection(&persisted, "please do deep architectural redesign")
-	if sel.Model != "glm" || sel.Effort != "high" {
-		t.Fatalf("selection = %+v", sel)
+	sel, err := harness.ResolveDispatchSelection(&persisted, "please do deep architectural redesign")
+	if err != nil || sel.Model != "glm" || sel.Effort != "high" {
+		t.Fatalf("selection = %+v, %v", sel, err)
 	}
 }

@@ -689,11 +689,11 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 
 	// Probe records every invocation with its meta (exact binding evidence).
 	var probeMu sync.Mutex
-	var probeCalls []map[string]string
-	probe := countingProbe{fn: func(_ string, meta map[string]string) (bool, error) {
+	var probeCalls []taskauthority.EndpointBinding
+	probe := countingProbe{fn: func(_ string, ep taskauthority.EndpointBinding) (bool, error) {
 		probeMu.Lock()
 		defer probeMu.Unlock()
-		probeCalls = append(probeCalls, meta)
+		probeCalls = append(probeCalls, ep)
 		return true, nil
 	}}
 
@@ -726,8 +726,8 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 		t.Fatal("event did not trigger a probe cycle within 3s")
 	}
 	foundExact := false
-	for _, meta := range calls {
-		if meta["window"] == "w:p" && meta["backend"] == "herdr" {
+	for _, ep := range calls {
+		if ep.Handle == "w:p" && ep.Backend == "herdr" {
 			foundExact = true
 		}
 	}
@@ -872,7 +872,7 @@ func TestEventLane_RaceWatcherAndRecovery(t *testing.T) {
 		{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:q"}, Source: src},
 	}}
 
-	probe := countingProbe{fn: func(string, map[string]string) (bool, error) { return true, nil }}
+	probe := countingProbe{fn: func(string, taskauthority.EndpointBinding) (bool, error) { return true, nil }}
 	sender := raceCycleSender{}
 	hooks := raceTestHooks{}
 
@@ -982,18 +982,20 @@ func (r *raceEventSource) After(next, prev backend.EventCursor) bool {
 
 // countingProbe is a TaskEndpointProbe wrapper counting invocations.
 type countingProbe struct {
-	fn func(string, map[string]string) (bool, error)
+	fn func(string, taskauthority.EndpointBinding) (bool, error)
 }
 
-func (p countingProbe) Probe(homeDir string, meta map[string]string) (bool, error) {
-	return p.fn(homeDir, meta)
+func (p countingProbe) Probe(homeDir string, ep taskauthority.EndpointBinding, _ string) (bool, error) {
+	return p.fn(homeDir, ep)
 }
 
 // raceCycleSender implements BoundSender for the race lane.
 type raceCycleSender struct{}
 
-func (raceCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (raceCycleSender) Send(string, map[string]string, string) home.BoundSendResult {
+func (raceCycleSender) Alive(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return false, nil
+}
+func (raceCycleSender) Send(string, taskauthority.EndpointBinding, string) home.BoundSendResult {
 	return home.BoundSendResult{}
 }
 

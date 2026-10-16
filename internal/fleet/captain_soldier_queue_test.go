@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // --- Test helpers ---
@@ -26,8 +28,10 @@ type fakeAgentEndpoint struct {
 	promptCalls  int
 }
 
-func (f *fakeAgentEndpoint) Busy(string, map[string]string) (bool, error) { return f.busy, f.busyErr }
-func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) home.BoundSendResult {
+func (f *fakeAgentEndpoint) Busy(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return f.busy, f.busyErr
+}
+func (f *fakeAgentEndpoint) Send(_ string, _ taskauthority.EndpointBinding, payload string) home.BoundSendResult {
 	f.promptCalls++
 	f.lastText = payload
 	status := f.status
@@ -41,6 +45,21 @@ func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) 
 	return home.BoundSendResult{Status: status, Acknowledged: f.acknowledged}
 }
 
+// seedBoundSoldierTask creates a ship task in homeDir, initializing the home
+// when it is not yet one, and binds it to ep.
+func seedBoundSoldierTask(t *testing.T, homeDir, taskID string, ep taskauthority.EndpointBinding) *taskauthority.Canonical {
+	t.Helper()
+	if _, err := home.Open(homeDir); errors.Is(err, home.ErrNotInitialized) {
+		if _, err := home.Init(homeDir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := canonicalAtHome(t, homeDir)
+	canonicalCreateTask(t, c, taskID, taskauthority.KindShip, "")
+	bindSoldier(t, c, taskID, ep)
+	return c
+}
+
 // setupSoldierTestHomes creates a captain home with a soldier task meta.
 // Soldiers share the captain's home; their identity is the task ID.
 func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldierTaskID, senderIdentity string) {
@@ -50,22 +69,13 @@ func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldi
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatalf("mkdir captain: %v", err)
 	}
+	// ReceiverIDForTask folds ".." to "_", so this ID shares its receiver ID
+	// with task_test-1.
+	soldierTaskID = "task..test-1"
+	seedBoundSoldierTask(t, captainHome, soldierTaskID, taskauthority.EndpointBinding{Backend: "test", Handle: "test-window"})
 	senderIdentity = "captain-main"
 	if err := home.SeedCaptainProvenance(captainHome, senderIdentity); err != nil {
 		t.Fatalf("SeedCaptainProvenance captain: %v", err)
-	}
-
-	soldierTaskID = "task:test-1"
-
-	// Write soldier task meta in the shared captain home.
-	meta := map[string]string{
-		"window":  "test-window",
-		"backend": "test",
-		"kind":    "ship",
-		"harness": "pi",
-	}
-	if err := home.WriteMeta(captainHome, soldierTaskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
 	}
 
 	return captainHome, soldierTaskID, senderIdentity
@@ -224,6 +234,66 @@ func TestSendToSoldier_DeadEndpoint_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestSendToSoldierRefusesATaskWithNoBoundEndpoint: a soldier task whose
+// current generation binds no endpoint is refused before any envelope is
+// written; a bound one is sent to.
+func TestSendToSoldierRefusesATaskWithNoBoundEndpoint(t *testing.T) {
+	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
+	canonicalCreateTask(t, canonicalAtHome(t, captainHome), "queued-soldier", taskauthority.KindShip, "")
+	for _, tc := range []struct {
+		task, want string
+	}{
+		{"queued-soldier", "soldier queued-soldier has no window endpoint"},
+		{soldierTaskID, ""},
+	} {
+		t.Run(tc.task, func(t *testing.T) {
+			result := SendToSoldier(captainHome, tc.task, senderIdentity, "do: work", &fakeAgentEndpoint{acknowledged: true})
+			if tc.want != "" {
+				if result.Err == nil || result.Err.Error() != tc.want || result.MessageID != "" {
+					t.Fatalf("SendToSoldier(%s) = %+v, want refusal %q before any envelope", tc.task, result, tc.want)
+				}
+				return
+			}
+			if result.Err != nil || !result.Sent {
+				t.Fatalf("SendToSoldier(%s) = %+v, want sent", tc.task, result)
+			}
+		})
+	}
+}
+
+// TestSoldierSeat pins the check a soldier receiver and a soldier sender's
+// provenance rest on: only a task whose current generation holds an endpoint
+// and is not retired is a hosted soldier.
+func TestSoldierSeat(t *testing.T) {
+	homeDir := t.TempDir()
+	c := seedBoundSoldierTask(t, homeDir, "bound", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
+	canonicalCreateTask(t, c, "queued", taskauthority.KindShip, "")
+	seedBoundSoldierTask(t, homeDir, "retired", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@2"})
+	retireSoldier(t, c, "retired")
+	for _, tc := range []struct {
+		task, want string
+	}{
+		{"queued", "home " + homeDir + ` hosts no live soldier seat for task "queued"`},
+		{"retired", "home " + homeDir + ` hosts no live soldier seat for task "retired"`},
+		{"unknown", "home " + homeDir + ` hosts no soldier task "unknown"`},
+		{"captain:c1", "home " + homeDir + ` hosts no soldier task "captain:c1"`},
+		{"bound", ""},
+	} {
+		t.Run(tc.task, func(t *testing.T) {
+			err := SoldierSeat(homeDir)(tc.task)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("SoldierSeat(%s) = %v, want hosted", tc.task, err)
+				}
+				return
+			}
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+				t.Fatalf("SoldierSeat(%s) = %v, want %q", tc.task, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestFlushPendingSoldierCommands_FlushesNotificationRef verifies that flush
 // sends a NotificationRef (not raw line) for the oldest pending command.
 func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
@@ -292,11 +362,9 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 
 func TestFlushPendingSoldierCommands_IgnoresCollidingTaskID(t *testing.T) {
 	captainHome, _, senderIdentity := setupSoldierTestHomes(t, "idle")
-	soldierTaskID := "task:a"
+	soldierTaskID := "task..a"
 	collidingTaskID := "task_a"
-	if err := home.WriteMeta(captainHome, soldierTaskID, map[string]string{"window": "test-window"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
+	seedBoundSoldierTask(t, captainHome, soldierTaskID, taskauthority.EndpointBinding{Backend: "test", Handle: "test-window"})
 	env := &home.Envelope{
 		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
@@ -772,9 +840,7 @@ func TestConsumeReady(t *testing.T) {
 			target := soldierTaskID
 			if tc.otherTask {
 				target = "task_test-1"
-				if err := home.WriteMeta(captainHome, target, map[string]string{"window": "w2"}); err != nil {
-					t.Fatal(err)
-				}
+				seedBoundSoldierTask(t, captainHome, target, taskauthority.EndpointBinding{Backend: "test", Handle: "w2"})
 			}
 			if r := SendToSoldier(captainHome, target, senderIdentity, "do: queued", be); r.Err != nil || !r.Queued {
 				t.Fatalf("expected queued: err=%v queued=%v", r.Err, r.Queued)
@@ -836,7 +902,7 @@ func TestSoldierAckHasAProductionWriter(t *testing.T) {
 
 			// The soldier's own home is the dispatching home; its receiver identity is
 			// its task ID.
-			recv, err := home.NewSoldierReceiver(captainHome, soldierTaskID)
+			recv, err := home.NewSoldierReceiver(captainHome, soldierTaskID, SoldierSeat(captainHome))
 			if err != nil {
 				t.Fatalf("NewSoldierReceiver: %v", err)
 			}

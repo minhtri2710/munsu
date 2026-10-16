@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -18,30 +17,23 @@ import (
 // reusing the ordinary retirement test backend's exact status and recording.
 type partialLaunchTeardown struct {
 	*recordingTeardown
-	probedMeta   map[string]string
-	disposedMeta map[string]string
+	probed   *taskauthority.EndpointBinding
+	disposed *taskauthority.EndpointBinding
 }
 
-func (t *partialLaunchTeardown) Probe(homeDir string, meta map[string]string) (RetirementEndpointStatus, error) {
-	t.probedMeta = cloneRetirementMeta(meta)
-	return t.recordingTeardown.Probe(homeDir, meta)
+func (t *partialLaunchTeardown) Probe(homeDir string, ep taskauthority.EndpointBinding, harness string) (RetirementEndpointStatus, error) {
+	t.probed = &ep
+	return t.recordingTeardown.Probe(homeDir, ep, harness)
 }
 
-func (t *partialLaunchTeardown) Dispose(homeDir string, meta map[string]string, req DisposeRequest) error {
-	t.disposedMeta = cloneRetirementMeta(meta)
-	return t.recordingTeardown.Dispose(homeDir, meta, req)
-}
-
-func cloneRetirementMeta(meta map[string]string) map[string]string {
-	cloned := make(map[string]string, len(meta))
-	for key, value := range meta {
-		cloned[key] = value
-	}
-	return cloned
+func (t *partialLaunchTeardown) Dispose(req DisposeRequest) error {
+	ep := req.Endpoint
+	t.disposed = &ep
+	return t.recordingTeardown.Dispose(req)
 }
 
 // TestRetirePartialLaunchUsesCanonicalResourceEvidence proves an unbound
-// launch, which wrote no .meta, retires from canonical path, endpoint, and
+// launch retires from canonical path, endpoint, and
 // manifest evidence.
 func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	f := newLaunchFixture(t, "partial-launch-retirement")
@@ -53,9 +45,6 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	if agg.Phase != taskauthority.PhaseQueued || agg.Worktree == nil || agg.Launch == nil ||
 		agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil || agg.Endpoint != nil {
 		t.Fatalf("fixture is not an unbound partial launch: %+v", agg)
-	}
-	if _, err := home.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("partial launch meta read = %v, want none written", err)
 	}
 	wtPath := agg.Worktree.Path
 	teardown := &partialLaunchTeardown{recordingTeardown: &recordingTeardown{alive: true}}
@@ -69,20 +58,12 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	if !errors.As(err, &pending) || !strings.Contains(err.Error(), "pre-return artifact verification failed") {
 		t.Fatalf("RetireTask error = %v, want pending cleanup at the pre-return artifact gate", err)
 	}
-	for key, want := range map[string]string{
-		"backend":       agg.AcquiredEndpoint.Backend,
-		"window":        agg.AcquiredEndpoint.Handle,
-		"session_owner": agg.AcquiredEndpoint.SessionOwner,
-		"workspace_id":  agg.AcquiredEndpoint.WorkspaceID,
-		"tab_id":        agg.AcquiredEndpoint.TabID,
-	} {
-		if teardown.probedMeta[key] != want || teardown.disposedMeta[key] != want {
-			t.Errorf("backend metadata %s: probed=%q disposed=%q, want canonical %q", key, teardown.probedMeta[key], teardown.disposedMeta[key], want)
-		}
+	want := acquiredBinding(*agg.AcquiredEndpoint)
+	if teardown.probed == nil || *teardown.probed != want || teardown.disposed == nil || *teardown.disposed != want {
+		t.Errorf("probed=%+v disposed=%+v, want the canonical acquired endpoint %+v", teardown.probed, teardown.disposed, want)
 	}
-	if len(teardown.disposed) != 1 || teardown.disposed[0].Handle != agg.AcquiredEndpoint.Handle ||
-		teardown.disposed[0].Backend != agg.AcquiredEndpoint.Backend {
-		t.Fatalf("disposed=%+v, want only the exact acquired endpoint", teardown.disposed)
+	if len(teardown.recordingTeardown.disposed) != 1 {
+		t.Fatalf("disposed=%+v, want only the exact acquired endpoint", teardown.recordingTeardown.disposed)
 	}
 	if len(teardown.returned) != 0 {
 		t.Fatalf("returned=%v, worktree must remain leased after a post-retirement artifact mutation", teardown.returned)
@@ -91,9 +72,6 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	after := f.aggregate()
 	if after.Phase != taskauthority.PhaseRetired || after.CleanupClaim == nil || after.CleanupClaim.Status != taskauthority.CleanupActive {
 		t.Fatalf("aggregate after incomplete cleanup = phase %q claim %+v, want retired with active claim", after.Phase, after.CleanupClaim)
-	}
-	if meta, err := home.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("retirement wrote a .meta for the unbound launch: %v, %v", meta, err)
 	}
 }
 
@@ -130,17 +108,6 @@ func TestRetireCompletedLaunchStillRequiresLandedBranchProof(t *testing.T) {
 	f := newLaunchFixture(t, "completed-launch-retirement")
 	if err := runLaunchPhases(f, ""); err != nil {
 		t.Fatalf("complete launch: %v", err)
-	}
-	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"project":     "test-proj",
-		"generation":  "1",
-		"state":       "working",
-		"repo":        f.repoPath,
-		"owner":       "general",
-		"description": "Ready",
-		"kind":        taskauthority.KindShip,
-	}); err != nil {
-		t.Fatal(err)
 	}
 
 	teardown := &recordingTeardown{alive: true}

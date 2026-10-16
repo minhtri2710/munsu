@@ -174,26 +174,6 @@ func AbortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	return abortRetirementCleanup(authority, homeDir, backend, taskID, claimGen)
 }
 
-// clearSessionMeta removes the backend session projection (window, backend
-// and the backend's endpoint identity keys) from a task's .meta once its endpoint is
-// proven absent, keeping every other key. A reopened generation then does not
-// read the dead session as a live one.
-func clearSessionMeta(homeDir, taskID string) error {
-	return home.UpdateMeta(homeDir, taskID, func(meta map[string]string) error {
-		removed := false
-		for _, k := range []string{"window", "backend", backend.MetaSessionOwner, backend.MetaWorkspaceID, backend.MetaTabID} {
-			if _, ok := meta[k]; ok {
-				delete(meta, k)
-				removed = true
-			}
-		}
-		if !removed {
-			return home.ErrMetaUnchanged
-		}
-		return nil
-	})
-}
-
 func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, backend BoundTeardown, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
@@ -203,27 +183,20 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 		return fmt.Errorf("cleanup claim for %s generation %s is not active", taskID, claimGen)
 	}
 	var endpointProof *exactEndpointProof
-	meta := map[string]string{}
+	var probed *taskauthority.EndpointBinding
 	if cur.Retirement != nil {
-		if cur.Retirement.Worktree != nil {
-			meta["worktree"] = cur.Retirement.Worktree.Path
-			if cur.Retirement.Worktree.LaunchManifest != nil {
-				meta["launch_manifest_sha256"] = cur.Retirement.Worktree.LaunchManifest.ManifestSHA256
-			}
-		}
+		probed = endpointOrAcquired(cur.Retirement.Endpoint, cur.Retirement.Acquired)
 		switch {
 		case cur.Retirement.Endpoint != nil:
 			ep := cur.Retirement.Endpoint
-			meta = retirementMetaForEvidence(meta, cur.Retirement)
 			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
 		case cur.Retirement.Acquired != nil:
 			ep := cur.Retirement.Acquired
-			meta = retirementMetaForEvidence(meta, cur.Retirement)
 			endpointProof = &exactEndpointProof{backend: ep.Backend, handle: ep.Handle, incarnation: ep.Incarnation, leaseID: ep.LeaseID, fenceToken: ep.FenceToken, generation: uint64(cur.Generation), revision: uint64(cur.Revision), acquired: true}
 		}
 	}
 	if endpointProof != nil {
-		status, err := backend.Probe(homeDir, meta)
+		status, err := backend.Probe(homeDir, *probed, launchHarness(cur))
 		if err != nil {
 			return fmt.Errorf("probing endpoint before aborting cleanup for %s: %w", taskID, err)
 		}
@@ -234,12 +207,6 @@ func abortRetirementCleanup(authority *taskauthority.Canonical, homeDir string, 
 	work := func() error {
 		if _, err := refreshDataDir(homeDir, taskID.Value()); err != nil {
 			return fmt.Errorf("refreshing data directory before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
-		}
-		if endpointProof == nil {
-			return nil
-		}
-		if err := clearSessionMeta(homeDir, taskID.Value()); err != nil {
-			return fmt.Errorf("clearing session keys from task meta before aborting cleanup for %s generation %s: %w", taskID, claimGen, err)
 		}
 		return nil
 	}
@@ -323,6 +290,11 @@ func retireTaskAuthoritatively(opts Options, authority *taskauthority.Canonical,
 				TerminalStatus:    cleanupStatusLabel(prior.claim),
 			}
 		}
+	}
+	// Only a generation that launched has a seat to retire.
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
+	if neverLaunched(agg) {
+		return taskauthority.Outcome{}, fmt.Errorf("task never launched, nothing to retire")
 	}
 	// Without --force, the retirement refuses while the task holds a delivery
 	// authorization nothing has answered. The decision is fenced by the
@@ -526,43 +498,22 @@ func resolveRetiredCleanupEvidence(authority *taskauthority.Canonical, taskID do
 // evidence preserves: releasing it would dispose/return a resource now owned
 // by the reopened generation. When the current generation differs, cleanup
 // may complete only evidence-pinned releases with no identity overlap.
-func retirementMetaForEvidence(meta map[string]string, ev *taskauthority.RetirementEvidence) map[string]string {
-	out := make(map[string]string, len(meta)+7)
-	for key, value := range meta {
-		out[key] = value
-	}
-	if ev == nil {
-		return out
-	}
-	if ev.Worktree != nil {
-		out["worktree"] = ev.Worktree.Path
-		if ev.Worktree.LaunchManifest != nil {
-			out["launch_manifest_sha256"] = ev.Worktree.LaunchManifest.ManifestSHA256
-		} else {
-			delete(out, "launch_manifest_sha256")
-		}
-	}
-	overlayEndpointMeta(out, ev.Endpoint, ev.Acquired)
-	return out
-}
-
-// overlayEndpointMeta writes the backend identity of the bound endpoint, else
-// of the acquired one, into meta.
-func overlayEndpointMeta(meta map[string]string, bound *taskauthority.EndpointBinding, acquired *taskauthority.AcquiredEndpoint) {
+// endpointOrAcquired is the bound endpoint, else the acquired one, or nil.
+func endpointOrAcquired(bound *taskauthority.EndpointBinding, acquired *taskauthority.AcquiredEndpoint) *taskauthority.EndpointBinding {
 	switch {
 	case bound != nil:
-		putEndpointMeta(meta, bound.Backend, bound.Handle, bound.SessionOwner, bound.WorkspaceID, bound.TabID)
+		ep := *bound
+		return &ep
 	case acquired != nil:
-		putEndpointMeta(meta, acquired.Backend, acquired.Handle, acquired.SessionOwner, acquired.WorkspaceID, acquired.TabID)
+		ep := acquiredBinding(*acquired)
+		return &ep
 	}
+	return nil
 }
 
-func putEndpointMeta(meta map[string]string, backendName, handle, sessionOwner, workspaceID, tabID string) {
-	meta["backend"] = backendName
-	meta["window"] = handle
-	meta[backend.MetaSessionOwner] = sessionOwner
-	meta[backend.MetaWorkspaceID] = workspaceID
-	meta[backend.MetaTabID] = tabID
+// acquiredBinding is the endpoint identity a launch acquired but never bound.
+func acquiredBinding(a taskauthority.AcquiredEndpoint) taskauthority.EndpointBinding {
+	return taskauthority.EndpointBinding{Backend: a.Backend, Handle: a.Handle, LeaseID: a.LeaseID, FenceToken: a.FenceToken, SessionOwner: a.SessionOwner, WorkspaceID: a.WorkspaceID, TabID: a.TabID, Incarnation: a.Incarnation}
 }
 
 func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthority.RetirementEvidence) error {
@@ -710,11 +661,6 @@ func sameRetiredAcquired(a, b *taskauthority.AcquiredEndpoint) bool {
 func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
-	meta, metaErr := home.ReadMeta(opts.HomeDir, opts.ID)
-	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, metaErr)
-	}
-
 	// Resolve the task identity and the safety-check generation up front: the
 	// scout check answers for the exact generation this invocation retires.
 	taskID, err := domain.NewTaskID(opts.ID)
@@ -731,24 +677,9 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: resolving task kind: %w", opts.ID, err)
 	}
-	// A launch that never bound wrote no meta and retires from canonical
-	// evidence alone; any other task without meta is refused.
-	if metaErr != nil {
-		if !launchedUnbound(current) {
-			return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, metaErr)
-		}
-		meta = map[string]string{}
-	}
 	kind := current.Definition.Kind
 	if kind == "" {
 		kind = taskauthority.KindShip // default
-	}
-
-	// A review owns no worktree; --force does not override this check.
-	if kind == taskauthority.KindReview {
-		if err := reviewSafetyCheck(opts, meta); err != nil {
-			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
-		}
 	}
 
 	partialLaunch := false
@@ -763,7 +694,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if evidenceErr != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, evidenceErr)
 		}
-		proofs, err := safetyCheck(opts, meta, kind, backend, authority, safetyGen, worktree, partialLaunch)
+		proofs, err := safetyCheck(opts, kind, backend, authority, safetyGen, worktree, partialLaunch)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
@@ -886,7 +817,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		return cleanupPending(fmt.Errorf("teardown %s: resolving retirement evidence: %w", opts.ID, err))
 	}
 	ev := evidence.evidence
-	meta = retirementMetaForEvidence(meta, ev)
+	harness := launchHarness(retired)
 	fullCleanup := evidence.currentIsRetired
 	if !fullCleanup {
 		result.Steps = append(result.Steps, fmt.Sprintf("resuming retirement of generation %s (current generation %s untouched)", committed.Generation, evidence.current.Generation))
@@ -901,7 +832,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(err)
 		}
 		ep := ev.Endpoint
-		status, err := backend.Probe(opts.HomeDir, meta)
+		status, err := backend.Probe(opts.HomeDir, *ep, harness)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
@@ -948,11 +879,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
 				}
-				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Endpoint: *ep, Home: opts.HomeDir, TaskID: opts.ID})
 				if err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
-				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
+				if err := backend.Dispose(request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", ep.Handle))
@@ -978,7 +909,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			return cleanupPending(err)
 		}
 		ae := ev.Acquired
-		status, err := backend.Probe(opts.HomeDir, meta)
+		status, err := backend.Probe(opts.HomeDir, acquiredBinding(*ae), harness)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying acquired endpoint: %w", opts.ID, err))
 		}
@@ -1014,11 +945,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: acquired endpoint dispose fence: %w", opts.ID, err))
 				}
-				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Backend: ae.Backend, Handle: ae.Handle, SessionOwner: ae.SessionOwner, WorkspaceID: ae.WorkspaceID, TabID: ae.TabID, Home: opts.HomeDir, TaskID: opts.ID})
+				request, err := withWorkspaceCloseGuard(opts.HomeDir, opts.ID, DisposeRequest{Endpoint: acquiredBinding(*ae), Home: opts.HomeDir, TaskID: opts.ID})
 				if err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: reading workspace references: %w", opts.ID, err))
 				}
-				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
+				if err := backend.Dispose(request); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: disposing acquired endpoint: %w", opts.ID, err))
 				}
 				result.Steps = append(result.Steps, fmt.Sprintf("acquired endpoint %s disposed", ae.Handle))
@@ -1201,18 +1132,7 @@ func finalizeCompletedProjectionCleanup(opts Options, homeID string, launch *tas
 		}
 		result.Steps = append(result.Steps, fmt.Sprintf("seat temp %s removed", dir))
 	}
-	if err := pruneRetiredWakeState(opts.HomeDir, opts.ID); err != nil {
-		return err
-	}
-	metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove meta: %w", err)
-	}
-	result.Steps = append(result.Steps, "task meta removed")
-	return nil
+	return pruneRetiredWakeState(opts.HomeDir, opts.ID)
 }
 
 // retiredTaskPrunedWakeKinds are the watcher-derived wake kinds that describe a
@@ -1276,13 +1196,11 @@ func retirementSafetyEvidenceForGeneration(authority *taskauthority.Canonical, t
 	return nil, false, nil
 }
 
-// launchedUnbound reports a generation that began a launch but never bound an
-// endpoint, retired or not.
-func launchedUnbound(agg taskauthority.Aggregate) bool {
-	if agg.Launch == nil && agg.AcquiredEndpoint == nil {
-		return false
-	}
-	return agg.Endpoint == nil && (agg.Retirement == nil || agg.Retirement.Endpoint == nil)
+// neverLaunched reports whether the task's current generation neither began a
+// launch nor holds, or held before retirement, an endpoint or a worktree.
+func neverLaunched(agg taskauthority.Aggregate) bool {
+	return agg.Launch == nil && agg.AcquiredEndpoint == nil && agg.Endpoint == nil && agg.Worktree == nil &&
+		(agg.Retirement == nil || (agg.Retirement.Endpoint == nil && agg.Retirement.Acquired == nil && agg.Retirement.Worktree == nil))
 }
 
 func partialLaunchRetirement(agg taskauthority.Aggregate) bool {
@@ -1299,10 +1217,10 @@ func partialLaunchRetirement(agg taskauthority.Aggregate) bool {
 	return false
 }
 
-func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+func safetyCheck(opts Options, kind string, backend BoundTeardown, authority *taskauthority.Canonical, gen taskauthority.Generation, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
 	switch kind {
 	case taskauthority.KindScout:
-		if err := scoutSafetyCheck(opts, meta, gen); err != nil {
+		if err := scoutSafetyCheck(opts, gen); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -1321,18 +1239,6 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 		}
 		return shipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
 	}
-}
-
-// reviewSafetyCheck answers for a review task: it owns no worktree, branch,
-// manifest or merge, so there is nothing to land and no proof to emit. The
-// reviewed worktree belongs to the reviewed ship task; retirement releases
-// only evidence.Worktree, which a review never has, so it cannot release it.
-// A worktree in the meta is refused even with --force.
-func reviewSafetyCheck(opts Options, meta map[string]string) error {
-	if meta["worktree"] != "" {
-		return fmt.Errorf("review task %s meta names a worktree; a review owns none", opts.ID)
-	}
-	return nil
 }
 
 // safetyCheckGeneration resolves the generation whose report a scout safety
@@ -1359,7 +1265,7 @@ func safetyCheckGeneration(authority *taskauthority.Canonical, taskID domain.Tas
 // and checks for unresolved decision holds. The report is resolved BY
 // GENERATION: only report-g<gen>.md answers for generation gen, so a prior
 // generation's report never satisfies a later generation's check.
-func scoutSafetyCheck(opts Options, meta map[string]string, gen taskauthority.Generation) error {
+func scoutSafetyCheck(opts Options, gen taskauthority.Generation) error {
 	reportPath := ReportPath(opts.HomeDir, opts.ID, gen)
 	fi, err := os.Lstat(reportPath)
 	if err != nil {
@@ -1689,11 +1595,6 @@ func checkRemoteBranch(wtPath string) error {
 	return nil
 }
 
-// taskMetaFilePath returns the path to the task meta file.
-func taskMetaFilePath(homeDir, id string) (string, error) {
-	return home.MetaFilePath(homeDir, id)
-}
-
 // cleanupResidualArtifactPaths lists the task's residual state paths: files and,
 // for a pi soldier, the per-task agent dir, which the callers remove with
 // os.RemoveAll (it unlinks the dir's symlinks and never follows them).
@@ -1982,10 +1883,10 @@ func parsePorcelainFilename(line string) string {
 // when another task references the same shared workspace. A read error is
 // returned because the workspace ownership decision is unknowable.
 func withWorkspaceCloseGuard(homeDir, excludeID string, request DisposeRequest) (DisposeRequest, error) {
-	if request.WorkspaceID == "" {
+	if request.Endpoint.WorkspaceID == "" {
 		return request, nil
 	}
-	refs, err := otherWorkspaceRefs(homeDir, excludeID, request.WorkspaceID)
+	refs, err := otherWorkspaceRefs(homeDir, excludeID, request.Endpoint.WorkspaceID)
 	if err != nil {
 		return DisposeRequest{}, err
 	}
@@ -1995,44 +1896,30 @@ func withWorkspaceCloseGuard(homeDir, excludeID string, request DisposeRequest) 
 	return request, nil
 }
 
-// otherWorkspaceRefs scans all task meta files in homeDir for references to the given
-// workspace ID, excluding the task with the given ID. Returns a list of task IDs that
-// still reference the workspace. This prevents closing a workspace that another task is using.
-// A missing state directory or a meta file that vanishes after enumeration means
-// there are no references from that absent record; every other read error fails closed.
+// otherWorkspaceRefs lists the tasks and captains in homeDir other than
+// excludeID whose endpoint sits in workspaceID, so retirement never closes a
+// workspace another pane still uses.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) ([]string, error) {
-	stateDir := filepath.Join(homeDir, "state")
-	entries, err := os.ReadDir(stateDir)
+	held, err := heldEndpoints(homeDir, home.Open)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, err
 	}
-
+	captains, err := captainWorkspaces(homeDir)
+	if err != nil {
+		return nil, err
+	}
 	var refs []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
-		}
-		taskID, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
-			continue
-		}
-		if taskID == excludeID {
-			continue
-		}
-
-		meta, err := home.ReadMetaFile(filepath.Join(stateDir, entry.Name()))
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, err
-		}
-		if meta[backend.MetaWorkspaceID] == workspaceID {
-			refs = append(refs, taskID)
+	for _, h := range held {
+		if h.TaskID != excludeID && h.Endpoint.WorkspaceID == workspaceID {
+			refs = append(refs, h.TaskID)
 		}
 	}
+	for id, ws := range captains {
+		if id != excludeID && ws == workspaceID {
+			refs = append(refs, id)
+		}
+	}
+	sort.Strings(refs)
 	return refs, nil
 }

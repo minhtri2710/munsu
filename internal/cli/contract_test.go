@@ -22,6 +22,7 @@ import (
 )
 
 func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	toon, err := runContract(t, []string{"capabilities"})
 	if err != nil {
 		t.Fatalf("capabilities: %v", err)
@@ -49,12 +50,8 @@ func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
 func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
-	// A canonical task (clean break: observation reads authoritative Task
-	// Authority, never a .meta/.status projection).
-	cliSeedCanonicalTask(t, home, "observe-me", "ship")
-	if err := mhome.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
-		t.Fatal(err)
-	}
+	// A canonical task whose worktree binding names the branch.
+	bindClaimWorktree(t, cliCanonicalForHome(t, home), "observe-me", filepath.Join(home, "branch-name"), false)
 	t.Setenv("MUNSU_HOME", home)
 
 	output, err := runContract(t, []string{"task", "observe", "observe-me"})
@@ -260,6 +257,8 @@ func TestFleetSnapshotDefinitiveEmpty(t *testing.T) {
 }
 
 func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
 	backend, err := runContract(t, []string{"backend", "capabilities", "--backend", "tmux"})
 	if err != nil {
 		t.Fatalf("backend capabilities: %v", err)
@@ -270,8 +269,6 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 
 	// Diagnostics must never probe to choose an adapter: omitting --backend is
 	// a typed missing-input failure, never an auto-select.
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
 	missing, err := runContract(t, []string{"backend", "capabilities"})
 	if err == nil {
 		t.Fatal("backend capabilities without --backend: expected typed missing-input error, got nil")
@@ -464,7 +461,8 @@ func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
 	initCLITestHome(t, homeDir)
 	t.Setenv("MUNSU_HOME", homeDir)
 	const taskID = "escaped-path"
-	if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("kind=ship\n"), 0644); err != nil {
+	cliSeedCanonicalTask(t, homeDir, taskID, "ship")
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json"), []byte("{not-json"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -476,9 +474,9 @@ func TestFleetSnapshotErrorHomePathIsNotPreQuoted(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &response); err != nil {
 		t.Fatalf("decode fleet snapshot output: %v\n%s", err, out)
 	}
-	want := fmt.Sprintf("reading authoritative current state for task %q in home %s: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", taskID, homeDir)
-	if response.Error.Message != want {
-		t.Fatalf("decoded message = %q, want %q", response.Error.Message, want)
+	want := "reading canonical task authority state for " + homeDir + ": "
+	if !strings.HasPrefix(response.Error.Message, want) {
+		t.Fatalf("decoded message = %q, want prefix %q", response.Error.Message, want)
 	}
 	if strings.Contains(response.Error.Message, strconv.Quote(homeDir)) {
 		t.Fatalf("decoded message still contains pre-quoted home path: %q", response.Error.Message)
@@ -595,6 +593,7 @@ func TestWriteContractErrorRespectsOutputFlag(t *testing.T) {
 }
 
 func TestBackendCapabilitiesHasHelpHint(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	output, err := runContract(t, []string{"backend", "capabilities", "--backend", "tmux"})
 	if err != nil {
 		t.Fatalf("backend capabilities: %v", err)
@@ -682,13 +681,6 @@ func TestFleetSnapshotCanonicalPhaseBeatsStaleStatus(t *testing.T) {
 
 	// A stale .status tail must NOT override the authoritative done phase.
 	if err := mhome.AppendStatus(home, "alpha", "working: stale tail claim"); err != nil {
-		t.Fatal(err)
-	}
-	// Ensure a .meta projection exists so the snapshot builds a row (the stale
-	// status tail is exercised), rather than serving the no-projection branch.
-	if err := mhome.WriteMeta(home, "alpha", map[string]string{
-		"description": "inspect", "worktree": home, "project": "munsu", "kind": "ship",
-	}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -17,21 +17,16 @@ import (
 
 // TestStructuredGuardFailsClosedOnUnreadableTruth proves the structured
 // `munsu guard` command returns a typed invalid_state failure when Task truth
-// is unreadable (a legacy/meta-only soldier task with no canonical record),
-// instead of evaluating the guard with an empty/down-counted fleet.
+// is unreadable (a corrupt canonical task document), instead of evaluating
+// the guard with an empty/down-counted fleet.
 func TestStructuredGuardFailsClosedOnUnreadableTruth(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", homeDir)
-	// A task-facing meta without a canonical record is unreadable Task truth
-	// under the clean-break contract.
-	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(homeDir, "state", "legacy-task.meta"), []byte(meta), 0644); err != nil {
+	cliSeedCanonicalTask(t, homeDir, "corrupt-task", "ship")
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "task-authority", "tasks", "corrupt-task", "current.json"), []byte("{not-json"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -56,11 +51,8 @@ func TestPrerunGuardSurfacesUnreadableTruth(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", homeDir)
-	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(homeDir, "state", "legacy-task.meta"), []byte(meta), 0644); err != nil {
+	cliSeedCanonicalTask(t, homeDir, "corrupt-task", "ship")
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "task-authority", "tasks", "corrupt-task", "current.json"), []byte("{not-json"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,6 +107,7 @@ func TestWakeClaimResolveAckActualSyntax(t *testing.T) {
 // discovery exposes only tmux and herdr; all other runtime backends are not
 // part of this contract surface.
 func TestBackendCapabilitiesOnlyTmuxHerdr(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	for _, tc := range []struct {
 		backend string
 		want    string // "" allows
@@ -137,25 +130,19 @@ func TestBackendCapabilitiesOnlyTmuxHerdr(t *testing.T) {
 }
 
 // TestTaskObserveRequiresCanonicalRecord proves `task observe` answers from the
-// canonical record alone: a task with only a legacy .meta projection is not
-// found, and a canonical task with no .meta is observed.
+// canonical record alone: a task with no canonical record is not found, and a
+// canonical task is observed.
 func TestTaskObserveRequiresCanonicalRecord(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", homeDir)
-	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(homeDir, "state", "legacy-task.meta"), []byte("kind=ship\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	cliSeedCanonicalTaskPhase(t, homeDir, "no-meta", "ship", taskauthority.PhaseQueued)
 
 	out, err := runContract(t, []string{"task", "observe", "no-meta", "--output", "json"})
 	if err != nil {
-		t.Fatalf("task observe canonical without meta: %v\n%s", err, out)
+		t.Fatalf("task observe canonical task: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, `"status": "queued"`) {
 		t.Errorf("task observe must report canonical queued phase, got:\n%s", out)
@@ -163,15 +150,15 @@ func TestTaskObserveRequiresCanonicalRecord(t *testing.T) {
 
 	out, err = runContract(t, []string{"task", "observe", "legacy-task", "--output=json"})
 	if err == nil {
-		t.Fatalf("task observe over a meta-only task = nil error, want not_found; output:\n%s", out)
+		t.Fatalf("task observe over a task with no canonical record = nil error, want not_found; output:\n%s", out)
 	}
 	response := decodeContractError(t, out)
 	if response.Error.ErrorCode != "not_found" {
-		t.Errorf("meta-only task observe error_code = %q, want not_found; output:\n%s", response.Error.ErrorCode, out)
+		t.Errorf("unknown task observe error_code = %q, want not_found; output:\n%s", response.Error.ErrorCode, out)
 	}
 	assertCarriesContext(t, response, "legacy-task", homeDir)
 	if response.Kind != "error" {
-		t.Errorf("meta-only task observe must not emit a success envelope, got kind %q:\n%s", response.Kind, out)
+		t.Errorf("unknown task observe must not emit a success envelope, got kind %q:\n%s", response.Kind, out)
 	}
 }
 
@@ -335,7 +322,7 @@ func mustOpIDFor(t *testing.T, value string) domain.OperationID {
 }
 
 // TestTaskObserveRefusalsStateThatMunsuCannotRepair proves task observe
-// reports a meta-only task as not found and a corrupt task as invalid state
+// reports an unknown task as not found and a corrupt task as invalid state
 // without pointing at a command that repairs it.
 func TestTaskObserveRefusalsStateThatMunsuCannotRepair(t *testing.T) {
 	homeDir := t.TempDir()
@@ -343,20 +330,14 @@ func TestTaskObserveRefusalsStateThatMunsuCannotRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", homeDir)
-	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(homeDir, "state", "meta-only.meta"), []byte("kind=ship\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	cliSeedCanonicalTask(t, homeDir, "corrupt", "ship")
 	cur := filepath.Join(homeDir, "state", "task-authority", "tasks", "corrupt", "current.json")
 	if err := os.WriteFile(cur, []byte("{not-json"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[string][2]string{
-		"meta-only": {"not_found", "Run `munsu task list` to find a task ID"},
-		"corrupt":   {"invalid_state", "munsu cannot repair an unreadable canonical record"},
+		"unknown": {"not_found", "Run `munsu task list` to find a task ID"},
+		"corrupt": {"invalid_state", "munsu cannot repair an unreadable canonical record"},
 	} {
 		out, err := runContract(t, []string{"task", "observe", id, "--output=json"})
 		if err == nil {

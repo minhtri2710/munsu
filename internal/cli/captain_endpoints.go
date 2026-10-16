@@ -60,15 +60,24 @@ func (e sessionLaunchEndpoint) Cleanup(home string, result fleet.LaunchResult) e
 }
 
 type sessionProbeEndpoint struct {
-	resolve func(string, map[string]string) (backend.Backend, string, error)
+	resolve boundResolver
 }
 
 func newSessionProbeEndpoint() sessionProbeEndpoint {
 	return sessionProbeEndpoint{resolve: backend.BackendForTask}
 }
 
-func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.CaptainProbeResult, error) {
-	window := meta["window"]
+// captainBackend resolves the backend a captain's .meta binds; its workspace
+// label is the captain's own home.
+func captainBackend(home string, meta map[string]string, resolve boundResolver) (backend.Backend, string, error) {
+	labelHome := home
+	if h := meta["home"]; h != "" {
+		labelHome = h
+	}
+	return boundBackend(labelHome, backend.MetaEndpointRef(meta), resolve)
+}
+
+func probeCaptainBackend(bk backend.Backend, window, harness string) (fleet.CaptainProbeResult, error) {
 	if provider, ok := bk.(backend.AgentActivityProvider); ok {
 		// One probe answers liveness and readiness, so the two cannot disagree.
 		pane, agent, recognized, status, err := provider.ObserveAgent(window)
@@ -86,7 +95,7 @@ func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.Capt
 			ReadyForPrompt: pane && agent && recognized && backend.AgentStatusReady(status),
 		}, nil
 	}
-	obs := backend.ObserveEndpoint(bk, window, harnessProcessMatcher(meta["harness"]))
+	obs := backend.ObserveEndpoint(bk, window, harnessProcessMatcher(harness))
 	// A non-agent-aware structured backend reports pane presence (Starting) and
 	// agent liveness (Alive, on process evidence in ObserveEndpoint); it cannot
 	// conclude authoritative absence (absent requires Fleet freshness
@@ -104,15 +113,15 @@ func probeCaptainBackend(bk backend.Backend, meta map[string]string) (fleet.Capt
 }
 
 func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (fleet.CaptainProbeResult, error) {
-	bk, _, err := boundBackend(home, meta, e.resolve)
+	bk, _, err := captainBackend(home, meta, e.resolve)
 	if err != nil {
 		return fleet.CaptainProbeResult{}, err
 	}
-	return probeCaptainBackend(bk, meta)
+	return probeCaptainBackend(bk, meta["window"], meta["harness"])
 }
 
 type sessionNudgeEndpoint struct {
-	resolve func(string, map[string]string) (backend.Backend, string, error)
+	resolve boundResolver
 }
 
 func newSessionNudgeEndpoint() sessionNudgeEndpoint {
@@ -120,11 +129,11 @@ func newSessionNudgeEndpoint() sessionNudgeEndpoint {
 }
 
 func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload string) (fleet.NudgeResult, error) {
-	bk, _, err := boundBackend(home, meta, e.resolve)
+	bk, _, err := captainBackend(home, meta, e.resolve)
 	if err != nil {
 		return fleet.NudgeResult{}, err
 	}
-	result, err := probeCaptainBackend(bk, meta)
+	result, err := probeCaptainBackend(bk, meta["window"], meta["harness"])
 	if err != nil {
 		return fleet.NudgeResult{}, err
 	}
@@ -139,7 +148,7 @@ func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload
 }
 
 type sessionRetireEndpoint struct {
-	resolve func(string, map[string]string) (backend.Backend, string, error)
+	resolve boundResolver
 	sleep   func(time.Duration)
 }
 
@@ -148,7 +157,7 @@ func newSessionRetireEndpoint() sessionRetireEndpoint {
 }
 
 func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error {
-	bk, _, err := boundBackend(home, meta, e.resolve)
+	bk, _, err := captainBackend(home, meta, e.resolve)
 	if err != nil {
 		return err
 	}

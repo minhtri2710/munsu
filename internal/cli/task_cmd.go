@@ -248,36 +248,37 @@ task reopen and task retry rewrite the brief for the new generation.`,
 				return err
 			}
 			agg, err := auth.Get(tid)
-			hasAggregate := err == nil
-			if err != nil && !errors.Is(err, taskauthority.ErrNotFound) {
+			if err != nil {
 				return err
-			}
-			meta, metaErr := home.ReadMeta(ctx.Home, id)
-			if metaErr != nil && !hasAggregate {
-				return metaErr
 			}
 
 			var b strings.Builder
+			line := func(key, value string) {
+				if value != "" {
+					b.WriteString(fmt.Sprintf("%s: %s\n", key, value))
+				}
+			}
 			b.WriteString(fmt.Sprintf("Task: %s\n---\n", id))
-			if hasAggregate {
-				b.WriteString(fmt.Sprintf("generation: %s\n", agg.Generation))
-				b.WriteString(fmt.Sprintf("owner: %s\n", agg.Definition.Owner))
-				if agg.Definition.Description != "" {
-					b.WriteString(fmt.Sprintf("description: %s\n", agg.Definition.Description))
-				}
-				if agg.Definition.Kind != "" {
-					b.WriteString(fmt.Sprintf("kind: %s\n", agg.Definition.Kind))
-				}
-				if agg.Definition.Project != "" {
-					b.WriteString(fmt.Sprintf("project: %s\n", agg.Definition.Project))
-				}
-				b.WriteString(fmt.Sprintf("state: %s\n", agg.Phase))
+			line("generation", agg.Generation.String())
+			line("owner", agg.Definition.Owner)
+			line("description", agg.Definition.Description)
+			line("kind", agg.Definition.Kind)
+			line("project", agg.Definition.Project)
+			line("state", string(agg.Phase))
+			harness := ""
+			if agg.Launch != nil {
+				harness = agg.Launch.Harness
+				line("harness", harness)
+				line("model", agg.Launch.Model)
+				line("mode", agg.Launch.Mode)
 			}
-			for k, v := range meta {
-				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
+			if agg.Worktree != nil {
+				line("worktree", agg.Worktree.Path)
 			}
-			if meta["window"] != "" {
-				alive, perr := runtimeTaskEndpointProbe().Probe(ctx.Home, meta)
+			if ep := agg.Endpoint; ep != nil {
+				line("backend", ep.Backend)
+				line("window", ep.Handle)
+				alive, perr := runtimeTaskEndpointProbe().Probe(ctx.Home, *ep, harness)
 				b.WriteString(fmt.Sprintf("pane_alive: %t\n", perr == nil && alive))
 			}
 

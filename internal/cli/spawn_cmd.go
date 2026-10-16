@@ -104,15 +104,11 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("error: uplink use munsu report; send is downlink only")
 			}
 
-			// Read meta to determine kind and resolve captain info.
-			meta, err := home.ReadMeta(ctx.Home, id)
-			if err != nil {
-				return fmt.Errorf("reading task %s: %w", id, err)
-			}
-
-			isCaptain := meta["kind"] == "captain"
-
-			if isCaptain {
+			if strings.HasPrefix(id, "captain:") {
+				meta, err := home.ReadMeta(ctx.Home, id)
+				if err != nil {
+					return fmt.Errorf("reading task %s: %w", id, err)
+				}
 				// Mailbox Store/Receiver flow for captain targets.
 				smID := fleet.CaptainIDFromTask(id, meta)
 				captainHome := meta["home"]
@@ -177,7 +173,7 @@ func newSendCmd() *cobra.Command {
 }
 
 type BoundCapture interface {
-	Capture(homeDir string, meta map[string]string, lines int) (string, error)
+	Capture(homeDir string, ep taskauthority.EndpointBinding, lines int) (string, error)
 }
 
 func newPeekCmd() *cobra.Command { return newPeekCmdWithCapture(sessionBoundCapture{}) }
@@ -192,19 +188,15 @@ func newPeekCmdWithCapture(capture BoundCapture) *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
-			// Read meta to resolve window
-			meta, err := home.ReadMeta(ctx.Home, id)
+			ep, err := peekEndpoint(ctx, id)
 			if err != nil {
-				return fmt.Errorf("reading task %s: %w", id, err)
-			}
-			if _, ok := meta["window"]; !ok {
-				return fmt.Errorf("task %s has no window endpoint", id)
+				return err
 			}
 
 			if capture == nil {
 				return fmt.Errorf("task-bound capture is not configured")
 			}
-			out, err := capture.Capture(ctx.Home, meta, lines)
+			out, err := capture.Capture(ctx.Home, ep, lines)
 			if err != nil {
 				return fmt.Errorf("capturing from %s: %w", id, err)
 			}
@@ -230,6 +222,37 @@ func newPeekCmdWithCapture(capture BoundCapture) *cobra.Command {
 	cmd.Flags().IntVar(&lines, "lines", 40, "Number of lines to capture")
 
 	return cmd
+}
+
+// peekEndpoint is the pane a peek reads: a captain's as its .meta records it,
+// a soldier's as its task's current canonical binding names it.
+func peekEndpoint(ctx Ctx, id string) (taskauthority.EndpointBinding, error) {
+	if strings.HasPrefix(id, "captain:") {
+		meta, err := home.ReadMeta(ctx.Home, id)
+		if err != nil {
+			return taskauthority.EndpointBinding{}, fmt.Errorf("reading task %s: %w", id, err)
+		}
+		if meta["window"] == "" {
+			return taskauthority.EndpointBinding{}, fmt.Errorf("task %s has no window endpoint", id)
+		}
+		return captainBinding(meta), nil
+	}
+	auth, err := ctx.TaskAuthority()
+	if err != nil {
+		return taskauthority.EndpointBinding{}, err
+	}
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		return taskauthority.EndpointBinding{}, err
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return taskauthority.EndpointBinding{}, fmt.Errorf("reading task %s: %w", id, err)
+	}
+	if agg.Endpoint == nil {
+		return taskauthority.EndpointBinding{}, fmt.Errorf("task %s has no window endpoint", id)
+	}
+	return *agg.Endpoint, nil
 }
 
 func newPromoteCmd() *cobra.Command {
@@ -360,7 +383,7 @@ generation must pass its explicit generation here.
 			// (Task 7.7). The authoritative retirement transition commits
 			// through the Authority; the fleet teardown performs the saga-side
 			// cleanup after the durable receipt.
-			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, id)
+			taskHome, err := fleet.ResolveTaskHome(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("teardown %s: %w", id, err)
 			}
