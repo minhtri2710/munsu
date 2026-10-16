@@ -51,11 +51,10 @@
 #
 # Only the first three enter the ledger. None of them estimate anything.
 #
-# The asymmetry is deliberate and it is what keeps this compatible with a hand-assigned owner:
-# the ledger only ever accuses, it never certifies. Absence from it proves
-# nothing -- 0/14 is what that lesson cost. An entry closes when the issue that
-# owns it closes on an argument from the code, never because N days passed with
-# no red.
+# The asymmetry is deliberate: the ledger only ever accuses, it never
+# certifies. Absence from it proves nothing -- 0/14 is what that lesson cost.
+# An entry closes when a fix lands on an argument from the code, never because
+# N days passed with no red.
 #
 # ---------------------------------------------------------------------------
 # What it does not see, said here rather than discovered later
@@ -85,7 +84,7 @@
 #   flake-sweep.sh observe [--window-days N]   API -> observation records (TSV)
 #   flake-sweep.sh classify < records          records -> verdicts (pure text)
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
-#   flake-sweep.sh sync     [--owner <ISSUE_ID>] [--window-days N]  rewrite the ledger table to match
+#   flake-sweep.sh sync     [--window-days N]  rewrite the ledger table to match
 #   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
@@ -325,7 +324,7 @@ observe() {
 	# They did, once. A 403, a secondary rate limit or one 5xx turned a
 	# `flake` into a `pending`, `check` then reported the row already in the
 	# ledger as no longer derivable, and `sync` deleted it -- taking its
-	# owner_issue and deadline with it -- inside a PR that asks the reader not to
+	# deadline and state with it -- inside a PR that asks the reader not to
 	# argue with the sweep. The fast path is the only route to a verdict for the
 	# median 43 minutes (p90 7.3 hours) before the next main run reaches this
 	# lane, so this is not a rare corner: it is the window the fast path exists
@@ -396,7 +395,7 @@ observe() {
 	local fsha status fixed_refs unanswered=""
 	fixed_refs="$(mktemp)"
 	if ! "$ROOT/.github/scripts/flake-ledger.sh" entries |
-		awk -F '\t' '$7 ~ /^fixed:/ { print substr($7, 7) }' |
+		awk -F '\t' '$6 ~ /^fixed:/ { print substr($6, 7) }' |
 		sort -u >"$fixed_refs"; then
 		rm -f "$pass1" "$fixed_refs"
 		die "could not read fixed ledger entries; observation is incomplete and cannot be told apart from clean"
@@ -650,7 +649,7 @@ check() {
 			classify <"$records" | awk -F '\t' -v t="$test" -v l="$lane" '
 				$1 == "flake" && $2 == t && $3 == l { printf "      %s %s attempt %s: %s\n", substr($4,1,8), $5, $6, $7 }' >&2
 		done
-		echo "  Run '.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>' to file them under the issue that will fix them." >&2
+		echo "  Run '.github/scripts/flake-sweep.sh sync' to file them." >&2
 		failed=1
 	fi
 
@@ -665,15 +664,14 @@ check() {
 			printf '  %s (%s)\n' "$test" "$lane" >&2
 		done
 		echo "  Their first_seen run is inside the window just read, and nothing in it says they were" >&2
-		echo "  flaky. Either the evidence moved or the row did. Run 'flake-sweep.sh sync --owner <ISSUE_ID>' to drop them" >&2
-		echo "  -- the long-term record of a flake is its owning issue, not this file." >&2
+		echo "  flaky. Either the evidence moved or the row did. Run 'flake-sweep.sh sync' to drop them." >&2
 		failed=1
 	fi
 
 	stale="$(awk -F '\t' -v obs="$obstmp" '
 		BEGIN { while ((getline o < obs) > 0) { split(o, p, "\t"); newest[p[1] "\t" p[2]] = p[4] } }
 		($1 "\t" $2) in newest && $4 != newest[$1 "\t" $2] {
-			what = ($7 ~ /^fixed:/) ? "flaked again after being declared fixed; must be reopened" : "has new evidence to record"
+			what = ($6 ~ /^fixed:/) ? "flaked again after being declared fixed; must be reopened" : "has new evidence to record"
 			print $1 "\t" $2 "\t" $4 "\t" newest[$1 "\t" $2] "\t" what
 		}' "$ledger_entries")"
 	if [ -n "$stale" ]; then
@@ -681,8 +679,8 @@ check() {
 		printf '%s\n' "$stale" | while IFS=$'\t' read -r test lane recorded observed what; do
 			printf '  %s (%s): recorded %s, observed %s -- %s\n' "$test" "$lane" "$recorded" "$observed" "$what" >&2
 		done
-		echo "  Run 'flake-sweep.sh sync --owner <ISSUE_ID>' to record the evidence; a row that flaked again after being" >&2
-		echo "  declared fixed is reopened with a fresh deadline, keeping its owning issue." >&2
+		echo "  Run 'flake-sweep.sh sync' to record the evidence; a row that flaked again after being" >&2
+		echo "  declared fixed is reopened with a fresh deadline." >&2
 		failed=1
 	fi
 
@@ -730,8 +728,8 @@ verify_fixed() {
 				if (p[1] == "fixedsha") answer[p[2]] = p[3]
 			}
 		}
-		$7 ~ /^fixed:/ {
-			sha = substr($7, 7)
+		$6 ~ /^fixed:/ {
+			sha = substr($6, 7)
 			verdict = (sha in answer) ? answer[sha] : "not-checked"
 			if (verdict != "on-main") print $1 "\t" $2 "\t" sha "\t" verdict
 		}' "$ledger_entries")"
@@ -769,13 +767,13 @@ newer() {
 }
 
 # Rewrite the table between the markers to match the observed set: keep the
-# deadline, owner and state of a row that is still grounded, add a row for a new
+# deadline and state of a row that is still grounded, add a row for a new
 # flake, drop an in-scope row the evidence no longer supports, and leave rows
 # from outside this window untouched. Rows this window observed get their
 # last_seen updated to the newest observation, and a `fixed:` row with newer
 # evidence is reopened with a fresh deadline. Never edits the prose around it.
 sync() {
-	local records rows runs observed tmp existing seen last_seen recorded_last deadline owner state
+	local records rows runs observed tmp existing seen last_seen recorded_last deadline state
 	records="$(records_file)"
 	grep -q '^<!-- flake-ledger:begin -->$' "$LEDGER" || die "$LEDGER_REL has no <!-- flake-ledger:begin --> marker"
 
@@ -793,9 +791,8 @@ sync() {
 			# sweep would let a deadline walk forward on its own, which is
 			# exactly the escape this file has to make visible rather than
 			# provide. A `fixed:` row with newer evidence has flaked again after
-			# being declared fixed: it is reopened with a fresh deadline,
-			# keeping the issue that owns the fix.
-			IFS=$'\t' read -r _ _ seen recorded_last deadline owner state <<<"$existing"
+			# being declared fixed: it is reopened with a fresh deadline.
+			IFS=$'\t' read -r _ _ seen recorded_last deadline state <<<"$existing"
 			if [[ "$state" == fixed:* ]] && newer "$last_seen" "$recorded_last"; then
 				state="open"
 				deadline="$(date_shift "$(today)" "+$DEADLINE_DAYS")"
@@ -803,16 +800,9 @@ sync() {
 		else
 			seen="$first_seen"
 			deadline="$(date_shift "$(today)" "+$DEADLINE_DAYS")"
-			# --owner names the issue that will do the fixing, so a row filed
-			# with it is mergeable in the same act that files the work. Without
-			# the flag the bot still cannot know which issue owns a flake, so it
-			# writes TBD -- and flake-ledger.sh refuses TBD, so that diff stays
-			# unmergeable until a person files the issue and re-runs with
-			# --owner. Filing the flake and filing the work stay the same act.
-			owner="${OWNER:-TBD}"
 			state="open"
 		fi
-		printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$test" "$lane" "$seen" "$last_seen" "$deadline" "$owner" "$state"
+		printf '| %s | %s | %s | %s | %s | %s |\n' "$test" "$lane" "$seen" "$last_seen" "$deadline" "$state"
 	done >"$rows"
 
 	"$ROOT/.github/scripts/flake-ledger.sh" entries |
@@ -825,14 +815,14 @@ sync() {
 				if (($1 "\t" $2) in observed) next   # already rewritten above
 				split($3, part, /[@\/]/)
 				if (part[2] in inwindow) next         # in scope and unsupported: dropped
-				printf "| %s | %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6, $7
+				printf "| %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6
 			}' >>"$rows"
 
 	tmp="$(mktemp)"
 	{
 		sed -n '1,/^<!-- flake-ledger:begin -->$/p' "$LEDGER"
-		echo '| test | lane | first_seen | last_seen | deadline | owner_issue | state |'
-		echo '| --- | --- | --- | --- | --- | --- | --- |'
+		echo '| test | lane | first_seen | last_seen | deadline | state |'
+		echo '| --- | --- | --- | --- | --- | --- |'
 		sort "$rows"
 		sed -n '/^<!-- flake-ledger:end -->$/,$p' "$LEDGER"
 	} >"$tmp"
@@ -866,8 +856,8 @@ scratch_ledger() {
 	{
 		echo '# Flake ledger -- selftest scratch'
 		echo '<!-- flake-ledger:begin -->'
-		echo '| test | lane | first_seen | last_seen | deadline | owner_issue | state |'
-		echo '| --- | --- | --- | --- | --- | --- | --- |'
+		echo '| test | lane | first_seen | last_seen | deadline | state |'
+		echo '| --- | --- | --- | --- | --- | --- |'
 		if [ $# -gt 0 ]; then printf '%s\n' "$@"; fi
 		echo '<!-- flake-ledger:end -->'
 	} >"$file"
@@ -911,8 +901,7 @@ selftest() {
 	ledger="$(mktemp)"
 
 	# 1. Observed and unfiled. check() must be red and name the test; sync() must
-	# file it with TBD in owner_issue, which is what makes the sweep's diff unmergeable
-	# until a person files the work.
+	# file it as `open`, in a row flake-ledger.sh accepts.
 	#
 	# Mutation this answers: replace the `if [ -n "$missing" ]` guard in check()
 	# with `if false`.
@@ -930,110 +919,29 @@ selftest() {
 		echo "::error::unfiled scenario: sync() failed" >&2
 		failed=1
 	}
-	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| TBD | open |' "$ledger"; then
-		echo "::error::unfiled scenario: sync did not file the observed flake with owner_issue TBD" >&2
-		failed=1
-	fi
-
-	# 1b. `sync --owner <ISSUE_ID>` writes that issue into every row it files,
-	# so the same act that files the flake files the work, and the row it writes
-	# is one flake-ledger.sh accepts. Without the flag sync still writes TBD
-	# (scenario 1), and the refusal below is unchanged: --owner only moves the
-	# hand-edit earlier, it does not remove it.
-	#
-	# Mutation this answers: ignore OWNER in sync(), or drop it from the row it
-	# writes.
-	local owner_fixture="BEO-541"
-	scratch_ledger "$ledger"
-	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
-		echo "::error::owner scenario: sync --owner $owner_fixture failed" >&2
-		failed=1
-	}
-	if ! grep -q "| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| $owner_fixture | open |" "$ledger"; then
-		echo "::error::owner scenario: sync --owner $owner_fixture did not write the validated owner into the filed row" >&2
-		failed=1
-	fi
-	if grep -q '| TBD |' "$ledger"; then
-		echo "::error::owner scenario: sync --owner $owner_fixture still wrote a row with owner_issue TBD" >&2
+	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | [0-9-]* | open |' "$ledger"; then
+		echo "::error::unfiled scenario: sync did not file the observed flake as open" >&2
 		failed=1
 	fi
 	if ! LEDGER="$ledger" "$ROOT/.github/scripts/flake-ledger.sh" check >/dev/null 2>&1; then
-		echo "::error::owner scenario: flake-ledger.sh rejects the row sync filed with --owner $owner_fixture" >&2
+		echo "::error::unfiled scenario: flake-ledger.sh rejects the row sync filed" >&2
 		failed=1
 	fi
 
-	# 1c. A bad --owner is refused at the argument, not written into the ledger:
-	# TBD re-creates the refusal flake-ledger.sh exists for, an empty value is
-	# no owner at all, a value with whitespace would break the markdown row it
-	# lands in, and a value that looks like a flag is a swallowed argument.
-	# None of them may reach the table.
-	#
-	# Mutation this answers: drop the owner checks in the argument handling.
-	for bad in TBD "" "two words" "--window-days" not-an-issue; do
-		scratch_ledger "$ledger"
-		if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$bad" >/dev/null 2>&1; then
-			echo "::error::owner scenario: sync --owner \"$bad\" was accepted" >&2
-			failed=1
-		fi
-	done
-	# A trailing --owner with nothing after it is refused too, and named, rather
-	# than left to die silently under `set -e` when shift runs out of arguments.
-	scratch_ledger "$ledger"
-	if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner >/dev/null 2>&1; then
-		echo "::error::owner scenario: sync --owner with no value was accepted" >&2
-		failed=1
-	fi
-
-	# 1d. --owner is sync's argument: no other command writes rows, so none of
-	# them may take it. Refusing it here keeps a command that cannot use the
-	# owner from silently ignoring the issue a person meant to file under.
-	#
-	# classify is the probe because it succeeds when the guard is gone: it is
-	# pure text in, text out, so a removed guard makes this subprocess exit 0
-	# and trips the check below, where a command that already fails for another
-	# reason would not.
-	#
-	# Mutation this answers: drop the `[ "$cmd" = "sync" ]` check.
-	if "$0" classify --owner "$owner_fixture" </dev/null >/dev/null 2>&1; then
-		echo "::error::owner scenario: classify --owner $owner_fixture was accepted" >&2
-		failed=1
-	fi
-
-	# 1e. --owner names the issue for rows this sweep files for the first time,
-	# and a row that already exists keeps the owner it has. That rule is what
-	# stops a later sweep clobbering the owner a person moved a row to, and the
-	# hand edit is the only way to move it: one sweep files every new row under
-	# one issue, so two flakes belonging to two issues cannot both be filed
-	# right (#568). .github/flake-ledger.md tells the reader to correct
-	# owner_issue by hand on the strength of this rule, so the rule is pinned
-	# here rather than left to hold by accident.
-	#
-	# Mutation this answers: apply OWNER to every row sync writes rather than
-	# only to the ones it is adding.
-	local kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
-	scratch_ledger "$ledger" "$kept"
-	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
-		echo "::error::owner scenario: sync --owner $owner_fixture failed over a row that already existed" >&2
-		failed=1
-	}
-	if ! grep -qF "$kept" "$ledger"; then
-		echo "::error::owner scenario: sync --owner $owner_fixture overwrote the hand-set owner of an existing row" >&2
-		failed=1
-	fi
-
-	# 1f. An existing row with no newer evidence keeps a hand-edited state,
-	# including a non-default `fixed:` value; this is the preservation guarantee
-	# the ledger documents, distinct from the fixed-row reopen rule in scenario 3.
+	# 1b. An existing row with no newer evidence keeps its hand-edited deadline
+	# and state, including a non-default `fixed:` value; this is the preservation
+	# guarantee the ledger documents, distinct from the fixed-row reopen rule in
+	# scenario 3.
 	#
 	# Mutation this answers: force every existing row sync emits to use `open`.
-	local state_kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
+	local state_kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | fixed:abc1234 |'
 	scratch_ledger "$ledger" "$state_kept"
-	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
-		echo "::error::state scenario: sync --owner $owner_fixture failed over a row with no newer evidence" >&2
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync >/dev/null || {
+		echo "::error::state scenario: sync failed over a row with no newer evidence" >&2
 		failed=1
 	}
 	if ! grep -qF "$state_kept" "$ledger"; then
-		echo "::error::state scenario: sync --owner $owner_fixture did not preserve the hand-edited state without newer evidence" >&2
+		echo "::error::state scenario: sync did not preserve the hand-edited state without newer evidence" >&2
 		failed=1
 	fi
 
@@ -1047,9 +955,9 @@ selftest() {
 	# with `if false`, or drop the `part[2] in inwindow` test in
 	# ledger_in_scope().
 	scratch_ledger "$ledger" \
-		'| TestOutsideWindow | integration | eeee5555@2999/1 | eeee5555@2999/1 | 9999-12-31 | BEO-99 | open |' \
-		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
-		'| TestVanished | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 9999-12-31 | BEO-99 | open |'
+		'| TestOutsideWindow | integration | eeee5555@2999/1 | eeee5555@2999/1 | 9999-12-31 | open |' \
+		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | open |' \
+		'| TestVanished | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 9999-12-31 | open |'
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
 	case "$msg" in
 	*"can no longer derive"*"TestVanished (integration)"*) ;;
@@ -1084,12 +992,12 @@ selftest() {
 
 	# 3. A row observed flaky again after being declared fixed must not be
 	# silent: check() has to be red on the mismatch, and sync() has to reopen the
-	# row with a fresh deadline, keeping its owning issue.
+	# row with a fresh deadline.
 	#
 	# Mutation this answers: drop the `stale` block in check(), or the
 	# `newer "$last_seen" "$recorded_last"` reopen branch in sync().
 	scratch_ledger "$ledger" \
-		'| TestReopens | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | BEO-99 | fixed:abc1234 |'
+		'| TestReopens | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | fixed:abc1234 |'
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
 	case "$msg" in
 	*reopened*) ;;
@@ -1103,7 +1011,7 @@ selftest() {
 		echo "::error::reopen scenario: sync() failed" >&2
 		failed=1
 	}
-	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| BEO-99 | open |' "$ledger"; then
+	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | [0-9-]* | open |' "$ledger"; then
 		echo "::error::reopen scenario: sync did not reopen the fixed row with a fresh deadline" >&2
 		failed=1
 	fi
@@ -1120,10 +1028,10 @@ selftest() {
 	# Mutation this answers: drop the `verdict != "on-main"` filter in
 	# verify_fixed(), or default a missing answer to "on-main".
 	scratch_ledger "$ledger" \
-		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |' \
-		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |' \
-		'| TestFixedUnknown | integration | cccc3333@2997/1 | cccc3333@2997/1 | 9999-12-31 | BEO-99 | fixed:deadbee |' \
-		'| TestFixedUnchecked | integration | dddd4444@2996/1 | dddd4444@2996/1 | 9999-12-31 | BEO-99 | fixed:cafe123 |'
+		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | fixed:abc1234 |' \
+		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | fixed:f00dbab |' \
+		'| TestFixedUnknown | integration | cccc3333@2997/1 | cccc3333@2997/1 | 9999-12-31 | fixed:deadbee |' \
+		'| TestFixedUnchecked | integration | dddd4444@2996/1 | dddd4444@2996/1 | 9999-12-31 | fixed:cafe123 |'
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" verify-fixed 2>&1 || true)"
 	for expect in \
 		"TestFixedOffMain (integration): fixed:f00dbab is a commit" \
@@ -1144,7 +1052,7 @@ selftest() {
 		;;
 	esac
 	scratch_ledger "$ledger" \
-		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
+		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | fixed:abc1234 |'
 	if ! SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" verify-fixed >/dev/null 2>&1; then
 		echo "::error::fixed-sha scenario: verify-fixed is red on a ledger whose only fix ref is on main" >&2
 		failed=1
@@ -1172,18 +1080,8 @@ selftest() {
 
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
-OWNER=""
 while [ $# -gt 0 ]; do
 	case "$1" in
-	--owner)
-		# Value demanded here, where it can be named: shift 2 on a missing one
-		# would exit silently under set -e, and this script's fail-closed cases
-		# are supposed to say what they refuse.
-		[ $# -ge 2 ] || die "--owner takes an issue id, e.g. --owner <ISSUE_ID>"
-		OWNER="${2}"
-		shift 2
-		[ -n "$OWNER" ] || die "--owner takes an issue id, e.g. --owner <ISSUE_ID>"
-		;;
 	--window-days)
 		WINDOW_DAYS="${2:-}"
 		shift 2
@@ -1201,27 +1099,6 @@ esac
 [ "$WINDOW_DAYS" -ge "$WINDOW_FLOOR" ] ||
 	die "--window-days $WINDOW_DAYS is narrower than the $WINDOW_FLOOR days this ledger's $DEADLINE_DAYS-day deadline needs: a row whose evidence ages out before its deadline is overdue and unfounded at once, and deleting it reads green in both halves"
 
-# --owner names the issue that will own the rows sync writes. Checked here, in
-# the same place every flag is checked, so a bad value is refused before it can
-# reach the table: whitespace would break the markdown row it lands in, a value
-# that looks like a flag is a swallowed argument, and TBD is the refusal
-# flake-ledger.sh exists for -- naming it here just moves that refusal earlier.
-# --owner only applies to sync; no other command writes rows, so none of them
-# may take it, and refusing it keeps a command that cannot use the owner from
-# silently ignoring the issue a person meant to file under.
-if [ -n "$OWNER" ]; then
-	case "$OWNER" in
-	*[[:space:]]*) die "--owner takes one issue id, got \"$OWNER\"" ;;
-	-*) die "--owner takes an issue id, got \"$OWNER\"" ;;
-	TBD) die "--owner must name a real issue, not TBD -- flake-ledger.sh refuses TBD on purpose" ;;
-	esac
-	if [[ ! "$OWNER" =~ ^BEO-[0-9]+$ ]]; then
-		die "--owner must match BEO-<number>, got \"$OWNER\""
-	fi
-	[ "$cmd" = "sync" ] ||
-		die "--owner only applies to sync; it names the issue that owns the rows sync writes, and $cmd writes no rows"
-fi
-
 case "$cmd" in
 observe) observe ;;
 classify) classify ;;
@@ -1230,7 +1107,7 @@ sync) sync ;;
 verify-fixed) verify_fixed ;;
 selftest) selftest ;;
 *)
-	echo "usage: flake-sweep.sh {observe|classify|check|sync [--owner <ISSUE_ID>]|verify-fixed|selftest} [--window-days N]" >&2
+	echo "usage: flake-sweep.sh {observe|classify|check|sync|verify-fixed|selftest} [--window-days N]" >&2
 	exit 2
 	;;
 esac
