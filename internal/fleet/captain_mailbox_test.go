@@ -447,7 +447,7 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	}
 
 	// Create receiver and ack the notification ref.
-	recv, err := home.NewReceiver(captainHome)
+	recv, err := home.NewReceiver(captainHome, SoldierSeat(captainHome))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestInboxAckCmd_InvalidRef(t *testing.T) {
 		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 
-	recv, err := home.NewReceiver(captainHome)
+	recv, err := home.NewReceiver(captainHome, SoldierSeat(captainHome))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}

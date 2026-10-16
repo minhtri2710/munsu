@@ -42,45 +42,34 @@ func (f fakeTeardown) ReturnWorktree(_, _, worktreePath string) error {
 	}
 	return f.returnWorktreeErr
 }
-func teardownFixture(t *testing.T) (Options, string) {
+func teardownFixture(t *testing.T) Options {
 	t.Helper()
 	h := t.TempDir()
 	if _, err := mhome.Init(h); err != nil {
 		t.Fatalf("home.Init: %v", err)
 	}
-	state := filepath.Join(h, "state")
-	os.MkdirAll(state, 0700)
-	meta := filepath.Join(state, "task.meta")
-	os.WriteFile(meta, []byte("backend=tmux\nwindow=pane-1\n"), 0600)
-	return Options{HomeDir: h, ID: "task", Force: true}, meta
+	return Options{HomeDir: h, ID: "task", Force: true}
 }
-func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
-	opts, meta := teardownFixture(t)
-	if _, err := RetireTask(opts, fakeTeardown{probeErr: errors.New("probe failed")}, fakeRetirementJournals{}, mergeTestAuth(t, opts.HomeDir, "task")); err == nil {
-		t.Fatal("expected error")
-	}
-	if _, err := os.Stat(meta); err != nil {
-		t.Fatalf("meta removed: %v", err)
+func TestRunWithBackendFailsOnProbeError(t *testing.T) {
+	opts := teardownFixture(t)
+	if _, err := RetireTask(opts, fakeTeardown{probeErr: errors.New("probe failed")}, fakeRetirementJournals{}, mergeTestAuth(t, opts.HomeDir, "task")); err == nil || !strings.Contains(err.Error(), "probe failed") {
+		t.Fatalf("error = %v, want the probe failure", err)
 	}
 }
-func TestRunWithBackendPreservesMetaOnDisposeError(t *testing.T) {
-	opts, meta := teardownFixture(t)
-	if _, err := RetireTask(opts, fakeTeardown{alive: true, disposeErr: errors.New("dispose failed")}, fakeRetirementJournals{}, mergeTestAuth(t, opts.HomeDir, "task")); err == nil {
-		t.Fatal("expected error")
-	}
-	if _, err := os.Stat(meta); err != nil {
-		t.Fatalf("meta removed: %v", err)
+func TestRunWithBackendFailsOnDisposeError(t *testing.T) {
+	opts := teardownFixture(t)
+	if _, err := RetireTask(opts, fakeTeardown{alive: true, disposeErr: errors.New("dispose failed")}, fakeRetirementJournals{}, mergeTestAuth(t, opts.HomeDir, "task")); err == nil || !strings.Contains(err.Error(), "dispose failed") {
+		t.Fatalf("error = %v, want the dispose failure", err)
 	}
 }
 
 func TestRunWithBackendReturnsWorktreeViaCapability(t *testing.T) {
-	opts, meta := teardownFixture(t)
+	opts := teardownFixture(t)
 
-	// Add a worktree path that exists as a directory so the return path runs.
+	// mergeTestAuth binds this existing directory, so the return path runs.
 	wtDir := filepath.Join(opts.HomeDir, "worktree")
 	os.MkdirAll(wtDir, 0755)
 	opts2 := opts
-	os.WriteFile(meta, []byte("backend=tmux\nwindow=pane-1\nworktree="+wtDir+"\n"), 0600)
 
 	var calls int
 	var gotPath string
@@ -107,11 +96,10 @@ func TestRunWithBackendReturnsWorktreeViaCapability(t *testing.T) {
 }
 
 func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
-	opts, meta := teardownFixture(t)
+	opts := teardownFixture(t)
 
 	wtDir := filepath.Join(opts.HomeDir, "worktree")
 	os.MkdirAll(wtDir, 0755)
-	os.WriteFile(meta, []byte("backend=tmux\nwindow=pane-1\nworktree="+wtDir+"\n"), 0600)
 
 	var calls int
 	fake := fakeTeardown{returnWorktreeFn: func(string) error { calls++; return errors.New("pool full") }}
@@ -121,10 +109,6 @@ func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("returnWorktree calls=%d, want 1", calls)
-	}
-	// Meta must survive because teardown aborted before cleanup.
-	if _, err := os.Stat(meta); err != nil {
-		t.Fatalf("meta removed on worktree failure: %v", err)
 	}
 }
 
@@ -145,11 +129,13 @@ func TestRetireTaskReportsSurvivingTaskProcessWithoutFailingTeardown(t *testing.
 	}{
 		{"with worktree evidence", func(t *testing.T, homeDir string) *taskauthority.Canonical { return mergeTestAuth(t, homeDir, "task") }},
 		{"without worktree evidence", func(t *testing.T, homeDir string) *taskauthority.Canonical {
-			return canonicalMergeTestAuth(t, homeDir, "task")
+			auth := canonicalMergeTestAuth(t, homeDir, "task")
+			seedWorktreeEvidence(t, auth, "task", t.TempDir(), "lease-wt", "fence-wt")
+			return auth
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts, _ := teardownFixture(t)
+			opts := teardownFixture(t)
 			useTaskProcessFakes(t, fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(800, "task", opts.HomeDir)}}}, func([]int) map[int]processDetail { return nil })
 			res, err := RetireTask(opts, fakeTeardown{}, fakeRetirementJournals{}, tc.auth(t, opts.HomeDir))
 			if err != nil {

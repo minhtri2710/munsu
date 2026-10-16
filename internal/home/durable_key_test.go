@@ -48,10 +48,10 @@ func TestCaptainDurableKeyRoundTrip(t *testing.T) {
 	}
 }
 
-// TestListMetaReturnsLogicalIDs verifies enumeration reverses the durable key:
-// ListMeta reports the logical ids (including captain:<id>) exactly as they
-// were written, not the persisted stems.
-func TestListMetaReturnsLogicalIDs(t *testing.T) {
+// TestListMetaIDsReturnsLogicalIDs verifies enumeration reverses the durable
+// key: ListMetaIDs reports the logical ids (including captain:<id>) exactly as
+// they were written, not the persisted stems.
+func TestListMetaIDsReturnsLogicalIDs(t *testing.T) {
 	tmp := t.TempDir()
 
 	ids := []string{"task-a", "captain:test", "captain:alpha"}
@@ -61,17 +61,17 @@ func TestListMetaReturnsLogicalIDs(t *testing.T) {
 		}
 	}
 
-	got, err := ListMeta(tmp)
+	got, err := ListMetaIDs(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
-	for _, e := range got {
-		seen[e.ID] = true
+	for _, id := range got {
+		seen[id] = true
 	}
 	for _, id := range ids {
 		if !seen[id] {
-			t.Errorf("ListMeta missing logical id %q (got %v)", id, got)
+			t.Errorf("ListMetaIDs missing logical id %q (got %v)", id, got)
 		}
 	}
 }

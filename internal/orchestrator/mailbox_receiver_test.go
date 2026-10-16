@@ -4,6 +4,8 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,7 @@ func setupReceiver(t *testing.T, homeDir, identity string, rank mhome.Rank) *mho
 			t.Fatalf("SeedCaptainProvenance: %v", err)
 		}
 	}
-	recv, err := mhome.NewReceiver(homeDir)
+	recv, err := mhome.NewReceiver(homeDir, seatsOf(homeDir))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -40,6 +42,30 @@ func setupEnvelope(t *testing.T, store *mhome.Store, env *mhome.Envelope) *mhome
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 	return env
+}
+
+// hostSoldierSeat records that homeDir hosts a live seat for taskID. seatsOf
+// answers from these records, standing in for fleet.SoldierSeat, which
+// orchestrator cannot import.
+func hostSoldierSeat(t *testing.T, homeDir, taskID string) {
+	t.Helper()
+	dir := filepath.Join(homeDir, "test-seats")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll seats: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, url.PathEscape(taskID)), nil, 0600); err != nil {
+		t.Fatalf("WriteFile seat: %v", err)
+	}
+}
+
+func seatsOf(homeDir string) mhome.SoldierSeatCheck {
+	return func(taskID string) error {
+		info, err := os.Stat(filepath.Join(homeDir, "test-seats", url.PathEscape(taskID)))
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("home %s hosts no live soldier seat for task %q", homeDir, taskID)
+		}
+		return nil
+	}
 }
 
 func wireCaptainToGeneral(t *testing.T, captainHome, generalID string) string {
@@ -823,9 +849,7 @@ func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 				wireGeneralToCaptain(t, home, tt.senderID, captainHome)
 			}
 			if tt.taskID != "" {
-				if err := mhome.WriteMeta(home, tt.taskID, map[string]string{"window": "w"}); err != nil {
-					t.Fatalf("WriteMeta: %v", err)
-				}
+				hostSoldierSeat(t, home, tt.taskID)
 			}
 
 			env := setupEnvelope(t, store, &mhome.Envelope{

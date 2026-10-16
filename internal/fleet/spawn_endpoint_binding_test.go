@@ -182,7 +182,7 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 	r.incarnation = agg.Launch.EndpointIncarnation
 }
 
-func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
+func TestConfirmSpawnBindsTheEndpointAndWorkingTogether(t *testing.T) {
 	homeDir := t.TempDir()
 	auth := mustCanonical(t)
 	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
@@ -204,19 +204,6 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 			Incarnation:  "bind-task-incarnation",
 		},
 	}
-	// The task meta projection is written before the authoritative working
-	// transition: a metadata failure must leave the task non-working, so the
-	// projection write must not commit the transition.
-	if err := r.writeTaskMeta(); err != nil {
-		t.Fatalf("writeTaskMeta: %v", err)
-	}
-	before, err := auth.Get(mustTaskID(t, "bind-task"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.Phase == taskauthority.PhaseWorking || before.Endpoint != nil {
-		t.Fatalf("meta write alone must not bind the endpoint or mark the task working: %+v", before)
-	}
 	// ConfirmSpawn commits the endpoint binding and the working transition
 	// together in one canonical operation.
 	if _, err := r.confirmSpawn(); err != nil {
@@ -237,13 +224,6 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	}
 	if bound.Revision != 3 {
 		t.Fatalf("revision=%d want 3 (create, bind worktree, confirm spawn)", bound.Revision)
-	}
-	reloadedMeta, err := home.ReadMeta(homeDir, "bind-task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reloadedMeta["backend"] != "herdr" || reloadedMeta["window"] != "session:pane-1" || reloadedMeta["session_owner"] != "session" || reloadedMeta["workspace_id"] != "workspace-1" || reloadedMeta["tab_id"] != "tab-1" {
-		t.Fatalf("meta=%v", reloadedMeta)
 	}
 }
 
@@ -315,34 +295,6 @@ func runGitForSpawnBinding(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestEndpointBindingMetadataFailureLeavesTaskNonWorking(t *testing.T) {
-	homeDir := t.TempDir()
-	auth := mustCanonical(t)
-	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
-	bindWorktreeForSpawnFixture(t, auth, "bind-task")
-	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux", Handle: "munsu:@1"}}
-	stateDir := home.StateDir(homeDir)
-	if err := os.MkdirAll(stateDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	blockedPath := filepath.Join(stateDir, "bind-task.meta")
-	if err := os.Mkdir(blockedPath, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.writeTaskMeta(); err == nil || !strings.Contains(err.Error(), "writing task meta") {
-		t.Fatalf("writeTaskMeta error=%v, want hard metadata error", err)
-	}
-	// ConfirmSpawn runs after the meta projection in Run(); a metadata
-	// failure leaves the task queued with no endpoint binding.
-	agg, err := auth.Get(mustTaskID(t, "bind-task"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
-		t.Fatalf("metadata write failure must leave task non-working: %+v", agg)
-	}
-}
-
 func TestEndpointBindingFailureLeavesTaskNonWorking(t *testing.T) {
 	homeDir := t.TempDir()
 	auth := mustCanonical(t)
@@ -406,13 +358,13 @@ func TestFinalEndpointVerificationRejectsStartingObservation(t *testing.T) {
 }
 
 // The ConfirmSpawn conflict seam: with the manifest and launch evidence intact
-// through the meta boundary, a runner endpoint identity that differs from the
+// through final verification, a runner endpoint identity that differs from the
 // recorded acquired endpoint is refused by BindEndpoint, and the refusal changes
 // no canonical state. The only mutation is the runner's endpoint handle.
 func TestConfirmSpawnRefusesEndpointSubstitutionWithIntactProof(t *testing.T) {
 	f := newLaunchFixture(t, "confirm-conflict")
-	if err := runLaunchPhases(f, "meta"); !errors.Is(err, errCrashSimulated) {
-		t.Fatalf("runLaunchPhases through meta: %v", err)
+	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("runLaunchPhases through verify: %v", err)
 	}
 	before := f.aggregate()
 	if before.LaunchEvidence == nil || before.Worktree == nil || before.Worktree.LaunchManifest == nil || before.AcquiredEndpoint == nil || before.Phase != taskauthority.PhaseQueued || before.Endpoint != nil {

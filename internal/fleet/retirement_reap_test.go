@@ -175,7 +175,6 @@ func TestRetireTaskDoesNotReportTheHolderItJustReaped(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
-	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 	pid := startMarkedSleeper(t, taskID, homeDir)
 	useTaskProcessFakes(t, fakeMarkerInventory{scan: MarkerScan{Marked: []MarkedProcess{markedTaskProcess(pid, taskID, homeDir)}}}, func([]int) map[int]processDetail { return nil })
 	fakeFuser(t, "if kill -0 "+strconv.Itoa(pid)+" 2>/dev/null; then echo "+strconv.Itoa(pid)+"; else exit 1; fi")
