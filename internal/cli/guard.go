@@ -62,7 +62,7 @@ func guardClearCooldown(path string) {
 
 // guardInFlight counts task-facing (ship/scout) tasks using the single
 // canonical current-state snapshot. It fails closed on unreadable Task truth:
-// a corrupt/legacy/meta-only fleet home returns an error and is never treated
+// a corrupt fleet home returns an error and is never treated
 // as an empty fleet. A home that is simply not initialized has no fleet to
 // guard and yields zero in-flight tasks (not an error).
 func guardInFlight(homeDir string) (int, error) {

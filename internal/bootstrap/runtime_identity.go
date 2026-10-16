@@ -160,8 +160,9 @@ func collectRuntimeIdentity(homeDir, cwd, cliVersion string, probe runtimeIdenti
 			capHome := strings.TrimSpace(c.Home)
 			ci := CaptainRuntimeIdentity{ID: capID, Home: capHome}
 			if capHome != "" {
-				checkout := collectSourceCheckout(capHome, probe)
-				ci.SourceCheckout = &checkout
+				if checkout, ok := collectSourceCheckout(capHome, probe); ok {
+					ci.SourceCheckout = &checkout
+				}
 				ci.Watcher = collectWatcherRuntime("captain:"+capID+" watcher", capHome, probe)
 				if ci.Watcher != nil {
 					classifyWatcherSkew(&id, *ci.Watcher, "munsu captain recover "+capID)
@@ -333,8 +334,8 @@ func collectSourceCheckouts(homeDir, cwd string, probe runtimeIdentityProbe) []S
 	seen := map[string]bool{}
 	var out []SourceCheckoutIdentity
 	for _, path := range []string{cwd, homeDir} {
-		checkout := collectSourceCheckout(path, probe)
-		if checkout.Path == "" || seen[checkout.Path] {
+		checkout, ok := collectSourceCheckout(path, probe)
+		if !ok || seen[checkout.Path] {
 			continue
 		}
 		seen[checkout.Path] = true
@@ -343,12 +344,15 @@ func collectSourceCheckouts(homeDir, cwd string, probe runtimeIdentityProbe) []S
 	return out
 }
 
-func collectSourceCheckout(path string, probe runtimeIdentityProbe) SourceCheckoutIdentity {
+func collectSourceCheckout(path string, probe runtimeIdentityProbe) (SourceCheckoutIdentity, bool) {
 	canonical := home.Canonical(path)
-	checkout := SourceCheckoutIdentity{Path: canonical}
 	if canonical == "" {
-		return checkout
+		return SourceCheckoutIdentity{}, false
 	}
+	if _, err := probe.git(canonical, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return SourceCheckoutIdentity{}, false
+	}
+	checkout := SourceCheckoutIdentity{Path: canonical}
 	if rev, err := probe.git(canonical, "rev-parse", "--short=12", "HEAD"); err == nil {
 		checkout.Revision = rev
 	} else {
@@ -359,7 +363,7 @@ func collectSourceCheckout(path string, probe runtimeIdentityProbe) SourceChecko
 	} else if checkout.Error == "" {
 		checkout.Error = err.Error()
 	}
-	return checkout
+	return checkout, true
 }
 
 func collectWatcherRuntime(component, homeDir string, probe runtimeIdentityProbe) *WatcherRuntimeIdentity {

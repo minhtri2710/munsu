@@ -254,7 +254,7 @@ func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 // TestReportResolvedRefusalReadsTheTaskKind pins the `resolved` refusal for a
 // ship task. A soldier reads its kind from its launch environment and never
 // opens the dispatcher's home; a captain or the dispatcher reads the canonical
-// task, never the .meta, and a canonical record that cannot be read refuses.
+// task, and a canonical record that cannot be read refuses.
 func TestReportResolvedRefusalReadsTheTaskKind(t *testing.T) {
 	const (
 		shipRefusal = "cannot use 'resolved' as delivery completion"
@@ -265,16 +265,15 @@ func TestReportResolvedRefusalReadsTheTaskKind(t *testing.T) {
 		role    string
 		envKind string
 		addArgs []string
-		meta    map[string]string
 		corrupt bool
 		want    string
 	}{
-		{"soldier whose launch names ship is refused", "soldier", "ship", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "scout"}, false, shipRefusal},
-		{"soldier whose launch names scout passes over a corrupt record", "soldier", "scout", []string{"--kind", "ship"}, map[string]string{"kind": "ship"}, true, ""},
-		{"canonical ship is refused with no meta kind", "general", "", []string{"--kind", "ship"}, map[string]string{"window": "w"}, false, shipRefusal},
-		{"unreadable canonical record is refused", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "scout"}, true, readRefusal},
-		{"canonical scout passes although meta claims ship", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, map[string]string{"kind": "ship"}, false, ""},
-		{"task with no canonical record and no meta is allowed", "general", "", nil, nil, false, ""},
+		{"soldier whose launch names ship is refused", "soldier", "ship", []string{"--kind", "scout", "--scope", "investigate report"}, false, shipRefusal},
+		{"soldier whose launch names scout passes over a corrupt record", "soldier", "scout", []string{"--kind", "ship"}, true, ""},
+		{"canonical ship is refused", "general", "", []string{"--kind", "ship"}, false, shipRefusal},
+		{"unreadable canonical record is refused", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, true, readRefusal},
+		{"canonical scout passes", "general", "", []string{"--kind", "scout", "--scope", "investigate report"}, false, ""},
+		{"task with no canonical record is allowed", "general", "", nil, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -283,9 +282,6 @@ func TestReportResolvedRefusalReadsTheTaskKind(t *testing.T) {
 				registerCLITestProject(t, homeDir, "munsu")
 				if out, err := runTaskCommand(t, append([]string{"task", "add", "res-1", "resolve", "--repo", "munsu", "--home", homeDir}, tc.addArgs...)); err != nil {
 					t.Fatalf("task add: %v\n%s", err, out)
-				}
-				if err := home.WriteMeta(homeDir, "res-1", tc.meta); err != nil {
-					t.Fatal(err)
 				}
 			}
 			if tc.corrupt {

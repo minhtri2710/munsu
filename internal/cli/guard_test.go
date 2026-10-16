@@ -172,15 +172,8 @@ func TestGuardSilenceNoInFlightTasks(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	// Create a task without kind=ship/scout — not in-flight
-	meta := "kind=done\nwindow=test\n"
-	metaDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(metaDir, 0755); err != nil {
-		t.Fatalf("creating state dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(metaDir, "test-task.meta"), []byte(meta), 0644); err != nil {
-		t.Fatalf("writing meta: %v", err)
-	}
+	// A queued task is not in flight.
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
 
 	stderr := captureStderr(func() {
@@ -292,7 +285,7 @@ func TestGuardContractOutput_StableCodes(t *testing.T) {
 // working soldier.
 func writeWorkingTaskMeta(t *testing.T, homeDir, id, kind string) {
 	t.Helper()
-	writeTaskMeta(t, homeDir, id, kind)
+	initHomeWithTask(t, homeDir, id, kind)
 	auth := cliCanonicalForHome(t, homeDir)
 	tid, err := domain.NewTaskID(id)
 	if err != nil {

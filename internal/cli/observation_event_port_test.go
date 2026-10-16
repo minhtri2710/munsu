@@ -71,15 +71,14 @@ func TestObservationEventPort_Sources_NoBinding(t *testing.T) {
 	}
 }
 
-// A .meta window (a captain's, or a stale soldier projection) is not a bound
-// endpoint: only the canonical binding is an event-wait target.
+// A captain's .meta window is not a bound endpoint: only the canonical binding
+// is an event-wait target.
 func TestObservationEventPort_Sources_MetaWindowSkipped(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
 	mustWriteCLIMeta(t, homeDir, "cap-1", map[string]string{"backend": "herdr", "window": "w:cap", "kind": "captain"})
-	mustWriteCLIMeta(t, homeDir, "task-1", map[string]string{"backend": "herdr", "window": "w:p"})
 	fakeDir := t.TempDir()
 	writeFakeHerdrCLI(t, fakeDir)
 	testutil.PrependPath(t, fakeDir)
