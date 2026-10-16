@@ -24,6 +24,7 @@ type State struct {
 	Description string // human-readable detail
 	PaneAlive   bool   // whether the session pane is still alive (diagnostic only — not truth)
 	StatusLines int    // number of status log lines
+	Worktree    string // the worktree the current generation binds, or ""
 
 	// PR is the read-time PR of the task; see PRView.
 	PR PRView
@@ -92,6 +93,9 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 
 	// Canonical phase is state truth.
 	s.Status = string(agg.Phase)
+	if agg.Worktree != nil {
+		s.Worktree = agg.Worktree.Path
+	}
 	if s.Status == "" {
 		s.Status = "unknown"
 	}

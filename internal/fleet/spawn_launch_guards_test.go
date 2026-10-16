@@ -207,14 +207,11 @@ func TestBacklogAuthorityRefusesBoundLiveSession(t *testing.T) {
 		phase    taskauthority.Phase
 		endpoint *taskauthority.EndpointBinding
 		acquired *taskauthority.AcquiredEndpoint
-		noWindow bool   // the .meta names no window
 		want     string // refusal text; empty means allowed
 	}{
 		{name: "general working task with a bound endpoint", phase: taskauthority.PhaseWorking, endpoint: bound, acquired: acquired, want: "already has a live soldier session (window=@1)"},
-		{name: "general working bound task whose meta lost its window", phase: taskauthority.PhaseWorking, endpoint: bound, acquired: acquired, noWindow: true, want: "already has a live soldier session (window=@1)"},
 		{name: "general queued task with only an acquired endpoint", phase: taskauthority.PhaseQueued, acquired: acquired},
 		{name: "captain task with a bound endpoint", captain: true, phase: taskauthority.PhaseQueued, endpoint: bound, acquired: acquired, want: "already has a live soldier session (window=@1)"},
-		{name: "captain bound task whose meta lost its window", captain: true, phase: taskauthority.PhaseWorking, endpoint: bound, acquired: acquired, noWindow: true, want: "already has a live soldier session (window=@1)"},
 		{name: "captain queued task with only an acquired endpoint", captain: true, phase: taskauthority.PhaseQueued, acquired: acquired},
 	}
 	for _, tc := range cases {
@@ -228,13 +225,6 @@ func TestBacklogAuthorityRefusesBoundLiveSession(t *testing.T) {
 			tamperTaskAggregate(t, homeDir, "live-task", func(agg *taskauthority.Aggregate) {
 				agg.Phase, agg.Endpoint, agg.AcquiredEndpoint = tc.phase, tc.endpoint, tc.acquired
 			})
-			meta := map[string]string{"window": "@1"}
-			if tc.noWindow {
-				meta = map[string]string{"kind": "ship"}
-			}
-			if err := home.WriteMeta(homeDir, "live-task", meta); err != nil {
-				t.Fatal(err)
-			}
 			r := &Runner{args: Args{ID: "live-task", Authority: auth}, homeDir: homeDir}
 			check := r.checkBacklogAuthority
 			if tc.captain {
@@ -545,6 +535,7 @@ func TestWaitForHarnessReadyRefusesUnreadableObservation(t *testing.T) {
 	eps := &probeStateEndpoints{state: EndpointUnresponsive}
 	r := &Runner{
 		args:      Args{ID: "ready-unreadable"},
+		launch:    &taskauthority.LaunchIntent{},
 		harness:   "pi",
 		endpoints: eps,
 		endpoint:  CreatedEndpoint{Backend: "tmux", Handle: "pane-1"},

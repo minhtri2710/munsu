@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -120,11 +119,11 @@ func GetWorktreeReserved(homeDir, treehouse, repoPath string, lease bool, reserv
 // ReservedGitWorktreePath returns the path git worktree derives for a launch
 // reservation, without creating anything. Treehouse allocates pool paths, so
 // it has no such derivation; reclaim spares those through the lease holder.
-func ReservedGitWorktreePath(homeDir, repoPath, reservationID string) (string, bool) {
+func ReservedGitWorktreePath(homeDir, repoPath, reservationID string) (string, error) {
 	if homeDir == "" || reservationID == "" {
-		return "", false
+		return "", fmt.Errorf("worktree: reserved path requires a home and a reservation identity")
 	}
-	return (&gitWorktreeProvider{homeDir: homeDir}).reservedPath(repoPath, reservationID), true
+	return (&gitWorktreeProvider{homeDir: homeDir}).reservedPath(repoPath, reservationID)
 }
 
 // ReturnWorktree returns a worktree path within the given munsu home.
@@ -297,8 +296,39 @@ func (p *gitWorktreeProvider) getWorktreeBase() string {
 	return filepath.Join(p.homeDir, ".worktrees")
 }
 
-func (p *gitWorktreeProvider) reservedPath(repoPath, reservationID string) string {
-	return filepath.Join(p.getWorktreeBase(), stableHash(repoPath+"\x00"+reservationID))
+func (p *gitWorktreeProvider) reservedPath(repoPath, reservationID string) (string, error) {
+	repo, err := canonicalRepoPath(repoPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(p.getWorktreeBase(), stableHash(repo+"\x00"+reservationID)), nil
+}
+
+// canonicalRepoPath resolves repoPath to an absolute, symlink-free path so
+// every spelling of one repository hashes to the same worktree.
+func canonicalRepoPath(repoPath string) (string, error) {
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving repo path: %w", err)
+	}
+	repo, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolving repo path: %w", err)
+	}
+	return repo, nil
+}
+
+// addGitWorktree returns wtDir when it already holds a worktree (.git
+// present), else creates it with `git worktree add --detach`.
+func addGitWorktree(repo, wtDir string) (string, error) {
+	if _, err := os.Lstat(filepath.Join(wtDir, ".git")); err == nil {
+		return wtDir, nil
+	}
+	out, stderr, err := runWorktreeMutationCommand("git", repo, "worktree", "add", "--detach", wtDir)
+	if err != nil {
+		return "", wrapBackendCommandError("git worktree add", out, stderr, err)
+	}
+	return wtDir, nil
 }
 
 // GetReserved acquires the worktree owned by one launch reservation. The
@@ -308,49 +338,31 @@ func (p *gitWorktreeProvider) reservedPath(repoPath, reservationID string) strin
 // recovery re-adopts the identical path — never a duplicate lease or path.
 // recovery is therefore idempotent and needs no provider-side distinction.
 func (p *gitWorktreeProvider) GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
-	base := p.getWorktreeBase()
-	wtDir := p.reservedPath(repoPath, reservationID)
-
-	// Ensure base directory exists.
-	if err := os.MkdirAll(base, 0755); err != nil {
+	repo, err := canonicalRepoPath(repoPath)
+	if err != nil {
+		return "", err
+	}
+	wtDir, err := p.reservedPath(repo, reservationID)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(p.getWorktreeBase(), 0755); err != nil {
 		return "", fmt.Errorf("creating worktree base: %w", err)
 	}
-
-	// If worktree already exists, return it (idempotent; recovery re-adopts
-	// the reservation-owned path).
-	if fi, err := os.Stat(wtDir); err == nil && fi.IsDir() {
-		return wtDir, nil
-	}
-
-	// Create new worktree with --detach.
-	out, stderr, err := runWorktreeMutationCommand("git", repoPath, "worktree", "add", "--detach", wtDir)
-	if err != nil {
-		return "", wrapBackendCommandError("git worktree add", out, stderr, err)
-	}
-	return wtDir, nil
+	// An existing worktree is re-adopted, so recovery is idempotent.
+	return addGitWorktree(repo, wtDir)
 }
 
 func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {
-	hash := stableHash(repoPath)
+	repo, err := canonicalRepoPath(repoPath)
+	if err != nil {
+		return "", err
+	}
 	base := p.getWorktreeBase()
-	wtDir := filepath.Join(base, hash)
-
-	// Ensure base directory exists.
 	if err := os.MkdirAll(base, 0755); err != nil {
 		return "", fmt.Errorf("creating worktree base: %w", err)
 	}
-
-	// If worktree already exists, return it (idempotent).
-	if fi, err := os.Stat(wtDir); err == nil && fi.IsDir() {
-		return wtDir, nil
-	}
-
-	// Create new worktree with --detach.
-	out, stderr, err := runWorktreeMutationCommand("git", repoPath, "worktree", "add", "--detach", wtDir)
-	if err != nil {
-		return "", wrapBackendCommandError("git worktree add", out, stderr, err)
-	}
-	return wtDir, nil
+	return addGitWorktree(repo, filepath.Join(base, stableHash(repo)))
 }
 
 func (p *gitWorktreeProvider) Return(path string) error {
@@ -396,9 +408,7 @@ func assertReturnable(path, verb string) (gitDir string, err error) {
 	if !ok {
 		return "", fmt.Errorf("unexpected .git file format: %s", line)
 	}
-	status := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
-	status.Dir = path
-	out, err := status.Output()
+	out, _, err := runWorktreeCommand("git", path, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
 	if err != nil {
 		return "", fmt.Errorf("checking worktree cleanliness before %s: %w", verb, err)
 	}

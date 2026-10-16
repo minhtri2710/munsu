@@ -4,10 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // PruneOptions controls the prune operation.
@@ -16,8 +12,12 @@ type PruneOptions struct {
 	Session string
 	// Apply closes matching workspaces. When false, only dry-run listing.
 	Apply bool
-	// HomeDir is the resolved munsu home directory used for hometag and live-task scanning.
+	// HomeDir is the resolved munsu home directory whose hometag labels the
+	// workspaces it owns.
 	HomeDir string
+	// LiveWorkspaceIDs are the workspaces the home's tasks and captains hold;
+	// prune never closes one. The caller reads them from canonical state.
+	LiveWorkspaceIDs map[string]bool
 	// CaptainHomes are candidate captain home paths whose workspace labels are
 	// also owned (and therefore prunable) by this home. The caller supplies and
 	// validates these from the canonical Fleet Registry; Backend only derives
@@ -45,43 +45,13 @@ type PruneResult struct {
 
 // denyListedLabel returns true if the label must never be closed by prune.
 // Foreign orchestrators and non-munsu labels are out of scope. Live munsu
-// captain/primary workspaces are protected by live-agent and live-meta checks.
+// captain/primary workspaces are protected by live-agent and held-workspace checks.
 func denyListedLabel(label string) bool {
 	switch label {
 	case "default":
 		return true
 	}
 	return false
-}
-
-// liveWorkspaceIDsFromTaskMeta scans all task meta files in the state directory
-// and returns the set of workspace_id values found.
-func liveWorkspaceIDsFromTaskMeta(homeDir string) (map[string]bool, error) {
-	stateDir := filepath.Join(homeDir, "state")
-	entries, err := os.ReadDir(stateDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading state dir: %w", err)
-	}
-	ids := make(map[string]bool)
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".meta") {
-			continue
-		}
-		if _, err := home.ReverseDurableKey(strings.TrimSuffix(e.Name(), ".meta")); err != nil {
-			continue
-		}
-		meta, err := home.ReadMetaFile(filepath.Join(stateDir, e.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("reading task meta %s: %w", e.Name(), err)
-		}
-		if wsID := meta[MetaWorkspaceID]; wsID != "" {
-			ids[wsID] = true
-		}
-	}
-	return ids, nil
 }
 
 // RunPrune executes the prune algorithm and returns the result.
@@ -111,12 +81,6 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	var resp herdrWorkspaceListResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		return nil, fmt.Errorf("parsing workspace list: %w", err)
-	}
-
-	// Step 3: Scan live task meta for referenced workspace IDs.
-	liveWSIDs, err := liveWorkspaceIDsFromTaskMeta(opts.HomeDir)
-	if err != nil {
-		return nil, fmt.Errorf("refusing to prune: scanning live task meta: %w", err)
 	}
 
 	result := &PruneResult{
@@ -154,10 +118,10 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 			continue
 		}
 
-		// Safety: never close workspace referenced by live task meta.
-		if liveWSIDs[ws.WorkspaceID] {
+		// Safety: never close a workspace a task or captain holds.
+		if opts.LiveWorkspaceIDs[ws.WorkspaceID] {
 			pw.Action = "skip"
-			pw.Reason = "referenced by live task meta workspace_id"
+			pw.Reason = "held by a live task or captain endpoint"
 			result.Workspaces = append(result.Workspaces, pw)
 			continue
 		}

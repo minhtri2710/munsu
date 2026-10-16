@@ -161,6 +161,61 @@ func TestTriageDrainsQueue(t *testing.T) {
 	}
 }
 
+// A daemon that dies after claiming and before the digest is written leaves
+// the wakes leased, so the lease's expiry returns them; a completed cycle
+// writes the digest and acks them.
+func TestTriageCycleAcksOnlyAfterTheDigestIsWritten(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		completes, flushErr bool
+		wantLeased          int
+	}{
+		{name: "crash before flush", wantLeased: 1},
+		{name: "flush fails", completes: true, flushErr: true, wantLeased: 1},
+		{name: "cycle completes", completes: true, wantLeased: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			if err := mhome.EnqueueWake(tmp, "afk", "task-1", "failed: CI red"); err != nil {
+				t.Fatal(err)
+			}
+			digestPath := filepath.Join(tmp, digestFile)
+			if tc.flushErr {
+				if err := os.WriteFile(digestPath, []byte("not json"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.completes {
+				d := &Daemon{homeDir: tmp, digester: NewDigester(tmp), startedAt: time.Now()}
+				d.triageCycle(time.Now())
+			} else if _, err := OneCycle(tmp); err != nil {
+				t.Fatal(err)
+			}
+			leases, err := mhome.ListClaimedLeases(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leased := 0
+			for _, l := range leases {
+				leased += len(l.Wakes)
+			}
+			if leased != tc.wantLeased {
+				t.Fatalf("leased wakes = %d, want %d", leased, tc.wantLeased)
+			}
+			if tc.flushErr {
+				return
+			}
+			be, err := readDigestFile(digestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := be != nil && len(be.Entries) == 1; got != tc.completes {
+				t.Fatalf("digest = %+v, want written=%v", be, tc.completes)
+			}
+		})
+	}
+}
+
 // --- Daemon flag lifecycle test ---
 
 // waitForFile waits for an externally observable file to appear. The bounded

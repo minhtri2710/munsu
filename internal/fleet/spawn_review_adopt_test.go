@@ -240,7 +240,6 @@ func TestReviewLaunchRunsEveryPhaseAgainstTheReviewedCheckout(t *testing.T) {
 		{"submit", rr.submitLaunch},
 		{"ready", rr.waitAndInjectBrief},
 		{"verify", rr.verifyEndpointReadyBeforePersist},
-		{"meta", rr.writeTaskMeta},
 		{"confirm", func() error { _, err := rr.confirmSpawn(); return err }},
 	}
 	for _, p := range phases {

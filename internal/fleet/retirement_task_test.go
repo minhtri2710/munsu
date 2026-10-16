@@ -371,7 +371,7 @@ func TestScoutSafetyCheck_ReportExists(t *testing.T) {
 	os.MkdirAll(reportDir, 0755)
 	os.WriteFile(filepath.Join(reportDir, ReportName(1)), []byte("findings"), 0644)
 
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, 1)
 	if err != nil {
 		t.Fatalf("should pass when the generation's report exists: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestScoutSafetyCheck_ReportExists(t *testing.T) {
 func TestScoutSafetyCheck_NoReport(t *testing.T) {
 	tmp := t.TempDir()
 
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, 1)
 	if err == nil {
 		t.Fatal("should fail when the generation wrote no report")
 	}
@@ -401,10 +401,10 @@ func TestScoutSafetyCheckRejectsPriorGenerationReport(t *testing.T) {
 	}
 
 	opts := Options{ID: "scout-gen", HomeDir: tmp}
-	if err := scoutSafetyCheck(opts, nil, 1); err != nil {
+	if err := scoutSafetyCheck(opts, 1); err != nil {
 		t.Fatalf("generation 1's own report must answer for generation 1: %v", err)
 	}
-	err := scoutSafetyCheck(opts, nil, 2)
+	err := scoutSafetyCheck(opts, 2)
 	if err == nil {
 		t.Fatal("a prior generation's report must not answer for generation 2")
 	}
@@ -413,9 +413,9 @@ func TestScoutSafetyCheckRejectsPriorGenerationReport(t *testing.T) {
 	}
 }
 
-// TestRun_NoMeta admits a task without .meta only when its generation began a
-// launch that never bound; --force does not widen that.
-func TestRun_NoMeta(t *testing.T) {
+// TestRun_NeverLaunchedIsRefused refuses a generation that never began a
+// launch and holds no resource; --force does not widen that.
+func TestRun_NeverLaunchedIsRefused(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		launch  bool
@@ -440,7 +440,7 @@ func TestRun_NoMeta(t *testing.T) {
 				auth = canonicalMergeTestAuth(t, homeDir, id)
 			}
 			_, err := RetireTask(Options{HomeDir: homeDir, ID: id, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
-			if refused := err != nil && strings.Contains(err.Error(), "reading meta"); refused != tc.refused {
+			if refused := err != nil && strings.Contains(err.Error(), "teardown no-meta-queued: task never launched, nothing to retire"); refused != tc.refused {
 				t.Fatalf("RetireTask error = %v, want refused=%v", err, tc.refused)
 			}
 			agg, gerr := auth.Get(mustTaskID(t, id))
@@ -456,12 +456,7 @@ func TestRun_NoMeta(t *testing.T) {
 
 func TestRun_SafetyCheckGenerationFailsClosedWithoutAuthority(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
-
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "no-authority.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
+	t.Setenv("MUNSU_HOME", tmp)
 
 	// The scout safety check answers for a canonical generation, so a nil
 	// authority fails closed before any report is resolved.
@@ -478,13 +473,10 @@ func TestRun_SafetyCheckGenerationFailsClosedWithoutAuthority(t *testing.T) {
 // some other generation's report.
 func TestRun_PinnedTeardownConflictPreemptsReportCheck(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "pinned-conflict")
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "pinned-conflict.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
+	seedWorktreeEvidence(t, auth, "pinned-conflict", t.TempDir(), "lease-wt", "fence-wt")
 
 	target := taskauthority.Generation(2)
 	_, err := RetireTask(Options{HomeDir: tmp, ID: "pinned-conflict", ExpectedGeneration: &target}, fakeTeardown{}, fakeRetirementJournals{}, auth)
@@ -499,18 +491,10 @@ func TestRun_PinnedTeardownConflictPreemptsReportCheck(t *testing.T) {
 
 func TestRun_ForceSkipsSafety(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
-	// Compose the canonical Authority and task before the projection write so
-	// the home is initialized first.
 	auth := canonicalScoutTestAuth(t, tmp, "nonexistent")
-
-	// Create a minimal meta file
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	metaContent := "backend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
+	seedWorktreeEvidence(t, auth, "nonexistent", t.TempDir(), "lease-wt", "fence-wt")
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
 	result, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
@@ -524,15 +508,10 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 
 func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "scout-test")
-
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	metaContent := "backend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
+	seedWorktreeEvidence(t, auth, "scout-test", t.TempDir(), "lease-wt", "fence-wt")
 
 	// Without --force, should fail
 	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, auth)
@@ -552,14 +531,11 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 
 func TestRun_ForcePreservesReport(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "scout-report")
 
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "scout-report.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
+	seedWorktreeEvidence(t, auth, "scout-report", t.TempDir(), "lease-wt", "fence-wt")
 
 	dataDir := filepath.Join(tmp, "data", "scout-report")
 	os.MkdirAll(dataDir, 0755)
@@ -592,10 +568,10 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 	// The report belongs to generation 1 and stops answering for any other:
 	// a later generation's check resolves only its own generation-named
 	// report, and its absence from that name is what refuses the check.
-	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{}, 1); err != nil {
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, 1); err != nil {
 		t.Fatalf("generation 1's own report must answer for generation 1: %v", err)
 	}
-	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, map[string]string{}, 2); err == nil {
+	if err := scoutSafetyCheck(Options{HomeDir: tmp, ID: "scout-report"}, 2); err == nil {
 		t.Fatal("scoutSafetyCheck must refuse a generation that wrote no report of its own")
 	}
 
@@ -608,14 +584,11 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 
 func TestRun_ForcePreservesBriefForSweep(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "stub-brief")
 
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "stub-brief.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644)
+	seedWorktreeEvidence(t, auth, "stub-brief", t.TempDir(), "lease-wt", "fence-wt")
 
 	dataDir := filepath.Join(tmp, "data", "stub-brief")
 	os.MkdirAll(dataDir, 0755)
@@ -651,8 +624,7 @@ func hasStep(steps []string, want string) bool {
 
 func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "test-residual")
 	// The canonical launch names the pi harness, so its adapter artifacts are
@@ -670,9 +642,6 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-
-	metaContent := "backend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
 	// Create residual artifacts: munsu-native + pi adapter artifacts, the
 	// per-task pi agent dir among them (a directory with content).
@@ -752,42 +721,6 @@ func TestCleanupResidualArtifactPaths(t *testing.T) {
 	}
 }
 
-// reviewTaskRetire force-retires a canonical review task whose meta carries extra.
-func reviewTaskRetire(t *testing.T, extra map[string]string) error {
-	t.Helper()
-	homeDir := t.TempDir()
-	auth := mergeTestAuth(t, homeDir, "ship-1")
-	create := taskauthority.CanonicalCreateRequest{
-		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "review-1"), Owner: "general", Description: "Ready", Kind: taskauthority.KindReview,
-		ReviewTaskID: "ship-1", ReviewHead: strings.Repeat("a", 40), Reason: "test",
-	}
-	if _, err := auth.Create(mustOp(t, "op-create-review-1", create), create); err != nil {
-		t.Fatalf("Create(review-1): %v", err)
-	}
-	meta := map[string]string{}
-	for k, v := range extra {
-		meta[k] = v
-	}
-	if err := mhome.WriteMeta(homeDir, "review-1", meta); err != nil {
-		t.Fatal(err)
-	}
-	_, err := RetireTask(Options{HomeDir: homeDir, ID: "review-1", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
-	return err
-}
-
-func reviewWorktreeBlock(t *testing.T) {
-	err := reviewTaskRetire(t, map[string]string{"worktree": "/wt"})
-	if err == nil || !strings.Contains(err.Error(), "meta names a worktree; a review owns none") {
-		t.Fatalf("RetireTask(force) of a review naming a worktree = %v, want the worktree refusal", err)
-	}
-}
-
-func reviewWorktreeAllow(t *testing.T) {
-	if err := reviewTaskRetire(t, nil); err != nil {
-		t.Fatalf("RetireTask(force) of a review naming no worktree: %v", err)
-	}
-}
-
 func scoutHoldsBlock(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -806,7 +739,7 @@ func scoutHoldsBlock(t *testing.T) {
 	}
 
 	// scoutSafetyCheck should fail listing unresolved keys.
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, 1)
 	if err == nil {
 		t.Fatal("should fail when unresolved decision holds exist")
 	}
@@ -835,7 +768,7 @@ func scoutHoldsAllow(t *testing.T) {
 	}
 
 	// scoutSafetyCheck should pass since all holds are resolved.
-	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil, 1)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, 1)
 	if err != nil {
 		t.Fatalf("should pass when all holds resolved: %v", err)
 	}
@@ -843,16 +776,11 @@ func scoutHoldsAllow(t *testing.T) {
 
 func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "scout-test")
 
-	// Create meta file for a scout task.
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-	metaContent := "backend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
+	seedWorktreeEvidence(t, auth, "scout-test", t.TempDir(), "lease-wt", "fence-wt")
 
 	// Create the generation's report so the report check passes before the
 	// decision hold check.
@@ -889,13 +817,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 func TestRun_DataPathFileFailsClosed(t *testing.T) {
 	tmp := t.TempDir()
 	auth := canonicalScoutTestAuth(t, tmp, "data-file")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "data-file.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedWorktreeEvidence(t, auth, "data-file", t.TempDir(), "lease-wt", "fence-wt")
 	dataDir := filepath.Join(tmp, "data", "data-file")
 	if err := os.MkdirAll(filepath.Dir(dataDir), 0755); err != nil {
 		t.Fatal(err)
@@ -921,13 +843,7 @@ func TestRun_DataParentStatFailsClosed(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	auth := canonicalScoutTestAuth(t, tmp, "data-parent")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "data-parent.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedWorktreeEvidence(t, auth, "data-parent", t.TempDir(), "lease-wt", "fence-wt")
 	dataRoot := filepath.Join(tmp, "data")
 	dataDir := filepath.Join(dataRoot, "data-parent")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -957,13 +873,6 @@ func abortPendingCleanup(t *testing.T) (*taskauthority.Canonical, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	auth := mergeTestAuth(t, tmp, "abort-live")
-	stateDir := filepath.Join(tmp, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "abort-live.meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: "abort-live", Force: true}, fakeTeardown{alive: true, disposeErr: errors.New("stuck")}, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected cleanup to remain pending")
 	}
@@ -1009,28 +918,16 @@ func (failingRetirementJournals) FinalizeRetirementJournals(string, string) ([]s
 	return nil, errors.New("journal finalization failed")
 }
 
-func TestRun_RetryAfterJournalFailureKeepsMeta(t *testing.T) {
+func TestRun_RetryAfterJournalFailureCompletes(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "retry-journal"
 	auth := canonicalScoutTestAuth(t, tmp, taskID)
-	metaPath := filepath.Join(tmp, "state", taskID+".meta")
-	if err := os.MkdirAll(filepath.Dir(metaPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metaPath, []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedWorktreeEvidence(t, auth, taskID, t.TempDir(), "lease-wt", "fence-wt")
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, failingRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected pending cleanup")
 	}
-	if _, err := os.Stat(metaPath); err != nil {
-		t.Fatalf("meta removed: %v", err)
-	}
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("retry: %v", err)
-	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta remains after retry: %v", err)
 	}
 	claim, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
@@ -1069,9 +966,7 @@ func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "projection-retry"
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedWorktreeEvidence(t, auth, taskID, t.TempDir(), "lease-wt", "fence-wt")
 	lift := blockResidualRemoval(t, filepath.Join(tmp, "state"), taskID)
 	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	var projectionErr *RetirementProjectionError
@@ -1088,14 +983,11 @@ func TestRun_ProjectionFailureRetriesWhileRetired(t *testing.T) {
 	}
 }
 
-func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
+func TestRun_WakePruneFailureIsRetried(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "prune-retry"
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	metaPath := filepath.Join(tmp, "state", taskID+".meta")
-	if err := os.WriteFile(metaPath, []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedWorktreeEvidence(t, auth, taskID, t.TempDir(), "lease-wt", "fence-wt")
 	marker := mhome.WatcherSeenMarkerPath(tmp, taskID)
 	if err := os.MkdirAll(filepath.Join(marker, "child"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1105,16 +997,10 @@ func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
 	if !errors.As(err, &projectionErr) {
 		t.Fatalf("error = %T %v, want projection error", err, err)
 	}
-	if _, err := os.Stat(metaPath); err != nil {
-		t.Fatalf("meta after the failed prune: %v, want it kept as the retry identity", err)
-	}
 	// The claim is now completed, so this retry runs the completed-claim path.
 	_, err = RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if !errors.As(err, &projectionErr) {
 		t.Fatalf("completed-claim retry error = %T %v, want projection error", err, err)
-	}
-	if _, err := os.Stat(metaPath); err != nil {
-		t.Fatalf("meta after the completed-claim retry's failed prune: %v, want it kept as the retry identity", err)
 	}
 	if err := os.RemoveAll(marker); err != nil {
 		t.Fatal(err)
@@ -1122,20 +1008,14 @@ func TestRun_WakePruneFailureKeepsMetaForTheRetry(t *testing.T) {
 	if _, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Fatalf("meta after the retry: %v, want removed", err)
-	}
 }
 
 func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "projection-superseded"
 	auth := canonicalMergeTestAuth(t, tmp, taskID)
-	metaPath := filepath.Join(tmp, "state", taskID+".meta")
 	statusPath := filepath.Join(tmp, "state", taskID+".status")
-	if err := os.WriteFile(metaPath, []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedWorktreeEvidence(t, auth, taskID, t.TempDir(), "lease-wt", "fence-wt")
 	lift := blockResidualRemoval(t, filepath.Join(tmp, "state"), taskID)
 	_, err := RetireTask(Options{HomeDir: tmp, ID: taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	var projectionErr *RetirementProjectionError
@@ -1162,11 +1042,7 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	if _, err := auth.Reopen(op, reopen); err != nil {
 		t.Fatal(err)
 	}
-	metaV2 := []byte("generation=2 meta\n")
 	statusV2 := []byte("generation=2 status\n")
-	if err := os.WriteFile(metaPath, metaV2, 0644); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(statusPath, statusV2, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1181,10 +1057,8 @@ func TestRun_ProjectionFailureThenReopenIsSuperseded(t *testing.T) {
 	if staleErr.PriorGeneration != 1 || staleErr.CurrentGeneration != 2 || staleErr.TerminalStatus != "completed" {
 		t.Fatalf("stale error = %+v, want prior 1 / current 2 / completed", staleErr)
 	}
-	gotMeta, _ := os.ReadFile(metaPath)
-	gotStatus, _ := os.ReadFile(statusPath)
-	if string(gotMeta) != string(metaV2) || string(gotStatus) != string(statusV2) {
-		t.Fatalf("current projections changed: meta=%q status=%q", gotMeta, gotStatus)
+	if gotStatus, _ := os.ReadFile(statusPath); string(gotStatus) != string(statusV2) {
+		t.Fatalf("current status projection changed: %q", gotStatus)
 	}
 }
 
@@ -1192,9 +1066,6 @@ func TestRun_AbortRefreshesBriefOnlyDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	taskID := "abort-brief-only"
 	auth := mergeTestAuth(t, tmp, taskID)
-	if err := os.WriteFile(filepath.Join(tmp, "state", taskID+".meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	dataDir := filepath.Join(tmp, "data", taskID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)

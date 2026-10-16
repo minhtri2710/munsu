@@ -139,40 +139,49 @@ func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath, blo
 }
 
 func TestHerdrEventSource_Wait_NormalizedSignal(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "args.log")
-	src, _ := eventSourceWithFake(t, `{"agent_status":"working","state_change_seq":42,"pane_id":"w1:p1"}`, 0, logPath)
+	for _, tc := range []struct {
+		handle   string
+		wantArgv string
+	}{
+		{"w1:p1", "--session test-s agent wait w1:p1 --timeout "},
+		{"sess:w1:p1", "--session sess agent wait w1:p1 --timeout "},
+	} {
+		t.Run(tc.handle, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "args.log")
+			src, _ := eventSourceWithFake(t, `{"agent_status":"working","state_change_seq":42,"pane_id":"w1:p1"}`, 0, logPath)
 
-	ref := EndpointRef{Backend: "herdr", Handle: "w1:p1"}
-	sig, err := src.Wait(context.Background(), ref, "")
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	if !sig.Valid() {
-		t.Fatalf("signal invalid: %+v", sig)
-	}
-	if sig.Source != SourceEvent {
-		t.Errorf("Source = %v, want event", sig.Source)
-	}
-	if sig.Activity != ActivityBusy {
-		t.Errorf("Activity = %v, want busy (wire status working)", sig.Activity)
-	}
-	if sig.Cursor != "42" {
-		t.Errorf("Cursor = %q, want 42", sig.Cursor)
-	}
-	if sig.ObservedAt.IsZero() {
-		t.Error("ObservedAt must be set")
-	}
+			ref := EndpointRef{Backend: "herdr", Handle: tc.handle}
+			sig, err := src.Wait(context.Background(), ref, "")
+			if err != nil {
+				t.Fatalf("Wait: %v", err)
+			}
+			if !sig.Valid() {
+				t.Fatalf("signal invalid: %+v", sig)
+			}
+			if sig.Source != SourceEvent {
+				t.Errorf("Source = %v, want event", sig.Source)
+			}
+			if sig.Activity != ActivityBusy {
+				t.Errorf("Activity = %v, want busy (wire status working)", sig.Activity)
+			}
+			if sig.Cursor != "42" {
+				t.Errorf("Cursor = %q, want 42", sig.Cursor)
+			}
+			if sig.ObservedAt.IsZero() {
+				t.Error("ObservedAt must be set")
+			}
+			if sig.Detail != "herdr agent wait: working" {
+				t.Errorf("Detail = %q, want no pane mismatch note", sig.Detail)
+			}
 
-	// Exact argv: session flag, agent wait subcommand, pane handle, timeout.
-	args, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("reading argv log: %v", err)
-	}
-	line := strings.TrimSpace(string(args))
-	for _, want := range []string{"--session", "test-s", "agent", "wait", "w1:p1", "--timeout"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("argv %q missing %q", line, want)
-		}
+			args, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("reading argv log: %v", err)
+			}
+			if line := strings.TrimSpace(string(args)); !strings.HasPrefix(line, tc.wantArgv) {
+				t.Errorf("argv %q, want prefix %q", line, tc.wantArgv)
+			}
+		})
 	}
 }
 

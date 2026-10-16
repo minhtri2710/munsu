@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"charm.land/lipgloss/v2"
-	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 var dashCard = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styleWarn.GetForeground()).Padding(0, 1)
@@ -34,11 +33,11 @@ func (m dashboardModel) detail() (lines []dashLine, held bool) {
 		}
 		return dashFree(body...), true
 	}
-	phase := dashText(fleet.PhaseFromProjection(*ts))
+	mark, phase := dashPhase(*ts)
 	if m.state() == stateStale {
 		phase += " [stale]"
 	} else {
-		phase = markFor(phase).style.Render(phase)
+		phase = mark.style.Render(phase)
 	}
 	pane := "unknown"
 	switch {

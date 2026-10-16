@@ -425,6 +425,8 @@ func buildTransferJournal(source, destination, captainID string, sourceAuth, des
 			return nil, fmt.Errorf("handoff: reading destination ownership for %s: %w", taskID, err)
 		}
 		reservationID := "transfer-" + id + "-" + taskID
+		def := agg.Definition
+		def.Owner = "captain:" + captainID
 		journal.Tasks = append(journal.Tasks, taskHandoffTask{
 			TaskID:           taskID,
 			SourceGeneration: uint64(agg.Generation),
@@ -432,13 +434,7 @@ func buildTransferJournal(source, destination, captainID string, sourceAuth, des
 			ReservationID:    reservationID,
 			FenceToken:       "fence-" + reservationID,
 			Owner:            "captain:" + captainID,
-			Definition: taskauthority.TaskDefinition{
-				Owner:        "captain:" + captainID,
-				Description:  agg.Definition.Description,
-				Kind:         agg.Definition.Kind,
-				Project:      agg.Definition.Project,
-				ParentTaskID: agg.Definition.ParentTaskID,
-			},
+			Definition:       def,
 			DeliveryContract: agg.DeliveryContract,
 		})
 	}

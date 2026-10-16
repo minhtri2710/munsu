@@ -106,13 +106,10 @@ func newTaskObserveCmd() *cobra.Command {
 				return err
 			}
 
-			// Read .meta only to detect the captain metadata exception. A
-			// captain is non-task metadata (not Task observation authority): it
-			// is observed through CaptainStatus/SummarizeCaptainHome and never
-			// routed through the Task Authority.
-			meta, metaErr := home.ReadMeta(ctx.Home, args[0])
-			hasMeta := metaErr == nil
-			if hasMeta && meta["kind"] == "captain" && strings.HasPrefix(args[0], "captain:") {
+			// A captain is non-task metadata (not Task observation authority):
+			// it is observed through its .meta, CaptainStatus and
+			// SummarizeCaptainHome, never through the Task Authority.
+			if meta, ok := captainMeta(ctx.Home, args[0]); ok {
 				state := &fleet.State{TaskID: args[0], Status: fleet.CaptainStatus(ctx.Home, fleet.CaptainIDFromTask(args[0], meta), meta["home"], cliEndpointProbe{resolve: backend.BackendForTask})}
 				state.PaneAlive = state.Status == "alive"
 				if summary := fleet.SummarizeCaptainHome(meta["home"]); summary.Valid {
@@ -137,14 +134,12 @@ func newTaskObserveCmd() *cobra.Command {
 				return observeReadError(ctx.Home, args[0], err)
 			}
 
-			// .meta is used only for optional diagnostics after canonical truth
-			// has been resolved.
 			result := TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
 			if fields["description"] {
 				result.Description = state.Description
 			}
-			if fields["branch"] && hasMeta {
-				result.Branch = branchFor(meta["worktree"])
+			if fields["branch"] {
+				result.Branch = branchFor(state.Worktree)
 			}
 			help := []string{"Run `munsu task observe " + args[0] + " --fields description,branch` for expanded fields"}
 			return writeContract(cmd, Response[TaskObserve]{
@@ -343,4 +338,16 @@ func branchFor(worktreePath string) string {
 		worktreePath = strings.TrimSuffix(worktreePath, string(filepath.Separator))
 	}
 	return filepath.Base(worktreePath)
+}
+
+// captainMeta is the .meta of the captain:<id> task, when id names a captain.
+func captainMeta(homeDir, id string) (map[string]string, bool) {
+	if !strings.HasPrefix(id, "captain:") {
+		return nil, false
+	}
+	meta, err := home.ReadMeta(homeDir, id)
+	if err != nil || meta["kind"] != "captain" {
+		return nil, false
+	}
+	return meta, true
 }

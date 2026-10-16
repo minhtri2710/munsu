@@ -8,42 +8,6 @@ func ResolveDispatch(cfg *DispatchConfig, taskDesc string) string {
 	return sel.Harness
 }
 
-func (cfg *DispatchConfig) normalize() {
-	if cfg.Default != nil {
-		if cfg.DefaultHarness == "" {
-			cfg.DefaultHarness = cfg.Default.Harness
-		}
-		if cfg.DefaultModel == "" {
-			cfg.DefaultModel = cfg.Default.Model
-		}
-		if cfg.DefaultEffort == "" {
-			cfg.DefaultEffort = cfg.Default.Effort
-		}
-	}
-	if len(cfg.Profiles) == 0 && len(cfg.Rules) > 0 {
-		cfg.Profiles = append([]DispatchProfile(nil), cfg.Rules...)
-	}
-	for i := range cfg.Profiles {
-		normalizeDispatchProfile(&cfg.Profiles[i])
-	}
-}
-
-func normalizeDispatchProfile(p *DispatchProfile) {
-	if len(p.Use) == 0 {
-		return
-	}
-	if p.Harness == "" {
-		c := p.Use[0]
-		p.Harness = c.Harness
-		if p.Model == "" {
-			p.Model = c.Model
-		}
-		if p.Effort == "" {
-			p.Effort = c.Effort
-		}
-	}
-}
-
 func TestResolveDispatch(t *testing.T) {
 	cfg := &DispatchConfig{
 		DefaultHarness: "pi",
@@ -134,6 +98,11 @@ func TestResolveDispatchSelection_ModelEffort(t *testing.T) {
 				Scaffold: "guided",
 			},
 			{
+				Name:  "model-only",
+				Match: []string{"docs"},
+				Model: "doc-model",
+			},
+			{
 				Name:    "all",
 				Match:   []string{"*"},
 				Harness: "pi",
@@ -142,11 +111,15 @@ func TestResolveDispatchSelection_ModelEffort(t *testing.T) {
 			},
 		},
 	}
-	cfg.normalize()
 
 	got, _ := ResolveDispatchSelection(cfg, "review this PR")
 	if got.Harness != "codex" || got.Model != "gpt-5.2-codex" || got.Effort != "high" || got.Scaffold != "guided" {
 		t.Errorf("review selection = %+v", got)
+	}
+
+	got, _ = ResolveDispatchSelection(cfg, "write docs")
+	if got.Harness != "pi" || got.Model != "doc-model" || got.Effort != "low" {
+		t.Errorf("model-only selection = %+v, want the default harness kept", got)
 	}
 
 	got, _ = ResolveDispatchSelection(cfg, "implement feature")

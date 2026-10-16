@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -34,7 +33,7 @@ func (t *partialLaunchTeardown) Dispose(req DisposeRequest) error {
 }
 
 // TestRetirePartialLaunchUsesCanonicalResourceEvidence proves an unbound
-// launch, which wrote no .meta, retires from canonical path, endpoint, and
+// launch retires from canonical path, endpoint, and
 // manifest evidence.
 func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	f := newLaunchFixture(t, "partial-launch-retirement")
@@ -46,9 +45,6 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	if agg.Phase != taskauthority.PhaseQueued || agg.Worktree == nil || agg.Launch == nil ||
 		agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil || agg.Endpoint != nil {
 		t.Fatalf("fixture is not an unbound partial launch: %+v", agg)
-	}
-	if _, err := home.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("partial launch meta read = %v, want none written", err)
 	}
 	wtPath := agg.Worktree.Path
 	teardown := &partialLaunchTeardown{recordingTeardown: &recordingTeardown{alive: true}}
@@ -76,9 +72,6 @@ func TestRetirePartialLaunchUsesCanonicalResourceEvidence(t *testing.T) {
 	after := f.aggregate()
 	if after.Phase != taskauthority.PhaseRetired || after.CleanupClaim == nil || after.CleanupClaim.Status != taskauthority.CleanupActive {
 		t.Fatalf("aggregate after incomplete cleanup = phase %q claim %+v, want retired with active claim", after.Phase, after.CleanupClaim)
-	}
-	if meta, err := home.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("retirement wrote a .meta for the unbound launch: %v, %v", meta, err)
 	}
 }
 
@@ -115,17 +108,6 @@ func TestRetireCompletedLaunchStillRequiresLandedBranchProof(t *testing.T) {
 	f := newLaunchFixture(t, "completed-launch-retirement")
 	if err := runLaunchPhases(f, ""); err != nil {
 		t.Fatalf("complete launch: %v", err)
-	}
-	if err := home.WriteMeta(f.homeDir, f.taskID, map[string]string{
-		"project":     "test-proj",
-		"generation":  "1",
-		"state":       "working",
-		"repo":        f.repoPath,
-		"owner":       "general",
-		"description": "Ready",
-		"kind":        taskauthority.KindShip,
-	}); err != nil {
-		t.Fatal(err)
 	}
 
 	teardown := &recordingTeardown{alive: true}

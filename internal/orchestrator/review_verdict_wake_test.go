@@ -43,14 +43,11 @@ func (p *fakeReviewPort) RecordReviewVerdict(_, taskID string, generation uint64
 	return "recorded PASS verdict for " + taskID, nil
 }
 
-// reviewVerdictHome is a General home hosting the review task rev-1, so the
-// report of its verdict has a receiver.
+// reviewVerdictHome is a General home, so the report of a verdict has a
+// receiver.
 func reviewVerdictHome(t *testing.T) string {
 	t.Helper()
 	generalHome, _ := directGeneralHome(t)
-	if err := home.WriteMeta(generalHome, "rev-1", map[string]string{"kind": "review"}); err != nil {
-		t.Fatal(err)
-	}
 	return generalHome
 }
 

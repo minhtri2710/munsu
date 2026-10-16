@@ -41,7 +41,7 @@ reviewed task, over a tree that did not move during the review. A later verdict
 replaces the earlier one.`,
 		Args: ExactArgs(0),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, reviewerTask)
+			taskHome, err := fleet.ResolveTaskHome(ctx.Home, reviewerTask)
 			if err != nil {
 				return fmt.Errorf("record-verdict %s: %w", reviewerTask, err)
 			}
@@ -107,6 +107,20 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 	if err := words.Validate(); err != nil {
 		return fleet.DeliverRequest{}, err
 	}
+	method := "squash"
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: pr-merge refuses unknown extras after --)
+	for _, arg := range extra {
+		switch strings.TrimSpace(arg) {
+		case "--merge":
+			method = "merge"
+		case "--rebase":
+			method = "rebase"
+		case "--squash":
+			method = "squash"
+		default:
+			return fleet.DeliverRequest{}, fmt.Errorf("unknown merge method %q after --: want --merge, --rebase or --squash", arg)
+		}
+	}
 	provider, owner, repo, num, _, err := domain.ParseProviderURL(prURL)
 	if err != nil {
 		return fleet.DeliverRequest{}, err
@@ -148,17 +162,6 @@ func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, ex
 		HeadRef:    snap.HeadRef,
 		HeadSHA:    snap.HeadSHA,
 		CapturedAt: snap.ObservedAt,
-	}
-	method := "squash"
-	for _, arg := range extra {
-		switch strings.TrimSpace(arg) {
-		case "--merge":
-			method = "merge"
-		case "--rebase":
-			method = "rebase"
-		case "--squash":
-			method = "squash"
-		}
 	}
 	return fleet.DeliverRequest{
 		Kind:     taskauthority.DeliveryAuthorizationProviderMerge,
@@ -208,7 +211,7 @@ failed, re-running pr-merge resumes the teardown only.`,
 			prURL := args[1]
 			extra := args[2:]
 
-			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, id)
+			taskHome, err := fleet.RequireShipTask(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}

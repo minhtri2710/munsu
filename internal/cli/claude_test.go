@@ -207,7 +207,7 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, tmpDir, "init")
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 	metaDir := filepath.Join(tmpDir, "state")
 	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
 	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
@@ -259,7 +259,7 @@ func TestClaudeGuardBlindTurn(t *testing.T) {
 	}
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 
 	// Create stale beat (10 minutes ago)
 	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
@@ -315,7 +315,7 @@ func TestClaudeGuardHealthyExit(t *testing.T) {
 	runGit(t, tmpDir, "init")
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 
 	// Create fresh beat
 	beat := fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())
@@ -597,7 +597,7 @@ func TestGuardAllowsASoldierSeatToStop(t *testing.T) {
 				t.Fatal(err)
 			}
 			runGit(t, tmpDir, "init")
-			writeTaskMeta(t, tmpDir, "test-task", "ship")
+			initHomeWithTask(t, tmpDir, "test-task", "ship")
 			if !tc.noBeat {
 				beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
 				if err := os.WriteFile(filepath.Join(tmpDir, "state", ".last-watcher-beat"), []byte(beat), 0644); err != nil {

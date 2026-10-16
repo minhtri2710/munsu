@@ -83,6 +83,14 @@ func TestSaveAndLoadObligations(t *testing.T) {
 	if len(loaded) != 1 {
 		t.Fatalf("LoadObligations() = %d items, want 1", len(loaded))
 	}
+	if err := SaveObligations(home, role, loaded); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Open(obligationsPath(home, role))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer before.Close()
 
 	found, err := CompleteObligation(home, role, Cleanup)
 	if err != nil {
@@ -90,6 +98,12 @@ func TestSaveAndLoadObligations(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("CompleteObligation(Cleanup) = false, want true")
+	}
+
+	// A save replaces the file and never rewrites it in place: a reader that
+	// opened it earlier still reads the whole earlier version.
+	if old, err := parseObligations(before); err != nil || len(old) != 1 || old[0].State == StateClosed {
+		t.Fatalf("earlier reader saw %+v, %v; want the open Cleanup it opened", old, err)
 	}
 
 	// Load again — the obligation persists, closed

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -203,9 +204,9 @@ var Adapters = map[string]Adapter{
 }
 
 // matchProcessNameFromAdapter checks a process name against the adapter registry.
-// It first tries exact matches, then substring matches.
+// It matches the base name of a full path, exact matches before substring.
 func matchProcessNameFromAdapter(name string) string {
-	name = strings.ToLower(name)
+	name = strings.ToLower(filepath.Base(name))
 	for _, harnessName := range KnownHarnesses {
 		a := Adapters[harnessName]
 		for _, m := range a.ProcessMatchers {

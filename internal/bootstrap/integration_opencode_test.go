@@ -6,6 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -165,6 +166,43 @@ func TestOpencodePluginsContent_SessionstartNudge(t *testing.T) {
 	// Look for catch block that deletes from inMemory
 	if !strings.Contains(content, "catch {") {
 		t.Error("sessionstart-nudge must catch promptAsync errors")
+	}
+}
+
+// TestOpencodeSessionstartNudgeConcurrentEvents runs the generated plugin under
+// node: two concurrent session.created events for one session send one nudge,
+// and two distinct sessions still get one each.
+func TestOpencodeSessionstartNudgeConcurrentEvents(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("Node.js not on PATH — required for runtime test")
+	}
+	dir := t.TempDir()
+	munsu := testutil.WriteFakeExecutable(t, filepath.Join(dir, "munsu"), "#!/bin/sh\nsleep 0.2\necho nudge\n")
+	if err := os.WriteFile(filepath.Join(dir, "plugin.mjs"), []byte(opencodeSessionstartNudgePlugin(opencodePluginCommand(munsu))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := `import { MunsuSessionstartNudge } from "./plugin.mjs";
+const rows = [
+  { name: "same session twice", ids: ["s1", "s1"], prompts: 1 },
+  { name: "two sessions", ids: ["s2", "s3"], prompts: 2 },
+];
+for (const row of rows) {
+  let prompts = 0;
+  const client = { session: { promptAsync: async () => { prompts++; } } };
+  const hooks = await MunsuSessionstartNudge({ client });
+  await Promise.all(row.ids.map((id) => hooks.event({ event: { type: "session.created", properties: { sessionID: id } } })));
+  if (prompts !== row.prompts) throw new Error(row.name + ": prompts=" + prompts + ", want " + row.prompts);
+}
+console.log("ALL TESTS PASSED");
+`
+	runnerPath := filepath.Join(dir, "runner.mjs")
+	if err := os.WriteFile(runnerPath, []byte(runner), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(nodePath, runnerPath).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "ALL TESTS PASSED") {
+		t.Fatalf("node runner failed: %v\n%s", err, out)
 	}
 }
 

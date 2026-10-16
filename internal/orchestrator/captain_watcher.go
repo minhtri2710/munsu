@@ -2,8 +2,6 @@ package orchestrator
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -66,20 +64,8 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 			return nil // already running
 		}
 
-		// Start the watcher for this captain home.
-		execPath, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("cannot resolve executable: %w", err)
-		}
-		cmd := exec.Command(execPath, "watch", "--home", captainHome)
-		cmd.Dir = captainHome
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		cmd.Env = append(os.Environ(), "MUNSU_HOME="+captainHome)
-
-		configureWatcherProcess(cmd)
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("starting watcher for captain home %s: %w", captainHome, err)
+		if _, err := StartWatcher(captainHome); err != nil {
+			return fmt.Errorf("captain home %s: %w", captainHome, err)
 		}
 		return nil
 	}
@@ -95,8 +81,6 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		if stop.State == StopUnresponsive {
 			return fmt.Errorf("watcher pid %d for captain home %s did not exit; keeping its beat, identity and lease", stop.PID, captainHome)
 		}
-		ClearBeat(captainHome)
-		ClearIdentity(captainHome)
 		// The stopped PID is the only lease this cleanup is entitled to remove.
 		if stop.PID > 0 {
 			home.ReleaseWatcherLeaseIfMatches(captainHome, stop.PID)
