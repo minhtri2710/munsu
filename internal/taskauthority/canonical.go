@@ -541,9 +541,9 @@ func (c *Canonical) mutateTaskFencedLocked(lk *home.Lock, op domain.Operation, t
 // encodeTaskDoc is the one encoder of a task document for a commit: an
 // aggregate that breaks a record invariant is refused here and never written.
 // prev is the committed aggregate the document replaces, nil for a new task;
-// a new generation or phase stamps PhaseChangedAt.
+// a new task or phase stamps PhaseChangedAt.
 func (c *Canonical) encodeTaskDoc(prev *Aggregate, doc taskDoc) ([]byte, error) {
-	if prev == nil || prev.Generation != doc.Aggregate.Generation || prev.Phase != doc.Aggregate.Phase {
+	if prev == nil || prev.Phase != doc.Aggregate.Phase {
 		doc.Aggregate.PhaseChangedAt = c.now().UnixNano()
 	}
 	if err := validateAggregate(doc.Aggregate); err != nil {

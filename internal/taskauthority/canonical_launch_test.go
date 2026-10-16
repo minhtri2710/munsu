@@ -1002,9 +1002,11 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 // the phase change.
 func TestCanonicalPhaseChangeStampsOnlyTransitions(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	created := time.Date(2026, 10, 1, 11, 0, 0, 0, time.UTC)
+	t0 := created.Add(time.Hour)
 	at := func(ts time.Time) { c.now = func() time.Time { return ts } }
-	at(t0)
+	// Create reads the clock once; the launch chain after it runs at t0.
+	c.now = func() time.Time { at(t0); return created }
 	_, rev := launchToWorking(t, c, "t1")
 	check := func(step string, phase, launched time.Time) {
 		t.Helper()
