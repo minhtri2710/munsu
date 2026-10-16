@@ -372,14 +372,29 @@ func TestAckWakesNonexistentLease(t *testing.T) {
 }
 
 func TestLeaseExpiryReclaim(t *testing.T) {
-	for _, consumer := range []string{"consumer", "a\tb"} {
-		t.Run(consumer, func(t *testing.T) {
+	for _, tc := range []struct {
+		consumer string
+		refused  bool
+	}{
+		{"munsu:afk", false},
+		{"a\nb", true},
+	} {
+		t.Run(tc.consumer, func(t *testing.T) {
 			home := t.TempDir()
 			writeQueueLines(t, home, []string{
 				"1780000000\t1\tsignal\tkey1\tpayload1",
 			})
 
-			result, err := ClaimWakes(home, consumer, 0, 10)
+			result, err := ClaimWakes(home, tc.consumer, 0, 10)
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "contains a control character") {
+					t.Fatalf("ClaimWakes(%q) error = %v, want the control-character refusal", tc.consumer, err)
+				}
+				if entries, _ := os.ReadDir(LeaseDir(home)); len(entries) != 0 {
+					t.Fatalf("refused claim wrote leases %v", entries)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

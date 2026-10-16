@@ -81,6 +81,10 @@ func ClaimWakes(homeDir, consumer string, leaseSeconds, limit int) (*ClaimResult
 }
 
 func claimWakesAt(homeDir, consumer string, leaseSeconds, limit int, now func() time.Time) (result *ClaimResult, err error) {
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: claim refuses consumer with tab/newline/C0; forged wake record)
+	if strings.IndexFunc(consumer, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return nil, fmt.Errorf("wake consumer %q contains a control character", consumer)
+	}
 	lock, err := acquireWakeLock(homeDir)
 	if err != nil {
 		return nil, err
