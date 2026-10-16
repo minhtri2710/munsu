@@ -156,7 +156,7 @@ func TestCanonicalRetireEvidenceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != PhaseRetired || agg.Endpoint != nil || agg.Worktree != nil {
+	if agg.Phase != PhaseRetired || agg.Endpoint != nil || agg.Worktree != nil || agg.AcquiredEndpoint != nil {
 		t.Fatalf("retired aggregate = %+v", agg)
 	}
 	if agg.Retirement == nil {

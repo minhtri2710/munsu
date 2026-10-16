@@ -108,12 +108,9 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	s.StatusLogSuperseded = true
 
 	// The endpoint identity is the canonical one, bound or only acquired: a
-	// launch whose handshake failed holds a live pane it never bound. A retired
-	// task's acquired endpoint is no longer its pane.
-	var ep *tauth.EndpointBinding
-	if agg.Phase != tauth.PhaseRetired {
-		ep = endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint)
-	}
+	// launch whose handshake failed holds a live pane it never bound. Retire
+	// releases both, so a retired task names no pane.
+	ep := endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint)
 
 	// .status contributes diagnostic evidence only (never lifecycle state).
 	statusLines, _ := home.ReadStatus(homeDir, id)
