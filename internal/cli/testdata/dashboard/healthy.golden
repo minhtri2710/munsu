@@ -4,8 +4,8 @@ unresolved 4  Human-needed 1  failed sources 0
 │ stuck    t-human              needs a decision                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Tasks - Showing 2 of 5 (page 1 of 3) ───────────────────────────────────────────────────────────╮
-│ ▌ ! general      t-human              ! blocked          ship   needs a decision                 │
-│                  t-work               ● working          ship   implementing                     │
+│ ▌ ! general      t-human              ! blocked          -     -     ship   needs a decision     │
+│                  t-work               ● working          3h    12m   ship   implementing         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Detail ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ t-human  ship  project munsu  blocked  general                                                   │

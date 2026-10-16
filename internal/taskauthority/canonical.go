@@ -528,7 +528,7 @@ func (c *Canonical) mutateTaskFencedLocked(lk *home.Lock, op domain.Operation, t
 	}
 	newDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: next}
 	rec := receiptFor(op, next)
-	items, err := taskItems(taskID.Value(), newDoc, rec)
+	items, err := c.taskItems(taskID.Value(), &doc.Aggregate, newDoc, rec)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -540,15 +540,20 @@ func (c *Canonical) mutateTaskFencedLocked(lk *home.Lock, op domain.Operation, t
 
 // encodeTaskDoc is the one encoder of a task document for a commit: an
 // aggregate that breaks a record invariant is refused here and never written.
-func encodeTaskDoc(doc taskDoc) ([]byte, error) {
+// prev is the committed aggregate the document replaces, nil for a new task;
+// a new generation or phase stamps PhaseChangedAt.
+func (c *Canonical) encodeTaskDoc(prev *Aggregate, doc taskDoc) ([]byte, error) {
+	if prev == nil || prev.Generation != doc.Aggregate.Generation || prev.Phase != doc.Aggregate.Phase {
+		doc.Aggregate.PhaseChangedAt = c.now().UnixNano()
+	}
 	if err := validateAggregate(doc.Aggregate); err != nil {
 		return nil, err
 	}
 	return json.Marshal(doc)
 }
 
-func taskItems(taskID string, doc taskDoc, rec receipt) ([]home.ChangeItem, error) {
-	docData, err := encodeTaskDoc(doc)
+func (c *Canonical) taskItems(taskID string, prev *Aggregate, doc taskDoc, rec receipt) ([]home.ChangeItem, error) {
+	docData, err := c.encodeTaskDoc(prev, doc)
 	if err != nil {
 		return nil, err
 	}

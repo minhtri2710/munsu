@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -994,6 +995,40 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 	if agg.Endpoint == nil || agg.Endpoint.Incarnation != req.EndpointIncarnation {
 		t.Fatalf("endpoint binding incarnation = %+v", agg.Endpoint)
 	}
+}
+
+// The dashboard's AGE reads the launch submission and SINCE the phase change:
+// a write that keeps the phase moves neither, a phase transition moves only
+// the phase change.
+func TestCanonicalPhaseChangeStampsOnlyTransitions(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	at := func(ts time.Time) { c.now = func() time.Time { return ts } }
+	at(t0)
+	_, rev := launchToWorking(t, c, "t1")
+	check := func(step string, phase, launched time.Time) {
+		t.Helper()
+		agg, err := c.Get(mustTaskID(t, "t1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if agg.PhaseChangedAt != phase.UnixNano() || agg.LaunchEvidence.SubmittedAt != launched.UnixNano() {
+			t.Fatalf("%s: phase changed at %d, launched at %d; want %d, %d", step, agg.PhaseChangedAt, agg.LaunchEvidence.SubmittedAt, phase.UnixNano(), launched.UnixNano())
+		}
+	}
+	check("working", t0, t0)
+
+	at(t0.Add(time.Minute))
+	mustRecordContract(t, c, "op-stamp-contract", "t1", preconditionOf(1, rev), "local-only")
+	check("same-phase write", t0, t0)
+
+	t2 := t0.Add(2 * time.Minute)
+	at(t2)
+	block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev+1), Detail: "waiting", Reason: "block"}
+	if _, err := c.Block(mustOperation(t, "op-stamp-block", block), block); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+	check("blocked", t2, t0)
 }
 
 // — BeginSpawn, BindWorktree, AttachEndpoint, RecordLaunch, BindEndpoint — and
