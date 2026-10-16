@@ -242,15 +242,22 @@ func writeDigestFile(path string, data []byte) error {
 	return nil
 }
 
-// classifyEscalationType determines the escalation type from a payload: the
-// status verb of a status-line payload, or of a report payload after its
-// "<key>: " prefix, decides first; prose keywords classify the rest.
+// classifyEscalationType determines the escalation type from a payload: a
+// recognised status verb of a status-line payload, or of a report payload
+// after its "<key>: " prefix, alone decides; prose keywords classify only a
+// payload with no recognised verb.
 func classifyEscalationType(key, payload string) EscalationType {
-	switch domain.LineVerb(strings.TrimPrefix(payload, key+": ")) {
-	case "needs-decision", "blocked":
-		return EscalationDecision
-	case "failed":
-		return EscalationFailure
+	if verb := domain.LineVerb(strings.TrimPrefix(payload, key+": ")); domain.IsValidStatusState(verb) {
+		switch verb {
+		case "needs-decision", "blocked":
+			return EscalationDecision
+		case "failed":
+			return EscalationFailure
+		case "done", "review-ready", "delivered":
+			return EscalationReviewReady
+		default:
+			return EscalationRoutine
+		}
 	}
 	lower := strings.ToLower(payload)
 	switch {
