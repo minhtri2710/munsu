@@ -658,8 +658,11 @@ const maxLinkHops = 32
 // returns the resolved path, every link it followed (each by its resolved
 // name), and the first name found missing ("" when the whole path exists). A
 // write through p lands at the resolved path, and replacing any of those links
-// moves it, so a caller denying p denies them all. A ".." after a missing name
-// is refused: the kernel's answer depends on what is created there later.
+// moves it, so a caller denying p denies them all. A link target may climb from
+// the link's directory, whose ancestors the caller denies with the link, but a
+// ".." after a name in the target is refused: the directory it climbs out of is
+// neither a link nor an ancestor of the result, so a seat could replace it. A
+// target with a control character, or a path resolving to "/", is refused.
 // Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: follow dangling PATH links, deny target, propagate resolve errors)
 func walkPath(p string) (resolved string, links []string, missing string, err error) {
 	cur, todo, hops := "/", strings.Split(p, "/"), 0
@@ -676,9 +679,6 @@ func walkPath(p string) (resolved string, links []string, missing string, err er
 		next := filepath.Join(cur, name)
 		fi, err := os.Lstat(next)
 		if os.IsNotExist(err) {
-			if slices.Contains(todo, "..") {
-				return "", nil, "", fmt.Errorf("path %q: a .. follows the missing %s", p, next)
-			}
 			return filepath.Join(append([]string{next}, todo...)...), links, next, nil
 		}
 		if err != nil {
@@ -695,11 +695,25 @@ func walkPath(p string) (resolved string, links []string, missing string, err er
 		if err != nil {
 			return "", nil, "", err
 		}
+		if hasControl(target) {
+			return "", nil, "", fmt.Errorf("path %q: link %s target %q holds a control character", p, next, target)
+		}
+		names := strings.Split(target, "/")
+		lead := 0
+		for lead < len(names) && (names[lead] == "" || names[lead] == "." || names[lead] == "..") {
+			lead++
+		}
+		if slices.Contains(names[lead:], "..") {
+			return "", nil, "", fmt.Errorf("path %q: link %s target %q has a .. past its first name", p, next, target)
+		}
 		links = append(links, next)
 		if filepath.IsAbs(target) {
 			cur = "/"
 		}
-		todo = append(strings.Split(target, "/"), todo...)
+		todo = append(names, todo...)
+	}
+	if cur == "/" {
+		return "", nil, "", fmt.Errorf("path %q resolves to the filesystem root", p)
 	}
 	return cur, links, "", nil
 }
