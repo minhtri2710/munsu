@@ -22,10 +22,10 @@ func NewResolvedSnapshotWithToolProbe(base FleetBaseDocument, facts ProjectFacts
 // step its task generation captured. The overlay's current forge entry is
 // replaced by the captured one, so later overlay drift neither refuses the
 // launch nor changes it; the captured tool is re-probed at preflight. The
-// worktree entry is not captured and is probed now.
+// worktree and quota entries are not captured and are probed now.
 func NewResolvedSnapshotWithCapturedSteps(base FleetBaseDocument, facts ProjectFacts, forge ResolvedStep, probe func(ToolEntry) ResolvedStep) (ResolvedSnapshot, error) {
 	facts.Overlay.Forge = toolEntryFromStep(forge)
-	resolved, err := ResolveProjectWithSteps(base, facts, forge, resolveToolStep(facts.Overlay.Worktree, probe))
+	resolved, err := ResolveProjectWithSteps(base, facts, forge, resolveToolStep(facts.Overlay.Worktree, probe), resolveToolStep(facts.Overlay.Quota, probe))
 	if err != nil {
 		return ResolvedSnapshot{}, err
 	}
@@ -51,9 +51,10 @@ func (s ResolvedSnapshot) WithSteps(forge ResolvedStep) (ResolvedSnapshot, error
 		DispatchProfiles:   cloneProfiles(resolved.DispatchProfiles),
 		Forge:              toolEntryFromStep(forge),
 		Worktree:           toolEntryFromStep(resolved.WorktreeStep),
+		Quota:              toolEntryFromStep(resolved.QuotaStep),
 		FenceWritableRoots: resolved.FenceWritableRoots, FenceUnsupported: resolved.FenceUnsupported,
 	}
-	digest, err := projectDigest(config, forge, resolved.WorktreeStep)
+	digest, err := projectDigest(config, forge, resolved.WorktreeStep, resolved.QuotaStep)
 	if err != nil {
 		return ResolvedSnapshot{}, err
 	}
@@ -70,6 +71,7 @@ func cloneResolvedProjectConfig(src ResolvedProjectConfig) ResolvedProjectConfig
 	result.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
 	result.ForgeStep = cloneResolvedStep(src.ForgeStep)
 	result.WorktreeStep = cloneResolvedStep(src.WorktreeStep)
+	result.QuotaStep = cloneResolvedStep(src.QuotaStep)
 	result.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
 	return result
 }

@@ -18,11 +18,6 @@ import (
 //go:embed seed_orchestrator_manual.md
 var orchestratorManual string
 
-var (
-	skillChoice string
-	reconfigure bool
-)
-
 const (
 	skillGlobal = "global"
 	skillLocal  = "local"
@@ -30,6 +25,10 @@ const (
 )
 
 func newInitCmd() *cobra.Command {
+	var (
+		skillChoice string
+		reconfigure bool
+	)
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create home and seed orchestrator operating manual",
@@ -50,7 +49,7 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 			}
 
 			// Auto-detect and persist config (only if absent or --reconfigure)
-			if err := autoDetectConfig(ctx.Home); err != nil {
+			if err := autoDetectConfig(ctx.Home, reconfigure); err != nil {
 				return fmt.Errorf("auto-detect config: %w", err)
 			}
 
@@ -68,7 +67,7 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 			fmt.Printf("Initialized munsu home at %s\n", ctx.Home)
 
 			// Install munsu skills
-			if err := runSkillInstall(cmd, ctx.Home); err != nil {
+			if err := runSkillInstall(skillChoice, ctx.Home); err != nil {
 				return err
 			}
 
@@ -110,7 +109,7 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 
 // autoDetectConfig detects the soldier harness,
 // persisting it only if the config file is absent (or --reconfigure is set).
-func autoDetectConfig(homeDir string) error {
+func autoDetectConfig(homeDir string, reconfigure bool) error {
 	// Note: backend is runtime context and is NOT persisted at init time.
 
 	// Auto-detect the soldier harness; it is persisted only into the typed
@@ -169,8 +168,7 @@ func autoDetectConfig(homeDir string) error {
 
 // runSkillInstall resolves the skill destination (flag, then env; unset skips)
 // and replaces the munsu-ops skill there with the embedded copy.
-func runSkillInstall(cmd *cobra.Command, homeDir string) error {
-	choice := skillChoice
+func runSkillInstall(choice, homeDir string) error {
 	if choice == "" {
 		choice = os.Getenv("MUNSU_INIT_SKILL")
 	}

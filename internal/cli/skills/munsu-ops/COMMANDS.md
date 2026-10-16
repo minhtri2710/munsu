@@ -25,6 +25,7 @@ for the complete registered set.
 | `munsu project add|list|show|rm` | Manage registered projects. |
 | `munsu project mode <name>` | Resolve delivery mode for a project. |
 | `munsu project config set <name> worktree '{"adapter":"treehouse","path":"/abs/treehouse"}'` | Opt the project into treehouse; without it worktrees use git worktree. A configured treehouse that is not Ready refuses the spawn. |
+| `munsu project config set <name> quota '{"adapter":"quota-axi","path":"/abs/quota-axi"}'` | Order a dispatch profile's `use` candidates by remaining quota; without it the first candidate is taken. A configured quota-axi that is not Ready, or that fails at dispatch, refuses the spawn. |
 | `munsu worktree get|return|status [--project <name>]` | Acquire, return, or inspect worktrees; `--project` uses that project's worktree tool, otherwise git worktree. |
 | `munsu worktree reclaim [--project <name>]` | Reclaim orphaned worktrees not claimed by task metadata or authoritative task bindings; refuses when either source cannot be read. |
 | `munsu harness detect` | Detect the running coding-agent harness. |

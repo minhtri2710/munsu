@@ -70,38 +70,45 @@ func TestReadAllowKeepsReasonsAndRefusesMalformedRows(t *testing.T) {
 	}
 }
 
-func TestCheckReportsBothDirectionsAndExitsCleanly(t *testing.T) {
-	allow := writeFile(t, "skips.allow", "m/internal/a TestNeedsTmux listed reason\nm/internal/a TestGone no longer skipped\n")
-	laneFile := writeFile(t, "integration.json", lane)
-
-	var out bytes.Buffer
-	if err := run([]string{"check", allow, laneFile}, &out); err != nil {
-		t.Fatalf("findings must not fail the run: %v", err)
-	}
-	text := out.String()
-	for _, want := range []string{
-		"unlisted skips (no row in skips.allow): 1",
-		"m/internal/a TestParent/sub [integration] (no message)",
-		"stale rows (skipped by no lane): 1",
-		"m/internal/a TestGone no longer skipped",
+func TestCheckFailsOnEitherDirectionAndPassesAFullyListedLane(t *testing.T) {
+	listed := "m/internal/a TestNeedsTmux listed\nm/internal/a TestParent/sub listed\n"
+	for _, tc := range []struct {
+		name, allow string
+		wantErr     bool
+		want        []string
+	}{
+		{"unlisted skip fails", "m/internal/a TestNeedsTmux listed\n", true, []string{
+			"unlisted skips (no row in skips.allow): 1",
+			"  m/internal/a TestParent/sub [integration] (no message)",
+			"stale rows (skipped by no lane): 0",
+		}},
+		{"stale row fails", listed + "m/internal/a TestGone no longer skipped\n", true, []string{
+			"unlisted skips (no row in skips.allow): 0",
+			"stale rows (skipped by no lane): 1",
+			"  m/internal/a TestGone no longer skipped",
+		}},
+		{"fully listed passes", listed, false, []string{
+			"every skip is listed and every row is skipped",
+		}},
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("report missing %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "  m/internal/a TestNeedsTmux [") {
-		t.Errorf("a listed skip reported as unlisted:\n%s", text)
-	}
-}
-
-func TestCheckOnAFullyListedLaneIsSilentAboutDifferences(t *testing.T) {
-	allow := writeFile(t, "skips.allow", "m/internal/a TestNeedsTmux listed\nm/internal/a TestParent/sub listed\n")
-	var out bytes.Buffer
-	if err := run([]string{"check", allow, writeFile(t, "integration.json", lane)}, &out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "every skip is listed and every row is skipped") {
-		t.Fatalf("want a clean report:\n%s", out.String())
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := run([]string{"check", writeFile(t, "skips.allow", tc.allow), writeFile(t, "integration.json", lane)}, &out)
+			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "1 finding(s) against skips.allow")) {
+				t.Fatalf("want the findings to fail the run, got %v", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("clean ledger failed the run: %v", err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("report missing %q:\n%s", w, out.String())
+				}
+			}
+			if strings.Contains(out.String(), "  m/internal/a TestNeedsTmux [") {
+				t.Errorf("a listed skip reported as unlisted:\n%s", out.String())
+			}
+		})
 	}
 }
 

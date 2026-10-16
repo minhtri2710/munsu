@@ -2,11 +2,10 @@
 #
 # Single source of truth for Go build tags and their CI coverage.
 #
-# CI lanes derive their package lists from the source tree with `packages`
-# instead of hard-coding them, so a new `//go:build integration` file in a
-# sixth package joins the lane by existing. `check` guards the remaining gaps:
-# a brand new tag that no lane covers at all, and a file written in the legacy
-# `// +build` syntax that this derivation cannot see.
+# Tag lanes run `go test -tags <tag> ./...`, so a new tagged file joins its lane
+# by existing. `check` guards the remaining gaps: a brand new tag that no lane
+# covers at all, and a file written in the legacy `// +build` syntax that this
+# derivation cannot see.
 #
 # What `check` does NOT do, so nobody trusts it further than it goes: the lane
 # greps are textual. They assert a non-comment line in ci.yml carries the
@@ -17,7 +16,6 @@
 # diff. That case is caught by reading the diff, not by this script.
 #
 # Usage:
-#   build-tags.sh packages <tag>   packages holding a file guarded by <tag>
 #   build-tags.sh tags             every tag identifier used in the tree
 #   build-tags.sh check            manifest and lanes agree with the tree
 #   build-tags.sh selftest         every rule above against a tree that breaks it
@@ -82,30 +80,6 @@ repo_tags() {
 # Constraint terms mentioning <tag>, polarity kept: "integration" or "!race".
 tag_terms() {
 	constraints | terms | grep -Fx -e "$1" -e "!$1" || true
-}
-
-# Packages carrying <tag>. Matches the identifier anywhere in the expression,
-# which is exact as long as the tag is never negated -- `check` enforces that
-# for every test-lane tag, so a `//go:build !integration` file cannot quietly
-# widen a lane's package set.
-#
-# Directories `go list ./...` deliberately skips are dropped: any path with a
-# `testdata` segment, or a segment starting with `_` or `.`. Fixtures under
-# `testdata/` are routinely code that is not meant to compile, so emitting them
-# would hand the lane an explicit path and turn a fixture into a red lane. The
-# filter is textual rather than a `go list` call so this script needs no
-# toolchain and no module download -- `invariants` now installs Go, but only
-# for its gofmt step, and `check` still runs without one.
-packages() {
-	local tag="$1" dirs
-	[ -n "$tag" ] || die "packages: missing tag"
-	# `|| true` on both greps: no match is exit 1, which pipefail and set -e
-	# would turn into a silent exit before the message below.
-	dirs="$( { grep -rlE "^[[:space:]]*//go:build\b.*\b${tag}\b" --include='*.go' "$ROOT" || true; } |
-		sed -e 's|/[^/]*$||' -e "s|^${ROOT}|.|" |
-		{ grep -vE '/(testdata|[_.][^/]*)(/|$)' || true; } | sort -u)"
-	[ -n "$dirs" ] || die "no package carries build tag '${tag}' -- stale lane or manifest entry"
-	paste -sd " " - <<<"$dirs"
 }
 
 check() {
@@ -195,7 +169,7 @@ check() {
 				failed=1
 			fi
 			if tag_terms "$tag" | grep -qFx "!${tag}"; then
-				echo "::error::${tag}: negated somewhere, so the derived package set for its lane is wrong" >&2
+				echo "::error::${tag}: negated somewhere, so the lane that sets -tags ${tag} never compiles that file" >&2
 				failed=1
 			fi
 			;;
@@ -231,7 +205,7 @@ check() {
 #
 # Two shapes must NOT fail, or the check becomes a false-alarm generator:
 #   //go:build integration && !windows   negated GOOS, builds fine on ubuntu
-#   //go:build integration || windows    the integration lane still builds it
+#   //go:build integration || windows    the -tags integration lane still builds it
 # Hence the unit of judgement is the disjunct, not the whole expression: a file
 # is reachable as long as ONE disjunct is free of positive GOOS terms.
 check_conjunctions() {
@@ -277,19 +251,17 @@ check_conjunctions() {
 # change that exactly one rule must refuse; the case pins the exit status and
 # that rule's message, so a deleted or loosened rule turns one case red and
 # names it. The clean tree also pins the shapes that must NOT fail: a
-# `testdata/` or `_`-prefixed directory, a leading-tab `//go:build<TAB>`
-# constraint, and a test-lane tag paired with a negated or OR-ed GOOS term.
+# leading-tab `//go:build<TAB>` constraint, and a test-lane tag paired with a
+# negated or OR-ed GOOS term.
 #
 # The trees are written here rather than committed under .github/testdata so
 # each mutation reads next to the rule it answers.
 selftest_tree() {
 	local t="$1"
-	mkdir -p "$t/.github/workflows" "$t/pkg/a/testdata/x" "$t/pkg/b" "$t/pkg/w" "$t/_skip"
+	mkdir -p "$t/.github/workflows" "$t/pkg/a" "$t/pkg/b" "$t/pkg/w"
 	printf 'integration\ttest-lane\tr\nwindows\tgoos-vet\tr\nrace\trace-excluded\tr\n' >"$t/.github/build-tags.manifest"
-	printf '      - run: go test -tags integration ./pkg/a\n      - run: GOOS=windows go vet ./...\n' >"$t/.github/workflows/ci.yml"
+	printf '      - run: go test -tags integration ./...\n      - run: GOOS=windows go vet ./...\n' >"$t/.github/workflows/ci.yml"
 	printf '//go:build integration\n\npackage a\n' >"$t/pkg/a/a_test.go"
-	printf '//go:build integration\n\npackage x\n' >"$t/pkg/a/testdata/x/x.go"
-	printf '//go:build integration\n\npackage skip\n' >"$t/_skip/s.go"
 	printf '\t//go:build\tintegration && !windows\n\npackage b\n' >"$t/pkg/b/b_test.go"
 	printf '//go:build windows\n\npackage w\n' >"$t/pkg/w/w.go"
 	printf '//go:build integration || windows\n\npackage w\n' >"$t/pkg/w/or.go"
@@ -302,36 +274,32 @@ selftest() {
 	trap 'rm -rf "$scratch"' RETURN
 
 	# name|expected exit|expected output line|mutation (shell, run inside the
-	# tree)|mode. Empty mutation is the clean tree. `|` rather than a tab: tab is
+	# tree). Empty mutation is the clean tree. `|` rather than a tab: tab is
 	# IFS whitespace, so an empty field would collapse and shift the rest.
-	while IFS='|' read -r name want_rc want mutation mode; do
+	while IFS='|' read -r name want_rc want mutation; do
 		t="$scratch/$name"
 		selftest_tree "$t"
 		(cd "$t" && eval "$mutation")
-		# shellcheck disable=SC2086 # mode is "check" or "packages <tag>": two words on purpose
-		if got="$(BUILD_TAGS_ROOT="$t" "$0" $mode 2>&1)"; then rc=0; else rc=$?; fi
+		if got="$(BUILD_TAGS_ROOT="$t" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
 		if [ "$rc" = "$want_rc" ] && printf '%s\n' "$got" | grep -Fq -- "$want"; then
 			echo "  ok   $name"
 		else
-			echo "::error::build-tags $mode disagrees with case $name (want exit $want_rc and '$want'):" >&2
+			echo "::error::build-tags check disagrees with case $name (want exit $want_rc and '$want'):" >&2
 			printf '%s\nexit %s\n' "$got" "$rc" >&2
 			failed=1
 		fi
 	done <<'CASES'
-clean|0|build tags: 3 classified, lanes present||check
-packages|0|./pkg/a ./pkg/b ./pkg/w||packages integration
-packages-no-tag|1|missing tag||packages
-packages-stale|1|no package carries build tag 'e2e'||packages e2e
-unclassified|1|absent from .github/build-tags.manifest|printf '//go:build e2e\n\npackage a\n' >pkg/a/e.go|check
-stale|1|manifest entries no longer matching any file|printf 'darwin\tdefault\tr\n' >>.github/build-tags.manifest|check
-legacy|1|legacy '// +build' line with no '//go:build' line|printf '//\t+build linux\n\npackage a\n' >pkg/a/l.go|check
-lane-commented|1|no lane in ci.yml passes -tags integration|printf '#      - run: go test -tags integration ./pkg/a\n      - run: GOOS=windows go vet ./...\n' >.github/workflows/ci.yml|check
-negated|1|integration: negated somewhere|printf '//go:build !integration\n\npackage a\n' >pkg/a/n.go|check
-goos-vet-missing|1|no 'GOOS=windows go vet' step|printf '      - run: go test -tags integration ./pkg/a\n' >.github/workflows/ci.yml|check
-race-positive|1|classified race-excluded but used un-negated|printf '//go:build race\n\npackage w\n' >pkg/w/rp.go|check
-no-reason|1|integration: manifest entry needs a reason|printf 'integration\ttest-lane\nwindows\tgoos-vet\tr\nrace\trace-excluded\tr\n' >.github/build-tags.manifest|check
-unknown-treatment|1|windows: unknown treatment 'vet'|printf 'integration\ttest-lane\tr\nwindows\tvet\tr\nrace\trace-excluded\tr\n' >.github/build-tags.manifest|check
-conjunction|1|pairs test-lane tag 'integration' with positive GOOS term 'windows'|printf '//go:build integration && windows\n\npackage w\n' >pkg/w/c.go|check
+clean|0|build tags: 3 classified, lanes present|
+unclassified|1|absent from .github/build-tags.manifest|printf '//go:build e2e\n\npackage a\n' >pkg/a/e.go
+stale|1|manifest entries no longer matching any file|printf 'darwin\tdefault\tr\n' >>.github/build-tags.manifest
+legacy|1|legacy '// +build' line with no '//go:build' line|printf '//\t+build linux\n\npackage a\n' >pkg/a/l.go
+lane-commented|1|no lane in ci.yml passes -tags integration|printf '#      - run: go test -tags integration ./...\n      - run: GOOS=windows go vet ./...\n' >.github/workflows/ci.yml
+negated|1|integration: negated somewhere|printf '//go:build !integration\n\npackage a\n' >pkg/a/n.go
+goos-vet-missing|1|no 'GOOS=windows go vet' step|printf '      - run: go test -tags integration ./...\n' >.github/workflows/ci.yml
+race-positive|1|classified race-excluded but used un-negated|printf '//go:build race\n\npackage w\n' >pkg/w/rp.go
+no-reason|1|integration: manifest entry needs a reason|printf 'integration\ttest-lane\nwindows\tgoos-vet\tr\nrace\trace-excluded\tr\n' >.github/build-tags.manifest
+unknown-treatment|1|windows: unknown treatment 'vet'|printf 'integration\ttest-lane\tr\nwindows\tvet\tr\nrace\trace-excluded\tr\n' >.github/build-tags.manifest
+conjunction|1|pairs test-lane tag 'integration' with positive GOOS term 'windows'|printf '//go:build integration && windows\n\npackage w\n' >pkg/w/c.go
 CASES
 
 	[ "$failed" -eq 0 ] || exit 1
@@ -339,12 +307,11 @@ CASES
 }
 
 case "${1:-}" in
-packages) packages "${2:-}" ;;
 tags) repo_tags ;;
 check) check ;;
 selftest) selftest ;;
 *)
-	echo "usage: build-tags.sh {packages <tag>|tags|check|selftest}" >&2
+	echo "usage: build-tags.sh {tags|check|selftest}" >&2
 	exit 2
 	;;
 esac

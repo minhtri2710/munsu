@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Report-only ledger of the tests the CI lanes skip, compared both ways against
+# Ledger of the tests the CI lanes skip, compared both ways against
 # .github/skips.allow.
 #
 # Each test lane writes its `go test -json` stream to coverage/skips-<lane>.json
@@ -8,10 +8,9 @@
 # profiles. The lanes are the default tag plus every test-lane tag in
 # .github/build-tags.manifest, the same derivation uncovered-guards.sh uses.
 #
-# Report-only on purpose: unlisted skips and stale rows are printed and the
-# script exits 0. It fails only when a lane file is missing, because a lane that
-# was not observed cannot be reported as clean. Making findings fail the job
-# needs the Human's words; this script is not the place to decide that.
+# Fails on a skip no row lists, on a row no lane skips, and on a missing lane
+# file: a lane that was not observed cannot be reported as clean.
+# Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: gate the skip ledger)
 #
 # Usage:
 #   skip-ledger.sh check   lanes' skips against .github/skips.allow
