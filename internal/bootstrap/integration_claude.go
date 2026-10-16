@@ -55,30 +55,16 @@ func (h jsonHookHarness) path(scope Scope, cwd string) (string, error) {
 	}
 }
 
-// jsonHookCommand builds a hook command string: the JSON-marshaled munsu
-// path (spaces and special characters survive) followed by the arguments.
-func jsonHookCommand(munsuBin string, args ...string) string {
-	binJSON, err := json.Marshal(munsuBin)
-	if err != nil {
-		binJSON = []byte(fmt.Sprintf("%q", munsuBin))
-	}
-	full := string(binJSON)
-	for _, arg := range args {
-		full += " " + arg
-	}
-	return full
-}
-
 func (h jsonHookHarness) sessionStartCommand(munsuBin string) string {
-	return jsonHookCommand(munsuBin, "integrate", "sessionstart-nudge")
+	return hookCommand(munsuBin, "integrate", "sessionstart-nudge")
 }
 
 func (h jsonHookHarness) safetyCheckCommand(munsuBin string) string {
-	return jsonHookCommand(munsuBin, "integrate", "safety-check", "--harness", h.name)
+	return hookCommand(munsuBin, "integrate", "safety-check", "--harness", h.name)
 }
 
 func (h jsonHookHarness) guardCommand(munsuBin string) string {
-	return jsonHookCommand(munsuBin, "guard", "--harness", h.name)
+	return hookCommand(munsuBin, "guard", "--harness", h.name)
 }
 
 // content returns the generated hooks JSON with the munsu binary path baked in.
@@ -240,7 +226,7 @@ func (h jsonHookHarness) install(scope Scope, cwd string, dryRun bool) (targetPa
 		return "", false, "", err
 	}
 	if existing != "" {
-		content, err = mergeHookEventArrays(targetPath, existing, content)
+		content, err = mergeHookEventArrays(targetPath, existing, content, munsuBin)
 		if err != nil {
 			return "", false, "", err
 		}
