@@ -184,12 +184,10 @@ func TestSoldierBranch(t *testing.T) {
 }
 
 func TestGitBranchRefFilesAreExactlyTheRefWriteSet(t *testing.T) {
-	// The refs tree only: the branch reflog under logs/ is append-only
-	// (allowData), not a create-allowed literal.
+	// The ref and its lock only: the namespace dir is pre-created at spawn and
+	// refused, and the branch reflog under logs/ is append-only (allowData).
 	got := gitBranchRefFiles("/c", "mu/T-1")
-	want := []string{
-		"/c/refs/heads/mu", "/c/refs/heads/mu/T-1", "/c/refs/heads/mu/T-1.lock",
-	}
+	want := []string{"/c/refs/heads/mu/T-1", "/c/refs/heads/mu/T-1.lock"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("gitBranchRefFiles = %q, want %q", got, want)
 	}
@@ -213,6 +211,19 @@ func TestHarnessStateRefusals(t *testing.T) {
 }
 
 func TestPathDirDenies(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A PATH link that climbs out of a directory it names: the seat could
+	// replace that directory, which no deny names.
+	climb := filepath.Join(filepath.Dir(file), "phys")
+	if err := os.Mkdir(filepath.Join(filepath.Dir(file), "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sub/../x", climb); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name string
 		in   []string
@@ -223,7 +234,12 @@ func TestPathDirDenies(t *testing.T) {
 		{"an empty entry", []string{""}, "", `PATH directory "" is not absolute`},
 		{"a dot entry", []string{"."}, "", `PATH directory "." is not absolute`},
 		{"a relative shim dir", []string{"/usr/bin"}, "git-shim/bin", `PATH directory "git-shim/bin" is not absolute`},
-		{"absolute entries", []string{"/usr/bin", "/usr/local/bin/"}, "", ""},
+		{"a dot-dot entry", []string{"/usr/bin", "/usr/../usr/bin"}, "", "is not absolute and clean"},
+		{"a dot entry inside a path", []string{"/usr/./bin"}, "", "is not absolute and clean"},
+		{"a control character under a missing top-level dir", []string{"/fence-no-such-top-dir/a\x01b"}, "", "control character"},
+		{"a link whose target climbs out of a name", []string{"/usr/bin", climb}, "", "past its first name"},
+		{"an entry that does not resolve", []string{"/usr/bin", filepath.Join(file, "bin")}, "", "PATH directory " + filepath.Join(file, "bin")},
+		{"absolute entries", []string{"/usr/bin", "/usr/local/bin/", "/fence-no-such-top-dir/bin"}, "", ""},
 		{"an absolute shim dir", []string{"/usr/bin", "/usr/local/bin/"}, "/usr/local/git-shim/bin", ""},
 	}
 	for _, tt := range tests {
@@ -354,6 +370,85 @@ func TestResolvePathRefusals(t *testing.T) {
 	}
 	if _, err := resolvePath(filepath.Join(root, "missing", "deeper"), false); err != nil {
 		t.Errorf("a missing path resolved through its nearest ancestor failed: %v", err)
+	}
+	// A dangling link whose walk walkPath refuses.
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sub/../x", filepath.Join(root, "phys")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolvePath(filepath.Join(root, "phys"), false); err == nil || !strings.Contains(err.Error(), "past its first name") {
+		t.Errorf("resolvePath through a link climbing out of a name = %q, %v; want a .. refusal", got, err)
+	}
+}
+
+// walkPath resolves as the kernel does and names every link on the way, each
+// of which a seat could replace to move where a write through the path lands.
+// A .. past a link target's first name, a control character in a target, a
+// path resolving to the root, or a chain past the hop bound, is refused.
+func TestWalkPathFollowsEveryLink(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(names ...string) []string {
+		var out []string
+		for _, n := range names {
+			out = append(out, filepath.Join(root, n))
+		}
+		return out
+	}
+	link := func(name, target string) string {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.Join(root, name)
+	}
+	for _, d := range []string{"ereal", filepath.Join("rdir", "bin"), "sub"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link("e2", "ereal")
+	link("d2", "dmissing")
+	link("ldir", filepath.Join(root, "rdir"))
+	// c0 -> c1 -> ... -> c<maxLinkHops> -> c<maxLinkHops+1>, which is missing.
+	for i := 0; i <= maxLinkHops; i++ {
+		link("c"+strconv.Itoa(i), "c"+strconv.Itoa(i+1))
+	}
+	for _, tt := range []struct {
+		name, path, want string
+		links            []string // nil: not checked
+		wantErr          string
+	}{
+		{"a dangling relative target", link("rel", "a/b"), filepath.Join(root, "a", "b"), at("rel"), ""},
+		{"a leading .. in the target", link("up", "../"+filepath.Base(root)+"-up"), root + "-up", at("up"), ""},
+		{"an existing chain", link("e1", "e2"), filepath.Join(root, "ereal"), at("e1", "e2"), ""},
+		{"a dangling chain", link("d1", "d2"), filepath.Join(root, "dmissing"), at("d1", "d2"), ""},
+		{"a link into a symlinked dir", link("s", filepath.Join(root, "ldir", "bin")), filepath.Join(root, "rdir", "bin"), at("s", "ldir"), ""},
+		{"a .. past the target's first name", link("phys", "sub/../x"), "", nil, "past its first name"},
+		{"a control character in a target", link("clink", "a\x01b"), "", nil, "control character"},
+		{"a link to the root", link("rlink", "/"), "", nil, "resolves to the filesystem root"},
+		{"a climb to the root", link("ulink", strings.Repeat("../", strings.Count(root, "/"))), "", nil, "resolves to the filesystem root"},
+		{"a chain at the hop bound", filepath.Join(root, "c1"), filepath.Join(root, "c"+strconv.Itoa(maxLinkHops+1)), nil, ""},
+		{"a chain past the hop bound", filepath.Join(root, "c0"), "", nil, "too many links"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, links, _, err := walkPath(tt.path)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("walkPath = %q, %v; want an error containing %q", got, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("walkPath = %q, %v; want %q", got, err, tt.want)
+			}
+			if tt.links != nil && !slices.Equal(links, tt.links) {
+				t.Fatalf("links = %q, want %q", links, tt.links)
+			}
+		})
 	}
 }
 
