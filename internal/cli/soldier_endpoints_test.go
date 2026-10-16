@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type soldierEndpointBackend struct {
@@ -45,10 +46,10 @@ func (b recognizedOnlyBackend) CheckAgentAlive(a string) (bool, bool, error) {
 
 func TestSoldierEndpointsBusyRejectsUnknownRecognizedAgentStatus(t *testing.T) {
 	bk := recognizedOnlyBackend{base: &soldierEndpointBackend{alive: true, recognized: true, status: "mystery"}}
-	endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	endpoint := sessionSoldierEndpoints{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return bk, "custom", nil
 	}}
-	busy, err := endpoint.Busy("home", map[string]string{"backend": "custom", "window": "pane"})
+	busy, err := endpoint.Busy("home", taskauthority.EndpointBinding{Backend: "custom", Handle: "pane"}, "")
 	if busy {
 		t.Fatal("Busy() = true, want false for unknown status")
 	}
@@ -72,8 +73,8 @@ func TestSoldierEndpointsRecognizedAgentOutcomes(t *testing.T) {
 		{"", false, false, false, true, "endpoint not alive:"},
 	} {
 		bk := recognizedOnlyBackend{base: &soldierEndpointBackend{alive: tt.alive, recognized: tt.recognized, status: tt.status}}
-		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "custom", nil }}
-		got, err := endpoint.Busy("home", map[string]string{"backend": "custom", "window": "pane"})
+		endpoint := sessionSoldierEndpoints{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) { return bk, "custom", nil }}
+		got, err := endpoint.Busy("home", taskauthority.EndpointBinding{Backend: "custom", Handle: "pane"}, "")
 		if got != tt.busy || (err != nil) != tt.wantErr {
 			t.Fatalf("%+v: got=%v err=%v", tt, got, err)
 		}
@@ -86,8 +87,8 @@ func TestSoldierEndpointsRecognizedAgentOutcomes(t *testing.T) {
 func TestSoldierEndpointsMapsPromptOutcomes(t *testing.T) {
 	for _, status := range []backend.PromptStatus{backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled, backend.PromptEndpointDead, backend.PromptBackendFailed, backend.PromptUnsupported} {
 		bk := &soldierEndpointBackend{prompt: backend.PromptResult{Status: status}}
-		endpoint := sessionSoldierEndpoints{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
-		got := endpoint.Send("home", map[string]string{"backend": "tmux", "window": "pane"}, "payload")
+		endpoint := sessionSoldierEndpoints{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) { return bk, "tmux", nil }}
+		got := endpoint.Send("home", taskauthority.EndpointBinding{Backend: "tmux", Handle: "pane"}, "payload")
 		wantAck := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
 		if got.Acknowledged != wantAck || !strings.EqualFold(got.Status, string(status)) {
 			t.Fatalf("status=%s got=%+v", status, got)

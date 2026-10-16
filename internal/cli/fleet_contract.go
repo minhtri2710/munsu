@@ -7,6 +7,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -15,19 +16,15 @@ func runtimeTaskEndpointProbe() orchestrator.TaskEndpointProbe {
 }
 
 type cliEndpointProbe struct {
-	resolve func(string, map[string]string) (backend.Backend, string, error)
+	resolve boundResolver
 }
 
-func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, error) {
-	ownerHome := meta["home"]
-	if ownerHome == "" {
-		ownerHome = home
-	}
-	bk, _, err := boundBackend(ownerHome, meta, p.resolve)
+func (p cliEndpointProbe) Probe(home string, ep taskauthority.EndpointBinding, harness string) (bool, error) {
+	bk, _, err := boundBackend(home, bindingRef(ep), p.resolve)
 	if err != nil {
 		return false, err
 	}
-	result, err := probeCaptainBackend(bk, meta)
+	result, err := probeCaptainBackend(bk, ep.Handle, harness)
 	if err != nil {
 		return false, err
 	}
@@ -68,19 +65,11 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 			Detail:         "herdr session ownership mismatch",
 		}, nil
 	}
-	meta := map[string]string{
-		"backend":                endpoint.Backend,
-		"window":                 endpoint.Handle,
-		backend.MetaSessionOwner: endpoint.SessionOwner,
-		backend.MetaWorkspaceID:  endpoint.WorkspaceID,
-		backend.MetaTabID:        endpoint.TabID,
-		"home":                   endpoint.Home,
-	}
 	resolve := p.resolve
 	if resolve == nil {
 		resolve = backend.BackendForTask
 	}
-	bk, resolved, err := resolve(endpoint.Home, meta)
+	bk, resolved, err := resolve(endpoint.Home, backend.EndpointRef{Backend: endpoint.Backend, Handle: endpoint.Handle, SessionOwner: endpoint.SessionOwner, WorkspaceID: endpoint.WorkspaceID, TabID: endpoint.TabID})
 	if err != nil {
 		return fleet.EndpointStatus{
 			Lifecycle:      fleet.LifecycleUnknown,

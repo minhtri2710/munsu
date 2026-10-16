@@ -9,20 +9,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
+
+// seedChild seeds a spawned child: its endpoint is bound (working), and done
+// completes it with the endpoint still held.
+func seedChild(t *testing.T, homeDir, taskID string, done bool) {
+	t.Helper()
+	auth := canonicalAtHome(t, homeDir)
+	canonicalCreateTask(t, auth, taskID, "ship", "")
+	bindSoldier(t, auth, taskID, taskauthority.EndpointBinding{Backend: "tmux", Handle: "@" + taskID})
+	if !done {
+		return
+	}
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCompleteRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), To: taskauthority.PhaseDone, Reason: "test",
+	}
+	if _, err := auth.Complete(mustFleetOperation(t, "op-done-"+taskID, req), req); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 	home := t.TempDir()
 	if _, err := mhome.Init(home); err != nil {
 		t.Fatal(err)
 	}
-	seedCanonicalPhase(t, home, "t1", taskauthority.PhaseWorking)
+	seedChild(t, home, "t1", false)
 	seedCanonicalPhase(t, home, "t2", taskauthority.PhaseQueued)
-	if err := mhome.WriteMeta(home, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := mhome.AppendStatus(home, "t1", "working: implementing"); err != nil {
 		t.Fatal(err)
 	}
@@ -52,17 +72,11 @@ func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 	if _, err := mhome.Init(home); err != nil {
 		t.Fatal(err)
 	}
-	seedCanonicalPhase(t, home, "t-decision", taskauthority.PhaseWorking)
+	seedChild(t, home, "t-decision", false)
 	seedCanonicalPhase(t, home, "t-blocked", taskauthority.PhaseBlocked)
-	seedCanonicalPhase(t, home, "t-done", taskauthority.PhaseDone)
+	seedChild(t, home, "t-done", true)
 	seedCanonicalPhase(t, home, "t-queued", taskauthority.PhaseQueued)
-	if err := mhome.WriteMeta(home, "t-decision", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := mhome.AppendStatus(home, "t-decision", "needs-decision [key=approach]: pick A or B"); err != nil {
-		t.Fatal(err)
-	}
-	if err := mhome.WriteMeta(home, "t-done", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mhome.AppendStatus(home, "t-done", "done: PR https://github.com/example/repo/pull/9"); err != nil {
@@ -152,24 +166,28 @@ func TestLastParentStatus(t *testing.T) {
 	}
 }
 
-// TestSummarizeCaptainHome_UnreadableMetaIsInvalid pins that a task meta the
-// summary cannot read makes the summary invalid instead of silently dropping
-// that task from its children and endpoint counts.
-func TestSummarizeCaptainHome_UnreadableMetaIsInvalid(t *testing.T) {
-	home := t.TempDir()
-	if _, err := mhome.Init(home); err != nil {
-		t.Fatal(err)
-	}
-	seedCanonicalPhase(t, home, "t1", taskauthority.PhaseQueued)
-	p, err := mhome.MetaFilePath(home, "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte("kind="+strings.Repeat("x", 1<<17)+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	sum := SummarizeCaptainHome(home)
-	if sum.Valid || sum.State != "unknown" || !strings.Contains(sum.Reason, "task meta unreadable") {
-		t.Fatalf("summary over an unreadable meta = valid=%v state=%q reason=%q; want invalid, unknown, task meta unreadable", sum.Valid, sum.State, sum.Reason)
+// TestSummarizeCaptainHome_InFlightTaskWithoutEndpointIsInvalid pins that a
+// working task holding no endpoint makes the summary invalid instead of
+// dropping it from the children.
+func TestSummarizeCaptainHome_InFlightTaskWithoutEndpointIsInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		seed      func(t *testing.T, home string)
+		wantValid bool
+	}{
+		{"working without an endpoint is invalid", func(t *testing.T, home string) { seedCanonicalPhase(t, home, "t1", taskauthority.PhaseWorking) }, false},
+		{"working with a bound endpoint is valid", func(t *testing.T, home string) { seedChild(t, home, "t1", false) }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if _, err := mhome.Init(home); err != nil {
+				t.Fatal(err)
+			}
+			tc.seed(t, home)
+			sum := SummarizeCaptainHome(home)
+			if sum.Valid != tc.wantValid || (!tc.wantValid && sum.Reason != "in-flight task holds no endpoint") {
+				t.Fatalf("summary = valid=%v reason=%q; want valid=%v", sum.Valid, sum.Reason, tc.wantValid)
+			}
+		})
 	}
 }

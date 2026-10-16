@@ -10,7 +10,15 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
+
+// RecoverySender delivers a recovered envelope to the pane of the envelope's
+// task.
+type RecoverySender interface {
+	Alive(homeDir string, ep taskauthority.EndpointBinding, harness string) (bool, error)
+	Send(homeDir string, ep taskauthority.EndpointBinding, payload string) home.BoundSendResult
+}
 
 // RecoveryAttempt describes one recovery retry attempt.
 type RecoveryAttempt struct {
@@ -30,7 +38,7 @@ func RecoveryMarkerPath(receiverHome, messageID string) string {
 // RecoverInbox attempts one recovery delivery for a single pending envelope.
 // It checks if the envelope was already acked and skips if so.
 // It writes a fingerprint marker on completion to prevent repeated retries.
-func RecoverInboxWithSender(sender home.BoundSender, receiverHome string, env *home.Envelope) *RecoveryAttempt {
+func RecoverInboxWithSender(sender RecoverySender, receiverHome string, env *home.Envelope) *RecoveryAttempt {
 	ra := &RecoveryAttempt{
 		MessageID: env.MessageID,
 	}
@@ -47,14 +55,13 @@ func RecoverInboxWithSender(sender home.BoundSender, receiverHome string, env *h
 		return ra
 	}
 
-	taskID := env.TaskID
-	meta, err := home.ReadMeta(receiverHome, taskID)
+	ep, err := paneEndpoint(receiverHome, env.TaskID)
 	if err != nil {
-		ra.Err = fmt.Errorf("reading meta for recovery: %w", err)
+		ra.Err = fmt.Errorf("reading bound endpoint for recovery: %w", err)
 		return ra
 	}
 
-	alive, err := sender.Alive(receiverHome, meta)
+	alive, err := sender.Alive(receiverHome, ep.Endpoint, ep.Harness)
 	if err != nil {
 		ra.Err = fmt.Errorf("resolving bound sender for recovery: %w", err)
 		return ra
@@ -64,7 +71,7 @@ func RecoverInboxWithSender(sender home.BoundSender, receiverHome string, env *h
 		return ra
 	}
 
-	sent := sender.Send(receiverHome, meta, env.Payload)
+	sent := sender.Send(receiverHome, ep.Endpoint, env.Payload)
 	if sent.Err != nil {
 		ra.Err = fmt.Errorf("recovery send failed: %w", sent.Err)
 		return ra
@@ -86,11 +93,11 @@ func RecoverInboxWithSender(sender home.BoundSender, receiverHome string, env *h
 // RecoverAllInboxes scans the given home for all pending inbox envelopes
 // from all senders and attempts recovery delivery for each.
 // This is the entry point for watcher startup recovery.
-func RecoverAllInboxesWithSender(sender home.BoundSender, receiverHome string) ([]*RecoveryAttempt, error) {
+func RecoverAllInboxesWithSender(sender RecoverySender, receiverHome string) ([]*RecoveryAttempt, error) {
 	return recoverAllInboxesWithFS(sender, receiverHome, os.Stat, os.ReadDir)
 }
 
-func recoverAllInboxesWithFS(sender home.BoundSender, receiverHome string, stat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error)) ([]*RecoveryAttempt, error) {
+func recoverAllInboxesWithFS(sender RecoverySender, receiverHome string, stat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error)) ([]*RecoveryAttempt, error) {
 	// Recovery validates state and inbox roots, then stops at state: the home
 	// itself is internal/home's contract to validate, where the guard at
 	// internal/home/canonical.go:346 is still gated on os.IsNotExist (#707's

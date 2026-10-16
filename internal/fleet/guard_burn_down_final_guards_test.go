@@ -176,14 +176,14 @@ func TestParseGLMergeStatus_EmptySHA(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestResolveTaskHome_EmptyHome(t *testing.T) {
-	_, _, err := ResolveTaskHome("", "t1")
+	_, err := ResolveTaskHome("", "t1")
 	if err == nil || !strings.Contains(err.Error(), "home directory is empty") {
 		t.Fatalf("ResolveTaskHome err = %v, want home directory is empty", err)
 	}
 }
 
 func TestResolveTaskHome_EmptyTaskID(t *testing.T) {
-	_, _, err := ResolveTaskHome(t.TempDir(), "")
+	_, err := ResolveTaskHome(t.TempDir(), "")
 	if err == nil || !strings.Contains(err.Error(), "task id is empty") {
 		t.Fatalf("ResolveTaskHome err = %v, want task id is empty", err)
 	}
@@ -194,22 +194,18 @@ func TestResolveTaskHome_EmptyTaskID(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 // TestReviewDiff_ProjectAndWorktreeRefusals pins the two refusals in
-// ReviewDiff's preamble. The project is read from the canonical task, never
-// from .meta: the blocking row names a project in .meta that the canonical
-// task lacks, the passing row holds the project only in the canonical task.
+// ReviewDiff's preamble, both read from the canonical task: each row passes
+// the guard before it.
 func TestReviewDiff_ProjectAndWorktreeRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		project   string
-		meta      func(worktree string) map[string]string
+		bound     bool
 		wantError string
 	}{
-		{"canonical task without a project is refused although meta names one", "", func(wt string) map[string]string {
-			return map[string]string{"project": "proj-1", "worktree": wt}
-		}, "task t1 has no project"},
-		{"canonical project passes to the worktree check without a meta project", "proj-1", func(string) map[string]string {
-			return map[string]string{}
-		}, "task t1 has no worktree path in meta"},
+		{"a task without a project is refused", "", false, "task t1 has no project"},
+		{"a project without a bound worktree is refused", "proj-1", false, "task t1 has no bound worktree"},
+		{"a bound worktree passes to the worktree stat", "proj-1", true, "worktree /wt/t1 does not exist"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			auth, homeDir := newFleetCanonical(t)
@@ -226,8 +222,8 @@ func TestReviewDiff_ProjectAndWorktreeRefusals(t *testing.T) {
 			if _, err := auth.Create(mustFleetOperation(t, "op-create-t1", req), req); err != nil {
 				t.Fatal(err)
 			}
-			if err := home.WriteMeta(homeDir, "t1", tc.meta(t.TempDir())); err != nil {
-				t.Fatal(err)
+			if tc.bound {
+				bindSoldier(t, auth, "t1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
 			}
 			err := ReviewDiff(homeDir, "t1")
 			if err == nil || !strings.Contains(err.Error(), tc.wantError) {

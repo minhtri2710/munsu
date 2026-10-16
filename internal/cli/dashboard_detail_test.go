@@ -14,7 +14,7 @@ import (
 // its last status line.
 func TestDashboardDetailPane(t *testing.T) {
 	m := selectTask(t, attentionModel(t, attentionHome(t), 120, 40), "foxtrot")
-	if f := ansi.Strip(m.View().Content); strings.Contains(f, "DECISION db") || !regexp.MustCompile(`(?m)^last needs-decision: which db\? \[key=db\]`).MatchString(f) {
+	if f := ansi.Strip(m.View().Content); strings.Contains(f, "DECISION db") || !regexp.MustCompile(`(?m)^│ last needs-decision: which db\? \[key=db\]`).MatchString(f) {
 		t.Fatalf("a reported needs-decision is not a hold card:\n%s", f)
 	}
 	m = selectTask(t, m, "alpha")
@@ -25,7 +25,7 @@ func TestDashboardDetailPane(t *testing.T) {
 	}
 	m = selectTask(t, m, "echo")
 	assertShown(t, "detail", ansi.Strip(m.View().Content),
-		"echo  ship  project munsu  queued  general",
+		"echo  ship  project munsu  working  general",
 		"seat claude opus  mode direct-PR  window w-echo  pane unknown  worktree /wt/echo",
 		"last working: fine")
 	m = selectTask(t, m, "golf")

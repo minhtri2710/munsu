@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestInboxCmd_Wakes(t *testing.T) {
@@ -230,15 +231,10 @@ func TestInboxCmd_EmptyState(t *testing.T) {
 // home, so the command must identify it by its task, not by that home.
 func TestInboxAck_SoldierIdentifiedByItsTask(t *testing.T) {
 	sharedHome := filepath.Join(t.TempDir(), "captain-main")
-	if err := os.MkdirAll(sharedHome, 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	const taskID = "soldier-1"
+	mustBindCLIEndpoint(t, sharedHome, taskID, taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
 	if err := home.SeedCaptainProvenance(sharedHome, "captain-main"); err != nil {
 		t.Fatalf("SeedCaptainProvenance: %v", err)
-	}
-	const taskID = "task:soldier-1"
-	if err := home.WriteMeta(sharedHome, taskID, map[string]string{"window": "w"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
 	}
 
 	env := &home.Envelope{

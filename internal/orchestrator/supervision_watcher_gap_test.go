@@ -97,7 +97,6 @@ func TestWaitForWatcherExit(t *testing.T) {
 // signal wake.
 func TestRunCycleQueuesASignalWake(t *testing.T) {
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "needs", map[string]string{"kind": "ship"})
 	if err := home.AppendStatus(homeDir, "needs", "blocked: waiting on a key"); err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +118,9 @@ func TestScanFleetSkipsTheCaptainsOwnSignalInACaptainHome(t *testing.T) {
 	if err := os.WriteFile(homeDir+"/"+home.CaptainProvenanceMarkerName, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	popupTask(t, homeDir, "captain:x", map[string]string{"kind": "captain"})
-	popupTask(t, homeDir, "soldier", map[string]string{"kind": "ship"})
+	if err := home.WriteMeta(homeDir, "captain:x", map[string]string{"kind": "captain"}); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{"captain:x", "soldier"} {
 		if err := home.AppendStatus(homeDir, id, "blocked: waiting on a key"); err != nil {
 			t.Fatal(err)

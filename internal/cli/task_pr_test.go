@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 const taskPRTestURL = "https://github.com/org/repo/pull/42"
@@ -15,18 +16,7 @@ const taskPRTestURL = "https://github.com/org/repo/pull/42"
 func TestTaskShowShowsReportedPR(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
-	registerCLITestProject(t, homeDir, "munsu")
-	for _, args := range [][]string{
-		{"task", "add", "pr1", "ship it", "--kind", "ship", "--repo", "munsu", "--home", homeDir},
-		{"task", "start", "pr1", "--home", homeDir},
-	} {
-		if out, err := runTaskCommand(t, args); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-	}
-	if err := home.WriteMeta(homeDir, "pr1", map[string]string{"kind": "ship", "window": "@1"}); err != nil {
-		t.Fatal(err)
-	}
+	mustBindCLIEndpoint(t, homeDir, "pr1", taskauthority.EndpointBinding{Backend: "fake", Handle: "@1"})
 	if err := home.AppendStatus(homeDir, "pr1", "done: PR "+taskPRTestURL+" checks green [key=default]"); err != nil {
 		t.Fatal(err)
 	}

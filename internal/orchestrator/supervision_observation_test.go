@@ -90,7 +90,9 @@ func TestCycleObservation_ScannedCount(t *testing.T) {
 // aliveTaskProbe reports every pane alive on any task.
 type aliveTaskProbe struct{}
 
-func (aliveTaskProbe) Probe(string, map[string]string) (bool, error) { return true, nil }
+func (aliveTaskProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return true, nil
+}
 
 // TestStaleAge_Exact is deterministic: it seeds the continuous-stale first-seen
 // time directly and asserts the measured age is exactly the injected now-minus-

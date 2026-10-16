@@ -983,8 +983,8 @@ func outcomeNotCompletedBlock(t *testing.T) {
 	}
 }
 
-// canonicalIdentitySafetyCheck runs the ship safety check over t1, whose .meta
-// carries no pr_* keys, while the provider reports its PR open. authorized
+// canonicalIdentitySafetyCheck runs the ship safety check over t1 while the
+// provider reports its PR open. authorized
 // leaves a delivery authorization in flight; reopened moves t1 to a later
 // generation than the one that authorized it.
 func canonicalIdentitySafetyCheck(t *testing.T, authorized, reopened bool) error {
@@ -1007,7 +1007,7 @@ func canonicalIdentitySafetyCheck(t *testing.T, authorized, reopened bool) error
 	}
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{State: "OPEN", HeadSHA: deliveryTestHead}, nil)
 	defer cleanup()
-	_, err = safetyCheck(Options{HomeDir: homeDir, ID: "t1"}, nil, taskauthority.KindShip, fakeTeardown{}, c, 0, testWorktreeBinding(wt, md), false)
+	_, err = safetyCheck(Options{HomeDir: homeDir, ID: "t1"}, taskauthority.KindShip, fakeTeardown{}, c, 0, testWorktreeBinding(wt, md), false)
 	return err
 }
 

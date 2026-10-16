@@ -133,6 +133,7 @@ var projectOverlayKeys = map[string]projectOverlayKey{
 	},
 	"forge":    toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Forge }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Forge = entry }),
 	"worktree": toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Worktree }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Worktree = entry }),
+	"quota":    toolEntryKey(func(o config.ProjectOverlay) *config.ToolEntry { return o.Quota }, func(o *config.ProjectOverlay, entry *config.ToolEntry) { o.Quota = entry }),
 }
 
 // projectOverlayKeyNames returns the settable overlay keys in stable order for

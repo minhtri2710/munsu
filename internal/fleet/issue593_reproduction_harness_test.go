@@ -3,12 +3,12 @@
 package fleet
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // TestIssue593ReproductionHarness pins both halves of the direct General
@@ -17,12 +17,7 @@ func TestIssue593ReproductionHarness(t *testing.T) {
 	generalHome := filepath.Join(t.TempDir(), "general-home")
 	captainHome := filepath.Join(t.TempDir(), "captain-home")
 	for _, dir := range []string{generalHome, captainHome} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := home.WriteMeta(dir, "task-soldier", map[string]string{"window": "soldier-window"}); err != nil {
-			t.Fatal(err)
-		}
+		seedBoundSoldierTask(t, dir, "task-soldier", taskauthority.EndpointBinding{Backend: "test", Handle: "soldier-window"})
 	}
 	if err := home.SeedCaptainProvenance(captainHome, "captain-home"); err != nil {
 		t.Fatal(err)
@@ -68,7 +63,9 @@ func TestIssue593ReproductionHarness(t *testing.T) {
 
 type harnessEndpoint struct{}
 
-func (*harnessEndpoint) Busy(string, map[string]string) (bool, error) { return false, nil }
-func (*harnessEndpoint) Send(string, map[string]string, string) home.BoundSendResult {
+func (*harnessEndpoint) Busy(string, taskauthority.EndpointBinding, string) (bool, error) {
+	return false, nil
+}
+func (*harnessEndpoint) Send(string, taskauthority.EndpointBinding, string) home.BoundSendResult {
 	return home.BoundSendResult{Acknowledged: true, Status: "submitted"}
 }

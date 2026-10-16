@@ -114,7 +114,7 @@ func (f *reentrantEndpointCapabilities) submitCount() int {
 // tests. It drives the REAL production phases (beginLaunchIntent,
 // acquireWorktree, bindWorktree, buildSoldierPrompt, createSession,
 // attachEndpoint, submitLaunch, writeLaunchManifest, waitAndInjectBrief,
-// verifyEndpointReadyBeforePersist, writeTaskMeta, confirmSpawn) against a
+// verifyEndpointReadyBeforePersist, confirmSpawn) against a
 // canonical home with a real git worktree and a counting
 // reservation-aware endpoint capability.
 type launchFixture struct {
@@ -267,7 +267,6 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		{"submit", r.submitLaunch},
 		{"ready", r.waitAndInjectBrief},
 		{"verify", r.verifyEndpointReadyBeforePersist},
-		{"meta", r.writeTaskMeta},
 		{"confirm", func() error {
 			_, err := r.confirmSpawn()
 			return err

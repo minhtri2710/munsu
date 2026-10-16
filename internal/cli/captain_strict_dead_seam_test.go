@@ -117,7 +117,7 @@ func (seamStaticIntegrationPort) Status(string, string) (fleet.IntegrationStatus
 
 // seamProbeEndpoint wires the production CLI probe endpoint to a fake backend.
 func seamProbeEndpoint(bk backend.Backend) sessionProbeEndpoint {
-	return sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	return sessionProbeEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return bk, "herdr", nil
 	}}
 }

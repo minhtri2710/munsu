@@ -62,7 +62,7 @@ func guardClearCooldown(path string) {
 
 // guardInFlight counts task-facing (ship/scout) tasks using the single
 // canonical current-state snapshot. It fails closed on unreadable Task truth:
-// a corrupt/legacy/meta-only fleet home returns an error and is never treated
+// a corrupt fleet home returns an error and is never treated
 // as an empty fleet. A home that is simply not initialized has no fleet to
 // guard and yields zero in-flight tasks (not an error).
 func guardInFlight(homeDir string) (int, error) {
@@ -108,7 +108,7 @@ func guardWatcherPreRunE() func(*cobra.Command, []string) error {
 		if cmd == cmd.Root() && (len(args) == 0 || args[0] == "--help" || args[0] == "-h") {
 			return nil
 		}
-		return guardWarnWatcher()
+		return guardWarnWatcher(homeFlag(cmd))
 	}
 }
 
@@ -118,7 +118,7 @@ func guardWatcherPreRunE() func(*cobra.Command, []string) error {
 // to guard it is a no-op; when an initialized home has unreadable Task truth
 // (a snapshot/current-state failure) it fails loud to stderr rather than
 // silently treating the fleet as empty.
-func guardWarnWatcher() error {
+func guardWarnWatcher(override string) error {
 	if os.Getenv("MUNSU_GUARD_SKIP") == "1" {
 		return nil
 	}
@@ -128,7 +128,7 @@ func guardWarnWatcher() error {
 		return nil
 	}
 
-	homeDir, err := home.Resolve(homeOverride)
+	homeDir, err := home.Resolve(override)
 	if err != nil {
 		return nil
 	}

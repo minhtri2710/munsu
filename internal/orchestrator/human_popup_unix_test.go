@@ -58,18 +58,11 @@ func popupEvents(t *testing.T, homeDir string) []Record {
 	return out
 }
 
-func popupTask(t *testing.T, homeDir, taskID string, meta map[string]string) {
-	t.Helper()
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestPopupHumanNeededNamesVerbAndTaskOnTheTaskBackendAndAuditsIt(t *testing.T) {
 	logPath, _ := fakeHerdrForPopups(t)
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "task-a", map[string]string{"backend": "herdr", "session_owner": "s1"})
-	popupTask(t, homeDir, "task-b", map[string]string{"backend": "herdr", "session_owner": "s2"})
+	seedBoundSoldier(t, homeDir, "task-a", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s1:p1", SessionOwner: "s1"})
+	seedBoundSoldier(t, homeDir, "task-b", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s2:p1", SessionOwner: "s2"})
 
 	popupHumanNeeded(homeDir, []humanNeededEvent{
 		{TaskID: "task-a", Line: "needs-decision [key=x]: pick a branch"},
@@ -97,7 +90,7 @@ func TestPopupHumanNeededAuditsAFailedPopupAndNeverRetriesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "task-a", map[string]string{"backend": "herdr", "session_owner": "s1"})
+	seedBoundSoldier(t, homeDir, "task-a", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s1:p1", SessionOwner: "s1"})
 
 	out := captureStderr(t, func() {
 		popupHumanNeeded(homeDir, []humanNeededEvent{{TaskID: "task-a", Line: "blocked: needs credentials"}})
@@ -118,13 +111,13 @@ func TestPopupHumanNeededAuditsAFailedPopupAndNeverRetriesIt(t *testing.T) {
 func TestPopupHumanNeededSkipsWhatHasNoNotifier(t *testing.T) {
 	logPath, _ := fakeHerdrForPopups(t)
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "no-backend", map[string]string{"kind": "ship"})
-	popupTask(t, homeDir, "other-backend", map[string]string{"backend": "tmux"})
+	seedTask(t, homeDir, "unbound")
+	seedBoundSoldier(t, homeDir, "other-backend", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
 
 	out := captureStderr(t, func() {
 		popupHumanNeeded(homeDir, []humanNeededEvent{
-			{TaskID: "no-meta", Line: "blocked: x"},
-			{TaskID: "no-backend", Line: "blocked: x"},
+			{TaskID: "no-task", Line: "blocked: x"},
+			{TaskID: "unbound", Line: "blocked: x"},
 			{TaskID: "other-backend", Line: "blocked: x"},
 		})
 	})
@@ -146,9 +139,8 @@ func TestRunCyclePopsUpOnlyFreshHumanNeededSignals(t *testing.T) {
 	logPath, _ := fakeHerdrForPopups(t)
 	homeDir := t.TempDir()
 	seedBoundSoldier(t, homeDir, "idle", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s1:p3", SessionOwner: "s1"})
-	popupTask(t, homeDir, "needs", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p1"})
-	popupTask(t, homeDir, "finished", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p2"})
-	popupTask(t, homeDir, "idle", map[string]string{"kind": "ship", "backend": "herdr", "session_owner": "s1", "window": "s1:p3"})
+	seedBoundSoldier(t, homeDir, "needs", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s1:p1", SessionOwner: "s1"})
+	seedBoundSoldier(t, homeDir, "finished", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s1:p2", SessionOwner: "s1"})
 	if err := home.AppendStatus(homeDir, "idle", "working: still going"); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +176,6 @@ func TestRunCyclePopsUpOnlyFreshHumanNeededSignals(t *testing.T) {
 
 func TestRunCycleClearsTheWakeMarkerOnceASignalResolves(t *testing.T) {
 	homeDir := t.TempDir()
-	popupTask(t, homeDir, "flip", map[string]string{"kind": "ship"})
 	wakesFor := func() int {
 		n := 0
 		for _, w := range mustReadWakeQueue(t, homeDir) {
