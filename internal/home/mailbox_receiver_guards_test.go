@@ -39,7 +39,7 @@ func newGuardReceiver(t *testing.T) (*Receiver, *Store, string) {
 	if err := config.Set(dir, "parent-home", parent); err != nil {
 		t.Fatalf("config.Set parent-home: %v", err)
 	}
-	r, err := NewReceiver(dir)
+	r, err := NewReceiver(dir, seatsOf(dir))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -275,10 +275,8 @@ func TestAckRejectsMismatchedAckOnlyRecord(t *testing.T) {
 func TestSoldierAckRejectsMismatchedAckOnlyTask(t *testing.T) {
 	home := t.TempDir()
 	const taskID = "task:hosted"
-	if err := WriteMeta(home, taskID, map[string]string{"window": "w"}); err != nil {
-		t.Fatal(err)
-	}
-	r, err := NewSoldierReceiver(home, taskID)
+	hostSoldier(t, home, taskID)
+	r, err := NewSoldierReceiver(home, taskID, seatsOf(home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +333,7 @@ func TestAckRemainsIdempotentAfterSenderProvenanceTeardown(t *testing.T) {
 		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
 	hostCaptain(t, generalHome, senderRankCaptainID, captainHome)
-	r, err := NewReceiver(generalHome)
+	r, err := NewReceiver(generalHome, seatsOf(generalHome))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -579,17 +577,15 @@ func TestReadHomeIdentityRefusesUnusableMarkers(t *testing.T) {
 	})
 }
 
-// A soldier's receiver identity is the task its hosting home holds a durable
-// record for. The home cannot vouch for a task it never hosted, so a claim it
+// A soldier's receiver identity is the task its hosting home holds a live
+// seat for. The home cannot vouch for a task it never hosted, so a claim it
 // has no record of must not resolve to a receiver.
 func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
 	dir := t.TempDir()
 	const receiverTask = "task:a"
 	const collidingTask = "task_a"
-	if err := WriteMeta(dir, receiverTask, map[string]string{"window": "w"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-	r, err := NewSoldierReceiver(dir, receiverTask)
+	hostSoldier(t, dir, receiverTask)
+	r, err := NewSoldierReceiver(dir, receiverTask, seatsOf(dir))
 	if err != nil {
 		t.Fatalf("NewSoldierReceiver: %v", err)
 	}
@@ -621,39 +617,31 @@ func TestSoldierReceiverRejectsCollidingTaskID(t *testing.T) {
 	}
 }
 
-func TestNewSoldierReceiverRefusesWhatTheHomeCannotVouchForAsASoldier(t *testing.T) {
+// The seat check owns which tasks are hosted (fleet.SoldierSeat, pinned by
+// TestSoldierSeat); the receiver refuses whatever it refuses.
+func TestNewSoldierReceiverRefusesATaskTheHomeHostsNoSeatFor(t *testing.T) {
 	dir := t.TempDir()
-
-	// Control: a task the home holds a meta record for resolves to a soldier
-	// receiver identified by that task.
-	if err := WriteMeta(dir, "task:hosted", map[string]string{"window": "w"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-	if err := WriteMeta(dir, "captain:captain-1", map[string]string{"kind": "captain", "home": filepath.Join(dir, "captain")}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-	r, err := NewSoldierReceiver(dir, "task:hosted")
-	if err != nil {
-		t.Fatalf("NewSoldierReceiver: %v", err)
-	}
-	if r.identity != ReceiverIDForTask("task:hosted") || r.rank != RankSoldier {
-		t.Fatalf("receiver = (%q, %q), want (%q, soldier)", r.identity, r.rank, ReceiverIDForTask("task:hosted"))
-	}
-
+	hostSoldier(t, dir, "task:hosted")
 	for _, tc := range []struct {
-		name    string
 		taskID  string
-		wantSub string
+		wantErr string
 	}{
-		{"a captain task", "captain:captain-1", "is a captain task"},
-		{"a task this home has no record of", "task:not-hosted", "hosts no task"},
-		{"a task ID that is not a task ID", "../escape", "invalid task ID"},
+		{"task:not-hosted", "new soldier receiver: home " + dir + " hosts no live soldier seat"},
+		{"task:hosted", ""},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := NewSoldierReceiver(dir, tc.taskID); err == nil {
-				t.Fatalf("NewSoldierReceiver accepted %s", tc.name)
-			} else if !strings.Contains(err.Error(), tc.wantSub) {
-				t.Fatalf("error = %v, want the %q refusal", err, tc.wantSub)
+		t.Run(tc.taskID, func(t *testing.T) {
+			r, err := NewSoldierReceiver(dir, tc.taskID, seatsOf(dir))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewSoldierReceiver: %v", err)
+			}
+			if r.identity != ReceiverIDForTask(tc.taskID) || r.rank != RankSoldier {
+				t.Fatalf("receiver = (%q, %q), want (%q, soldier)", r.identity, r.rank, ReceiverIDForTask(tc.taskID))
 			}
 		})
 	}

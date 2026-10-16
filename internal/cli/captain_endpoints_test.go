@@ -96,7 +96,7 @@ func (b *ordinaryCaptainProbeBackend) Teardown(string) error { b.teardownCalls++
 
 func TestSessionProbeEndpointReturnsResolutionError(t *testing.T) {
 	want := errors.New("resolve failed")
-	ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	ep := sessionProbeEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return nil, "", want
 	}}
 	if _, err := ep.Probe("home", map[string]string{"backend": "herdr", "window": "pane"}); !errors.Is(err, want) {
@@ -118,7 +118,7 @@ func TestSessionProbeEndpointOrdinaryOutcomes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bk := &ordinaryCaptainProbeBackend{alive: tt.alive, process: tt.process}
-			ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "tmux", nil }}
+			ep := sessionProbeEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) { return bk, "tmux", nil }}
 			got, err := ep.Probe("home", map[string]string{"backend": "tmux", "window": "pane", "harness": "claude"})
 			if err != nil {
 				t.Fatal(err)
@@ -141,7 +141,7 @@ func TestSessionNudgeEndpointTypedOutcomes(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			bk := &captainProbeBackend{paneAlive: true, agentAlive: true, prompt: backend.PromptResult{Status: status}}
 			resolves := 0
-			ep := sessionNudgeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+			ep := sessionNudgeEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 				resolves++
 				return bk, "herdr", nil
 			}}
@@ -161,7 +161,7 @@ func TestSessionNudgeEndpointTypedOutcomes(t *testing.T) {
 
 func TestSessionNudgeEndpointUnavailableDoesNotPrompt(t *testing.T) {
 	for _, bk := range []*captainProbeBackend{{paneAlive: false}, {paneAlive: true, agentAlive: false}, {agentErr: backend.ErrPaneNotFound}} {
-		ep := sessionNudgeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return bk, "herdr", nil }}
+		ep := sessionNudgeEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) { return bk, "herdr", nil }}
 		got, err := ep.Nudge("home", map[string]string{"backend": "herdr", "window": "owned:pane", "session_owner": "owned"}, "payload")
 		if err != nil || got.Status != "unavailable" || bk.promptCalls != 0 {
 			t.Fatalf("got=%+v err=%v calls=%d", got, err, bk.promptCalls)
@@ -188,7 +188,7 @@ func TestSessionRetireEndpointOutcomes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ep := sessionRetireEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+			ep := sessionRetireEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 				return tt.bk, "herdr", tt.resolveErr
 			}, sleep: func(time.Duration) {}}
 			err := ep.Retire("home", tt.meta)
@@ -273,7 +273,7 @@ func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ep := sessionProbeEndpoint{resolve: func(string, map[string]string) (backend.Backend, string, error) { return tt.backend, "herdr", nil }}
+			ep := sessionProbeEndpoint{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) { return tt.backend, "herdr", nil }}
 			got, err := ep.Probe("home", map[string]string{"backend": "herdr", "window": "owned:pane", "session_owner": "owned"})
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("error=%v, want=%v", err, tt.wantErr)

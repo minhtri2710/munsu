@@ -305,3 +305,79 @@ func TestTmux_Teardown_AbsentTargetIsDone(t *testing.T) {
 		t.Errorf("Teardown on unknown window should not error: %v", err)
 	}
 }
+
+// A prompt reaches an agent reading its terminal unbuffered. A program reading
+// it by line is refused before anything is typed: text pasted into it while
+// it runs would wait in the terminal and run in the shell once it exits.
+func TestTmux_AgentPromptDelivery(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not on PATH")
+	}
+	session := newDisposableSession(t)
+	tk := &TmuxBackend{}
+	const payload, ran = "echo RACE-$((6*7))", "RACE-42"
+	for _, tc := range []struct {
+		name, command, program string
+		want                   PromptStatus
+	}{
+		{"a short-lived program reading by line is refused", "sleep 1", "sleep", PromptUnsupported},
+		{"an agent reading unbuffered takes the prompt", `exec perl -e 'system "stty -icanon"; $| = 1; print "ready\n"; print "got: $_" while <STDIN>'`, "perl", PromptSubmitted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wid, err := tk.NewWindow(session, "prompt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = tk.Teardown(wid) })
+			if err := tk.SendKeys(wid, tc.command); err != nil {
+				t.Fatal(err)
+			}
+			waitForegroundProcess(t, tk, wid, tc.program)
+			if tc.want == PromptSubmitted {
+				waitPane(t, tk, wid, "the agent to read its terminal unbuffered", func(screen string) bool {
+					return strings.Contains(screen, "ready")
+				})
+			}
+			if got := tk.AgentPrompt(wid, payload); got.Status != tc.want {
+				t.Fatalf("AgentPrompt = %+v, want %s", got, tc.want)
+			}
+			if tc.want == PromptSubmitted {
+				waitPane(t, tk, wid, "the agent to read the prompt", func(screen string) bool {
+					return strings.Contains(screen, "got: "+payload)
+				})
+			} else {
+				waitPane(t, tk, wid, "the shell to return", func(string) bool {
+					got, _ := tk.ForegroundProcess(wid)
+					return tmuxShells[got]
+				})
+				time.Sleep(time.Second)
+			}
+			if screen, _ := tk.Capture(wid, 30); strings.Contains(screen, ran) {
+				t.Fatalf("the shell ran the prompt:\n%s", screen)
+			}
+		})
+	}
+}
+
+// waitPane waits until done holds for the pane's screen.
+func waitPane(t *testing.T, tk *TmuxBackend, wid, what string, done func(screen string) bool) {
+	t.Helper()
+	for deadline := time.Now().Add(tmuxSetupTimeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if screen, err := tk.Capture(wid, 30); err == nil && done(screen) {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// waitForegroundProcess waits until the pane's foreground process is want.
+func waitForegroundProcess(t *testing.T, tk *TmuxBackend, wid, want string) {
+	t.Helper()
+	var got string
+	for deadline := time.Now().Add(tmuxSetupTimeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if got, _ = tk.ForegroundProcess(wid); got == want {
+			return
+		}
+	}
+	t.Fatalf("pane foreground process is %q, want %q", got, want)
+}

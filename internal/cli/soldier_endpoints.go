@@ -5,31 +5,32 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type sessionSoldierEndpoints struct {
-	resolve func(string, map[string]string) (backend.Backend, string, error)
+	resolve boundResolver
 }
 
 func newSessionSoldierEndpoints() sessionSoldierEndpoints {
 	return sessionSoldierEndpoints{resolve: backend.BackendForTask}
 }
 
-func (s sessionSoldierEndpoints) backend(home string, meta map[string]string) (backend.Backend, error) {
-	if home == "" || meta["window"] == "" {
+func (s sessionSoldierEndpoints) backend(home string, ep taskauthority.EndpointBinding) (backend.Backend, error) {
+	if home == "" || ep.Handle == "" {
 		return nil, fmt.Errorf("soldier endpoint identity is incomplete")
 	}
-	bk, _, err := boundBackend(home, meta, s.resolve)
+	bk, _, err := boundBackend(home, bindingRef(ep), s.resolve)
 	return bk, err
 }
 
-func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool, error) {
-	bk, err := s.backend(home, meta)
+func (s sessionSoldierEndpoints) Busy(home string, ep taskauthority.EndpointBinding, harness string) (bool, error) {
+	bk, err := s.backend(home, ep)
 	if err != nil {
 		return false, err
 	}
 	if _, ok := bk.(backend.AgentActivityReader); ok {
-		observation := backend.ObserveEndpoint(bk, meta["window"], harnessProcessMatcher(meta["harness"]))
+		observation := backend.ObserveEndpoint(bk, ep.Handle, harnessProcessMatcher(harness))
 		if observation.Lifecycle != backend.LifecycleAlive {
 			return false, fmt.Errorf("endpoint not alive: %s", observation.Detail)
 		}
@@ -45,11 +46,11 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	return false, nil
 }
 
-func (s sessionSoldierEndpoints) Send(home string, meta map[string]string, payload string) mhome.BoundSendResult {
-	bk, err := s.backend(home, meta)
+func (s sessionSoldierEndpoints) Send(home string, ep taskauthority.EndpointBinding, payload string) mhome.BoundSendResult {
+	bk, err := s.backend(home, ep)
 	if err != nil {
 		return mhome.BoundSendResult{Status: "backend-failed", Err: err}
 	}
-	result := backend.SubmitPrompt(bk, meta["window"], payload)
+	result := backend.SubmitPrompt(bk, ep.Handle, payload)
 	return mhome.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
 }

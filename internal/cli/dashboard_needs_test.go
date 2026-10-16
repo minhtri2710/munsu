@@ -58,9 +58,7 @@ func attentionHome(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	if err := home.WriteMeta(h, "echo", map[string]string{"id": "echo", "kind": "ship", "harness": "claude", "model": "opus", "mode": "direct-PR", "window": "w-echo", "worktree": "/wt/echo"}); err != nil {
-		t.Fatal(err)
-	}
+	launchEcho(t, auth)
 	if err := os.MkdirAll(filepath.Join(h, "captains", "broken"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +66,68 @@ func attentionHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// launchEcho launches echo through the canonical spawn operations: a claude
+// opus direct-PR seat in window w-echo over worktree /wt/echo. The backend is
+// one no adapter resolves, so its pane reads unknown.
+func launchEcho(t *testing.T, auth *taskauthority.Canonical) {
+	t.Helper()
+	tid := mustTaskIDFor(t, "echo")
+	precondition := func() domain.Precondition {
+		agg, err := auth.Get(tid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+	}
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: precondition(), SnapshotDigest: guardDigest("snapshot:echo"),
+		Backend: "fake", Harness: "claude", Model: "opus", Effort: "high", Mode: "direct-PR", Kind: taskauthority.KindShip,
+		Project: "munsu", LaunchID: "launch-echo", WindowLabel: "window-echo",
+		WorktreeReservationID: "wt-res-echo", WorktreeFenceToken: "wt-fence-echo",
+		EndpointReservationID: "ep-res-echo", EndpointFenceToken: "ep-fence-echo", EndpointIncarnation: "inc-echo",
+		SeatPathDirs: []string{"/usr/bin"}, SeatEnv: taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}, Reason: "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "op-begin-echo", begin), begin); err != nil {
+		t.Fatal(err)
+	}
+	wt := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: precondition(), Reason: "spawn", Binding: taskauthority.WorktreeBinding{
+		RepositoryIdentity: "repo", Path: "/wt/echo", GitDir: "/repo/.git/worktrees/echo", CommonDir: "/repo/.git",
+		BaseHead: strings.Repeat("a", 40), LeaseID: begin.WorktreeReservationID, FenceToken: begin.WorktreeFenceToken, BoundAtUnix: 1,
+	}}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "op-bindwt-echo", wt), wt); err != nil {
+		t.Fatal(err)
+	}
+	manifest := taskauthority.CanonicalRecordLaunchManifestRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: precondition(), LaunchID: begin.LaunchID,
+		WorktreeLeaseID: begin.WorktreeReservationID, WorktreeFenceToken: begin.WorktreeFenceToken,
+		ManifestSHA256: guardDigest("manifest:echo"), Reason: "manifest prepared",
+	}
+	if _, err := auth.RecordLaunchManifest(mustCanonicalOp(t, "op-manifest-echo", manifest), manifest); err != nil {
+		t.Fatal(err)
+	}
+	attach := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: precondition(), Backend: begin.Backend, Handle: "w-echo",
+		LeaseID: begin.EndpointReservationID, FenceToken: begin.EndpointFenceToken, Incarnation: begin.EndpointIncarnation, Reason: "attach",
+	}
+	if _, err := auth.AttachEndpoint(mustCanonicalOp(t, "op-attach-echo", attach), attach); err != nil {
+		t.Fatal(err)
+	}
+	record := taskauthority.CanonicalRecordLaunchRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: precondition(), LaunchID: begin.LaunchID,
+		CommandDigest: guardDigest("launch:echo"), Reason: "record",
+		Seat: taskauthority.LaunchSeat{Argv: []string{"claude"}, PromptDigest: guardDigest("prompt"), Fence: taskauthority.FenceRecord{Reason: "no fence on this host"}},
+	}
+	if _, err := auth.RecordLaunch(mustCanonicalOp(t, "op-record-echo", record), record); err != nil {
+		t.Fatal(err)
+	}
+	bind := taskauthority.CanonicalBindEndpointRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: precondition(), Reason: "spawn", Binding: taskauthority.EndpointBinding{
+		Backend: begin.Backend, Handle: "w-echo", LeaseID: begin.EndpointReservationID, FenceToken: begin.EndpointFenceToken, Incarnation: begin.EndpointIncarnation, BoundAtUnix: 1,
+	}}
+	if _, err := auth.BindEndpoint(mustCanonicalOp(t, "op-bindep-echo", bind), bind); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func attentionModel(t *testing.T, h string, w, height int) dashboardModel {
@@ -155,7 +215,7 @@ func TestDashboardNeedsYou(t *testing.T) {
 
 	t.Run("a hold is listed once beside its own needs-decision line", func(t *testing.T) {
 		h := t.TempDir()
-		writeTaskMeta(t, h, "kilo", "ship")
+		initHomeWithTask(t, h, "kilo", "ship")
 		if out, err := runRoot(t, "decision-hold", "hold", "db", "--reason", "Pick a db", "--from", "kilo", "--home", h); err != nil {
 			t.Fatalf("hold: %v\n%s", err, out)
 		}
@@ -167,7 +227,7 @@ func TestDashboardNeedsYou(t *testing.T) {
 
 	t.Run("a hold belongs only to the task it scopes", func(t *testing.T) {
 		h := t.TempDir()
-		writeTaskMeta(t, h, "a", "ship")
+		initHomeWithTask(t, h, "a", "ship")
 		cliSeedCanonicalTask(t, h, "a-decision-x", "ship")
 		if out, err := runRoot(t, "decision-hold", "hold", "k", "--reason", "Pick", "--from", "a-decision-x", "--home", h); err != nil {
 			t.Fatalf("hold: %v\n%s", err, out)

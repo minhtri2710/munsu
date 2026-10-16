@@ -3,7 +3,6 @@ package fleet
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -39,7 +37,7 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 		{crashAfter: "create-session"},  // after endpoint create
 		{crashAfter: "attach-endpoint"}, // after durable attach
 		{crashAfter: "submit"},          // after launch submit
-		{crashAfter: "meta"},            // after metadata, before final bind
+		{crashAfter: "verify"},          // after final verification, before final bind
 		{crashAfter: "confirm", refused: "spawn requires queued; duplicate or stale live spawn refused"}, // after final bind
 	}
 	for _, b := range boundaries {
@@ -408,8 +406,7 @@ func TestRecordedEndpointWaitsForGuardWithoutResubmission(t *testing.T) {
 // re-run `munsu spawn <id> <project>`, or stop the pane by hand. Each row then
 // takes only those steps. Where the re-run resumes, it adopts the same endpoint
 // and works the task; where the cause persists (the task stays blocked) the
-// re-run is refused with the existing refusal's own reason. The .meta window a
-// failed run leaves behind decides nothing: only a bound endpoint is live.
+// re-run is refused with the existing refusal's own reason.
 // The submitted launch command executes the real launch artifact, so the harness
 // launch count is the number of soldier processes.
 func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
@@ -496,39 +493,8 @@ func TestLaunchRecoveryPostSubmitFailureNamesLiveEndpoint(t *testing.T) {
 			wantSubmits: 1,
 		},
 		{
-			// The meta path is a directory, so writing the projection fails;
-			// the task is still queued with no bound endpoint, so the re-run is
-			// admitted. The read error is an *fs.PathError for the read of that
-			// path on every platform: os.File.Read wraps every failure through
-			// File.wrapErr (os/file.go), whatever errno the platform gives for
-			// reading a directory.
-			name: "task meta",
-			inject: func(f *launchFixture) func() {
-				path, err := home.MetaFilePath(f.homeDir, f.taskID)
-				if err != nil {
-					f.t.Fatal(err)
-				}
-				probes := 0
-				f.endpoints.onProbe = func() error {
-					if probes++; probes == 3 {
-						if err := os.MkdirAll(path, 0o755); err != nil {
-							f.t.Fatal(err)
-						}
-					}
-					return nil
-				}
-				return func() { os.Remove(path) }
-			},
-			wantCause: func(f *launchFixture, err error) bool {
-				path, perr := home.MetaFilePath(f.homeDir, f.taskID)
-				var pe *fs.PathError
-				return perr == nil && errors.As(err, &pe) && pe.Op == "read" && pe.Path == path
-			},
-			wantSubmits: 1,
-		},
-		{
-			// A spawn hold lands after the .meta projection names the window,
-			// so the final bind refuses. The operator releases the hold and the
+			// A spawn hold lands after final verification, so the final bind
+			// refuses. The operator releases the hold and the
 			// re-run re-adopts the pane and binds it.
 			name: "final bind",
 			inject: func(f *launchFixture) func() {

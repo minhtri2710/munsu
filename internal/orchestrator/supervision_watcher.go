@@ -16,6 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 const watcherPollInterval = 5 * time.Second
@@ -41,7 +42,7 @@ type WakeReason struct {
 // Run starts the persistent watcher daemon. It records actionable conditions in
 // the durable wake queue and continues polling until SIGTERM or SIGINT.
 type TaskEndpointProbe interface {
-	Probe(homeDir string, meta map[string]string) (bool, error)
+	Probe(homeDir string, ep taskauthority.EndpointBinding, harness string) (bool, error)
 }
 
 // WatcherHooks is the per-cycle work the composition root adds to the watcher.
@@ -156,7 +157,7 @@ func wakeActiveDeliveries(homeDir string, port ActiveDeliveryPort, obs *cycleObs
 // triggers an immediate re-probe cycle; every other outcome keeps the polling
 // ticker as the cadence authority (the watcher is never silent). A nil observation
 // event port keeps the watcher on pure polling.
-func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender RecoverySender, hooks WatcherHooks, reviews ReviewVerdictPort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
 	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, reviews, events, deliveries)
 }
 
@@ -166,7 +167,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender RecoverySender, hooks WatcherHooks, reviews ReviewVerdictPort, events ObservationEventPort, deliveries ActiveDeliveryPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -435,7 +436,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 		if obs != nil {
 			obs.scannedTasks++
 		}
-		reason := scanTaskWithProbe(homeDir, id, ep.Meta, probe, lv)
+		reason := scanTaskWithProbe(homeDir, ep, probe, lv)
 		if reason == nil {
 			if clearResolved {
 				clearWakeMarker(homeDir, id)
@@ -540,13 +541,13 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 	return out
 }
 
-func scanTaskWithProbe(homeDir, id string, meta map[string]string, probe TaskEndpointProbe, lv config.SeatLiveness) *WakeReason {
-	windowID := meta["window"]
+func scanTaskWithProbe(homeDir string, ep BoundEndpoint, probe TaskEndpointProbe, lv config.SeatLiveness) *WakeReason {
+	id, windowID := ep.TaskID, ep.Endpoint.Handle
 
 	if probe == nil {
 		return &WakeReason{Kind: "check", TaskIDs: []string{id}, Message: "endpoint probe is not configured"}
 	}
-	paneAlive, err := probe.Probe(homeDir, meta)
+	paneAlive, err := probe.Probe(homeDir, ep.Endpoint, ep.Harness)
 	if err != nil {
 		return &WakeReason{Kind: "check", TaskIDs: []string{id}, Message: fmt.Sprintf("endpoint probe failed: %v", err)}
 	}
@@ -590,7 +591,7 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`;
 // both paths capture and log the cycle's internal observations.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender RecoverySender, hooks WatcherHooks, reviews ReviewVerdictPort) (bool, error) {
 	obs := newCycleObservation()
 	emitted, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, reviews, obs)
 	if err == nil {
@@ -602,7 +603,7 @@ func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 // runRecovery executes the one-shot recovery on watcher startup.
 // It retries pending inbox envelopes once with fingerprint dedup,
 // runs the mailbox recovery hook (if any) once.
-func runRecovery(homeDir string, sender home.BoundSender, hooks WatcherHooks) error {
+func runRecovery(homeDir string, sender RecoverySender, hooks WatcherHooks) error {
 	if sender == nil {
 		return fmt.Errorf("mailbox recovery sender capability is required")
 	}
@@ -644,7 +645,7 @@ func staleAge(id string, now time.Time) time.Duration {
 	return now.Sub(first)
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender home.BoundSender, hooks WatcherHooks, reviews ReviewVerdictPort, obs *cycleObservation) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender RecoverySender, hooks WatcherHooks, reviews ReviewVerdictPort, obs *cycleObservation) (bool, error) {
 	lv, err := config.ReadSeatLiveness(homeDir)
 	if err != nil {
 		return false, err

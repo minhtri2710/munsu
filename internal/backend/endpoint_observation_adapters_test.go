@@ -185,13 +185,13 @@ if [ "$1" = "list-panes" ]; then
   esac
 fi
 if [ "$1" = "display-message" ]; then
-  if [ "$2" != "-p" ] || [ "$3" != "-t" ] || [ "$5" != '#{pane_current_command}' ]; then
+  if [ "$2" != "-p" ] || [ "$3" != "-t" ] || [ "$5" != '#{pane_pid} #{pane_current_command}' ]; then
     echo "unexpected display-message argv: $*" >&2; exit 2
   fi
   case "$4" in
-    alive) echo pi ;;
-    shell) echo zsh ;;
-    noproc) exit 0 ;;
+    alive) echo 99999999 pi ;;
+    shell) echo 99999999 zsh ;;
+    noproc) echo 99999999 ;;
     procfail) echo "permission denied" >&2; exit 1 ;;
   esac
   exit 0

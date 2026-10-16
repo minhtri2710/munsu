@@ -10,6 +10,7 @@ github.com/minhtri2710/munsu/internal/backend TestBackendForTask_HerdrSessionFro
 github.com/minhtri2710/munsu/internal/backend TestResolve_HerdrUsesDefaultSessionNotHometag herdr not on PATH (Resolve verifies the requested capability)
 github.com/minhtri2710/munsu/internal/cli TestHelperNewWatcher not a helper invocation
 github.com/minhtri2710/munsu/internal/cli TestOrphanScanChildProcess helper process for TestOrphanScanReportsRealGarbageAndLeavesItRunning
+github.com/minhtri2710/munsu/internal/cli TestUnbufferedCaptainChild helper process for TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat
 github.com/minhtri2710/munsu/internal/fleet TestCaptainSeatClientChild runs only as the captain of TestServeCaptainSeatRunsTheCaptain
 github.com/minhtri2710/munsu/internal/fleet TestOrphanScanChildProcess helper process for TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets
 github.com/minhtri2710/munsu/internal/orchestrator TestAFKDaemonChildProcess AFK daemon child process entry point

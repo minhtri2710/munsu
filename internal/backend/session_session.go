@@ -158,32 +158,27 @@ func Resolve(name string) (Backend, string, error) {
 	return bk, name, nil
 }
 
-// BackendForTask resolves the session backend durably bound in task metadata.
-// ONLY meta["backend"] is consumed: if the bound identity is MISSING or empty,
-// resolution FAILS CLOSED — it NEVER falls through to Resolve(config/env/PATH).
+// BackendForTask resolves the session backend of one bound endpoint. ONLY
+// ep.Backend selects it: a missing or empty identity FAILS CLOSED and NEVER
+// falls through to Resolve(config/env/PATH).
 //
 // The bound identity goes through the SAME verified construction path as
 // Resolve: an absent or unhealthy capability FAILS CLOSED at
 // resolution — session binding can never bypass capability verification.
 //
-// For the "herdr" backend, the session name is bound from task metadata
-// AFTER verification, resolved from (in order):
-//  1. meta[MetaSessionOwner]
-//  2. HandleSession(meta["window"])
+// For the "herdr" backend, the session name is bound AFTER verification,
+// resolved from (in order):
+//  1. ep.SessionOwner
+//  2. HandleSession(ep.Handle)
 //  3. HERDR_SESSION env or "default" (from the verified base construction)
 //
-// This is session BINDING from task metadata, not selection. It ensures
-// post-spawn lifecycle (peek/send/teardown) uses the correct session,
-// not the hometag.
-func BackendForTask(homeDir string, meta map[string]string) (Backend, string, error) {
-	var bkName string
-	if meta != nil {
-		bkName = meta["backend"]
+// labelHome is the home whose workspace label a teardown may close (a captain
+// home's label is captain-<id>-<hash>, not its parent's primary tag).
+func BackendForTask(labelHome string, ep EndpointRef) (Backend, string, error) {
+	if err := requireIdentity(ep.Backend); err != nil {
+		return nil, "", fmt.Errorf("bound endpoint backend: %w", err)
 	}
-	if err := requireIdentity(bkName); err != nil {
-		return nil, "", fmt.Errorf("task metadata meta[\"backend\"]: %w", err)
-	}
-	switch bkName {
+	switch ep.Backend {
 	case "herdr":
 		// Capability verification FIRST via the shared path; session binding
 		// is layered on AFTER verification and can never bypass it.
@@ -192,35 +187,32 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 			return nil, "", err
 		}
 		hb := bk.(*HerdrBackend)
-		if meta != nil {
-			// Session binding: meta session owner > HandleSession(window)
-			// > verified base (HERDR_SESSION env or "default").
-			if sess := meta[MetaSessionOwner]; sess != "" {
-				hb.Session = sess
-			} else if wsess := HandleSession(meta["window"]); wsess != "" {
-				hb.Session = wsess
-			}
-			// Seed durable teardown tab ID from meta
-			if tabID := meta[MetaTabID]; tabID != "" {
-				hb.SeedTeardownTab(tabID)
-			}
-			// Seed durable workspace ID from meta for husk cleanup
-			if wsID := meta[MetaWorkspaceID]; wsID != "" {
-				hb.TeardownWorkspaceID = wsID
-			}
-			// Set workspace label for label-safe close. Prefer the task's own home
-			// (captain homes use captain-<id>-<hash>, not the parent primary tag).
-			labelHome := homeDir
-			if mh := meta["home"]; mh != "" {
-				labelHome = mh
-			}
-			hb.Hometag = WorkspaceTag(labelHome)
+		if ep.SessionOwner != "" {
+			hb.Session = ep.SessionOwner
+		} else if wsess := HandleSession(ep.Handle); wsess != "" {
+			hb.Session = wsess
 		}
+		if ep.TabID != "" {
+			hb.SeedTeardownTab(ep.TabID)
+		}
+		hb.TeardownWorkspaceID = ep.WorkspaceID
+		hb.Hometag = WorkspaceTag(labelHome)
 		return bk, "herdr", nil
 	case "tmux":
 		bk, err := constructBackend("tmux")
 		return bk, "tmux", err
 	default:
-		return nil, "", fmt.Errorf("unknown bound session backend: %q (supported: %s); munsu cannot operate this endpoint: close it in its own multiplexer", bkName, supportedBackends)
+		return nil, "", fmt.Errorf("unknown bound session backend: %q (supported: %s); munsu cannot operate this endpoint: close it in its own multiplexer", ep.Backend, supportedBackends)
+	}
+}
+
+// MetaEndpointRef reads the bound endpoint a captain's .meta records.
+func MetaEndpointRef(meta map[string]string) EndpointRef {
+	return EndpointRef{
+		Backend:      meta["backend"],
+		Handle:       meta["window"],
+		SessionOwner: meta[MetaSessionOwner],
+		WorkspaceID:  meta[MetaWorkspaceID],
+		TabID:        meta[MetaTabID],
 	}
 }
