@@ -298,20 +298,32 @@ func TestConfigSetCaptainHarnessMalformedBaseFailsClosed(t *testing.T) {
 }
 
 // TestFleetBaseMutatorsRejectCaptainHome verifies no fleet-base mutator
-// authors config/base.json from a Captain home (identified by its
+// changes config/base.json from a Captain home (identified by its
 // config/parent-home pointer), while the General home still writes it.
+// Seeded rows start from a base holding dispatch profile "p".
 func TestFleetBaseMutatorsRejectCaptainHome(t *testing.T) {
+	t.Setenv("MUNSU_INIT_SKILL", "skip")
+	add := []string{"config", "dispatch", "add", "--name", "q", "--harness", "pi", "--match", "y"}
 	for _, tc := range []struct {
 		args    []string
 		captain bool
+		seed    bool
 	}{
-		{[]string{"config", "set", "soldier-harness", "pi"}, true},
-		{[]string{"config", "set", "model", "pi"}, true},
-		{[]string{"config", "set", "captain-harness", "pi"}, true},
-		{[]string{"config", "set", "backend", "tmux"}, true},
-		{[]string{"config", "set", "backend", "tmux"}, false},
-		{[]string{"config", "dispatch", "set-default", "pi"}, true},
-		{[]string{"config", "dispatch", "set-default", "pi"}, false},
+		{[]string{"config", "set", "soldier-harness", "pi"}, true, false},
+		{[]string{"config", "set", "model", "pi"}, true, false},
+		{[]string{"config", "set", "captain-harness", "pi"}, true, false},
+		{[]string{"config", "set", "backend", "tmux"}, true, false},
+		{[]string{"config", "set", "backend", "tmux"}, false, false},
+		{[]string{"config", "dispatch", "set-default", "pi"}, true, false},
+		{[]string{"config", "dispatch", "set-default", "pi"}, false, false},
+		{add, true, false},
+		{add, false, false},
+		{[]string{"config", "dispatch", "rm", "p"}, true, true},
+		{[]string{"config", "dispatch", "rm", "p"}, false, true},
+		{[]string{"config", "dispatch", "clear"}, true, true},
+		{[]string{"config", "dispatch", "clear"}, false, true},
+		{[]string{"init"}, true, false},
+		{[]string{"init"}, false, false},
 	} {
 		name := strings.Join(tc.args, " ")
 		if tc.captain {
@@ -325,22 +337,31 @@ func TestFleetBaseMutatorsRejectCaptainHome(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if tc.seed {
+				seed := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
+				seed.Config.DispatchProfiles = []config.DispatchProfile{{Name: "p", Match: []string{"x"}, Harness: "pi"}}
+				if err := config.StoreFleetBase(home, seed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			basePath := filepath.Join(home, config.BaseDocumentPath)
+			before, _ := os.ReadFile(basePath)
 			err := runConfigSet(t, tc.args...)
-			_, statErr := os.Stat(filepath.Join(home, config.BaseDocumentPath))
+			after, _ := os.ReadFile(basePath)
 			if tc.captain {
 				if err == nil || !strings.Contains(err.Error(), "from a Captain home") {
 					t.Fatalf("error = %v, want Captain-home refusal", err)
 				}
-				if !os.IsNotExist(statErr) {
-					t.Fatalf("base document must not be created from a Captain home: %v", statErr)
+				if !bytes.Equal(before, after) {
+					t.Fatalf("base document changed from a Captain home:\n%s", after)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("General home write: %v", err)
 			}
-			if statErr != nil {
-				t.Fatalf("General home write did not author base document: %v", statErr)
+			if bytes.Equal(before, after) {
+				t.Fatalf("General home write did not change base document:\n%s", after)
 			}
 		})
 	}
