@@ -141,8 +141,8 @@ func seedSeamCaptain(t *testing.T, id string, integration fleet.IntegrationPort)
 
 // seedUnlaunchedCaptain seeds a canonical parent home and a managed-worktree
 // captain home of repo through fleet.SeedCaptain (Pi harness, herdr backend,
-// integration installed through the given port). No launch meta is written, so no fleet path
-// resolves a session backend for it.
+// integration installed through the given port). No launch meta is written,
+// so no fleet path resolves a session backend for it.
 func seedUnlaunchedCaptain(t *testing.T, id string, integration fleet.IntegrationPort) (parent, captainHome, repo string) {
 	t.Helper()
 	fakePiToolchain(t)
