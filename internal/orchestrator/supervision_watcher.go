@@ -440,6 +440,9 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	bound, err := LiveBoundEndpoints(homeDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "watcher: listing bound soldier tasks: %v\n", err)
+		// An unprobed task has no reason this scan; clearing its marker would
+		// re-wake it once the listing recovers.
+		clearResolved = false
 	}
 	for _, ep := range bound {
 		id := ep.TaskID
