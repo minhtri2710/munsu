@@ -40,7 +40,6 @@ func TestExpectedTargetPathRejectsEmptyProjectCwd(t *testing.T) {
 
 func TestExpectedTargetPathRejectsMissingUserHome(t *testing.T) {
 	t.Setenv("HOME", "")
-	t.Setenv("USERPROFILE", "")
 	_, err := ExpectedTargetPath(ScopeUser, "")
 	if err == nil || !strings.Contains(err.Error(), "cannot determine user extensions directory") {
 		t.Fatalf("ExpectedTargetPath error = %v, want missing-home refusal", err)
@@ -121,7 +120,6 @@ func TestOpencodeInstallRejectsUnknownPluginContent(t *testing.T) {
 
 func TestPiInstallRejectsEmptyUserExtensionDirectory(t *testing.T) {
 	t.Setenv("HOME", "")
-	t.Setenv("USERPROFILE", "")
 	SetMunsuPathResolver(testMunsuResolver{path: "/fake/munsu"})
 	t.Cleanup(ResetMunsuPathResolver)
 	fakePiToolchain(t)

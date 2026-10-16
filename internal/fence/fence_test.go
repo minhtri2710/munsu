@@ -815,7 +815,6 @@ func rootsEnv(t *testing.T, root string) (userHome, pathDir string) {
 		}
 	}
 	t.Setenv("HOME", userHome)
-	t.Setenv("USERPROFILE", userHome)
 	t.Setenv("PATH", pathDir)
 	return userHome, pathDir
 }

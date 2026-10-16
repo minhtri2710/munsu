@@ -13,7 +13,6 @@ func TestHumanClaudeConfig(t *testing.T) {
 	home := t.TempDir()
 	state := filepath.Join(home, "munsu", "state")
 	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
 	def := ClaudeConfig{Dir: filepath.Join(home, ".claude"), GlobalConfig: filepath.Join(home, ".claude.json")}
 	custom := filepath.Join(home, "claude-work")
 	tests := []struct {
