@@ -10,11 +10,12 @@ import (
 // second extension status row.
 const piFooterRows = 4
 
-// piStats matches the start of pi's stats row: the usage tokens pi 1.2.0's
-// footer can print (↑input ↓output Rcache-read Wcache-write CHcache-hit%
-// $cost), then the context stat with the window, e.g.
-// "↑9.2k ↓5 3.6%/256k (auto) • xp", "?/256k" or "12.5%/1.0M".
-var piStats = regexp.MustCompile(`^(?:(?:[↑↓RW]\d+(?:\.\d)?[kM]?|CH\d+\.\d%|\$\d+\.\d{3}(?: \(sub\))?) )*(?:\d+(\.\d+)?%|\?)/\d+(?:\.\d)?[kM]\b`)
+// piStats matches pi 1.2.0's stats row: the usage tokens its footer can print
+// (↑input ↓output Rcache-read Wcache-write CHcache-hit% $cost), the context
+// stat with the window, optional " (auto)" and " • xp", then the end of the
+// row or at least two spaces of padding before the right side, e.g.
+// "↑9.2k ↓5 3.6%/256k (auto) • xp      gpt-6-luna • xhigh" or "?/0".
+var piStats = regexp.MustCompile(`^(?:(?:[↑↓RW]\d+(?:\.\d)?[kM]?|CH\d+\.\d%|\$\d+\.\d{3}(?: \(sub\))?) )*(?:\d+(\.\d+)?%|\?)/\d+(?:\.\d)?[kM]?(?: \(auto\))?(?: • xp)?(?:$| {2,}\S)`)
 
 // ClassifyPiComposer judges a capture of the bottom rows of a pi pane. Empty
 // means a blank row, a rule line, one blank row (spaces and NBSP ignored), a
@@ -38,5 +39,5 @@ func isPiFooter(rows []string) bool {
 		return false
 	}
 	cwd, stats := trimComposerSpace(rows[0]), trimComposerSpace(rows[1])
-	return (strings.HasPrefix(cwd, "/") || strings.HasPrefix(cwd, "~")) && piStats.MatchString(stats) && strings.Contains(stats, " • ")
+	return (strings.HasPrefix(cwd, "/") || strings.HasPrefix(cwd, "~")) && piStats.MatchString(stats)
 }
