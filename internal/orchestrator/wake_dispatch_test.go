@@ -889,6 +889,45 @@ func TestDispatchWake_DeferredBackendFailedHasTypedReason(t *testing.T) {
 	}
 }
 
+// A submit status proving the prompt never reached the composer puts the Wake
+// back at the queue head, so it is delivered before a newer one; a status that
+// may have left the text in the composer keeps the lease.
+func TestDispatchWake_UndeliveredStatusReleasesLease(t *testing.T) {
+	for _, tc := range []struct {
+		status, wantNext string
+		wantLeases       int
+	}{
+		{status: "endpoint-dead", wantNext: "test payload", wantLeases: 0},
+		{status: "stalled", wantNext: "newer payload", wantLeases: 1},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			req, home := setupMockRequest(t, WakeDeliveryHerdr, true)
+			req.Submit = &mockSubmitPort{status: tc.status}
+			if result, err := DispatchWake(req); err != nil || result.Reason != tc.status {
+				t.Fatalf("first dispatch = %+v, %v; want deferred %s", result, err, tc.status)
+			}
+			if err := EnqueueWake(home, "signal", "task-2", "newer payload"); err != nil {
+				t.Fatal(err)
+			}
+			submit := &mockSubmitPort{acknowledged: true}
+			req.Submit = submit
+			if result, err := DispatchWake(req); err != nil || result.Outcome != WakeSubmitted {
+				t.Fatalf("second dispatch = %+v, %v; want submitted", result, err)
+			}
+			if !strings.Contains(submit.prompt, tc.wantNext) {
+				t.Fatalf("second prompt = %q, want it to carry %q", submit.prompt, tc.wantNext)
+			}
+			leases, err := mhome.ListClaimedLeases(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(leases) != tc.wantLeases+1 {
+				t.Fatalf("leases = %d, want %d", len(leases), tc.wantLeases+1)
+			}
+		})
+	}
+}
+
 // --- Test: Submitted outcome with detail ---
 
 func TestDispatchWake_SubmittedWithDetail(t *testing.T) {

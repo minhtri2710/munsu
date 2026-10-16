@@ -25,7 +25,7 @@ func TestDashboardDetailPane(t *testing.T) {
 	}
 	m = selectTask(t, m, "echo")
 	assertShown(t, "detail", ansi.Strip(m.View().Content),
-		"echo  ship  project munsu  working  general",
+		"echo  ship  project munsu  working unknown  general",
 		"seat claude opus  mode direct-PR  window w-echo  pane unknown  worktree /wt/echo",
 		"last working: fine")
 	m = selectTask(t, m, "golf")

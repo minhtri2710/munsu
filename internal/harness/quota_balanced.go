@@ -1,10 +1,16 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"time"
 )
+
+// quotaProbeTimeout bounds quota-axi so a hung tool cannot stall dispatch,
+// matching readinessProbeTimeout. It is a variable so tests can shorten it.
+var quotaProbeTimeout = 10 * time.Second
 
 // quotaProvider maps harness names to their quota-axi provider identifiers.
 var quotaProvider = map[string]string{
@@ -50,7 +56,14 @@ type quotaWindowData struct {
 // quotaBalanced runs the configured quota-axi and picks a candidate from its
 // report. Any failure is returned, never answered with the first candidate.
 func quotaBalanced(tool string, candidates []DispatchCandidate) (DispatchCandidate, error) {
-	output, err := exec.Command(tool, "--json").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), quotaProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, tool, "--json")
+	cmd.WaitDelay = time.Second
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		return DispatchCandidate{}, fmt.Errorf("quota-axi %s did not finish within %s", tool, quotaProbeTimeout)
+	}
 	if err != nil {
 		return DispatchCandidate{}, fmt.Errorf("quota-axi %s: %w", tool, err)
 	}

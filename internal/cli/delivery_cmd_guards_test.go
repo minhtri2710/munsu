@@ -264,6 +264,8 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 		state   string
 		checks  []domain.CheckRun
 		reviews []domain.Review
+		extra   []string
+		method  string
 		wantErr string
 	}{
 		{name: "open failed check", state: "OPEN", checks: failed, wantErr: "delivery provider state is not mergeable"},
@@ -272,6 +274,8 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 		{name: "merged terminal", state: "MERGED"},
 		{name: "closed terminal", state: "CLOSED"},
 		{name: "unknown", state: "UNKNOWN", wantErr: "delivery provider state is unknown"},
+		{name: "misspelled method extra", state: "OPEN", checks: passed, extra: []string{"--rebse"}, wantErr: `unknown merge method "--rebse"`},
+		{name: "rebase method extra", state: "OPEN", checks: passed, extra: []string{"--rebase"}, method: "rebase"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			taskID := "t-state-" + strings.ReplaceAll(strings.ToLower(tc.name), " ", "-")
@@ -282,9 +286,12 @@ func TestBuildDeliverRequestStateGuard(t *testing.T) {
 				return &fleet.ProviderSnapshot{Provider: "github", Owner: "acme", Repo: "widgets", Number: 42, URL: prURL, BaseRef: "main", HeadRef: "feature", HeadSHA: deliveryGuardHead, State: tc.state, Checks: tc.checks, Reviews: tc.reviews, ObservedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 			}
 			t.Cleanup(func() { fleet.FetchProviderSnapshot = old })
-			_, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, nil, deliveryGuardWords())
+			req, err := buildDeliverRequest(auth, taskID, deliveryGuardPRURL, tc.extra, deliveryGuardWords())
 			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+			if tc.method != "" && req.Method != tc.method {
+				t.Fatalf("method = %q, want %q", req.Method, tc.method)
 			}
 		})
 	}

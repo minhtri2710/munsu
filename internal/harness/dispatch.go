@@ -60,7 +60,9 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) (DispatchSel
 			continue
 		}
 		sel.Scaffold = p.Scaffold
-		sel.Harness = p.Harness
+		if p.Harness != "" {
+			sel.Harness = p.Harness
+		}
 		if p.Model != "" {
 			sel.Model = p.Model
 		}
