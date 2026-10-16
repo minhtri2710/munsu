@@ -28,12 +28,10 @@ func ContextUsage(harnessName, dir, cwd string) (used, window int) {
 	case Claude:
 		return lastUsage(newestJSONL(filepath.Join(dir, "projects", claudeProjectKey(cwd))), claudeRowUsage), 0
 	case Pi:
+		// lastUsage stops at the row it returns, so provider and model are that row's.
 		var provider, model string
-		used = lastUsage(newestJSONL(filepath.Join(dir, "sessions", piSessionKey(cwd))), func(line []byte) (int, bool) {
-			n, compaction, p, m := piRowUsage(line)
-			if n > 0 {
-				provider, model = p, m
-			}
+		used = lastUsage(newestJSONL(filepath.Join(dir, "sessions", piSessionKey(cwd))), func(line []byte) (n int, compaction bool) {
+			n, compaction, provider, model = piRowUsage(line)
 			return n, compaction
 		})
 		if used == 0 {

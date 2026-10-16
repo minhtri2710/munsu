@@ -315,7 +315,7 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			ts.PaneAlive = false
 			ts.PaneAliveUnknown = true
 		}
-		if ts.PaneAlive && agg.LaunchEvidence != nil && ts.Worktree != "" {
+		if ts.PaneAlive && agg.LaunchEvidence != nil {
 			ts.ContextUsed, ts.ContextWindow = seatContextUsage(taskHome, id, ts.Harness, agg.LaunchEvidence.Seat.Fence.Applied, ts.Worktree)
 		}
 

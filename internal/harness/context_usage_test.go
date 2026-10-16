@@ -65,7 +65,7 @@ func TestContextUsageClaude(t *testing.T) {
 		lines []string // the newest session file, nil for none
 		want  int
 	}{
-		{"normal row sums input and both cache counts", nil, []string{`{"type":"user"}`, asst(2, 300, 9000, false), `{"type":"user"}`}, 9302},
+		{"normal row sums input and both cache counts", nil, []string{`{"type":"user"}`, asst(2, 300, 9000, false), `{"type":"user","message":{"usage":{"input_tokens":999}}}`}, 9302},
 		{"sidechain row ignored", nil, []string{asst(2, 300, 9000, false), asst(1, 1, 1, true)}, 9302},
 		{"zero-usage row ignored", nil, []string{asst(2, 300, 9000, false), asst(0, 0, 0, false)}, 9302},
 		{"rows before a compaction ignored", nil, []string{asst(0, 0, 90000, false), boundary, asst(5, 0, 0, false)}, 5},
@@ -79,7 +79,18 @@ func TestContextUsageClaude(t *testing.T) {
 			cwd, real := realCwd(t)
 			dir := filepath.Join(cfg, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(real, "-"))
 			if tc.older != nil {
-				writeSession(t, dir, "a.jsonl", time.Hour, tc.older)
+				// The older file sorts last, and a newer non-.jsonl file and a
+				// newer *.jsonl directory sit beside them.
+				writeSession(t, dir, "z.jsonl", time.Hour, tc.older)
+				writeSession(t, dir, "c.txt", -time.Minute, []string{asst(0, 0, 555, false)})
+				sub := filepath.Join(dir, "d.jsonl")
+				if err := os.Mkdir(sub, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				at := time.Now().Add(time.Minute)
+				if err := os.Chtimes(sub, at, at); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.lines != nil {
 				writeSession(t, dir, "b.jsonl", 0, tc.lines)
@@ -98,7 +109,7 @@ func TestContextUsagePi(t *testing.T) {
 	}
 	// normal is the usage of a real pi 1.2.0 session whose footer read 3.6%/256k.
 	normal := asst("stop", `"input":9241,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":9246`)
-	models := `{"providers":{"p":{"models":[{"id":"other","contextWindow":1},{"id":"m","contextWindow":256000}]}}}`
+	models := `{"providers":{"q":{"models":[{"id":"m","contextWindow":1}]},"p":{"models":[{"id":"other","contextWindow":1},{"id":"m","contextWindow":256000}]}}}`
 	for _, tc := range []struct {
 		name         string
 		models       string // models.json, "" for none
@@ -109,11 +120,15 @@ func TestContextUsagePi(t *testing.T) {
 		{"totalTokens wins over the field sum", models, []string{asst("stop", `"input":1,"output":2,"cacheRead":30,"cacheWrite":400,"totalTokens":500`)}, 500, 256000},
 		{"no totalTokens sums input, output and both caches", models, []string{asst("stop", `"input":1,"output":2,"cacheRead":30,"cacheWrite":400`)}, 433, 256000},
 		{"aborted and failed replies ignored", models, []string{normal, asst("aborted", `"totalTokens":5`), asst("error", `"totalTokens":6`)}, 9246, 256000},
+		{"non-message and non-assistant rows ignored", models, []string{normal,
+			`{"type":"branch_summary","message":{"role":"assistant","stopReason":"stop","usage":{"totalTokens":7}}}`,
+			`{"type":"message","message":{"role":"toolResult","stopReason":"stop","usage":{"totalTokens":8}}}`}, 9246, 256000},
 		{"rows before a compaction ignored", models, []string{asst("stop", `"totalTokens":90000`), `{"type":"compaction"}`, normal}, 9246, 256000},
 		{"no row after a compaction", models, []string{normal, `{"type":"compaction"}`}, 0, 0},
 		{"missing file", models, nil, 0, 0},
 		{"model not in models.json shows tokens only", `{"providers":{"p":{"models":[{"id":"other","contextWindow":1}]}}}`, []string{normal}, 9246, 0},
 		{"no models.json shows tokens only", "", []string{normal}, 9246, 0},
+		{"the model under another provider only shows tokens only", `{"providers":{"q":{"models":[{"id":"m","contextWindow":1}]}}}`, []string{normal}, 9246, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := t.TempDir()

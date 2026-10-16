@@ -198,52 +198,62 @@ func TestSnapshotCarriesLaunchAndPhaseChangeTimes(t *testing.T) {
 }
 
 // The snapshot row of a live launched seat carries the context use its
-// harness wrote to the seat's own session dir; a seat that is not live reads none.
+// harness wrote to the seat's own session dir; a seat that is not live, or has
+// no launch evidence or worktree, reads none.
 func TestSnapshotCarriesSeatContextUsage(t *testing.T) {
-	f := newLaunchFixture(t, "ctx-task")
-	if err := runLaunchPhases(f, ""); err != nil {
-		t.Fatalf("runLaunchPhases: %v", err)
-	}
-	agg := f.aggregate()
-	if agg.Worktree == nil || agg.LaunchEvidence == nil {
-		t.Fatalf("launched aggregate = worktree %v, launch evidence %v", agg.Worktree, agg.LaunchEvidence)
-	}
-	agentDir, err := piAgentDirPath(f.homeDir, f.taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cwd, err := filepath.EvalSymlinks(agg.Worktree.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessions := filepath.Join(agentDir, "sessions", "--"+strings.ReplaceAll(strings.TrimPrefix(cwd, "/"), "/", "-")+"--")
-	if err := os.MkdirAll(sessions, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	line := `{"type":"message","message":{"role":"assistant","provider":"p","model":"gpt-5","stopReason":"stop","usage":{"totalTokens":64000}}}` + "\n"
-	if err := os.WriteFile(filepath.Join(sessions, "s.jsonl"), []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(`{"providers":{"p":{"models":[{"id":"gpt-5","contextWindow":256000}]}}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
+		name         string
 		state        EndpointObservationState
+		drop         func(*taskauthority.Aggregate) // nil keeps the launched aggregate
 		used, window int
 	}{
-		{EndpointAlive, 64000, 256000},
-		{EndpointDead, 0, 0},
+		{"live", EndpointAlive, nil, 64000, 256000},
+		{"dead", EndpointDead, nil, 0, 0},
+		{"live without launch evidence", EndpointAlive, func(a *taskauthority.Aggregate) { a.LaunchEvidence = nil }, 0, 0},
+		{"live without a worktree", EndpointAlive, func(a *taskauthority.Aggregate) { a.Worktree = nil }, 0, 0},
 	} {
-		snap, err := Snapshot(f.homeDir, SnapshotDependencies{CurrentState: NewCanonicalCurrentState(), Endpoint: snapshotProbe{status: endpointStatusFromState(tc.state)}})
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if len(snap.Tasks) != 1 {
-			t.Fatalf("snapshot rows = %+v, want one", snap.Tasks)
-		}
-		if ts := snap.Tasks[0]; ts.ContextUsed != tc.used || ts.ContextWindow != tc.window {
-			t.Errorf("%s seat: row context %d/%d, want %d/%d", tc.state, ts.ContextUsed, ts.ContextWindow, tc.used, tc.window)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchFixture(t, "ctx-task")
+			if err := runLaunchPhases(f, ""); err != nil {
+				t.Fatalf("runLaunchPhases: %v", err)
+			}
+			agg := f.aggregate()
+			if agg.Worktree == nil || agg.LaunchEvidence == nil {
+				t.Fatalf("launched aggregate = worktree %v, launch evidence %v", agg.Worktree, agg.LaunchEvidence)
+			}
+			agentDir, err := piAgentDirPath(f.homeDir, f.taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cwd, err := filepath.EvalSymlinks(agg.Worktree.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessions := filepath.Join(agentDir, "sessions", "--"+strings.ReplaceAll(strings.TrimPrefix(cwd, "/"), "/", "-")+"--")
+			if err := os.MkdirAll(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			line := `{"type":"message","message":{"role":"assistant","provider":"p","model":"gpt-5","stopReason":"stop","usage":{"totalTokens":64000}}}` + "\n"
+			if err := os.WriteFile(filepath.Join(sessions, "s.jsonl"), []byte(line), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(`{"providers":{"p":{"models":[{"id":"gpt-5","contextWindow":256000}]}}}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.drop != nil {
+				tamperTaskAggregate(t, f.homeDir, f.taskID, tc.drop)
+			}
+			snap, err := Snapshot(f.homeDir, SnapshotDependencies{CurrentState: NewCanonicalCurrentState(), Endpoint: snapshotProbe{status: endpointStatusFromState(tc.state)}})
+			if err != nil {
+				t.Fatalf("Snapshot: %v", err)
+			}
+			if len(snap.Tasks) != 1 {
+				t.Fatalf("snapshot rows = %+v, want one", snap.Tasks)
+			}
+			if ts := snap.Tasks[0]; ts.ContextUsed != tc.used || ts.ContextWindow != tc.window {
+				t.Errorf("row context %d/%d, want %d/%d", ts.ContextUsed, ts.ContextWindow, tc.used, tc.window)
+			}
+		})
 	}
 }
 

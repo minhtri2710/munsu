@@ -1090,6 +1090,16 @@ func TestDashboardCtx(t *testing.T) {
 			t.Errorf("dashCtx(%d, %d) = %q, want %q", tc.used, tc.window, got, tc.want)
 		}
 	}
+	// The column is drawn from list width 96, the terminal width less the panel borders.
+	for _, tc := range []struct {
+		width int
+		shown bool
+	}{{99, false}, {100, true}} {
+		m := healthyModel(tc.width, 32)
+		if got := strings.Contains(ansiSeq.ReplaceAllString(m.frame(), ""), " CTX "); m.listW() != tc.width-4 || got != tc.shown {
+			t.Errorf("width %d (list %d): CTX shown %v, want %v", tc.width, m.listW(), got, tc.shown)
+		}
+	}
 }
 
 // A row whose seat health the snapshot could not determine reads "unknown"
