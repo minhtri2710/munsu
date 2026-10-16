@@ -212,6 +212,7 @@ func TestGuardSkillShowDeniesManagementSkillsToASoldier(t *testing.T) {
 	} {
 		t.Run(tc.role, func(t *testing.T) {
 			t.Setenv("MUNSU_ROLE", tc.role)
+			t.Setenv("MUNSU_HOME", t.TempDir())
 			_, err := runRoot(t, "skill", "show", "munsu-ops")
 			if tc.want == "" {
 				if err != nil {
@@ -479,7 +480,7 @@ func TestGuardConfigDispatchAddRequiresItsIdentifyingFlags(t *testing.T) {
 	}{
 		{"no --name", []string{"--harness", "claude", "--match", "*"}, "add: --name is required"},
 		{"no --harness", []string{"--name", "p1", "--match", "*"}, "add: --harness is required"},
-		{"neither --match nor --when", []string{"--name", "p1", "--harness", "claude"}, "add: at least one --match or --when is required"},
+		{"no --match", []string{"--name", "p1", "--harness", "claude"}, "add: at least one --match is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := runRoot(t, append([]string{"config", "dispatch", "add", "--home", homeDir}, tc.args...)...)
@@ -685,9 +686,7 @@ func TestGuardPeekRefusesWhenNoCapturePortIsConfigured(t *testing.T) {
 	// the only state this guard exists for.
 	cmd := newPeekCmdWithCapture(nil)
 	cmd.SetArgs([]string{"t1"})
-	previous := homeOverride
-	homeOverride = homeDir
-	t.Cleanup(func() { homeOverride = previous })
+	t.Setenv("MUNSU_HOME", homeDir)
 	err := cmd.Execute()
 	wantErrContains(t, err, "task-bound capture is not configured", "peek composed with no capture port")
 	if strings.Contains(err.Error(), "has no window endpoint") {

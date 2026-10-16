@@ -17,6 +17,37 @@ var (
 	styleAccent = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 )
 
+// dashTheme is the dashboard's grays and backgrounds, picked for the
+// terminal's background; the state colors stay the ANSI ones above.
+type dashTheme struct {
+	subtle, border, bar, sel lipgloss.Style
+}
+
+func dashThemeFor(dark bool) dashTheme {
+	ld := lipgloss.LightDark(dark)
+	fg := func(light, dark string) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(ld(lipgloss.Color(light), lipgloss.Color(dark)))
+	}
+	bg := func(light, dark string) lipgloss.Style {
+		return lipgloss.NewStyle().Background(ld(lipgloss.Color(light), lipgloss.Color(dark)))
+	}
+	return dashTheme{
+		subtle: fg("#6C6C6C", "#8A8A8A"),
+		border: fg("#BCBCBC", "#4E4E4E"),
+		bar:    bg("#E4E4E4", "#262626"),
+		sel:    bg("#DCE2EE", "#2B3245"),
+	}
+}
+
+// pillStyle is a state badge: bold text on a state color.
+func pillStyle(state lipgloss.Style) lipgloss.Style {
+	fg := lipgloss.Color("0")
+	if state.GetForeground() == styleFail.GetForeground() {
+		fg = lipgloss.Color("15")
+	}
+	return lipgloss.NewStyle().Bold(true).Foreground(fg).Background(state.GetForeground())
+}
+
 type stateMark struct {
 	icon  string
 	style lipgloss.Style

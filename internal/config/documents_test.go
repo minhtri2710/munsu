@@ -369,7 +369,7 @@ func resolvedDigest(t *testing.T, base FleetBaseDocument, facts ProjectFacts) st
 // resolveBaseline resolves a project whose forge tool is baseline, the state
 // of an overlay with no tool entry.
 func resolveBaseline(base FleetBaseDocument, facts ProjectFacts) (ResolvedProjectConfig, error) {
-	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep())
+	return ResolveProjectWithSteps(base, facts, baselineStep(), baselineStep(), baselineStep())
 }
 
 func validFacts(name, path string, overlay ProjectOverlay) ProjectFacts {
@@ -439,14 +439,34 @@ func TestToolStepRefusals(t *testing.T) {
 			return ValidateProjectTools(ProjectOverlay{Worktree: &ToolEntry{Adapter: "treehouse", Path: "/bin/treehouse"}})
 		}, ""},
 		{"worktree step not matching the overlay", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, baselineStep(), ResolvedStep{Adapter: "treehouse", Path: "/bin/treehouse", ProbeState: "ready"})
+			_, err := ResolveProjectWithSteps(base, bare, baselineStep(), ResolvedStep{Adapter: "treehouse", Path: "/bin/treehouse", ProbeState: "ready"}, baselineStep())
 			return err
 		}, "resolved worktree step does not match the project overlay"},
 		{"worktree step matching the overlay", func(*testing.T) error {
 			th := validFacts(bare.Name, bare.Path, ProjectOverlay{Worktree: &ToolEntry{Adapter: "treehouse", Path: "/bin/treehouse"}})
-			_, err := ResolveProjectWithSteps(base, th, baselineStep(), ResolvedStep{Adapter: "treehouse", Path: "/bin/treehouse", ProbeState: "ready"})
+			_, err := ResolveProjectWithSteps(base, th, baselineStep(), ResolvedStep{Adapter: "treehouse", Path: "/bin/treehouse", ProbeState: "ready"}, baselineStep())
 			return err
 		}, ""},
+		{"unknown quota adapter", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Quota: &ToolEntry{Adapter: "treehouse", Path: "/bin/treehouse"}})
+		}, "quota tool has unknown adapter \"treehouse\""},
+		{"quota-axi with an absolute path", func(*testing.T) error {
+			return ValidateProjectTools(ProjectOverlay{Quota: &ToolEntry{Adapter: "quota-axi", Path: "/bin/quota-axi"}})
+		}, ""},
+		{"configured quota-axi not Ready", func(*testing.T) error {
+			q := validFacts(bare.Name, bare.Path, ProjectOverlay{Quota: &ToolEntry{Adapter: "quota-axi", Path: "/bin/quota-axi"}})
+			_, err := ResolveProjectWithSteps(base, q, baselineStep(), baselineStep(), ResolvedStep{Adapter: "quota-axi", Path: "/bin/quota-axi", ProbeState: "missing"})
+			return err
+		}, "resolved quota adapter quota-axi probe missing"},
+		{"configured quota-axi Ready", func(*testing.T) error {
+			q := validFacts(bare.Name, bare.Path, ProjectOverlay{Quota: &ToolEntry{Adapter: "quota-axi", Path: "/bin/quota-axi"}})
+			_, err := ResolveProjectWithSteps(base, q, baselineStep(), baselineStep(), ResolvedStep{Adapter: "quota-axi", Path: "/bin/quota-axi", ProbeState: "ready"})
+			return err
+		}, ""},
+		{"quota step not matching the overlay", func(*testing.T) error {
+			_, err := ResolveProjectWithSteps(base, bare, baselineStep(), baselineStep(), ResolvedStep{Adapter: "quota-axi", Path: "/bin/quota-axi", ProbeState: "ready"})
+			return err
+		}, "resolved quota step does not match the project overlay"},
 		{"empty snapshot", func(*testing.T) error {
 			_, err := (ResolvedSnapshot{}).WithSteps(baselineStep())
 			return err
@@ -464,23 +484,23 @@ func TestToolStepRefusals(t *testing.T) {
 			return err
 		}, ""},
 		{"adapter outside the forge set", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "bogus", Path: "/bin/bogus", ProbeState: "ready"}, baselineStep())
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Adapter: "bogus", Path: "/bin/bogus", ProbeState: "ready"}, baselineStep(), baselineStep())
 			return err
 		}, "resolved forge adapter bogus probe ready"},
 		{"step not matching the overlay", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, readyForge, baselineStep())
+			_, err := ResolveProjectWithSteps(base, bare, readyForge, baselineStep(), baselineStep())
 			return err
 		}, "does not match the project overlay"},
 		{"step matching the overlay", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, facts, readyForge, baselineStep())
+			_, err := ResolveProjectWithSteps(base, facts, readyForge, baselineStep(), baselineStep())
 			return err
 		}, ""},
 		{"baseline step carrying tool data", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "github", ProbeState: "baseline"}, baselineStep())
+			_, err := ResolveProjectWithSteps(base, bare, ResolvedStep{Baseline: true, Adapter: "github", ProbeState: "baseline"}, baselineStep(), baselineStep())
 			return err
 		}, "baseline carries configured tool data"},
 		{"relative executable path", func(*testing.T) error {
-			_, err := ResolveProjectWithSteps(base, facts, ResolvedStep{Adapter: "github", Path: "gh-axi", ProbeState: "ready"}, baselineStep())
+			_, err := ResolveProjectWithSteps(base, facts, ResolvedStep{Adapter: "github", Path: "gh-axi", ProbeState: "ready"}, baselineStep(), baselineStep())
 			return err
 		}, "requires an absolute executable path"},
 		{"no session backend identity anywhere", func(*testing.T) error {

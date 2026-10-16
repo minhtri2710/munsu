@@ -146,12 +146,13 @@ func configuredToolProbe(entry config.ToolEntry) config.ResolvedStep {
 		path, _ := ghAxiLookPath()
 		reason := fmt.Sprintf("gh-axi and gh probe state: %s", state)
 		return config.ResolvedStep{Path: path, ProbeState: strings.ToLower(state.String()), Reason: reason}
-	case "treehouse":
+	case "treehouse", "quota-axi":
 		path, err := exec.LookPath(entry.Path)
 		if err != nil {
-			return config.ResolvedStep{Path: entry.Path, ProbeState: "missing", Reason: fmt.Sprintf("treehouse executable: %v", err)}
+			key := map[string]string{"treehouse": "worktree", "quota-axi": "quota"}[entry.Adapter]
+			return config.ResolvedStep{Path: entry.Path, ProbeState: "missing", Reason: fmt.Sprintf("%s executable: %v; install it at that path or clear the entry with `munsu project config set <project> %s ''`", entry.Adapter, err, key)}
 		}
-		return config.ResolvedStep{Path: path, ProbeState: "ready", Reason: "treehouse executable is Ready"}
+		return config.ResolvedStep{Path: path, ProbeState: "ready", Reason: entry.Adapter + " executable is Ready"}
 	default:
 		return config.ResolvedStep{ProbeState: "failed", Reason: "unsupported configured tool"}
 	}
@@ -177,7 +178,7 @@ func ProjectWorktreeTool(homeDir, project string) (string, error) {
 		return "", err
 	}
 	step := snap.Config().WorktreeStep
-	if err := requireReadyWorktree(step); err != nil {
+	if err := requireReadyStep("worktree", step); err != nil {
 		return "", err
 	}
 	return step.Path, nil
@@ -250,7 +251,7 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 	tools := []string{""}
 	for _, s := range steps {
 		// Words: Human, typed, 2026-10-15: "phần worktree này đang kết hợp với external tool không, nếu có thì nên chuyển thành kiểu tích hợp riêng chứ không nên làm thành builtin defalt"
-		if err := requireReadyWorktree(s.step); err != nil {
+		if err := requireReadyStep("worktree", s.step); err != nil {
 			return nil, fmt.Errorf("%s: %w%s", s.owner, err, s.hint)
 		}
 		if !slices.Contains(tools, s.step.Path) {
@@ -260,16 +261,16 @@ func HomeWorktreeTools(homeDir string) ([]string, error) {
 	return tools, nil
 }
 
-// requireReadyWorktree re-probes a configured worktree step and refuses unless
-// it is Ready, so a published snapshot's treehouse is checked before any task
+// requireReadyStep re-probes a configured worktree or quota step and refuses
+// unless it is Ready, so a published snapshot's tool is checked before any task
 // mutation the same way its forge is.
-func requireReadyWorktree(step config.ResolvedStep) error {
+func requireReadyStep(port string, step config.ResolvedStep) error {
 	if step.Baseline {
 		return nil
 	}
-	// Human words: quoted at config.ResolveProjectWithSteps.
+	// Human words: quoted at config.ResolveProjectWithSteps, one per port.
 	if probed := configuredToolProbe(config.ToolEntry{Adapter: step.Adapter, Path: step.Path}); probed.ProbeState != "ready" {
-		return fmt.Errorf("worktree adapter %s probe %s: configured worktree tool is not Ready: %s", step.Adapter, probed.ProbeState, probed.Reason)
+		return fmt.Errorf("%s adapter %s probe %s: configured %s tool is not Ready: %s", port, step.Adapter, probed.ProbeState, port, probed.Reason)
 	}
 	return nil
 }
