@@ -538,8 +538,17 @@ func (c *Canonical) mutateTaskFencedLocked(lk *home.Lock, op domain.Operation, t
 	return outcomeFor(op, next, false), nil
 }
 
+// encodeTaskDoc is the one encoder of a task document for a commit: an
+// aggregate that breaks a record invariant is refused here and never written.
+func encodeTaskDoc(doc taskDoc) ([]byte, error) {
+	if err := validateAggregate(doc.Aggregate); err != nil {
+		return nil, err
+	}
+	return json.Marshal(doc)
+}
+
 func taskItems(taskID string, doc taskDoc, rec receipt) ([]home.ChangeItem, error) {
-	docData, err := json.Marshal(doc)
+	docData, err := encodeTaskDoc(doc)
 	if err != nil {
 		return nil, err
 	}

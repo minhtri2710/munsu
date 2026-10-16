@@ -782,7 +782,7 @@ func (c *Canonical) mutateDelivery(op domain.Operation, taskID domain.TaskID, pr
 
 	newDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: nextAgg}
 	rec := receiptFor(op, nextAgg)
-	docData, err := json.Marshal(newDoc)
+	docData, err := encodeTaskDoc(newDoc)
 	if err != nil {
 		return DeliveryIndex{}, false, err
 	}

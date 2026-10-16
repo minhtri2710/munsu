@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // The refusal branches of the canonical operations themselves — the ones the
@@ -239,8 +241,90 @@ func TestTaskLifecycleRefusals(t *testing.T) {
 		return err
 	}
 	noChange := func(*CanonicalPromoteRequest) {}
+	// promoteKeepingScope is Promote's mutation without the scope clear.
+	promoteKeepingScope := func(cur Aggregate) Aggregate {
+		next := cur.clone()
+		next.Definition.Kind = KindShip
+		next.Revision++
+		return next
+	}
+	promoteClearingScope := func(cur Aggregate) Aggregate {
+		next := promoteKeepingScope(cur)
+		next.Definition.ScoutScope = ""
+		return next
+	}
+	// writeRefusedUnchanged runs a write and, when it refuses, proves the
+	// stored document is still the one from before the write.
+	writeRefusedUnchanged := func(t *testing.T, c *Canonical, write func() error) error {
+		before, err := c.Get(mustTaskID(t, "scout-1"))
+		mustStep(t, err)
+		werr := write()
+		if werr == nil {
+			return nil
+		}
+		after, err := c.Get(mustTaskID(t, "scout-1"))
+		if err != nil {
+			t.Fatalf("stored document after the refused write: %v", err)
+		}
+		if after.Revision != before.Revision || after.Definition != before.Definition {
+			t.Fatalf("refused write changed the stored document: %+v -> %+v", before, after)
+		}
+		return werr
+	}
+	mutateWith := func(t *testing.T, c *Canonical, apply func(Aggregate) Aggregate) error {
+		prec := mustDoneScout(t, c, "scout-1")
+		return writeRefusedUnchanged(t, c, func() error {
+			_, err := c.mutateTask(mustOperation(t, "op-mutate-scout-1", promoteRequest(t, c, "scout-1", prec)), mustTaskID(t, "scout-1"), prec, func(cur Aggregate) (Aggregate, error) {
+				return apply(cur), nil
+			})
+			return err
+		})
+	}
+	mutateDeliveryWith := func(t *testing.T, c *Canonical, apply func(Aggregate) Aggregate) error {
+		prec := mustDoneScout(t, c, "scout-1")
+		return writeRefusedUnchanged(t, c, func() error {
+			_, _, err := c.mutateDelivery(mustOperation(t, "op-mutate-delivery-scout-1", promoteRequest(t, c, "scout-1", prec)), mustTaskID(t, "scout-1"), prec, func(cur Aggregate, index DeliveryIndex) (Aggregate, DeliveryIndex, []home.ChangeItem, error) {
+				return apply(cur), index, nil, nil
+			})
+			return err
+		})
+	}
+
+	createScout := func(t *testing.T, c *Canonical, scope string) error {
+		req := createRequest(c, "scout-x")
+		req.Kind, req.ScoutScope = KindScout, scope
+		_, err := c.Create(mustOperation(t, "op-create-scout-x", req), req)
+		return err
+	}
 
 	runRefusalRows(t, []refusalRow{
+		{name: "create refuses a scout with no scope before it takes the task lock", class: ErrInvalidInput, want: "scout task requires non-empty scope", run: func(t *testing.T, c *Canonical) error {
+			err := createScout(t, c, "")
+			locks, _ := filepath.Glob(filepath.Join(c.h.Root(), home.LockDirName, taskScope("scout-x")+".*"))
+			if len(locks) != 0 {
+				t.Fatalf("refused create left lock state: %v", locks)
+			}
+			return err
+		}},
+		{name: "create allows a scout with a scope", run: func(t *testing.T, c *Canonical) error {
+			err := createScout(t, c, "map the repo")
+			if locks, _ := filepath.Glob(filepath.Join(c.h.Root(), home.LockDirName, taskScope("scout-x")+".*")); len(locks) == 0 {
+				t.Fatal("accepted create left no lock state; the refused row's absence check proves nothing")
+			}
+			return err
+		}},
+		{name: "a task write refuses an aggregate that breaks its kind contract", class: ErrInvalidInput, want: "scout-only fields are not valid for ship tasks", run: func(t *testing.T, c *Canonical) error {
+			return mutateWith(t, c, promoteKeepingScope)
+		}},
+		{name: "a task write allows an aggregate that keeps its kind contract", run: func(t *testing.T, c *Canonical) error {
+			return mutateWith(t, c, promoteClearingScope)
+		}},
+		{name: "a delivery write refuses an aggregate that breaks its kind contract", class: ErrInvalidInput, want: "scout-only fields are not valid for ship tasks", run: func(t *testing.T, c *Canonical) error {
+			return mutateDeliveryWith(t, c, promoteKeepingScope)
+		}},
+		{name: "a delivery write allows an aggregate that keeps its kind contract", run: func(t *testing.T, c *Canonical) error {
+			return mutateDeliveryWith(t, c, promoteClearingScope)
+		}},
 		{name: "start refuses a working task", class: ErrPrecondition, want: "start requires queued task", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "t1")
 			mustStep(t, stepStart(t, c, "t1", 1))

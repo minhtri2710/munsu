@@ -60,6 +60,19 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	if strings.TrimSpace(req.Owner) == "" {
 		return Outcome{}, validationError("create requires an owner")
 	}
+	agg, err := NewAggregate(req.TaskID.Value(), TaskDefinition{
+		Owner:        req.Owner,
+		Description:  req.Description,
+		Kind:         req.Kind,
+		Project:      req.Project.Value(),
+		ParentTaskID: req.ParentTaskID.Value(),
+		ScoutScope:   strings.TrimSpace(req.ScoutScope),
+		ReviewTaskID: req.ReviewTaskID,
+		ReviewHead:   req.ReviewHead,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
 
 	lk, err := c.h.Lock(taskScope(req.TaskID.Value()))
 	if err != nil {
@@ -86,19 +99,6 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 		if err := c.checkReviewTarget(req.ReviewTaskID); err != nil {
 			return Outcome{}, err
 		}
-	}
-	agg, err := NewAggregate(req.TaskID.Value(), TaskDefinition{
-		Owner:        req.Owner,
-		Description:  req.Description,
-		Kind:         req.Kind,
-		Project:      req.Project.Value(),
-		ParentTaskID: req.ParentTaskID.Value(),
-		ScoutScope:   strings.TrimSpace(req.ScoutScope),
-		ReviewTaskID: req.ReviewTaskID,
-		ReviewHead:   req.ReviewHead,
-	})
-	if err != nil {
-		return Outcome{}, err
 	}
 	doc := taskDoc{HomeRevision: rev + 1, Aggregate: agg}
 	rec := receiptFor(op, agg)
@@ -192,11 +192,9 @@ func (c *Canonical) taskResidue(taskID string) ([]string, error) {
 // checkReviewTarget requires the reviewed task to be a working ship task that
 // holds both its worktree and its endpoint. Anything else fails closed, so a
 // review names a checkout that exists and an author that can be checked.
+// The ID comes from a definition validateReviewContract accepted.
 func (c *Canonical) checkReviewTarget(reviewTaskID string) error {
-	id, err := domain.NewTaskID(reviewTaskID)
-	if err != nil {
-		return validationError("review task requires the reviewed task id: %v", err)
-	}
+	id, _ := domain.NewTaskID(reviewTaskID)
 	target, err := c.Get(id)
 	if err != nil {
 		return err
@@ -706,9 +704,6 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 		Definition:    cur.Definition,
 		Phase:         PhaseQueued,
 	}
-	if err := validateAggregate(newGen); err != nil {
-		return Outcome{}, err
-	}
 	newDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: newGen}
 	rec := receiptFor(op, newGen)
 	rec.Reopened = true
@@ -717,11 +712,11 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	// GetGeneration can reread its historical evidence (retirement/transfer)
 	// after reopen.
 	histDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: historical}
-	histData, err := json.Marshal(histDoc)
+	histData, err := encodeTaskDoc(histDoc)
 	if err != nil {
 		return Outcome{}, err
 	}
-	docData, err := json.Marshal(newDoc)
+	docData, err := encodeTaskDoc(newDoc)
 	if err != nil {
 		return Outcome{}, err
 	}
