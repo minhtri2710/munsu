@@ -259,9 +259,9 @@ func TestWorktreePoolArtifactHygieneContaminatedReservationRetainsCustody(t *tes
 		t.Fatalf("beginLaunchIntent: %v", err)
 	}
 	reservationID := f.runner.wtReservationID()
-	reservedPath, ok := backend.ReservedGitWorktreePath(f.homeDir, f.repoPath, reservationID)
-	if !ok {
-		t.Fatalf("ReservedGitWorktreePath = (%q, %v)", reservedPath, ok)
+	reservedPath, err := backend.ReservedGitWorktreePath(f.homeDir, f.repoPath, reservationID)
+	if err != nil {
+		t.Fatalf("ReservedGitWorktreePath: %v", err)
 	}
 	if err := os.MkdirAll(reservedPath, 0o755); err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestWorktreePoolArtifactHygieneContaminatedReservationRetainsCustody(t *tes
 	if string(got) != "unanchored prior content\n" {
 		t.Fatalf("contaminated artifact changed to %q", got)
 	}
-	if resolved, ok := backend.ReservedGitWorktreePath(f.homeDir, f.repoPath, reservationID); !ok || resolved != reservedPath {
-		t.Fatalf("reservation custody no longer discoverable: (%q, %v)", resolved, ok)
+	if resolved, err := backend.ReservedGitWorktreePath(f.homeDir, f.repoPath, reservationID); err != nil || resolved != reservedPath {
+		t.Fatalf("reservation custody no longer discoverable: (%q, %v)", resolved, err)
 	}
 }

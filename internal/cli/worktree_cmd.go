@@ -341,13 +341,14 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 				return fmt.Errorf("launch reservation %q has no canonical project identity", agg.Launch.WorktreeReservationID)
 			}
 			repoPath, rerr := fleet.ResolveRepoPath(dir, agg.Launch.Project)
-			if rerr == nil {
-				if path, ok := backend.ReservedGitWorktreePath(dir, repoPath, agg.Launch.WorktreeReservationID); ok {
-					active[worktreeClaimKey(path)] = true
-				}
-			} else {
+			if rerr != nil {
 				return fmt.Errorf("resolving project for live worktree reservation %q: %w", agg.Launch.WorktreeReservationID, rerr)
 			}
+			path, perr := backend.ReservedGitWorktreePath(dir, repoPath, agg.Launch.WorktreeReservationID)
+			if perr != nil {
+				return fmt.Errorf("deriving worktree for live reservation %q: %w", agg.Launch.WorktreeReservationID, perr)
+			}
+			active[worktreeClaimKey(path)] = true
 		}
 		return nil
 	}
