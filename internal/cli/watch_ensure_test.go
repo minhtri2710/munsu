@@ -3,8 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
