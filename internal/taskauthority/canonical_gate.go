@@ -235,7 +235,7 @@ func (c *Canonical) RecordGate(op domain.Operation, req CanonicalRecordGateReque
 	}
 	// The scope revision advances with every commit and the task document
 	// carries it, so the unchanged aggregate is rewritten at the next one.
-	docData, err := encodeTaskDoc(taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: cur})
+	docData, err := c.encodeTaskDoc(&doc.Aggregate, taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: cur})
 	if err != nil {
 		return GateRecord{}, err
 	}

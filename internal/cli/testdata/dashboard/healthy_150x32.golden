@@ -4,13 +4,13 @@ unresolved 4  Human-needed 1  failed sources 0
 │ stuck    t-human              needs a decision                                                                                                     │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Tasks ──────────────────────────────────────────────────────────────────────────────────────────╮╭─ Detail ───────────────────────────────────────╮
-│     GROUP        NAME                 STATE              ROLE   STATUS                           ││ t-human  ship  project munsu  blocked  general │
+│     GROUP        NAME                 STATE              AGE   SINCE ROLE   STATUS               ││ t-human  ship  project munsu  blocked  general │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────── ││ seat - -  mode -  window -  pane -  worktree - │
-│ ▌ ! general      t-human              ! blocked          ship   needs a decision                 ││ last -                                         │
-│                  t-work               ● working          ship   implementing                     ││                                                │
-│                  t-done               ✓ done             ship   merged                           ││                                                │
-│     alpha        t-cap                ● working          ship   in captain home                  ││                                                │
-│     └─           t-cap2               ○ queued           ship   waiting for a slot               ││                                                │
+│ ▌ ! general      t-human              ! blocked          -     -     ship   needs a decision     ││ last -                                         │
+│                  t-work               ● working          3h    12m   ship   implementing         ││                                                │
+│                  t-done               ✓ done             -     -     ship   merged               ││                                                │
+│     alpha        t-cap                ● working          -     -     ship   in captain home      ││                                                │
+│     └─           t-cap2               ○ queued           -     -     ship   waiting for a slot   ││                                                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
 ╭─ Events (2 malformed lines skipped) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ 12:00:01 task.status t-work k1 working: started                                                                                                    │

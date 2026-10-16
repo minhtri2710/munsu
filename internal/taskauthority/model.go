@@ -406,6 +406,7 @@ type Aggregate struct {
 	Definition       TaskDefinition       `json:"definition"`
 	Phase            Phase                `json:"phase"`
 	PhaseDetail      string               `json:"phase_detail,omitempty"`
+	PhaseChangedAt   int64                `json:"phase_changed_at,omitempty"` // unix ns this generation entered Phase; set by encodeTaskDoc
 	Endpoint         *EndpointBinding     `json:"endpoint,omitempty"`
 	Worktree         *WorktreeBinding     `json:"worktree,omitempty"`
 	Launch           *LaunchIntent        `json:"launch,omitempty"`

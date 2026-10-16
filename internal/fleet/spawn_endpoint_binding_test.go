@@ -172,6 +172,29 @@ func TestConfirmSpawnBindsTheEndpointAndWorkingTogether(t *testing.T) {
 	}
 }
 
+// The snapshot row of a launched task carries the aggregate's launch
+// submission and phase change times.
+func TestSnapshotCarriesLaunchAndPhaseChangeTimes(t *testing.T) {
+	f := newLaunchFixture(t, "times-task")
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatalf("runLaunchPhases: %v", err)
+	}
+	agg := f.aggregate()
+	if agg.Phase != taskauthority.PhaseWorking || agg.LaunchEvidence == nil || agg.PhaseChangedAt == 0 {
+		t.Fatalf("launched aggregate = phase %q, launch evidence %v, phase changed at %d", agg.Phase, agg.LaunchEvidence, agg.PhaseChangedAt)
+	}
+	snap, err := Snapshot(f.homeDir, SnapshotDependencies{CurrentState: NewCanonicalCurrentState()})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("snapshot rows = %+v, want one", snap.Tasks)
+	}
+	if ts := snap.Tasks[0]; ts.LaunchedAt != agg.LaunchEvidence.SubmittedAt || ts.PhaseChangedAt != agg.PhaseChangedAt {
+		t.Fatalf("row launched at %d, phase changed at %d; aggregate %d, %d", ts.LaunchedAt, ts.PhaseChangedAt, agg.LaunchEvidence.SubmittedAt, agg.PhaseChangedAt)
+	}
+}
+
 func TestConfirmSpawnFailsClosedWithoutAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task"}, endpoint: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"}}
