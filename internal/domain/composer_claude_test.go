@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func claudeCapture(t *testing.T, name string) []string {
+func captureRows(t *testing.T, name string) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
@@ -29,12 +29,12 @@ const (
 
 func TestClassifyClaudeComposer(t *testing.T) {
 	for _, name := range []string{"claude_composer_w34p74.capture", "claude_composer_w34p76.capture"} {
-		if got := ClassifyClaudeComposer(strings.Join(claudeCapture(t, name), "\n")); got != Empty {
+		if got := ClassifyClaudeComposer(strings.Join(captureRows(t, name), "\n")); got != Empty {
 			t.Errorf("%s = %v, want empty", name, got)
 		}
 	}
 
-	base := claudeCapture(t, "claude_composer_w34p74.capture")
+	base := captureRows(t, "claude_composer_w34p74.capture")
 	rule := base[rowUpperRule]
 	with := func(edit func(rows []string) []string) string {
 		return strings.Join(edit(append([]string(nil), base...)), "\n")

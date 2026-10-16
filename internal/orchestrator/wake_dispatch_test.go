@@ -1308,6 +1308,17 @@ func assertWakeStillQueued(t *testing.T, home string) {
 
 func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
 	const rule = "──────────────────────────────"
+	fixture := func(name string) string {
+		data, err := os.ReadFile(filepath.Join("..", "domain", "testdata", "composer", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	serve := func(agent, name string) func(c *mockComposerPort) {
+		capture := fixture(name)
+		return func(c *mockComposerPort) { c.agent, c.capture = agent, capture }
+	}
 	cases := []struct {
 		name       string
 		afk        bool
@@ -1318,8 +1329,12 @@ func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
 	}{
 		{name: "afk active", afk: true, composer: func(*mockComposerPort) {}, wantReason: "afk"},
 		{name: "afk cleared submits", afk: true, afkCleared: true, composer: func(*mockComposerPort) {}, wantCapt: true},
-		{name: "agent is not claude", composer: func(c *mockComposerPort) { c.agent = "codex" }, wantReason: "composer-harness"},
+		{name: "harness without a composer classifier", composer: func(c *mockComposerPort) { c.agent = "codex" }, wantReason: "composer-harness"},
 		{name: "agent is claude submits", composer: func(c *mockComposerPort) { c.agent = "claude" }, wantCapt: true},
+		{name: "agy empty composer submits", composer: serve("agy", "agy-empty.txt"), wantCapt: true},
+		{name: "agy pending composer", composer: serve("agy", "agy-pending.txt"), wantReason: "composer-pending", wantCapt: true},
+		{name: "pi empty composer submits", composer: serve("pi", "pi-empty.txt"), wantCapt: true},
+		{name: "pi pending composer", composer: serve("pi", "pi-pending.txt"), wantReason: "composer-pending", wantCapt: true},
 		{name: "capture error", composer: func(c *mockComposerPort) { c.err = fmt.Errorf("pane read failed") }, wantReason: "composer-capture-error", wantCapt: true},
 		{name: "glyph followed by text", composer: func(c *mockComposerPort) { c.capture = rule + "\n❯ half typed\n" + rule + "\nfooter\n" }, wantReason: "composer-pending", wantCapt: true},
 		{name: "layout not recognized", composer: func(c *mockComposerPort) { c.capture = "›\n  gpt-6 high\n" }, wantReason: "composer-unrecognized", wantCapt: true},
