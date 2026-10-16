@@ -305,3 +305,58 @@ func TestTmux_Teardown_AbsentTargetIsDone(t *testing.T) {
 		t.Errorf("Teardown on unknown window should not error: %v", err)
 	}
 }
+
+// AgentPrompt types the prompt into a pane whose foreground is a program and
+// submits it; a pane at its shell prompt gets nothing typed.
+func TestTmux_AgentPromptDelivery(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not on PATH")
+	}
+	session := newDisposableSession(t)
+	tk := &TmuxBackend{}
+	const payload = "munsu-it-prompt-payload"
+	for _, tc := range []struct {
+		name, program string
+		want          PromptStatus
+		echoes        int
+	}{
+		{"a program in the foreground takes the prompt", "cat", PromptSubmitted, 2},
+		{"a shell in the foreground is refused", "", PromptUnsupported, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wid, err := tk.NewWindow(session, "prompt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = tk.Teardown(wid) })
+			if tc.program != "" {
+				if err := tk.SendKeys(wid, "exec "+tc.program); err != nil {
+					t.Fatal(err)
+				}
+				waitForegroundProcess(t, tk, wid, tc.program)
+			}
+			if got := tk.AgentPrompt(wid, payload); got.Status != tc.want {
+				t.Fatalf("AgentPrompt = %+v, want %s", got, tc.want)
+			}
+			screen, err := tk.Capture(wid, 30)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := strings.Count(screen, payload); n != tc.echoes {
+				t.Fatalf("pane shows the payload %d times, want %d:\n%s", n, tc.echoes, screen)
+			}
+		})
+	}
+}
+
+// waitForegroundProcess waits until the pane's foreground process is want.
+func waitForegroundProcess(t *testing.T, tk *TmuxBackend, wid, want string) {
+	t.Helper()
+	var got string
+	for deadline := time.Now().Add(tmuxSetupTimeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if got, _ = tk.ForegroundProcess(wid); got == want {
+			return
+		}
+	}
+	t.Fatalf("pane foreground process is %q, want %q", got, want)
+}

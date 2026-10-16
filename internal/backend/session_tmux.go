@@ -180,23 +180,67 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 }
 
 // ForegroundProcess reports the pane's foreground command via
-// `tmux display-message -p -t <target> '#{pane_current_command}'`. Empty
-// output is unreadable evidence, not a process name.
+// `tmux display-message -p -t <target> '#{pane_pid} #{pane_current_command}'`,
+// or, when that command is a munsu captain seat, the command of the captain
+// the seat runs. Empty output is unreadable evidence, not a process name.
 func (t *TmuxBackend) ForegroundProcess(windowID string) (string, error) {
 	bin, err := lookBackendBin("tmux")
 	if err != nil {
 		return "", err
 	}
 	target := normalizeTarget(windowID)
-	out, stderr, err := runBackendCommand(bin, []string{"display-message", "-p", "-t", target, "#{pane_current_command}"}, "", nil)
+	out, stderr, err := runBackendCommand(bin, []string{"display-message", "-p", "-t", target, "#{pane_pid} #{pane_current_command}"}, "", nil)
 	if err != nil {
 		return "", wrapBackendCommandError("tmux display-message", out, stderr, err)
 	}
-	name := strings.TrimSpace(string(out))
+	panePID, name, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
 	if name == "" {
 		return "", fmt.Errorf("tmux display-message: empty pane_current_command for target %q", target)
 	}
+	if captain, ok := captainSeatChild(panePID); ok {
+		return captain, nil
+	}
 	return name, nil
+}
+
+// captainSeatChild returns the command of the captain a `munsu captain seat`
+// in the foreground of the pane runs: the seat's child in the seat's own
+// process group (the seat runs captain requests in groups of their own). It
+// is false when the foreground is not a seat, the seat has no captain yet, or
+// ps is unreadable.
+func captainSeatChild(panePID string) (string, bool) {
+	ps, err := lookBackendBin("ps")
+	if err != nil {
+		return "", false
+	}
+	out, _, err := runBackendCommand(ps, []string{"-A", "-o", "pid=,ppid=,pgid=,tpgid=,comm="}, "", nil)
+	if err != nil {
+		return "", false
+	}
+	type proc struct{ pid, ppid, pgid, tpgid, comm string }
+	var procs []proc
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 5 {
+			procs = append(procs, proc{f[0], f[1], f[2], f[3], strings.Join(f[4:], " ")})
+		}
+	}
+	for _, seat := range procs {
+		if (seat.pid != panePID && seat.ppid != panePID) || seat.pid != seat.pgid || seat.pgid != seat.tpgid {
+			continue
+		}
+		args, _, err := runBackendCommand(ps, []string{"-o", "args=", "-p", seat.pid}, "", nil)
+		if err != nil || !strings.Contains(string(args), " captain seat -- ") {
+			return "", false
+		}
+		for _, c := range procs {
+			if c.ppid == seat.pid && c.pgid == seat.pid {
+				return filepath.Base(c.comm), true
+			}
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
