@@ -483,6 +483,7 @@ func workflowSeedCaptainHome(t *testing.T, generalHome, repo, captainID string) 
 		CaptainProfile:   config.CaptainProfile{Harness: harness.Pi},
 		ForgeStep:        config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
 		WorktreeStep:     config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
+		QuotaStep:        config.ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"},
 		FenceUnsupported: "allow",
 		Digest:           workflowPublishedDigest,
 	}); err != nil {

@@ -225,11 +225,7 @@ func deliveryGuardShip(t *testing.T, taskID string) string {
 	} else if agg3.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("phase after binding = %s, want working", agg3.Phase)
 	}
-	// Another test in this package can leave homeOverride set, and it wins
-	// over MUNSU_HOME; pin it explicitly rather than depending on run order.
-	previous := homeOverride
-	homeOverride = homeDir
-	t.Cleanup(func() { homeOverride = previous })
+	t.Setenv("MUNSU_HOME", homeDir)
 	return homeDir
 }
 

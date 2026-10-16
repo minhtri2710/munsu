@@ -459,30 +459,10 @@ func TestSpawn_ProjectConfigModelValidated(t *testing.T) {
 // TestSpawn_DispatchSelectionResolvedOnce verifies blocker 2's quota property:
 // the dispatch/quota selector runs exactly once across identity resolution,
 // allowlist validation, preflight, and launch, and the identity used for launch
-// is identical to the one validated. A quota-balanced profile makes each
-// selector invocation exec quota-axi; a fake quota-axi on PATH counts calls.
+// is identical to the one validated. The project's configured quota-axi is a
+// fake that counts calls.
 func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 	homeDir := t.TempDir()
-	base := config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config: config.FleetBaseConfig{
-			Backend: "tmux",
-			DispatchProfiles: []config.DispatchProfile{
-				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",
-					Use: []config.DispatchCandidate{
-						{Harness: harness.Codex, Model: "q-model"},
-						{Harness: harness.Pi, Model: "q-pi"},
-					}},
-			},
-		},
-	}
-	projects := []testProjectRecord{
-		{Name: "quota-proj", Path: filepath.Join(homeDir, "projects", "quota-proj")},
-	}
-	storeTestDocuments(t, homeDir, base, projects, nil)
-	spawnContext(t, homeDir)
-	writeModelAllowlist(t, homeDir, "codex:q-model\n")
-
 	// Fake quota-axi: counts invocations and always reports codex with the most
 	// remaining general quota, so the selector deterministically picks codex.
 	fakeDir := t.TempDir()
@@ -496,10 +476,30 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := "#!/usr/bin/env bash\nprintf 'x' >> \"$QUOTA_COUNTER\"\ncat \"$QUOTA_FIXTURE\"\n"
-	testutil.WriteFakeExecutable(t, filepath.Join(fakeDir, "quota-axi"), script)
+	quotaAxi := testutil.WriteFakeExecutable(t, filepath.Join(fakeDir, "quota-axi"), script)
 	t.Setenv("QUOTA_COUNTER", counter)
 	t.Setenv("QUOTA_FIXTURE", fixture)
-	testutil.PrependPath(t, fakeDir)
+
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.FleetBaseConfig{
+			Backend: "tmux",
+			DispatchProfiles: []config.DispatchProfile{
+				{Name: "quota", Match: []string{"*"},
+					Use: []config.DispatchCandidate{
+						{Harness: harness.Codex, Model: "q-model"},
+						{Harness: harness.Pi, Model: "q-pi"},
+					}},
+			},
+		},
+	}
+	projects := []testProjectRecord{
+		{Name: "quota-proj", Path: filepath.Join(homeDir, "projects", "quota-proj"),
+			Config: config.ProjectOverlay{Quota: &config.ToolEntry{Adapter: "quota-axi", Path: quotaAxi}}},
+	}
+	storeTestDocuments(t, homeDir, base, projects, nil)
+	spawnContext(t, homeDir)
+	writeModelAllowlist(t, homeDir, "codex:q-model\n")
 
 	r := NewRunner(Args{ID: "quota-task", ProjectName: "quota-proj", HomeDir: homeDir, TaskDescription: "quota work"})
 	r.homeDir = homeDir
