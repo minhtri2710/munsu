@@ -103,7 +103,7 @@ the next `main` run; a row the evidence does not support is a bug in
 <!-- flake-ledger:begin -->
 | test | lane | first_seen | last_seen | deadline | state |
 | --- | --- | --- | --- | --- | --- |
-| TestCaptainSeatRequests | race | 15a3423a@38778045954/1 | f9b02805@38780344478/1 | 2026-10-30 | open |
+| TestCaptainSeatRequests | race | 15a3423a@38778045954/1 | f9b02805@38780344478/1 | 2026-10-30 | fixed:da04dc62 |
 | TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 282f6cfb@31680287927/1 | 2026-08-30 | fixed:7e295ea |
 | TestStoreWriteAckRefusesUnusableAckRecords | race | e31d83a1@32094709771/1 | e31d83a1@32094709771/1 | 2026-09-01 | fixed:8eafcd37 |
 <!-- flake-ledger:end -->
