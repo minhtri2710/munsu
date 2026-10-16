@@ -1378,10 +1378,10 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 		if key == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "resolved:") {
+		switch domain.LineVerb(line) {
+		case "resolved":
 			resolved[key] = true
-		}
-		if strings.HasPrefix(line, "needs-decision:") {
+		case "needs-decision":
 			needs[key] = true
 		}
 	}

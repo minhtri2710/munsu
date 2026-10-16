@@ -243,27 +243,24 @@ func writeDigestFile(path string, data []byte) error {
 }
 
 // classifyEscalationType determines the escalation type from a payload: a
-// recognised status verb of a status-line payload, or of a report payload
-// after its "<key>: " prefix, alone decides; prose keywords classify only a
-// payload with no recognised verb.
+// decisive status verb of a status-line payload, or of a report payload after
+// its "<key>: " prefix, alone decides; prose keywords classify the rest.
 func classifyEscalationType(key, payload string) EscalationType {
-	if verb := domain.LineVerb(strings.TrimPrefix(payload, key+": ")); domain.IsValidStatusState(verb) {
-		switch verb {
-		case "needs-decision", "blocked":
-			return EscalationDecision
-		case "failed":
-			return EscalationFailure
-		case "done", "review-ready", "delivered":
-			return EscalationReviewReady
-		default:
-			return EscalationRoutine
-		}
+	switch domain.LineVerb(strings.TrimPrefix(payload, key+": ")) {
+	case "needs-decision", "blocked", "awaiting_approval":
+		return EscalationDecision
+	case "failed":
+		return EscalationFailure
+	case "done", "review-ready", "delivered":
+		return EscalationReviewReady
+	case "resolved", "unblocked":
+		return EscalationRoutine
 	}
 	lower := strings.ToLower(payload)
 	switch {
 	case containsAny(lower, "needs-decision", "blocked", "which", "decision"):
 		return EscalationDecision
-	case containsAny(lower, "failure", "broken", "error"):
+	case containsAny(lower, "failed:", "failure", "broken", "error"):
 		return EscalationFailure
 	case containsAny(lower, "credential", "auth", "token", "login"):
 		return EscalationCredential

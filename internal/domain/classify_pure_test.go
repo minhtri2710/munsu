@@ -170,6 +170,8 @@ func TestSplitStatusKey(t *testing.T) {
 		{"needs-decision: see [key=fake] in docs", "needs-decision: see [key=fake] in docs", ""},
 		{"key only [key=]", "key only [key=]", ""},
 		{"bad key [key=a b]", "bad key [key=a b]", ""},
+		{"needs-decision: pick [key=a] ", "needs-decision: pick", "a"},
+		{"resolved:[key=other]", "resolved:[key=other]", ""},
 	} {
 		if rest, key := SplitStatusKey(tc.line); rest != tc.rest || key != tc.key {
 			t.Errorf("SplitStatusKey(%q) = %q, %q, want %q, %q", tc.line, rest, key, tc.rest, tc.key)

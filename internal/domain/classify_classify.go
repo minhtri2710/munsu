@@ -114,9 +114,10 @@ func LineVerb(line string) string {
 }
 
 // SplitStatusKey splits the trailing " [key=<key>]" ReportStatusLine writes,
-// before any report mark, off line. A line without a valid trailing key
-// returns itself and key "".
+// before any report mark, off the trimmed line. A line without a valid
+// trailing key returns itself trimmed and key "".
 func SplitStatusKey(line string) (rest, key string) {
+	line = strings.TrimSpace(line)
 	body := strings.TrimSuffix(line, reportMark)
 	if strings.HasSuffix(body, "]") {
 		if i := strings.LastIndex(body, " [key="); i >= 0 {

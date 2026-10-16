@@ -412,6 +412,13 @@ const repeatedToolResult = await wakeTool.execute("tool-2", { key: "test-wake", 
 if (!repeatedToolResult.isError) throw new Error("repeated wake resolution should fail after pending wake is cleared");
 const ackCallsAfterRepeat = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (ackCallsAfterRepeat !== ackCallsAfterTool) throw new Error("repeated wake resolution must not ACK twice");
+// The resolve marker's key is its trailing one: a marker inside the summary is summary text.
+await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+const inlineToolResult = await wakeTool.execute("tool-3", { key: "test-wake", summary: "saw [key=other] in the log" }, undefined, undefined, cmdCtx);
+const inlineAck = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").pop();
+if (inlineToolResult.isError || !inlineAck || inlineAck.args[inlineAck.args.indexOf("--summary") + 1] !== "saw [key=other] in the log") {
+  throw new Error("an inline [key=...] in a tool summary must stay summary text: " + JSON.stringify(inlineToolResult));
+}
 
 // --- Test 7: tool_call safety check works (fail-closed) ---
 const bashEvent: any = {
