@@ -5,6 +5,7 @@ package fleet
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -263,8 +264,8 @@ func TestWorktreePoolArtifactHygieneContaminatedReservationRetainsCustody(t *tes
 	if err != nil {
 		t.Fatalf("ReservedGitWorktreePath: %v", err)
 	}
-	if err := os.MkdirAll(reservedPath, 0o755); err != nil {
-		t.Fatal(err)
+	if out, err := exec.Command("git", "-C", f.repoPath, "worktree", "add", "--detach", reservedPath).CombinedOutput(); err != nil {
+		t.Fatalf("creating reserved worktree: %v: %s", err, out)
 	}
 	artifact := filepath.Join(reservedPath, CharterName)
 	if err := os.WriteFile(artifact, []byte("unanchored prior content\n"), 0o644); err != nil {
