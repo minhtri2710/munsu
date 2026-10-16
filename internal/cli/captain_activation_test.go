@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -18,9 +19,40 @@ func (p *sequenceCaptainProbe) Probe(string, map[string]string) (fleet.CaptainPr
 	return result, nil
 }
 
+func TestCaptainRecoveryErrFailsOnAnyFailedStep(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		steps   []fleet.StepResult
+		wantErr bool
+	}{
+		{name: "a failed step fails recovery", steps: []fleet.StepResult{{Name: "provenance", State: fleet.StepOk}, {Name: "relaunch-pane", State: fleet.StepFailed}}, wantErr: true},
+		{name: "ok and skipped steps pass", steps: []fleet.StepResult{{Name: "provenance", State: fleet.StepOk}, {Name: "relaunch-pane", State: fleet.StepSkipped}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := captainRecoveryErr(&fleet.RecoverResult{Steps: tc.steps})
+			if (err != nil) != tc.wantErr || err != nil && !strings.Contains(err.Error(), "captain recovery failed") {
+				t.Fatalf("captainRecoveryErr = %v, wantErr %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCaptainRecoverCommandFailsOnFailedStep(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	if err := fleet.Register(homeDir, "broken", t.TempDir(), "", "broken"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runRoot(t, "captain", "recover", "broken", "--home", homeDir)
+	if err == nil || !strings.Contains(err.Error(), "captain recovery failed") || !strings.Contains(err.Error(), "provenance") {
+		t.Fatalf("captain recover = %v, want captain recovery failed on provenance", err)
+	}
+}
+
 func TestRecoverCaptainEndpointReportsFailedRecoveryStep(t *testing.T) {
-	if err := recoverCaptainEndpoint(t.TempDir(), fleet.Info{}); err == nil {
-		t.Fatal("expected failed captain recovery to be reported")
+	err := recoverCaptainEndpoint(t.TempDir(), fleet.Info{})
+	if err == nil || !strings.Contains(err.Error(), "captain recovery failed") {
+		t.Fatalf("recoverCaptainEndpoint = %v, want captain recovery failed", err)
 	}
 }
 

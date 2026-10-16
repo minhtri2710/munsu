@@ -11,7 +11,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 // seamProbeBackend is a controllable agent-aware backend used to drive the
@@ -124,9 +123,9 @@ func seamProbeEndpoint(bk backend.Backend) sessionProbeEndpoint {
 
 // seedSeamCaptain seeds a captain through seedUnlaunchedCaptain, then records
 // launch meta so fleet recovery reaches the probe/launch decision.
-func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
+func seedSeamCaptain(t *testing.T, id string, integration fleet.IntegrationPort) (parent, captainHome string) {
 	t.Helper()
-	parent, captainHome, _ = seedUnlaunchedCaptain(t, id)
+	parent, captainHome, _ = seedUnlaunchedCaptain(t, id, integration)
 	canon, err := home.CanonicalCaptainHome(captainHome)
 	if err != nil {
 		t.Fatal(err)
@@ -142,11 +141,11 @@ func seedSeamCaptain(t *testing.T, id string) (parent, captainHome string) {
 
 // seedUnlaunchedCaptain seeds a canonical parent home and a managed-worktree
 // captain home of repo through fleet.SeedCaptain (Pi harness, herdr backend,
-// the canonical Pi integration). No launch meta is written, so no fleet path
+// integration installed through the given port). No launch meta is written, so no fleet path
 // resolves a session backend for it.
-func seedUnlaunchedCaptain(t *testing.T, id string) (parent, captainHome, repo string) {
+func seedUnlaunchedCaptain(t *testing.T, id string, integration fleet.IntegrationPort) (parent, captainHome, repo string) {
 	t.Helper()
-	putFakePiOnPath(t)
+	fakePiToolchain(t)
 	t.Setenv("MUNSU_ROLE", "")
 	parent = t.TempDir()
 	if _, err := home.Init(parent); err != nil {
@@ -169,7 +168,7 @@ func seedUnlaunchedCaptain(t *testing.T, id string) (parent, captainHome, repo s
 	repo = seamProjectRepo(t)
 	if err := fleet.SeedCaptain(fleet.CaptainSeedOptions{
 		ID: id, Home: captainHome, Repo: repo, ParentHome: parent,
-		Integration: seamStaticIntegrationPort{},
+		Integration: integration,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,21 +199,11 @@ func seamProjectRepo(t *testing.T) string {
 	return project
 }
 
-// putFakePiOnPath makes exec.LookPath("pi") resolve to a fake binary so the
-// real fleet Launch front-end reaches the endpoint under test, mirroring the
-// fake-herdr fixture pattern in the backend tests.
-func putFakePiOnPath(t *testing.T) {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "pi")
-	testutil.WriteFakeExecutable(t, bin, "#!/bin/sh\nexit 0\n")
-	testutil.PrependPath(t, filepath.Dir(bin))
-}
-
 // TestProbeLivenessSeam_StrictDeadOnly drives the production probe seam into
 // fleet.ProbeLiveness: only authoritative pane absence reports "dead";
 // pane-present/no-agent reports "unknown" (fail closed), never "dead".
 func TestProbeLivenessSeam_StrictDeadOnly(t *testing.T) {
-	parent, captainHome := seedSeamCaptain(t, "seam-probe")
+	parent, captainHome := seedSeamCaptain(t, "seam-probe", seamStaticIntegrationPort{})
 	registered := []fleet.Info{{ID: "seam-probe", Home: captainHome}}
 
 	probes := fleet.ProbeLiveness(parent, registered, seamProbeEndpoint(&seamProbeBackend{err: backend.ErrPaneNotFound}))
@@ -236,7 +225,7 @@ func TestProbeLivenessSeam_StrictDeadOnly(t *testing.T) {
 // TestRecoverSeam_AuthoritativeAbsenceRelaunches proves through the real CLI
 // probe endpoint that only ErrPaneNotFound authorizes Launch in fleet.Recover.
 func TestRecoverSeam_AuthoritativeAbsenceRelaunches(t *testing.T) {
-	parent, captainHome := seedSeamCaptain(t, "seam-recover")
+	parent, captainHome := seedSeamCaptain(t, "seam-recover", seamStaticIntegrationPort{})
 	launch := &seamLaunchEndpoint{}
 
 	res, err := fleet.Recover(parent, []fleet.Info{{ID: "seam-recover", Home: captainHome}}, fleet.RecoverCapabilities{
@@ -259,7 +248,7 @@ func TestRecoverSeam_AuthoritativeAbsenceRelaunches(t *testing.T) {
 // endpoint that pane-present/no-agent never authorizes Launch and fails
 // closed with the strict-dead-only refusal.
 func TestRecoverSeam_NoAgentFailsClosed(t *testing.T) {
-	parent, captainHome := seedSeamCaptain(t, "seam-noagent")
+	parent, captainHome := seedSeamCaptain(t, "seam-noagent", seamStaticIntegrationPort{})
 	launch := &seamLaunchEndpoint{}
 
 	res, err := fleet.Recover(parent, []fleet.Info{{ID: "seam-noagent", Home: captainHome}}, fleet.RecoverCapabilities{
@@ -277,12 +266,35 @@ func TestRecoverSeam_NoAgentFailsClosed(t *testing.T) {
 	}
 }
 
+// TestCaptainConvergeCapabilitiesRelaunchSeamDeadCaptain proves the shared
+// capability set used by `captain converge` and `update --captains` carries
+// what a dead-captain relaunch needs, Integration included.
+func TestCaptainConvergeCapabilitiesRelaunchSeamDeadCaptain(t *testing.T) {
+	parent, captainHome := seedSeamCaptain(t, "seam-converge", captainIntegrationAdapter{})
+	launch := &seamLaunchEndpoint{}
+	caps := captainConvergeCapabilities()
+	caps.Launch = launch
+	caps.Probe = seamProbeEndpoint(&seamAbsentThenAliveBackend{})
+
+	// The real mailbox sender has no live endpoint here, so only the
+	// liveness step is asserted.
+	result, _ := fleet.Converge(parent, []fleet.Info{{ID: "seam-converge", Home: captainHome}}, caps)
+	if result == nil || launch.calls != 1 {
+		t.Fatalf("launch calls = %d, want 1 (result %+v)", launch.calls, result)
+	}
+	for _, step := range result.Steps {
+		if step.Name == "seam-converge: liveness check" && step.Status != fleet.ConvergeOK {
+			t.Fatalf("liveness step = %+v, want relaunched ok", step)
+		}
+	}
+}
+
 // TestProbeLivenessSeam_UnknownAgentStatusFailsClosed proves through the real
 // CLI probe endpoint that a registered agent with an "unknown" status (live
 // pane, transitional status) is never reported alive: it fails closed as
 // "unknown", never "alive" or "dead".
 func TestProbeLivenessSeam_UnknownAgentStatusFailsClosed(t *testing.T) {
-	parent, captainHome := seedSeamCaptain(t, "seam-unknown")
+	parent, captainHome := seedSeamCaptain(t, "seam-unknown", seamStaticIntegrationPort{})
 	registered := []fleet.Info{{ID: "seam-unknown", Home: captainHome}}
 
 	probes := fleet.ProbeLiveness(parent, registered, seamProbeEndpoint(&seamProbeBackend{paneAlive: true, agentAlive: true, status: "unknown"}))
@@ -295,7 +307,7 @@ func TestProbeLivenessSeam_UnknownAgentStatusFailsClosed(t *testing.T) {
 // probe endpoint that an "unknown" agent status never authorizes Launch and
 // never clears the relaunch guard: it fails closed.
 func TestRecoverSeam_UnknownAgentStatusFailsClosed(t *testing.T) {
-	parent, captainHome := seedSeamCaptain(t, "seam-unknown-recover")
+	parent, captainHome := seedSeamCaptain(t, "seam-unknown-recover", seamStaticIntegrationPort{})
 	launch := &seamLaunchEndpoint{}
 
 	res, err := fleet.Recover(parent, []fleet.Info{{ID: "seam-unknown-recover", Home: captainHome}}, fleet.RecoverCapabilities{

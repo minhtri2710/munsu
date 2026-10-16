@@ -225,7 +225,7 @@ The sweep lock is parent state/.captain-converge.lock.`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, captainConvergeCapabilities())
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
@@ -265,7 +265,7 @@ The sweep lock is parent state/.captain-converge.lock.`,
 			}
 			res := newCaptainRecoverTransaction().Recover(ctx.Home, *target)
 			fmt.Println(res.StepsString())
-			return nil
+			return captainRecoveryErr(res)
 		}),
 	}
 	cmd.AddCommand(recoverCmd)
