@@ -142,23 +142,6 @@ func TestScanFleet_EmptyStateDir(t *testing.T) {
 	}
 }
 
-// A .meta window names no seat: only a canonical bound endpoint is probed.
-func TestScanFleet_MetaWindowWithoutBindingNotProbed(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	os.WriteFile(filepath.Join(stateDir, ".hidden.meta"), []byte("window=@test\n"), 0644)
-	if err := mhome.WriteMeta(tmp, "meta-only", map[string]string{"kind": "ship", "window": "@nonexistent99"}); err != nil {
-		t.Fatal(err)
-	}
-
-	reason := testScanFleet(tmp)
-	if reason != nil {
-		t.Errorf("expected nil when no canonical endpoint is bound, got %v", reason)
-	}
-}
-
 func TestScanFleet_QueuedTaskNotProbed(t *testing.T) {
 	tmp := t.TempDir()
 	seedTask(t, tmp, "no-win")
@@ -842,7 +825,6 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	os.WriteFile(mhome.WatcherBeatPath(tmp), []byte(beatContent), 0644)
 
 	// Add an in-flight task.
-	mhome.WriteMeta(tmp, "task-stale", map[string]string{"window": "@test"})
 	os.WriteFile(filepath.Join(stateDir, "task-stale.status"), []byte("working: started\n"), 0644)
 
 	// Enqueue a material wake.

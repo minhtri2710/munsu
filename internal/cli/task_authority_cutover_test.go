@@ -87,7 +87,7 @@ func mustCanonicalOp(t *testing.T, id string, intent domain.Intent) domain.Opera
 
 // TestTaskAddCreatesCanonicalQueuedGeneration proves one `task add` produces
 // exactly one queued Task Generation at Revision one with owner, definition,
-// kind, and project, and writes no .meta projection.
+// kind, and project.
 func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -105,15 +105,11 @@ func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	if agg.Definition.Owner != filepath.Base(homeDir) || agg.Definition.Description != "ship beta" || agg.Definition.Kind != "ship" || agg.Definition.Project != "munsu" {
 		t.Fatalf("definition = %+v", agg.Definition)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", "beta.meta")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("task add wrote a .meta projection (stat err=%v)", err)
-	}
 }
 
-// TestTaskAddDuplicateReturnsTypedConflictWithoutProjection proves duplicate
-// creation returns a typed conflict and creates no projection duplicate and
-// no additional authoritative record.
-func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
+// TestTaskAddDuplicateReturnsTypedConflict proves duplicate creation returns a
+// typed conflict and changes no authoritative record.
+func TestTaskAddDuplicateReturnsTypedConflict(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	registerCLITestProject(t, homeDir, "munsu")
@@ -129,14 +125,10 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	if got := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "beta", "current.json")); got != beforeCurrent {
 		t.Fatal("duplicate add changed authoritative aggregate")
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, "state", "beta.meta")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("task add wrote a .meta projection (stat err=%v)", err)
-	}
 }
 
-// TestTaskListReadsCanonicalAuthorityRecords proves `task list` serves only
-// canonical Authority records: meta-only tasks are absent and tampered meta
-// cannot override kind, project, or phase (Task 3.2 criterion 3).
+// TestTaskListReadsCanonicalAuthorityRecords proves `task list` serves the
+// canonical Authority records' kind, project, and phase.
 func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -149,14 +141,6 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 		if out, err := runTaskCommand(t, args); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, out)
 		}
-	}
-	// A meta-only task with no canonical record must not be listed.
-	if err := home.WriteMeta(homeDir, "ghost", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	// A tampered meta projection must not override canonical records.
-	if err := home.WriteMeta(homeDir, "alpha", map[string]string{"kind": "hacked", "project": "hacked"}); err != nil {
-		t.Fatal(err)
 	}
 	out, err := runTaskCommand(t, []string{"task", "list", "--output", "json", "--home", homeDir})
 	if err != nil {
@@ -179,13 +163,10 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 	if e := byID["beta"]; e.Kind != "ship" || e.Project != "munsu" || e.Status != "queued" {
 		t.Fatalf("beta entry = %+v", e)
 	}
-	if _, ok := byID["ghost"]; ok {
-		t.Fatal("meta-only task ghost leaked into canonical task list")
-	}
 }
 
 // TestTaskShowReadsCanonicalAuthorityRecords proves `task show` reads the
-// canonical Aggregate and that .meta holds no copy of the authoritative fields.
+// canonical Aggregate.
 func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -208,7 +189,7 @@ func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 			t.Fatalf("task show missing %q:\n%s", want, out)
 		}
 	}
-	// Each task field is printed once, from the Aggregate: .meta holds no copy.
+	// Each task field is printed once, from the Aggregate.
 	for _, field := range []string{"description: ", "kind: ship", "project: "} {
 		if n := strings.Count(out, field); n != 1 {
 			t.Fatalf("task show prints %q %d times, want once:\n%s", field, n, out)
@@ -216,11 +197,9 @@ func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 	}
 }
 
-// TestTaskObserveCanonicalTaskWithoutMeta proves `task observe` resolves a
-// task from its canonical Authority record even when no .meta projection
-// exists yet (Task 7.8 canonical-read preference): the projection is display
-// fallback, never the existence gate.
-func TestTaskObserveCanonicalTaskWithoutMeta(t *testing.T) {
+// TestTaskObserveCanonicalTask proves `task observe` resolves a task from its
+// canonical Authority record.
+func TestTaskObserveCanonicalTask(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)

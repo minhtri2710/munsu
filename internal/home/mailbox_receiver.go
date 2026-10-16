@@ -60,8 +60,8 @@ func (ref NotificationRef) Validate() error {
 // receiver owns a home: a general or captain owns the home it runs in, so
 // NewReceiver reads home provenance. A soldier owns no home -- it is
 // launched with MUNSU_HOME set to its dispatcher's home -- so
-// NewSoldierReceiver reads the durable per-task record that home holds for
-// the soldier instead.
+// NewSoldierReceiver asks that home's Task Authority, through the injected
+// SoldierSeatCheck, whether it hosts the soldier.
 //
 // The Receiver exposes two independent operations:
 //   - Receive: validate and load the envelope, returning the payload.
@@ -70,25 +70,33 @@ func (ref NotificationRef) Validate() error {
 //     the command into its context. Pending remains until the sender
 //     reconciles via converge. Always writes outcome "accepted".
 type Receiver struct {
-	identity string
-	rank     Rank
-	taskID   string
-	store    *Store
+	identity    string
+	rank        Rank
+	taskID      string
+	store       *Store
+	soldierSeat SoldierSeatCheck
 }
+
+// SoldierSeatCheck reports, from the home's canonical Task Authority, whether
+// the home hosts a live soldier seat for taskID. home cannot read the Task
+// Authority itself, so its owner injects the check.
+type SoldierSeatCheck func(taskID string) error
 
 // NewReceiver creates a Receiver for the owner of homeDir: the captain whose
 // .munsu-captain-home marker it carries, or the general whose home it is.
 // Identity and rank come from durable home provenance instead of caller
 // strings. Soldiers are not home owners -- see NewSoldierReceiver.
-func NewReceiver(homeDir string) (*Receiver, error) {
+// soldierSeat proves soldier senders.
+func NewReceiver(homeDir string, soldierSeat SoldierSeatCheck) (*Receiver, error) {
 	ident, rnk, err := ReadHomeIdentity(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("new receiver: %w", err)
 	}
 	return &Receiver{
-		identity: ident,
-		rank:     rnk,
-		store:    NewStore(homeDir),
+		identity:    ident,
+		rank:        rnk,
+		store:       NewStore(homeDir),
+		soldierSeat: soldierSeat,
 	}, nil
 }
 
@@ -107,28 +115,22 @@ func ReceiverIDForTask(taskID string) string {
 // set to the home of the general or captain that dispatched it, so home
 // provenance there names the dispatcher and can never name the soldier.
 //
-// The durable statement that this home hosts this soldier is the task meta
-// file the home keeps for it. Without that record there is no soldier to be,
-// and construction fails closed. The trust boundary for this check is the
+// The durable statement that this home hosts this soldier is the live seat
+// its Task Authority records for the task. Without it there is no soldier to
+// be, and construction fails closed. The trust boundary for this check is the
 // home directory, not the task: it establishes that this home durably hosts
 // the task, just as ReadHomeIdentity establishes that a home is a captain
 // home. Neither check authenticates the caller.
-func NewSoldierReceiver(homeDir, taskID string) (*Receiver, error) {
-	if _, err := MetaFilePath(homeDir, taskID); err != nil {
+func NewSoldierReceiver(homeDir, taskID string, soldierSeat SoldierSeatCheck) (*Receiver, error) {
+	if err := soldierSeat(taskID); err != nil {
 		return nil, fmt.Errorf("new soldier receiver: %w", err)
 	}
-	meta, readErr := ReadMeta(homeDir, taskID)
-	if readErr != nil {
-		return nil, fmt.Errorf("new soldier receiver: home %s hosts no task %q (unreadable): %w", homeDir, taskID, readErr)
-	}
-	if meta["kind"] == "captain" {
-		return nil, fmt.Errorf("new soldier receiver: task %q is a captain task", taskID)
-	}
 	return &Receiver{
-		identity: ReceiverIDForTask(taskID),
-		rank:     RankSoldier,
-		taskID:   taskID,
-		store:    NewStore(homeDir),
+		identity:    ReceiverIDForTask(taskID),
+		rank:        RankSoldier,
+		taskID:      taskID,
+		store:       NewStore(homeDir),
+		soldierSeat: soldierSeat,
 	}, nil
 }
 
@@ -191,12 +193,8 @@ func (r *Receiver) verifySenderRank(env *Envelope) error {
 		if env.TaskID == "" || env.SenderIdentity != ReceiverIDForTask(env.TaskID) {
 			return fmt.Errorf("soldier sender identity does not match task %q", env.TaskID)
 		}
-		meta, err := ReadMeta(r.store.homeDir, env.TaskID)
-		if err != nil {
+		if err := r.soldierSeat(env.TaskID); err != nil {
 			return fmt.Errorf("reading soldier sender provenance: %w", err)
-		}
-		if meta["kind"] == "captain" {
-			return fmt.Errorf("soldier sender provenance names a captain task")
 		}
 		return nil
 	case RankCaptain:

@@ -10,7 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -110,10 +109,6 @@ func TestDeliveryRecordVerdictRecordsTheReviewTasksVerdictFile(t *testing.T) {
 	homeDir := deliveryGuardShip(t, "t-ship")
 	auth := cliCanonicalForHome(t, homeDir)
 	workingGuardReview(t, auth, "t-ship", "rev-1")
-	// record-verdict resolves the task home through the .meta projection.
-	if err := home.WriteMeta(homeDir, "rev-1", map[string]string{"id": "rev-1", "kind": "review"}); err != nil {
-		t.Fatal(err)
-	}
 
 	out, err := runTaskCommand(t, []string{"delivery", "record-verdict", "--reviewer-task", "rev-1", "--home", homeDir})
 	if err == nil || !strings.Contains(err.Error(), "record-verdict rev-1") || !strings.Contains(err.Error(), "wrote no verdict file") {

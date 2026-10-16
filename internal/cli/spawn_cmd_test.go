@@ -241,6 +241,15 @@ func seedRetireAuthority(t *testing.T, taskID, kind string) string {
 	if _, err := auth.Create(mustCanonicalOp(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatal(err)
 	}
+	if kind != taskauthority.KindReview {
+		// A launch that began but bound nothing leaves teardown nothing to
+		// release.
+		launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), SnapshotDigest: strings.Repeat("d", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "local-only", Kind: kind, LaunchID: "launch-" + taskID, WindowLabel: "window-" + taskID, WorktreeReservationID: "wt-" + taskID, WorktreeFenceToken: "fence-" + taskID, EndpointReservationID: "ep-" + taskID, EndpointFenceToken: "ep-fence-" + taskID, SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-" + taskID, Reason: "spawn"}
+		launch.SeatEnv = taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}
+		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "op-launch-"+taskID, launch), launch); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return homeDir
 }
 
@@ -268,11 +277,6 @@ func TestTeardownCmdHoldsForUnsettledReports(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			soldierID := "teardown-report-test"
 			tmpDir := seedRetireAuthority(t, soldierID, tc.kind)
-			meta := "kind=" + tc.kind + "\n"
-			if tc.kind != taskauthority.KindReview {
-				meta += "worktree=/nonexistent\n"
-			}
-			writeRawTaskMeta(t, tmpDir, soldierID, meta)
 			if err := os.MkdirAll(filepath.Join(tmpDir, "data", soldierID), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -315,8 +319,8 @@ func TestTeardownCmdHoldsForUnsettledReports(t *testing.T) {
 }
 
 // seedDoneScoutForPromote seeds one done scout task through the canonical
-// Authority and writes the .meta projection + the generation-named report the
-// promote preflight requires.
+// Authority and writes the generation-named report the promote preflight
+// requires.
 func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *taskauthority.Canonical {
 	t.Helper()
 	auth := testAuthorityFor(t, homeDir)
@@ -361,8 +365,7 @@ func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *tas
 }
 
 // TestPromoteRoutesThroughTaskAuthority proves `promote` commits the scout →
-// ship kind change through the composed canonical Task Authority and that
-// the post-commit .meta write copies no task field.
+// ship kind change through the composed canonical Task Authority.
 func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -426,13 +429,9 @@ func TestPromoteRefusesAbsentTask(t *testing.T) {
 	if !errors.Is(err, taskauthority.ErrNotFound) {
 		t.Fatalf("promote absent task err = %v, want typed ErrNotFound", err)
 	}
-	// Nothing was created: the canonical view stays empty and no projections
-	// were written.
+	// Nothing was created: the canonical view stays empty.
 	if _, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "scout-absent")); !errors.Is(err, taskauthority.ErrNotFound) {
 		t.Fatalf("absent task appears after failed promote: %v", err)
-	}
-	if _, err := home.ReadMeta(homeDir, "scout-absent"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("meta written for absent task: %v", err)
 	}
 }
 

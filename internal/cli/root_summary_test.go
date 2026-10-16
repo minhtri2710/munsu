@@ -114,8 +114,8 @@ func TestStyledOutputStripsToPlain(t *testing.T) {
 		{id: "t3", phase: "mystery", project: "-", status: "mystery"},
 	}}
 	snap := &fleet.FleetSnapshot{Time: "now", Tasks: []fleet.TaskSnapshot{
-		{ID: "t1", Project: "p", Kind: "ship", Mode: "pr", Yolo: "false", Window: "@1", CurrentState: "done"},
-		{ID: "t2", Project: "p", Kind: "ship", Mode: "pr", Yolo: "false", Window: "@2"},
+		{ID: "t1", Project: "p", Kind: "ship", Mode: "pr", Window: "@1", CurrentState: "done"},
+		{ID: "t2", Project: "p", Kind: "ship", Mode: "pr", Window: "@2"},
 	}}
 	render := func(mode markMode) string {
 		old := outputMarks
@@ -151,11 +151,11 @@ Next: munsu fleet view | munsu peek <id> | munsu --help
 Tasks: 2
 
 - **t1** (repo: p) [primary]
-  kind: ship | mode: pr | yolo: false
+  kind: ship | mode: pr
   pane: @1 (✓ done)
 
 - **t2** (repo: p) [primary]
-  kind: ship | mode: pr | yolo: false
+  kind: ship | mode: pr
   pane: @2 (✗ dead)
 
 ✗ MISSING: tmux (install instructions vary)
