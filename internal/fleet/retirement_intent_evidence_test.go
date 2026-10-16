@@ -27,9 +27,7 @@ func TestRetirementIntentEvidence(t *testing.T) {
 			homeDir := t.TempDir()
 			taskID := "evidence-report-" + tc.name
 			auth := canonicalScoutTestAuth(t, homeDir, taskID)
-			if err := os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte("backend=tmux\nwindow=@1\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
+			seedWorktreeEvidence(t, auth, taskID, t.TempDir(), "lease-wt", "fence-wt")
 			dataDir := filepath.Join(homeDir, "data", taskID)
 			if err := os.MkdirAll(dataDir, 0755); err != nil {
 				t.Fatal(err)
@@ -58,7 +56,7 @@ func TestRetirementIntentEvidence(t *testing.T) {
 					t.Fatalf("entry %s is not a generation-scoped report; the write path must not produce unversioned report files", entry)
 				}
 			}
-			if err := scoutSafetyCheck(Options{HomeDir: homeDir, ID: taskID}, map[string]string{}, 2); err == nil {
+			if err := scoutSafetyCheck(Options{HomeDir: homeDir, ID: taskID}, 2); err == nil {
 				t.Fatal("later generation unexpectedly accepted retired report evidence")
 			} else {
 				t.Logf("%s later-generation safety check refused retired report: %v", tc.name, err)
@@ -76,7 +74,6 @@ func TestRetirementIntentEvidence(t *testing.T) {
 		}
 		seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
 		seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-		writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 		opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 		first := &recordingTeardown{alive: true, disposeErr: errors.New("simulated crash")}
 		if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
@@ -111,7 +108,6 @@ func TestRetirementIntentEvidence(t *testing.T) {
 		}
 		seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
 		seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
-		writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 		opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 		if _, err := RetireTask(opts, &recordingTeardown{alive: true}, fakeRetirementJournals{}, auth); err != nil {
 			t.Fatal(err)
@@ -126,7 +122,6 @@ func TestRetirementIntentEvidence(t *testing.T) {
 		}
 		seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
 		seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-2", "fence-ep-2")
-		writeRetireMeta(t, homeDir, taskID, "@2", wtDir)
 		stale := &recordingTeardown{alive: true}
 		_, err = RetireTask(opts, stale, fakeRetirementJournals{}, auth)
 		var refusal *RetirementStaleTeardownError

@@ -29,7 +29,7 @@ func (b *mailboxPromptBackend) IsRecognizedAgent(string) (bool, string) {
 }
 
 func TestSessionMailboxSenderAliveRequiresLiveAgent(t *testing.T) {
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	sender := sessionMailboxSender{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return &captainProbeBackend{alive: true, paneAlive: true, agentAlive: false}, "herdr", nil
 	}}
 
@@ -44,7 +44,7 @@ func TestSessionMailboxSenderAliveRequiresLiveAgent(t *testing.T) {
 
 func TestSessionMailboxSenderDefersWorkingAgent(t *testing.T) {
 	bk := &mailboxPromptBackend{recognized: true, status: "working", result: backend.PromptResult{Status: backend.PromptSubmitted}}
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+	sender := sessionMailboxSender{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 		return bk, "herdr", nil
 	}}
 	got := sender.Send("/home", map[string]string{"backend": "herdr", "window": "pane"}, "payload")
@@ -69,7 +69,7 @@ func TestSessionMailboxSenderReadyNormalization(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			bk := &mailboxPromptBackend{recognized: true, status: tt.status, result: backend.PromptResult{Status: backend.PromptSubmitted}}
-			sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+			sender := sessionMailboxSender{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 				return bk, "herdr", nil
 			}}
 			got := sender.Send("/home", map[string]string{"backend": "herdr", "window": "pane"}, "payload")
@@ -87,7 +87,7 @@ func TestSessionMailboxSenderReadyNormalization(t *testing.T) {
 func TestSessionMailboxSenderPreservesTypedPromptResult(t *testing.T) {
 	for _, status := range []backend.PromptStatus{backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled, backend.PromptUnsupported, backend.PromptEndpointDead, backend.PromptBackendFailed} {
 		bk := &mailboxPromptBackend{recognized: true, status: "idle", result: backend.PromptResult{Status: status, Detail: "detail", Err: errors.New("typed")}}
-		sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+		sender := sessionMailboxSender{resolve: func(string, backend.EndpointRef) (backend.Backend, string, error) {
 			return bk, "tmux", nil
 		}}
 		got := sender.Send("/home", map[string]string{"backend": "tmux", "window": "pane"}, "payload")

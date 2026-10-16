@@ -10,18 +10,58 @@ import (
 	"testing"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type recoverySender struct {
 	alive    bool
 	result   mhome.BoundSendResult
 	payloads []string
+	sentTo   []taskauthority.EndpointBinding
+	harness  string
 }
 
-func (s *recoverySender) Alive(string, map[string]string) (bool, error) { return s.alive, nil }
-func (s *recoverySender) Send(_ string, _ map[string]string, payload string) mhome.BoundSendResult {
+func (s *recoverySender) Alive(_ string, _ taskauthority.EndpointBinding, harness string) (bool, error) {
+	s.harness = harness
+	return s.alive, nil
+}
+func (s *recoverySender) Send(_ string, ep taskauthority.EndpointBinding, payload string) mhome.BoundSendResult {
 	s.payloads = append(s.payloads, payload)
+	s.sentTo = append(s.sentTo, ep)
 	return s.result
+}
+
+// Recovery delivers to the pane of the envelope's task: a captain's from its
+// .meta (config-reread envelopes name captain:<id>), a soldier's from its
+// canonical binding.
+func TestRecoverInboxDeliversToTheTaskPane(t *testing.T) {
+	for _, tc := range []struct {
+		name, taskID string
+		seed         func(t *testing.T, home string)
+		want         taskauthority.EndpointBinding
+		harness      string
+	}{
+		{"captain", "captain:c1", func(t *testing.T, home string) {
+			if err := mhome.WriteMeta(home, "captain:c1", map[string]string{"backend": "herdr", "window": "s:p1", "session_owner": "s", "harness": "pi"}); err != nil {
+				t.Fatal(err)
+			}
+		}, taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:p1", SessionOwner: "s"}, "pi"},
+		{"soldier", "task-1", func(t *testing.T, home string) {
+			seedBoundSoldier(t, home, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
+		}, taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1", LeaseID: "lease-ep", FenceToken: "fence-ep", Incarnation: "inc-ep", BoundAtUnix: 1}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			tc.seed(t, home)
+			env := recoveryEnvelope("")
+			env.TaskID = tc.taskID
+			sender := &recoverySender{alive: true, result: mhome.BoundSendResult{Acknowledged: true, Status: "submitted"}}
+			attempt := RecoverInboxWithSender(sender, home, env)
+			if attempt.Err != nil || len(sender.sentTo) != 1 || sender.sentTo[0] != tc.want || sender.harness != tc.harness {
+				t.Fatalf("attempt=%+v sentTo=%+v harness=%q, want %+v harness %q", attempt, sender.sentTo, sender.harness, tc.want, tc.harness)
+			}
+		})
+	}
 }
 
 func recoveryEnvelope(kind string) *mhome.Envelope {
@@ -42,10 +82,10 @@ func recoveryEnvelope(kind string) *mhome.Envelope {
 
 func writeRecoveryEnvelope(t *testing.T, home string, env *mhome.Envelope) {
 	t.Helper()
-	if err := mhome.NewStore(home).WriteEnvelope(env); err != nil {
-		t.Fatal(err)
+	if _, err := taskEndpoint(home, env.TaskID); err != nil {
+		seedBoundSoldier(t, home, env.TaskID, taskauthority.EndpointBinding{Backend: "tmux", Handle: "pane-1"})
 	}
-	if err := os.WriteFile(filepath.Join(home, "state", "task-1.meta"), []byte("backend=tmux\nwindow=pane-1\n"), 0600); err != nil {
+	if err := mhome.NewStore(home).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
 }

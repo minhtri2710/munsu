@@ -17,7 +17,7 @@ import (
 // observationEventPort resolves native event sources for the bound endpoints
 // of a home. resolve is injectable for tests (defaults to BackendForTask).
 type observationEventPort struct {
-	resolve func(string, map[string]string) (backend.Backend, string, error)
+	resolve boundResolver
 }
 
 // runtimeObservationEventPort builds the production event port over the
@@ -38,10 +38,9 @@ func (p observationEventPort) Sources(homeDir string) ([]orchestrator.EndpointSo
 	}
 	var out []orchestrator.EndpointSource
 	for _, ep := range endpoints {
-		meta := ep.Meta
-		meta["home"] = homeDir
-		bk, resolved, err := p.resolveFor(homeDir, meta)
-		if err != nil || resolved != meta["backend"] {
+		ref := bindingRef(ep.Endpoint)
+		bk, resolved, err := p.resolveFor(homeDir, ref)
+		if err != nil || resolved != ref.Backend {
 			continue // unresolvable or mismatched binding → poll
 		}
 		src, ok := bk.(backend.ObservationEventSource)
@@ -50,8 +49,8 @@ func (p observationEventPort) Sources(homeDir string) ([]orchestrator.EndpointSo
 		}
 		out = append(out, orchestrator.EndpointSource{
 			Endpoint: backend.EndpointRef{
-				Backend: meta["backend"],
-				Handle:  meta["window"],
+				Backend: ref.Backend,
+				Handle:  ref.Handle,
 			},
 			Source: src,
 		})
@@ -61,10 +60,10 @@ func (p observationEventPort) Sources(homeDir string) ([]orchestrator.EndpointSo
 
 // resolveFor routes through the injectable resolver, defaulting to the
 // production BackendForTask path when nil.
-func (p observationEventPort) resolveFor(homeDir string, meta map[string]string) (backend.Backend, string, error) {
+func (p observationEventPort) resolveFor(homeDir string, ep backend.EndpointRef) (backend.Backend, string, error) {
 	resolve := p.resolve
 	if resolve == nil {
 		resolve = backend.BackendForTask
 	}
-	return resolve(homeDir, meta)
+	return resolve(homeDir, ep)
 }

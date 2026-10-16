@@ -8,7 +8,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // humanNeededEvent is one Human-needed status line the watcher has just
@@ -28,11 +27,12 @@ type humanNeededEvent struct {
 func popupHumanNeeded(homeDir string, events []humanNeededEvent) {
 	var wg sync.WaitGroup
 	for _, ev := range events {
-		meta, err := home.ReadMeta(homeDir, ev.TaskID)
+		bound, err := paneEndpoint(homeDir, ev.TaskID)
 		if err != nil {
 			continue
 		}
-		bk, _, err := backend.BackendForTask(homeDir, meta)
+		ep := bound.Endpoint
+		bk, _, err := backend.BackendForTask(homeDir, backend.EndpointRef{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID})
 		if err != nil {
 			continue
 		}

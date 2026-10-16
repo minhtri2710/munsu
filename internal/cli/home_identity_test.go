@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // seededCaptainHome is an initialized home that is already known to be a
@@ -37,7 +38,7 @@ func TestCaptainHomeCommandsIdentityGuard(t *testing.T) {
 		wrap   string
 		env    map[string]string
 		args   []string
-		meta   bool
+		bound  bool
 	}{
 		{"task", "resolving task owner", map[string]string{"MUNSU_ROLE": "general"}, []string{"task", "add", "t1", "desc"}, false},
 		{"soldier-flush", "soldier-flush: deriving sender identity", map[string]string{"MUNSU_ROLE": "general"}, []string{"soldier-flush", "t1"}, false},
@@ -75,10 +76,8 @@ func TestCaptainHomeCommandsIdentityGuard(t *testing.T) {
 					initCLITestHome(t, general)
 					t.Setenv("MUNSU_PARENT_STATUS", general)
 				}
-				if cmd.meta {
-					if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "soldier"}); err != nil {
-						t.Fatal(err)
-					}
+				if cmd.bound {
+					mustBindCLIEndpoint(t, homeDir, "t1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
 				}
 				_, err := runRoot(t, cmd.args...)
 				if marker.refused == "" {

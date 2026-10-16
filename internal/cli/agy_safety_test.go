@@ -284,7 +284,7 @@ func TestAgyGuardBlindTurn(t *testing.T) {
 	// authoritative Task Authority records).
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 
 	// Create stale beat (10 minutes ago)
 	beat := "0 0"

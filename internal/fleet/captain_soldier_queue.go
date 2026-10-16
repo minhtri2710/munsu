@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // SendToSoldierResult describes the outcome of sending a command to a soldier.
@@ -20,8 +21,29 @@ type SendToSoldierResult struct {
 }
 
 type SoldierEndpointCapabilities interface {
-	Busy(home string, meta map[string]string) (bool, error)
-	Send(home string, meta map[string]string, payload string) home.BoundSendResult
+	Busy(home string, ep taskauthority.EndpointBinding, harness string) (bool, error)
+	Send(home string, ep taskauthority.EndpointBinding, payload string) home.BoundSendResult
+}
+
+// soldierEndpoint reads the endpoint the soldier task is canonically bound to
+// and the harness launched into it.
+func soldierEndpoint(homeDir, taskID string) (taskauthority.EndpointBinding, string, error) {
+	agg, err := currentCanonical(homeDir, taskID)
+	if err != nil {
+		return taskauthority.EndpointBinding{}, "", fmt.Errorf("reading soldier task: %w", err)
+	}
+	if agg.Endpoint == nil {
+		return taskauthority.EndpointBinding{}, "", fmt.Errorf("soldier %s has no window endpoint", taskID)
+	}
+	return *agg.Endpoint, launchHarness(agg), nil
+}
+
+// launchHarness is the harness the task's current launch runs, or "".
+func launchHarness(agg taskauthority.Aggregate) string {
+	if agg.Launch == nil {
+		return ""
+	}
+	return agg.Launch.Harness
 }
 
 // SendToSoldier sends a command to a soldier using the mailbox envelope pattern.
@@ -49,15 +71,10 @@ type SoldierEndpointCapabilities interface {
 func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpoint SoldierEndpointCapabilities) *SendToSoldierResult {
 	result := &SendToSoldierResult{}
 
-	// 1. Read soldier task meta for window and backend.
-	meta, err := home.ReadMeta(senderHome, soldierTaskID)
+	// 1. Read the soldier's bound endpoint.
+	ep, harness, err := soldierEndpoint(senderHome, soldierTaskID)
 	if err != nil {
-		result.Err = fmt.Errorf("reading soldier meta: %w", err)
-		return result
-	}
-	windowID := meta["window"]
-	if windowID == "" {
-		result.Err = fmt.Errorf("soldier %s has no window endpoint", soldierTaskID)
+		result.Err = err
 		return result
 	}
 
@@ -97,7 +114,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 		result.Err = fmt.Errorf("soldier endpoint capability is required")
 		return result
 	}
-	busy, busyErr := endpoint.Busy(senderHome, meta)
+	busy, busyErr := endpoint.Busy(senderHome, ep, harness)
 	if busyErr != nil {
 		// Unknown status: fail closed, retain pending.
 		result.Err = fmt.Errorf("checking soldier status: %w", busyErr)
@@ -117,7 +134,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 	}
 	refText := ref.Encode()
 
-	promptResult := endpoint.Send(senderHome, meta, refText)
+	promptResult := endpoint.Send(senderHome, ep, refText)
 	if !promptResult.Acknowledged {
 		// Not acknowledged — pending retained for retry.
 		result.Err = fmt.Errorf("send not acknowledged (status=%s)", promptResult.Status)
@@ -164,15 +181,9 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 		return result // no pending for this soldier
 	}
 
-	// Read soldier meta for window/backend.
-	meta, err := home.ReadMeta(senderHome, soldierTaskID)
+	ep, harness, err := soldierEndpoint(senderHome, soldierTaskID)
 	if err != nil {
-		result.Err = fmt.Errorf("reading soldier meta: %w", err)
-		return result
-	}
-	windowID := meta["window"]
-	if windowID == "" {
-		result.Err = fmt.Errorf("soldier %s has no window endpoint", soldierTaskID)
+		result.Err = err
 		return result
 	}
 
@@ -183,7 +194,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 		result.Err = fmt.Errorf("soldier endpoint capability is required")
 		return result
 	}
-	busy, busyErr := endpoint.Busy(senderHome, meta)
+	busy, busyErr := endpoint.Busy(senderHome, ep, harness)
 	if busyErr != nil {
 		result.Err = fmt.Errorf("checking soldier status: %w", busyErr)
 		return result
@@ -211,7 +222,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 	refText := ref.Encode()
 
-	promptResult := endpoint.Send(senderHome, meta, refText)
+	promptResult := endpoint.Send(senderHome, ep, refText)
 	if !promptResult.Acknowledged {
 		result.Err = fmt.Errorf("flush not acknowledged (status=%s)", promptResult.Status)
 		return result

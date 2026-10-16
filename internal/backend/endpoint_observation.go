@@ -177,10 +177,14 @@ func (s ObservationSource) Valid() bool {
 	return s >= SourceProbe && s <= SourceEvent
 }
 
-// EndpointRef identifies one exact bound endpoint for a typed probe.
+// EndpointRef identifies one exact bound endpoint: its backend, its handle,
+// and the session, workspace and tab the backend placed it in.
 type EndpointRef struct {
-	Backend string
-	Handle  string
+	Backend      string
+	Handle       string
+	SessionOwner string
+	WorkspaceID  string
+	TabID        string
 }
 
 // EndpointObservation is the typed, orthogonal runtime diagnostic of one exact

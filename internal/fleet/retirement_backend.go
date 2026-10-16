@@ -22,13 +22,16 @@ type RetirementEndpointStatus struct {
 	Detail         string
 }
 
+// DisposeRequest names the exact endpoint a retirement disposes, in the home
+// that owns it. DenyWorkspaceClose keeps a workspace another task still uses.
 type DisposeRequest struct {
-	Backend, Handle, SessionOwner, WorkspaceID, TabID, Home, TaskID string
-	DenyWorkspaceClose                                              bool
+	Endpoint           taskauthority.EndpointBinding
+	Home, TaskID       string
+	DenyWorkspaceClose bool
 }
 type BoundTeardown interface {
-	Probe(homeDir string, meta map[string]string) (RetirementEndpointStatus, error)
-	Dispose(homeDir string, meta map[string]string, request DisposeRequest) error
+	Probe(homeDir string, ep taskauthority.EndpointBinding, harness string) (RetirementEndpointStatus, error)
+	Dispose(request DisposeRequest) error
 	ReturnWorktree(homeDir, treehouse, worktreePath string) error
 	QueryMergeStatus(forge taskauthority.DeliveryStep, ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
 }
