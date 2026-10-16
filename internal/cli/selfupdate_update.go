@@ -221,7 +221,7 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 }
 
 // UpdateWithHandshakeEx resolves the install root using the 6-step resolver,
-// persists it, performs the update, and handles the watcher handshake.
+// performs the update, persists the root, and handles the watcher handshake.
 // Returns the snapshot with evidence on success or partial/failure.
 func UpdateWithHandshakeEx(homeDir, repoOpt string) (*WatcherSnapshot, error) {
 	// Step 1: Resolve the install root.
@@ -230,17 +230,17 @@ func UpdateWithHandshakeEx(homeDir, repoOpt string) (*WatcherSnapshot, error) {
 		return nil, err
 	}
 
-	// Step 2: Persist after successful resolution.
-	if persistErr := PersistInstallRoot(homeDir, root); persistErr != nil {
-		// Non-fatal: resolution succeeded, persistence is secondary.
-		fmt.Fprintf(os.Stderr, "warning: failed to persist install root: %v\n", persistErr)
-	}
-
 	snap := snapshotWatcher(homeDir)
 
-	// Step 3: Perform update in the resolved root.
+	// Step 2: Perform update in the resolved root.
 	if err := doUpdateIn(root); err != nil {
 		return snap, err
+	}
+
+	// Step 3: Persist only after a successful update.
+	if persistErr := PersistInstallRoot(homeDir, root); persistErr != nil {
+		// Non-fatal: the update succeeded, persistence is secondary.
+		fmt.Fprintf(os.Stderr, "warning: failed to persist install root: %v\n", persistErr)
 	}
 
 	// Step 4: Set installed version and commit identity from known root.
