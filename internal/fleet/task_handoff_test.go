@@ -246,6 +246,31 @@ func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	}
 }
 
+// TestHandoffCarriesTheWholeDefinition proves the destination re-creates a
+// task with the source definition, only the owner changed: a dropped scout
+// scope leaves a task no launch accepts.
+func TestHandoffCarriesTheWholeDefinition(t *testing.T) {
+	parent, captain := seedHandoffPair(t)
+	src := mustAuthority(t, parent)
+	req := taskauthority.CanonicalCreateRequest{HomeID: src.HomeID(), TaskID: mustTransferTaskID(t, "SCOUT-1"), Owner: "general", Description: "scout", Kind: taskauthority.KindScout, Project: mustTransferProjectID(t, "munsu"), ScoutScope: "map the repo", Reason: "test seed"}
+	if _, err := src.Create(mustTransferOp(t, "seed-create-SCOUT-1", req), req); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	source, err := src.Get(req.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Handoff(parent, captain, []string{"SCOUT-1"}); err != nil {
+		t.Fatalf("Handoff: %v", err)
+	}
+	want := source.Definition
+	want.Owner = "captain:test-sm"
+	if got := mustTransferOwner(t, captain, "SCOUT-1").Definition; got != want {
+		t.Fatalf("destination definition = %+v, want %+v", got, want)
+	}
+}
+
 // TestHandoffCarriesDeliveryContractToDestination proves a transferred task
 // keeps its recorded delivery contract, including the captured forge step,
 // after the full journal -> request -> receive handoff. A drop at any wiring
