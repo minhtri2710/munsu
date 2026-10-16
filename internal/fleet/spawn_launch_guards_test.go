@@ -535,6 +535,7 @@ func TestWaitForHarnessReadyRefusesUnreadableObservation(t *testing.T) {
 	eps := &probeStateEndpoints{state: EndpointUnresponsive}
 	r := &Runner{
 		args:      Args{ID: "ready-unreadable"},
+		launch:    &taskauthority.LaunchIntent{},
 		harness:   "pi",
 		endpoints: eps,
 		endpoint:  CreatedEndpoint{Backend: "tmux", Handle: "pane-1"},

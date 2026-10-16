@@ -378,6 +378,7 @@ func TestCreateSessionUsesProjectPrefixedSoldierTabLabel(t *testing.T) {
 		HomeDir:     t.TempDir(),
 		Endpoints:   fakeEndpointCapabilities{backend: fake},
 	})
+	r.launch = &taskauthority.LaunchIntent{}
 
 	if err := r.createSession(); err != nil {
 		t.Fatalf("createSession: %v", err)
@@ -638,7 +639,7 @@ func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
 				capture: func(windowID string, lines int) (string, error) { return tc.capture, nil },
 			}
 			r := &Runner{
-				harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+				harness: "claude", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 			}
 			err := r.waitForHarnessReady(5)
 			if tc.wantErr == "" {
@@ -661,7 +662,7 @@ func TestWaitForHarnessReady_ReadyPatternSuccess(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness: "pi", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+		harness: "pi", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	if err := r.waitForHarnessReady(5); err != nil {
 		t.Fatalf("expected ready success, got: %v", err)
@@ -675,7 +676,7 @@ func TestWaitForHarnessReady_Timeout(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness: "pi", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+		harness: "pi", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	err := r.waitForHarnessReady(2)
 	if err == nil {
@@ -701,7 +702,7 @@ func TestWaitAndInjectBrief_FailurePatternPreservesAttachedEndpoint(t *testing.T
 	dataDir := filepath.Join(homeDir, "data", "handshake-test")
 	_ = os.MkdirAll(dataDir, 0755)
 	r := &Runner{
-		homeDir: homeDir, harness: "codex", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+		homeDir: homeDir, harness: "codex", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 		briefData: []byte("# test brief"),
 	}
 	r.args.ID = "handshake-test"

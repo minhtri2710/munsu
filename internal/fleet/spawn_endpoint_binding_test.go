@@ -281,7 +281,7 @@ func TestCreateSessionAcceptsStartingObservation(t *testing.T) {
 		created: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
 		probes:  []SpawnEndpointObservation{endpointStatusFromState(EndpointStarting)},
 	}
-	r := &Runner{homeDir: t.TempDir(), endpoints: caps}
+	r := &Runner{homeDir: t.TempDir(), endpoints: caps, launch: &taskauthority.LaunchIntent{}}
 	if err := r.createSession(); err != nil {
 		t.Fatalf("createSession should accept starting endpoint: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestFinalEndpointVerificationRejectsStartingObservation(t *testing.T) {
 		created: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
 		probes:  []SpawnEndpointObservation{endpointStatusFromState(EndpointStarting)},
 	}
-	r := &Runner{homeDir: t.TempDir(), endpoints: caps, endpoint: caps.created, windowID: caps.created.Handle}
+	r := &Runner{homeDir: t.TempDir(), endpoints: caps, launch: &taskauthority.LaunchIntent{}, endpoint: caps.created, windowID: caps.created.Handle}
 	if err := r.verifyEndpointReadyBeforePersist(); err == nil {
 		t.Fatal("final verification should reject starting observation")
 	}
