@@ -10,7 +10,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
@@ -108,9 +107,8 @@ project whose worktree tool entry configures treehouse. Reclaim without
 	reclaimCmd := &cobra.Command{
 		Use:   "reclaim",
 		Short: "Reclaim worktrees not claimed by active tasks",
-		Long: `Reclaim worktrees not referenced by active task metadata or
-canonical task bindings. If task metadata or task authority cannot be read,
-the command aborts without reclaiming anything.
+		Long: `Reclaim worktrees not referenced by canonical task bindings. If task
+authority cannot be read, the command aborts without reclaiming anything.
 
 This command releases only provider-listed worktrees with no task, retirement,
 or launch-reservation claim. A reported lease holder that cannot be reconciled
@@ -293,25 +291,12 @@ func verifyManualWorktreeRelease(worktreePath string) error {
 // activeWorktreeClaims returns the worktree paths held by a task, retirement, or
 // live launch reservation, and the reservation IDs released by canonical
 // retirement. A reservation ID live in any scanned home is never released.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[string]bool, map[string]bool, error) {
 	active := make(map[string]bool)
 	reservedLaunches := make(map[string]bool)
 	releasedLaunches := make(map[string]bool)
 	addHome := func(dir string) error {
-		ids, err := home.ListMetaIDs(dir)
-		if err != nil {
-			return fmt.Errorf("listing task meta in %s: %w", dir, err)
-		}
-		for _, id := range ids {
-			meta, err := home.ReadMeta(dir, id)
-			if err != nil {
-				return fmt.Errorf("reading task meta %q in %s: %w", id, dir, err)
-			}
-			if wt := meta["worktree"]; wt != "" {
-				active[worktreeClaimKey(wt)] = true
-			}
-		}
-
 		auth, err := taskAuthorityForRead(dir)
 		if err != nil {
 			return fmt.Errorf("reading task authority in %s: %w", dir, err)
@@ -341,13 +326,14 @@ func activeWorktreeClaims(homeDir string, entries []backend.WorktreeEntry) (map[
 				return fmt.Errorf("launch reservation %q has no canonical project identity", agg.Launch.WorktreeReservationID)
 			}
 			repoPath, rerr := fleet.ResolveRepoPath(dir, agg.Launch.Project)
-			if rerr == nil {
-				if path, ok := backend.ReservedGitWorktreePath(dir, repoPath, agg.Launch.WorktreeReservationID); ok {
-					active[worktreeClaimKey(path)] = true
-				}
-			} else {
+			if rerr != nil {
 				return fmt.Errorf("resolving project for live worktree reservation %q: %w", agg.Launch.WorktreeReservationID, rerr)
 			}
+			path, perr := backend.ReservedGitWorktreePath(dir, repoPath, agg.Launch.WorktreeReservationID)
+			if perr != nil {
+				return fmt.Errorf("deriving worktree for live reservation %q: %w", agg.Launch.WorktreeReservationID, perr)
+			}
+			active[worktreeClaimKey(path)] = true
 		}
 		return nil
 	}

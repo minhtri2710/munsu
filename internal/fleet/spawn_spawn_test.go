@@ -378,6 +378,7 @@ func TestCreateSessionUsesProjectPrefixedSoldierTabLabel(t *testing.T) {
 		HomeDir:     t.TempDir(),
 		Endpoints:   fakeEndpointCapabilities{backend: fake},
 	})
+	r.launch = &taskauthority.LaunchIntent{}
 
 	if err := r.createSession(); err != nil {
 		t.Fatalf("createSession: %v", err)
@@ -394,22 +395,45 @@ func TestAuthorizeSpawnRejectsRegularSoldier(t *testing.T) {
 	}
 }
 
+// A pane a soldier's current generation holds cannot spawn whatever
+// MUNSU_ROLE says; a pane whose binding was released by retirement is no
+// soldier's, and an unreadable task document refuses.
 func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing.T) {
-	homeDir := t.TempDir()
-	if err := home.WriteMeta(homeDir, "soldier-1", map[string]string{
-		"kind":    "ship",
-		"backend": "herdr",
-		"window":  "default:w1:p9",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HERDR_PANE_ID", "w1:p9")
-	t.Setenv("TMUX_PANE", "")
-	t.Setenv("MUNSU_ROLE", "")
-	r := &Runner{homeDir: homeDir}
-	err := r.checkSpawnAuthority()
-	if err == nil || !strings.Contains(err.Error(), "managed soldier endpoints cannot spawn") {
-		t.Fatalf("checkSpawnAuthority() error = %v, want managed-endpoint refusal", err)
+	const managed = "managed soldier endpoints cannot spawn"
+	const unreadable = "spawn authority: resolving current endpoint"
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, homeDir string)
+		refusal string
+	}{
+		{"blocks a live soldier binding on this pane", func(t *testing.T, homeDir string) {
+			seedBoundSoldierTask(t, homeDir, "soldier-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "default:w1:p9"})
+		}, managed},
+		{"allows a retired soldier binding on this pane", func(t *testing.T, homeDir string) {
+			retireSoldier(t, seedBoundSoldierTask(t, homeDir, "soldier-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "default:w1:p9"}), "soldier-1")
+		}, ""},
+		{"fails closed on an unreadable task document", func(t *testing.T, homeDir string) {
+			seedBoundSoldierTask(t, homeDir, "soldier-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "default:w1:p9"})
+			corruptCanonicalTask(t, homeDir, "soldier-1")
+		}, unreadable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			tc.seed(t, homeDir)
+			t.Setenv("HERDR_PANE_ID", "w1:p9")
+			t.Setenv("TMUX_PANE", "")
+			t.Setenv("MUNSU_ROLE", "")
+			err := (&Runner{homeDir: homeDir}).checkSpawnAuthority()
+			if tc.refusal == "" {
+				if err != nil && (strings.Contains(err.Error(), managed) || strings.Contains(err.Error(), unreadable)) {
+					t.Fatalf("checkSpawnAuthority() = %v, want no managed-endpoint refusal", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+				t.Fatalf("checkSpawnAuthority() = %v, want %q", err, tc.refusal)
+			}
+		})
 	}
 }
 
@@ -432,12 +456,7 @@ func TestCurrentEndpointKindFindsCaptainHerdrPane(t *testing.T) {
 
 func TestCurrentEndpointKindFindsTmuxWindowForPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := home.WriteMeta(homeDir, "soldier-2", map[string]string{
-		"kind":   "ship",
-		"window": "munsu:@7",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	seedBoundSoldierTask(t, homeDir, "soldier-2", taskauthority.EndpointBinding{Backend: "tmux", Handle: "munsu:@7"})
 	original := tmuxWindowForPane
 	t.Cleanup(func() { tmuxWindowForPane = original })
 	tmuxWindowForPane = func(pane string) (string, error) {
@@ -620,7 +639,7 @@ func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
 				capture: func(windowID string, lines int) (string, error) { return tc.capture, nil },
 			}
 			r := &Runner{
-				harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+				harness: "claude", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 			}
 			err := r.waitForHarnessReady(5)
 			if tc.wantErr == "" {
@@ -643,7 +662,7 @@ func TestWaitForHarnessReady_ReadyPatternSuccess(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness: "pi", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+		harness: "pi", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	if err := r.waitForHarnessReady(5); err != nil {
 		t.Fatalf("expected ready success, got: %v", err)
@@ -657,7 +676,7 @@ func TestWaitForHarnessReady_Timeout(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness: "pi", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+		harness: "pi", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	err := r.waitForHarnessReady(2)
 	if err == nil {
@@ -683,7 +702,7 @@ func TestWaitAndInjectBrief_FailurePatternPreservesAttachedEndpoint(t *testing.T
 	dataDir := filepath.Join(homeDir, "data", "handshake-test")
 	_ = os.MkdirAll(dataDir, 0755)
 	r := &Runner{
-		homeDir: homeDir, harness: "codex", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
+		homeDir: homeDir, harness: "codex", launch: &taskauthority.LaunchIntent{}, endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 		briefData: []byte("# test brief"),
 	}
 	r.args.ID = "handshake-test"
@@ -769,16 +788,15 @@ func TestCheckCaptainTaskAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainTaskAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T) {
+func TestCheckCaptainTaskAuthority_AllowsWorkingTaskWithoutBoundEndpoint(t *testing.T) {
 	homeDir := t.TempDir()
-	_ = home.WriteMeta(homeDir, "pre-spawn", map[string]string{"kind": "ship"})
 	r := &Runner{
 		args:      Args{ID: "pre-spawn", Authority: seedSpawnAuthorityPhase(t, "pre-spawn", taskauthority.PhaseWorking)},
 		spawnRole: "captain",
 		homeDir:   homeDir,
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("a working task whose meta has no window must pass the backlog check, got: %v", err)
+		t.Fatalf("a working task with no bound endpoint must pass the backlog check, got: %v", err)
 	}
 }
 
@@ -899,11 +917,6 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Errorf("expected typed observation error, got: %v", err)
 	}
 
-	metaPath := filepath.Join(homeDir, "state", "reconcile-task.meta")
-	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
-		t.Errorf("task meta file should NOT exist on failed verification: %s", metaPath)
-	}
-
 	statusLines, _ := home.ReadStatus(homeDir, "reconcile-task")
 	for _, l := range statusLines {
 		if strings.Contains(l, "working: spawned") {
@@ -936,9 +949,6 @@ func TestSpawn_RefusedFenceAllocatesNoPane(t *testing.T) {
 	}
 	if windows != 0 {
 		t.Fatalf("NewWindow calls = %d, want none before the fence is proven", windows)
-	}
-	if _, statErr := os.Stat(filepath.Join(homeDir, "state", "reconcile-task.meta")); !os.IsNotExist(statErr) {
-		t.Fatalf("a refused launch wrote task meta: %v", statErr)
 	}
 }
 
@@ -1035,82 +1045,17 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 	}
 }
 
-// TestWriteTaskMetaNeverWritesAuthoritativeFields proves the pre-transition
-// side file is a runtime-only projection (Task 7.8 adjudication): when no
-// .meta exists yet it writes no authoritative Task Aggregate fields (kind,
-// project, description, owner, generation, state), and when a projection
-// exists it preserves the authoritative fields rather than overwriting them
-// from spawn args.
-func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "side-file-authoritative"
-	auth := mustCanonical(t)
-	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
-	r := &Runner{
-		homeDir:       homeDir,
-		args:          Args{ID: taskID, ProjectName: "test-proj", Authority: auth},
-		windowID:      "session:pane-1",
-		wtPath:        "/tmp/wt",
-		projPath:      "/tmp/proj",
-		harness:       "pi",
-		effectiveMode: "direct-PR",
-		endpoint:      CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
-	}
-	if err := r.writeTaskMeta(); err != nil {
-		t.Fatalf("writeTaskMeta: %v", err)
-	}
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	// No authoritative fields when there was no existing projection.
-	for _, key := range []string{"kind", "project", "description", "owner", "generation", "state"} {
-		if _, ok := meta[key]; ok {
-			t.Errorf("writeTaskMeta wrote authoritative field %q from spawn args: %v", key, meta)
-		}
-	}
-	if meta["window"] != "session:pane-1" || meta["worktree"] != "/tmp/wt" {
-		t.Fatalf("runtime fields = %v", meta)
-	}
-
-	// With an existing projection, authoritative fields are preserved (they
-	// were derived from the canonical aggregate at task add), never replaced
-	// by the spawn args (kind=scout here must not leak).
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{"kind": "ship", "project": "test-proj", "repo": "keep"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.writeTaskMeta(); err != nil {
-		t.Fatalf("writeTaskMeta second pass: %v", err)
-	}
-	meta, err = home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta["kind"] != "ship" || meta["project"] != "test-proj" {
-		t.Fatalf("authoritative fields clobbered by spawn args: %v", meta)
-	}
-	if meta["repo"] != "keep" {
-		t.Fatalf("runtime projection field lost: %v", meta)
-	}
-}
-
 // TestCheckBacklogAuthorityRequiresCanonicalAggregate proves the spawn
 // backlog shim no longer creates a legacy home aggregate (Task 7.8): the
 // task must already have a canonical Task Authority record, and spawn fails
 // closed otherwise without writing any v1 aggregate state.
 func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	homeDir := t.TempDir()
-	// The canonical home must be initialized before the projection is written
-	// so the composed canonical Authority is bound to the same home the
-	// projection reads.
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	// Meta exists, but the Authority has no record: the query must fail
-	// closed on the absent canonical aggregate (no legacy fallback).
-	if err := home.WriteMeta(homeDir, "no-agg", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	// The Authority has no record: the query must fail closed on the absent
+	// canonical aggregate.
 	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
 	if err != nil {
 		t.Fatal(err)

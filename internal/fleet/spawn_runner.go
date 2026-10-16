@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -162,8 +161,8 @@ func (r *Runner) authorizeEndpoint(obs SpawnEndpointObservation, ep CreatedEndpo
 		backend:     ep.Backend,
 		handle:      ep.Handle,
 		incarnation: ep.Incarnation,
-		leaseID:     r.epReservationID(),
-		fenceToken:  r.epFenceToken(),
+		leaseID:     r.launch.EndpointReservationID,
+		fenceToken:  r.launch.EndpointFenceToken,
 		generation:  gen,
 		revision:    rev,
 		acquired:    true, // in-process creation receipt or durable AcquiredEndpoint
@@ -374,9 +373,6 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
 		return taskauthority.Outcome{}, err
 	}
-	if err := r.writeTaskMeta(); err != nil {
-		return taskauthority.Outcome{}, err
-	}
 	return r.confirmSpawn()
 }
 
@@ -498,6 +494,10 @@ var tmuxWindowForPane = func(pane string) (string, error) {
 	return window, nil
 }
 
+// currentEndpointKind is the kind of the task or captain whose pane this
+// process runs in: a soldier's from its canonical binding, a captain's from
+// its .meta.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func currentEndpointKind(homeDir string) (string, bool, error) {
 	herdrPane := strings.TrimSpace(os.Getenv("HERDR_PANE_ID"))
 	tmuxPane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
@@ -512,33 +512,35 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 			return "", false, err
 		}
 	}
-	entries, err := os.ReadDir(home.StateDir(homeDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", false, nil
+	runsIn := func(backendName, handle string) bool {
+		if herdrPane != "" && backendName == "herdr" && strings.HasSuffix(handle, ":"+herdrPane) {
+			return true
 		}
+		return tmuxWindow != "" && (handle == tmuxWindow || strings.HasSuffix(handle, ":"+tmuxWindow))
+	}
+	held, err := heldEndpoints(homeDir, home.OpenCommitted)
+	if err != nil {
 		return "", false, err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
+	for _, h := range held {
+		if runsIn(h.Endpoint.Backend, h.Endpoint.Handle) {
+			return h.Kind, true, nil
 		}
-		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
+	}
+	ids, err := home.ListMetaIDs(homeDir)
+	if err != nil {
+		return "", false, err
+	}
+	for _, id := range ids {
+		if !strings.HasPrefix(id, "captain:") {
 			continue
 		}
 		meta, err := home.ReadMeta(homeDir, id)
 		if err != nil {
 			continue
 		}
-		if herdrPane != "" && meta["backend"] == "herdr" && strings.HasSuffix(meta["window"], ":"+herdrPane) {
+		if runsIn(meta["backend"], meta["window"]) {
 			return meta["kind"], true, nil
-		}
-		if tmuxWindow != "" {
-			window := meta["window"]
-			if window == tmuxWindow || strings.HasSuffix(window, ":"+tmuxWindow) {
-				return meta["kind"], true, nil
-			}
 		}
 	}
 	return "", false, nil
@@ -1334,7 +1336,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 	}
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	if agg.Worktree != nil {
-		if r.launch != nil && (agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken) {
+		if agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken {
 			return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: committed worktree binding does not match the launch worktree reservation fence; refuse")
 		}
 		// The adopted path is re-classified, not trusted. The fence proves the
@@ -1351,13 +1353,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 		r.cwd, r.launchDir = bw.Path(), bw.Path()
 		return bw, nil
 	}
-	var leaseID, fenceToken string
-	if r.launch != nil {
-		leaseID, fenceToken = r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken
-	} else {
-		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
-	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken, r.launchWorktreeTool())
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken, r.launchWorktreeTool())
 	if err != nil {
 		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
@@ -1592,8 +1588,8 @@ func (r *Runner) createSession() error {
 		PreferredBackend: backendName,
 		TabName:          tabName,
 		Cwd:              r.cwd,
-		ReservationID:    r.epReservationID(),
-		FenceToken:       r.epFenceToken(),
+		ReservationID:    r.launch.EndpointReservationID,
+		FenceToken:       r.launch.EndpointFenceToken,
 	}
 	// The mandatory reservation-aware create contract find-or-creates the
 	// endpoint under the exact reservation on EVERY call (first attempt AND
@@ -1738,7 +1734,7 @@ func (r *Runner) attachEndpoint() error {
 			a.SessionOwner != r.endpoint.SessionOwner || a.WorkspaceID != r.endpoint.WorkspaceID || a.TabID != r.endpoint.TabID || a.Incarnation != r.endpoint.Incarnation {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint %s/%s does not match created endpoint %s/%s; refuse", a.Backend, a.Handle, r.endpoint.Backend, r.endpoint.Handle)
 		}
-		if r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken) {
+		if a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint does not match the launch endpoint reservation fence; refuse")
 		}
 		return nil
@@ -1749,8 +1745,8 @@ func (r *Runner) attachEndpoint() error {
 		Precondition: prec,
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      r.epReservationID(),
-		FenceToken:   r.epFenceToken(),
+		LeaseID:      r.launch.EndpointReservationID,
+		FenceToken:   r.launch.EndpointFenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
@@ -2133,7 +2129,7 @@ func (r *Runner) submitLaunch() error {
 			WorktreePath: r.cwd, LaunchDir: r.launchDir, Review: r.review, HomeDir: r.homeDir,
 			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
-			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
+			EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence, PathDirs: r.seatPath,
 			SeatEnv: r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
@@ -2250,7 +2246,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID, TaskKind: r.kind,
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
-		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence,
 		PathDirs: r.seatPath,
 		SeatEnv:  r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 	})
@@ -2375,7 +2371,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			// Ambiguous readings are never "died" (unknown != dead).
 			if dead := authorizeAbsence(status, exactEndpointProof{
 				backend: r.endpoint.Backend, handle: r.endpoint.Handle, incarnation: r.endpoint.Incarnation,
-				leaseID: r.epReservationID(), fenceToken: r.epFenceToken(),
+				leaseID: r.launch.EndpointReservationID, fenceToken: r.launch.EndpointFenceToken,
 				generation: gen, revision: rev,
 			}); dead.Absent() {
 				return fmt.Errorf("window died while waiting for ready")
@@ -2492,20 +2488,16 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
-		if r.launch != nil && (agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken) {
+		if agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken {
 			return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: committed endpoint binding does not match the launch endpoint reservation fence; refuse")
 		}
 		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
 	}
-	leaseID, fenceToken := r.epReservationID(), r.epFenceToken()
-	if r.launch == nil {
-		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
-	}
 	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      leaseID,
-		FenceToken:   fenceToken,
+		LeaseID:      r.launch.EndpointReservationID,
+		FenceToken:   r.launch.EndpointFenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
@@ -2528,70 +2520,6 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	return out, nil
-}
-
-// epReservationID and epFenceToken return the launch intent's one-time
-// endpoint reservation identities (empty when no intent is committed).
-func (r *Runner) epReservationID() string {
-	if r.launch != nil {
-		return r.launch.EndpointReservationID
-	}
-	return ""
-}
-
-func (r *Runner) epFenceToken() string {
-	if r.launch != nil {
-		return r.launch.EndpointFenceToken
-	}
-	return ""
-}
-
-func newEndpointToken() string {
-	buf := make([]byte, 16)
-	// crypto/rand.Read cannot return an error: since Go 1.24 it terminates the
-	// process instead of reporting failure, so there is no branch to take.
-	rand.Read(buf)
-	return fmt.Sprintf("%x", buf)
-}
-
-// Phase 14: writeTaskMeta writes the task metadata file. The side file is a
-// pre-transition runtime observation projection (Task 4.2, Task 7.8
-// adjudication): it carries the runtime-only fields that describe the live
-// soldier session (window, worktree, harness, backend, mode, yolo, model,
-// endpoint metadata) and never
-// acts as a writer of record for authoritative Task Aggregate fields (kind,
-// project, description, owner, generation, state). Existing projection
-// fields are preserved; runtime fields are overlaid. Nothing reconciles
-// Authoritative fields into it: readers take them from the canonical aggregate.
-func (r *Runner) writeTaskMeta() error {
-	yoloVal := "off"
-	if r.args.Yolo {
-		yoloVal = "on"
-	}
-	err := home.UpdateMeta(r.homeDir, r.args.ID, func(meta map[string]string) error {
-		put := func(k, v string) {
-			if v != "" {
-				meta[k] = v
-			}
-		}
-		put("window", r.windowID)
-		put("worktree", r.wtPath)
-		put("harness", r.harness)
-		put("backend", r.endpoint.Backend)
-		put("mode", r.effectiveMode)
-		put("yolo", yoloVal)
-		if r.model != "" {
-			put("model", r.model)
-		}
-		put(backend.MetaSessionOwner, r.endpoint.SessionOwner)
-		put(backend.MetaWorkspaceID, r.endpoint.WorkspaceID)
-		put(backend.MetaTabID, r.endpoint.TabID)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("writing task meta: %w", err)
-	}
-	return nil
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

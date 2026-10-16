@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-func TestDigesterFlushAccumulatesAcrossWindowsAndDrains(t *testing.T) {
+func TestDigesterFlushAccumulatesAcrossFlushesAndDrains(t *testing.T) {
 	home := t.TempDir()
 	d := NewDigester(home)
-	firstFlush := time.Now().Add(defaultWindow + time.Second)
+	firstFlush := time.Now()
 
 	d.Feed(&Digest{Routines: []WakeDigest{{Kind: "status", Key: "first", Payload: "first window"}}})
 	if err := d.Flush(firstFlush); err != nil {
@@ -19,7 +19,7 @@ func TestDigesterFlushAccumulatesAcrossWindowsAndDrains(t *testing.T) {
 	}
 
 	d.Feed(&Digest{Escalated: []WakeDigest{{Kind: "signal", Key: "second", Payload: "PR merged"}}})
-	if err := d.Flush(firstFlush.Add(defaultWindow + time.Second)); err != nil {
+	if err := d.Flush(firstFlush.Add(time.Second)); err != nil {
 		t.Fatalf("second Flush: %v", err)
 	}
 
@@ -58,7 +58,7 @@ func TestDigesterFlushRejectsCorruptExistingDigestAndRetainsEntries(t *testing.T
 
 	d := NewDigester(home)
 	d.Feed(&Digest{Routines: []WakeDigest{{Kind: "status", Key: "retained", Payload: "keep me"}}})
-	if err := d.Flush(time.Now().Add(defaultWindow + time.Second)); err == nil {
+	if err := d.Flush(time.Now()); err == nil {
 		t.Fatal("Flush with corrupt existing digest succeeded")
 	}
 
@@ -73,7 +73,7 @@ func TestDigesterFlushRejectsCorruptExistingDigestAndRetainsEntries(t *testing.T
 	if err := os.Remove(digestPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Flush(time.Now().Add(2*defaultWindow + time.Second)); err != nil {
+	if err := d.Flush(time.Now()); err != nil {
 		t.Fatalf("Flush after corrupt digest removal: %v", err)
 	}
 	data, err = os.ReadFile(digestPath)
@@ -102,13 +102,13 @@ func TestDigesterFlushKeepsEntriesWhenTheWriteFails(t *testing.T) {
 
 	d := NewDigester(home)
 	d.Feed(&Digest{Routines: []WakeDigest{{Kind: "status", Key: "retained", Payload: "keep me"}}})
-	if err := d.Flush(time.Now().Add(defaultWindow + time.Second)); err == nil {
+	if err := d.Flush(time.Now()); err == nil {
 		t.Fatal("Flush into a read-only state dir succeeded")
 	}
 	if err := os.Chmod(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Flush(time.Now().Add(2*defaultWindow + time.Second)); err != nil {
+	if err := d.Flush(time.Now()); err != nil {
 		t.Fatalf("Flush after the write failure: %v", err)
 	}
 	be, err := drainDigest(home, func(*BatchedEscalation) {})

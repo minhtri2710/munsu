@@ -99,6 +99,9 @@ func newConfigDispatchSetDefaultCmd() *cobra.Command {
 		Short: "Set default harness (and optional model) for dispatch",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseFleetBaseWriteInCaptainHome(ctx.Home, "config dispatch set-default"); err != nil {
+				return err
+			}
 			hName := args[0]
 			if err := harness.ValidateHarness(hName); err != nil {
 				return fmt.Errorf("set-default: %w", err)
@@ -152,6 +155,9 @@ plan scaffold for a weaker or cheaper runtime.
 If a profile with the same name exists, pass --replace to overwrite it.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseFleetBaseWriteInCaptainHome(ctx.Home, "config dispatch add"); err != nil {
+				return err
+			}
 			if name == "" {
 				return fmt.Errorf("add: --name is required")
 			}
@@ -233,6 +239,9 @@ func newConfigDispatchRmCmd() *cobra.Command {
 		Short: "Remove a named dispatch profile",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseFleetBaseWriteInCaptainHome(ctx.Home, "config dispatch rm"); err != nil {
+				return err
+			}
 			name := args[0]
 			base, err := config.LoadFleetBase(ctx.Home)
 			if err != nil {
@@ -272,6 +281,9 @@ func newConfigDispatchClearCmd() *cobra.Command {
 		Short: "Clear all dispatch profiles from the fleet base document",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseFleetBaseWriteInCaptainHome(ctx.Home, "config dispatch clear"); err != nil {
+				return err
+			}
 			base, err := config.LoadFleetBase(ctx.Home)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {

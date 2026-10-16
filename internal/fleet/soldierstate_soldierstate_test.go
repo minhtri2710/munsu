@@ -17,8 +17,7 @@ import (
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
 func setHomeEnv(t *testing.T, path string) {
 	t.Helper()
-	os.Setenv("MUNSU_HOME", path)
-	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
+	t.Setenv("MUNSU_HOME", path)
 }
 
 // seedCanonicalPhase creates one canonical task at the given phase through
@@ -102,30 +101,6 @@ func TestRead_MissingCanonicalFailsClosed(t *testing.T) {
 	}
 }
 
-// TestRead_MetaOnlyTaskFailsClosed proves a task-facing .meta without a
-// canonical record is not observed as lifecycle state: it fails closed.
-func TestRead_MetaOnlyTaskFailsClosed(t *testing.T) {
-	tmp := t.TempDir()
-	if _, err := home.Init(tmp); err != nil {
-		t.Fatal(err)
-	}
-	setHomeEnv(t, tmp)
-	if err := home.WriteMeta(tmp, "meta-only", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.AppendStatus(tmp, "meta-only", "done: completed without canonical record"); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := ReadWithProbe(tmp, "meta-only", nil)
-	if err == nil {
-		t.Fatal("meta-only task observation = nil, want fail-closed")
-	}
-	if !strings.Contains(err.Error(), "meta-only") || !testutil.PathInMessage(err.Error(), tmp) {
-		t.Errorf("error must carry task and home context, got: %v", err)
-	}
-}
-
 // TestRead_CanonicalPhaseWinsOverStaleStatus proves the canonical phase is the
 // only lifecycle authority: a stale .status tail cannot change it.
 func TestRead_CanonicalPhaseWinsOverStaleStatus(t *testing.T) {
@@ -151,9 +126,9 @@ func TestRead_CanonicalPhaseWinsOverStaleStatus(t *testing.T) {
 	}
 }
 
-// TestRead_CanonicalWithoutMetaSucceeds proves a canonical task with no .meta
-// projection is still observed from its authoritative phase.
-func TestRead_CanonicalWithoutMetaSucceeds(t *testing.T) {
+// TestRead_CanonicalWorkingIsObserved proves a canonical task is observed
+// from its authoritative phase.
+func TestRead_CanonicalWorkingIsObserved(t *testing.T) {
 	tmp := t.TempDir()
 	if _, err := home.Init(tmp); err != nil {
 		t.Fatal(err)
@@ -179,9 +154,6 @@ func TestRead_CanonicalWorkingUnaffectedByDeadProbe(t *testing.T) {
 	}
 	setHomeEnv(t, tmp)
 	seedCanonicalPhase(t, tmp, "working", taskauthority.PhaseWorking)
-	if err := home.WriteMeta(tmp, "working", map[string]string{"window": "@win"}); err != nil {
-		t.Fatal(err)
-	}
 
 	s, err := ReadWithProbe(tmp, "working", deadProbe{})
 	if err != nil {

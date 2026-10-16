@@ -8,18 +8,12 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ReviewDiff runs `munsu review-diff` for the given task.
 // It compares the soldier branch against the authoritative base and prints
 // a Markdown diff summary against the worktree's default branch.
 func ReviewDiff(homeDir string, id string) error {
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		return fmt.Errorf("reading task %s meta: %w", id, err)
-	}
-
 	agg, err := currentCanonical(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("reading task %s: %w", id, err)
@@ -28,10 +22,10 @@ func ReviewDiff(homeDir string, id string) error {
 		return fmt.Errorf("task %s has no project", id)
 	}
 
-	worktreePath, ok := meta["worktree"]
-	if !ok || worktreePath == "" {
-		return fmt.Errorf("task %s has no worktree path in meta", id)
+	if agg.Worktree == nil || agg.Worktree.Path == "" {
+		return fmt.Errorf("task %s has no bound worktree", id)
 	}
+	worktreePath := agg.Worktree.Path
 
 	// Check worktree exists
 	if _, err := os.Stat(worktreePath); err != nil {

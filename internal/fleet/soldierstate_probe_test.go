@@ -4,10 +4,8 @@ package fleet
 
 import (
 	"errors"
-	"os"
 	"testing"
 
-	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -39,7 +37,7 @@ func TestReadWithProbeProbesTheCanonicalBinding(t *testing.T) {
 }
 
 // TestReadWithProbeProbesUnboundAcquiredEndpoint probes the pane a launch
-// acquired but never bound, which wrote no .meta, until the task retires.
+// acquired but never bound, until the task retires.
 func TestReadWithProbeProbesUnboundAcquiredEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -62,9 +60,6 @@ func TestReadWithProbeProbesUnboundAcquiredEndpoint(t *testing.T) {
 				if agg := f.aggregate(); agg.Phase != taskauthority.PhaseRetired || agg.AcquiredEndpoint == nil {
 					t.Fatalf("fixture phase %q acquired %v, want retired still naming the acquired endpoint", agg.Phase, agg.AcquiredEndpoint)
 				}
-			}
-			if _, err := mhome.ReadMeta(f.homeDir, f.taskID); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("fixture meta read = %v, want none", err)
 			}
 			probe := &stateProbe{alive: true}
 			state, err := ReadWithProbe(f.homeDir, f.taskID, probe)

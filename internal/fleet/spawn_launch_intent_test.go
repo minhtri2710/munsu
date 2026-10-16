@@ -114,7 +114,7 @@ func (f *reentrantEndpointCapabilities) submitCount() int {
 // tests. It drives the REAL production phases (beginLaunchIntent,
 // acquireWorktree, bindWorktree, buildSoldierPrompt, createSession,
 // attachEndpoint, submitLaunch, writeLaunchManifest, waitAndInjectBrief,
-// verifyEndpointReadyBeforePersist, writeTaskMeta, confirmSpawn) against a
+// verifyEndpointReadyBeforePersist, confirmSpawn) against a
 // canonical home with a real git worktree and a counting
 // reservation-aware endpoint capability.
 type launchFixture struct {
@@ -267,7 +267,6 @@ func runLaunchPhases(f *launchFixture, crashAfter string) error {
 		{"submit", r.submitLaunch},
 		{"ready", r.waitAndInjectBrief},
 		{"verify", r.verifyEndpointReadyBeforePersist},
-		{"meta", r.writeTaskMeta},
 		{"confirm", func() error {
 			_, err := r.confirmSpawn()
 			return err
@@ -310,7 +309,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
-		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence,
 		PathDirs: r.seatPath, TaskKind: r.kind,
 		HomeID: f.auth.HomeID().Value(), SeatEnv: testSeatEnv(),
 	})

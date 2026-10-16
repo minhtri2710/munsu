@@ -211,6 +211,8 @@ function runProcess(command, args) {
 }
 
 export const MunsuSessionstartNudge = async ({ client, directory, worktree }) => {
+  // In-memory guard: prevents concurrent duplicate processing.
+  const inMemory = new Set();
   return {
     event: async ({ event }) => {
       if (event.type !== "session.created") return;
@@ -221,8 +223,6 @@ export const MunsuSessionstartNudge = async ({ client, directory, worktree }) =>
       const durable = loadNudgedSessions();
       if (durable.has(sessionID)) return;
 
-      // In-memory guard: prevents concurrent duplicate processing.
-      const inMemory = new Set();
       if (inMemory.has(sessionID)) return;
       inMemory.add(sessionID);
 

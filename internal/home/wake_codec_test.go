@@ -25,7 +25,6 @@ func TestWakePayloadRoundTripsThroughEveryDrainPath(t *testing.T) {
 	}{
 		{name: "all", drain: drainWakeDirect},
 		{name: "kind", drain: drainWakeOfKind},
-		{name: "excluding kind", drain: drainWakeExcludingKind},
 		{name: "claim", drain: drainWakeClaim},
 		{name: "reclaim", drain: drainWakeReclaim},
 	}
@@ -69,17 +68,6 @@ func drainWakeDirect(home string) (string, error) {
 
 func drainWakeOfKind(home string) (string, error) {
 	records, err := DrainWakesOfKind(home, "signal")
-	if err != nil {
-		return "", err
-	}
-	if len(records) != 1 {
-		return "", gotWakeCountError(len(records))
-	}
-	return records[0].Payload, nil
-}
-
-func drainWakeExcludingKind(home string) (string, error) {
-	records, err := DrainWakesExcludingKind(home, ProcessEventWakeKind)
 	if err != nil {
 		return "", err
 	}

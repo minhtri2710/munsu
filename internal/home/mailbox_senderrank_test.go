@@ -1,6 +1,8 @@
 package home
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,12 +34,27 @@ func namedHome(t *testing.T, identity string) string {
 	return dir
 }
 
-// hostSoldier records the durable task the home holds for a soldier it
-// dispatched. This is the record the derivation reads.
+// hostSoldier records that the home hosts a live seat for a soldier it
+// dispatched. seatsOf answers from these records, standing in for the Task
+// Authority check the CLI injects.
 func hostSoldier(t *testing.T, homeDir, taskID string) {
 	t.Helper()
-	if err := WriteMeta(homeDir, taskID, map[string]string{"window": "w"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
+	dir := filepath.Join(homeDir, "test-seats")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll seats: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, url.PathEscape(taskID)), nil, 0600); err != nil {
+		t.Fatalf("WriteFile seat: %v", err)
+	}
+}
+
+func seatsOf(homeDir string) SoldierSeatCheck {
+	return func(taskID string) error {
+		info, err := os.Stat(filepath.Join(homeDir, "test-seats", url.PathEscape(taskID)))
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("home %s hosts no live soldier seat for task %q", homeDir, taskID)
+		}
+		return nil
 	}
 }
 
@@ -83,7 +100,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				configureParent(t, dir, namedHome(t, senderRankGeneralID))
-				r, err := NewReceiver(dir)
+				r, err := NewReceiver(dir, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
 				}
@@ -107,7 +124,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				configureParent(t, dir, namedHome(t, senderRankGeneralID))
-				r, err := NewReceiver(dir)
+				r, err := NewReceiver(dir, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
 				}
@@ -134,7 +151,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				hostCaptain(t, dir, senderRankCaptainID, captainHome)
-				r, err := NewReceiver(dir)
+				r, err := NewReceiver(dir, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
 				}
@@ -157,7 +174,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewReceiver(dir)
+				r, err := NewReceiver(dir, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
 				}
@@ -179,7 +196,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankGeneralID)
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewReceiver(dir)
+				r, err := NewReceiver(dir, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewReceiver: %v", err)
 				}
@@ -202,7 +219,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 					t.Fatalf("SeedCaptainProvenance: %v", err)
 				}
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewSoldierReceiver(dir, senderRankTaskID)
+				r, err := NewSoldierReceiver(dir, senderRankTaskID, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewSoldierReceiver: %v", err)
 				}
@@ -222,7 +239,7 @@ func TestSenderRankDerivesForEveryHopTheTopologiesProduce(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, string) {
 				dir := namedHome(t, senderRankGeneralID)
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewSoldierReceiver(dir, senderRankTaskID)
+				r, err := NewSoldierReceiver(dir, senderRankTaskID, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewSoldierReceiver: %v", err)
 				}
@@ -263,7 +280,7 @@ func TestSenderRankAcceptsCollidingCaptainAndSoldierClaims(t *testing.T) {
 	}
 	hostCaptain(t, generalHome, "task_relay", captainHome)
 	hostSoldier(t, generalHome, "task:relay")
-	r, err := NewReceiver(generalHome)
+	r, err := NewReceiver(generalHome, seatsOf(generalHome))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +306,7 @@ func newCaptainReceiver(t *testing.T) (*Receiver, string) {
 	if err := SeedCaptainProvenance(dir, senderRankCaptainID); err != nil {
 		t.Fatalf("SeedCaptainProvenance: %v", err)
 	}
-	r, err := NewReceiver(dir)
+	r, err := NewReceiver(dir, seatsOf(dir))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -300,7 +317,7 @@ func newCaptainReceiver(t *testing.T) (*Receiver, string) {
 func newGeneralReceiver(t *testing.T) (*Receiver, string) {
 	t.Helper()
 	dir := namedHome(t, senderRankGeneralID)
-	r, err := NewReceiver(dir)
+	r, err := NewReceiver(dir, seatsOf(dir))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
@@ -406,7 +423,7 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, string, *Envelope) {
 				dir := namedHome(t, senderRankGeneralID)
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewSoldierReceiver(dir, senderRankTaskID)
+				r, err := NewSoldierReceiver(dir, senderRankTaskID, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewSoldierReceiver: %v", err)
 				}
@@ -424,7 +441,7 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, string, *Envelope) {
 				dir := namedHome(t, "hosting-home")
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewSoldierReceiver(dir, senderRankTaskID)
+				r, err := NewSoldierReceiver(dir, senderRankTaskID, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewSoldierReceiver: %v", err)
 				}
@@ -482,7 +499,7 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 			build: func(t *testing.T) (*Receiver, string, *Envelope) {
 				dir := namedHome(t, senderRankGeneralID)
 				hostSoldier(t, dir, senderRankTaskID)
-				r, err := NewSoldierReceiver(dir, senderRankTaskID)
+				r, err := NewSoldierReceiver(dir, senderRankTaskID, seatsOf(dir))
 				if err != nil {
 					t.Fatalf("NewSoldierReceiver: %v", err)
 				}
@@ -526,23 +543,6 @@ func TestSenderRankRefusesWhatProvenanceContradicts(t *testing.T) {
 				}
 			},
 			wantSub: "soldier sender identity does not match",
-		},
-		{
-			name: "a soldier claim under a captain task",
-			build: func(t *testing.T) (*Receiver, string, *Envelope) {
-				r, dir := newGeneralReceiver(t)
-				captainTask := "captain:" + senderRankCaptainID
-				if err := WriteMeta(dir, captainTask, map[string]string{"kind": "captain", "home": "/missing"}); err != nil {
-					t.Fatal(err)
-				}
-				return r, dir, &Envelope{
-					SenderRank: RankSoldier, SenderIdentity: ReceiverIDForTask(captainTask),
-					ReceiverRank: RankGeneral, ReceiverID: senderRankGeneralID,
-					TaskID: captainTask, Key: "phase",
-					Payload: "claims soldier",
-				}
-			},
-			wantSub: "soldier sender provenance names a captain task",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
