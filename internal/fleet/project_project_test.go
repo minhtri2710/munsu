@@ -366,18 +366,17 @@ func TestResolveAdhoc_InGitRepo(t *testing.T) {
 		_ = cfg.Run()
 	}
 
-	// ResolveAdhoc should succeed and return the dir basename as project name
+	t.Chdir(tmp)
 	p, err := ResolveAdhoc()
 	if err != nil {
 		t.Fatalf("ResolveAdhoc in git repo should succeed, got: %v", err)
 	}
-	// p.Name should be "munsu" since that's the worktree root basename
-	// but we mainly care that it succeeded and returned a valid project
-	if p.Name == "" {
-		t.Error("ResolveAdhoc returned empty name")
+	want, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if p.Path == "" {
-		t.Error("ResolveAdhoc returned empty path")
+	if p.Path != want || p.Name != filepath.Base(want) {
+		t.Errorf("ResolveAdhoc = %q (%q), want the fixture repo %q (%q)", p.Path, p.Name, want, filepath.Base(want))
 	}
 }
 
