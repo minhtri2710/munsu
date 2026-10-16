@@ -11,15 +11,6 @@ import (
 
 // --- Digester tests ---
 
-func TestDigesterFeedNilDigest(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-	d.Feed(nil) // should not panic
-	if d.ShouldFlush(time.Now()) {
-		t.Error("ShouldFlush = true after nil feed, want false")
-	}
-}
-
 func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 	tmp := t.TempDir()
 	d := NewDigester(tmp)
@@ -35,19 +26,7 @@ func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 	}
 	d.Feed(digest)
 
-	// Should not flush immediately (window not elapsed).
-	now := time.Now()
-	if d.ShouldFlush(now) {
-		t.Error("ShouldFlush = true immediately after feed, want false")
-	}
-
-	// Force flush by advancing the clock past the window.
-	future := now.Add(defaultWindow + time.Second)
-	if !d.ShouldFlush(future) {
-		t.Error("ShouldFlush = false after window elapsed, want true")
-	}
-
-	if err := d.Flush(future); err != nil {
+	if err := d.Flush(time.Now()); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
 
@@ -94,6 +73,7 @@ func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 func TestDigesterFlushEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	d := NewDigester(tmp)
+	d.Feed(nil)
 	if err := d.Flush(time.Now()); err != nil {
 		t.Fatalf("Flush on empty digester: %v", err)
 	}
@@ -115,7 +95,7 @@ func TestDigesterMultipleDigests(t *testing.T) {
 		Routines: []WakeDigest{{Kind: "check", Key: "t2", Payload: "ok"}},
 	})
 
-	now := time.Now().Add(defaultWindow + time.Second)
+	now := time.Now()
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -156,7 +136,7 @@ func TestDigesterConcurrentSafe(t *testing.T) {
 	<-done1
 	<-done2
 
-	now := time.Now().Add(defaultWindow + time.Second)
+	now := time.Now()
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush after concurrent feeds: %v", err)
 	}

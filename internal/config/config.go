@@ -20,7 +20,6 @@ var KnownKeys = []string{
 	"model-allowlist",
 	"wake-delivery-mode",
 	"general-pane",
-	"afk-digest-window",
 	"seat-silent-after",
 	"seat-repeat-nudge",
 	"seat-repeat-end",
