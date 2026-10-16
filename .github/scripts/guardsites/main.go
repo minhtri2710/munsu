@@ -12,7 +12,8 @@
 //	func       stable owner identity: top-level function/method or package variable
 //	           initialized by a function literal (`Type.Method` for methods)
 //	nth        1-based occurrence of this exact predicate in this owner
-//	predicate  the `if` condition, or `default` for a refusing switch default
+//	predicate  the `if` condition, `!(<condition>)` for a refusing `else` block,
+//	           or `default` for a refusing switch default
 //	body       source range of the refusal body, `start-end` as `line.col`
 //	entries    body-start and first-statement coordinates, comma-separated
 //
@@ -313,19 +314,15 @@ func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockS
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch stmt := n.(type) {
 		case *ast.IfStmt:
-			if !isLegacyRefusal(stmt.Body) || !isSelfOriginating(r, abs, fset, stmt.Init, stmt.Cond) {
+			if !isSelfOriginating(r, abs, fset, stmt.Init, stmt.Cond) {
 				return true
 			}
-			pos := fset.Position(stmt.Body.Lbrace)
-			*rows = append(*rows, site{
-				File:      file,
-				Func:      owner,
-				Predicate: exprText(src, fset, stmt.Cond),
-				Body:      sourceRange(fset, stmt.Body),
-				Entries:   entryPoints(fset, stmt.Body),
-				line:      pos.Line,
-				col:       pos.Column,
-			})
+			cond := exprText(src, fset, stmt.Cond)
+			appendIfSite(rows, stmt.Body, owner, file, cond, fset)
+			// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: guardsites registers refusing else-blocks)
+			if elseBody, ok := stmt.Else.(*ast.BlockStmt); ok {
+				appendIfSite(rows, elseBody, owner, file, "!("+cond+")", fset)
+			}
 		case *ast.SwitchStmt:
 			if switchSelfOriginating(r, abs, fset, stmt) {
 				appendDefaultSites(r, abs, rows, stmt.Body, owner, file, fset)
@@ -336,6 +333,22 @@ func appendFunctionSites(r *resolver, abs string, rows *[]site, body *ast.BlockS
 			}
 		}
 		return true
+	})
+}
+
+func appendIfSite(rows *[]site, body *ast.BlockStmt, owner, file, predicate string, fset *token.FileSet) {
+	if !isLegacyRefusal(body) {
+		return
+	}
+	pos := fset.Position(body.Lbrace)
+	*rows = append(*rows, site{
+		File:      file,
+		Func:      owner,
+		Predicate: predicate,
+		Body:      sourceRange(fset, body),
+		Entries:   entryPoints(fset, body),
+		line:      pos.Line,
+		col:       pos.Column,
 	})
 }
 
