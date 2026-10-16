@@ -42,7 +42,7 @@ func mergeStatusIdentity() domain.DeliveryIdentity {
 }
 
 // inFlightGitHubDelivery leaves t1 as pr-merge does between authorizing and
-// merging: a delivery authorization, no outcome, and no pr_* keys in .meta.
+// merging: a delivery authorization and no outcome.
 func inFlightGitHubDelivery(t *testing.T) string {
 	t.Helper()
 	c, homeDir := newFleetCanonical(t)

@@ -41,7 +41,7 @@ reviewed task, over a tree that did not move during the review. A later verdict
 replaces the earlier one.`,
 		Args: ExactArgs(0),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, reviewerTask)
+			taskHome, err := fleet.ResolveTaskHome(ctx.Home, reviewerTask)
 			if err != nil {
 				return fmt.Errorf("record-verdict %s: %w", reviewerTask, err)
 			}
@@ -211,7 +211,7 @@ failed, re-running pr-merge resumes the teardown only.`,
 			prURL := args[1]
 			extra := args[2:]
 
-			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, id)
+			taskHome, err := fleet.RequireShipTask(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}

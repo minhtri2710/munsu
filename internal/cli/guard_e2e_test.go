@@ -92,7 +92,7 @@ func TestGuardE2E_NoInFlightTasksSilent(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	// A canonical task with a non-ship/scout kind is not in-flight.
-	writeTaskMeta(t, tmpDir, "register-task", "done")
+	initHomeWithTask(t, tmpDir, "register-task", "done")
 	writeStaleBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher("") })
 	if strings.Contains(stderr, "WARNING:") {
@@ -121,8 +121,8 @@ func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeWorkingTaskMeta(t, tmpDir, "ship-task", "ship")
-	writeTaskMeta(t, tmpDir, "done-task", "done")
-	writeTaskMeta(t, tmpDir, "idle-task", "idle")
+	initHomeWithTask(t, tmpDir, "done-task", "done")
+	initHomeWithTask(t, tmpDir, "idle-task", "idle")
 	writeStaleBeat(t, tmpDir)
 	stderr := captureStderr(func() { _ = guardWarnWatcher("") })
 	if !strings.Contains(stderr, "WARNING:") {

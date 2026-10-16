@@ -24,9 +24,6 @@ func directGeneralHome(t *testing.T) (string, string) {
 	if err := os.WriteFile(filepath.Join(generalHome, "config", "general-pane"), []byte("fleet:p1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteMeta(generalHome, "direct-task", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
 	identity, rank, err := home.ReadHomeIdentity(generalHome)
 	if err != nil {
 		t.Fatalf("ReadHomeIdentity: %v", err)

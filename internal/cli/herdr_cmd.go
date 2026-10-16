@@ -34,7 +34,7 @@ Dry-run by default; use --apply to close.
 Safety invariants (always enforced):
   - Never closes workspaces whose label does not match a known munsu hometag.
   - Never closes workspaces with any live agent.
-  - Never closes workspaces referenced by live task meta (workspace_id).
+  - Never closes workspaces a live task binding or captain meta holds.
   - Never closes workspaces with deny-listed labels (legacy-protected, captain-*).
   - --apply with no matching workspaces is a no-op (not an error).`,
 		Args: NoArgs,
@@ -51,11 +51,16 @@ Safety invariants (always enforced):
 					captainHomes = append(captainHomes, c.Home)
 				}
 			}
+			live, err := fleet.LiveWorkspaceIDs(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("refusing to prune: %w", err)
+			}
 			result, err := backend.RunPrune(backend.PruneOptions{
-				Session:      session,
-				Apply:        apply,
-				HomeDir:      ctx.Home,
-				CaptainHomes: captainHomes,
+				Session:          session,
+				Apply:            apply,
+				HomeDir:          ctx.Home,
+				CaptainHomes:     captainHomes,
+				LiveWorkspaceIDs: live,
 			})
 			if err != nil {
 				return err

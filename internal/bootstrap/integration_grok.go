@@ -40,15 +40,7 @@ func grokHooksDir(scope Scope, cwd string) (string, error) {
 // Grok requires the command to be wrapped in bash -lc because Grok expands
 // the raw hook command string before bash runs it.
 func grokHookCommand(munsuBin string, args ...string) string {
-	binJSON, err := json.Marshal(munsuBin)
-	if err != nil {
-		binJSON = []byte(fmt.Sprintf("%q", munsuBin))
-	}
-	full := string(binJSON)
-	for _, arg := range args {
-		full += " " + arg
-	}
-	return "bash -lc 'exec " + full + "'"
+	return "bash -lc " + shellQuote("exec "+hookCommand(munsuBin, args...))
 }
 
 // grokHookFileNames lists the 4 Grok hook file names, matching the munsu contract.
@@ -282,7 +274,7 @@ func (a *GrokAdapter) InstallGrokHooks() (targetPaths []string, written bool, co
 			return nil, false, "", err
 		}
 		if existing != "" {
-			content, err = mergeHookEventArrays(targetPath, existing, content)
+			content, err = mergeHookEventArrays(targetPath, existing, content, munsuBin)
 			if err != nil {
 				return nil, false, "", err
 			}

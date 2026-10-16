@@ -315,43 +315,34 @@ func TestRunPrune_CaptainHomesLabelsOwned(t *testing.T) {
 	}
 }
 
-func TestRunPrune_MetaReferencedSkipped(t *testing.T) {
-	tmp := t.TempDir()
-	homeDir := filepath.Join(tmp, "home")
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
-	tag := Hometag(homeDir)
+// A workspace the caller reports held is never closed; the same idle
+// workspace unheld is.
+func TestRunPrune_HeldWorkspaceSkipped(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		live       map[string]bool
+		wantAction string
+	}{
+		{"blocks a held workspace", map[string]bool{"wReferenced": true}, "skip"},
+		{"allows an unheld workspace", map[string]bool{"wOther": true}, "closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			homeDir := filepath.Join(tmp, "home")
+			wsJSON := `[{"label":"` + Hometag(homeDir) + `","workspace_id":"wReferenced","tab_count":0,"agent_status":"none"}]`
+			testutil.PrependPath(t, writeFakeHerdrPrune(t, tmp, wsJSON))
 
-	// Write a meta file that references a workspace.
-	metaContent := "workspace_id=wReferenced\nbackend=herdr\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	wsJSON := `[{"label":"` + tag + `","workspace_id":"wReferenced","tab_count":0,"agent_status":"none"}]`
-	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
-	testutil.PrependPath(t, fakePath)
-
-	result, err := RunPrune(PruneOptions{
-		Session: "test-session",
-		Apply:   true,
-		HomeDir: homeDir,
-	})
-	if err != nil {
-		t.Fatalf("RunPrune failed: %v", err)
-	}
-
-	if len(result.Workspaces) != 1 {
-		t.Fatalf("len(Workspaces) = %d, want 1", len(result.Workspaces))
-	}
-	if result.Workspaces[0].Action != "skip" {
-		t.Errorf("Action = %q, want skip (meta-referenced)", result.Workspaces[0].Action)
-	}
-	if !strings.Contains(result.Workspaces[0].Reason, "task meta") {
-		t.Errorf("Reason = %q, should mention task meta reference", result.Workspaces[0].Reason)
-	}
-	if result.Closed != 0 {
-		t.Errorf("Closed = %d, want 0", result.Closed)
+			result, err := RunPrune(PruneOptions{Session: "test-session", Apply: true, HomeDir: homeDir, LiveWorkspaceIDs: tc.live})
+			if err != nil {
+				t.Fatalf("RunPrune failed: %v", err)
+			}
+			if len(result.Workspaces) != 1 || result.Workspaces[0].Action != tc.wantAction {
+				t.Fatalf("Workspaces = %+v, want one %s", result.Workspaces, tc.wantAction)
+			}
+			if tc.wantAction == "skip" && result.Workspaces[0].Reason != "held by a live task or captain endpoint" {
+				t.Errorf("Reason = %q, want the held-workspace reason", result.Workspaces[0].Reason)
+			}
+		})
 	}
 }
 
@@ -497,60 +488,6 @@ func TestRunPrune_WithSession(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("RunPrune failed: %v", err)
-	}
-}
-
-// TestRunPrune_RefusesWhenTaskMetaScanFails pins fail-closed prune: when the
-// live-task scan cannot read state/ or a task meta file, nothing is closed.
-func TestRunPrune_RefusesWhenTaskMetaScanFails(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		unreadable func(stateDir string) string
-	}{
-		{"state dir", func(stateDir string) string { return stateDir }},
-		{"meta file", func(stateDir string) string { return filepath.Join(stateDir, "task-1.meta") }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
-			homeDir := filepath.Join(tmp, "home")
-			stateDir := filepath.Join(homeDir, "state")
-			if err := os.MkdirAll(stateDir, 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("workspace_id=wLive\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-			wsJSON := `[{"label":"` + Hometag(homeDir) + `","workspace_id":"wLive","tab_count":0,"agent_status":"none"}]`
-			testutil.PrependPath(t, writeFakeHerdrPrune(t, tmp, wsJSON))
-			testutil.MakePathUnreadable(t, tc.unreadable(stateDir))
-
-			result, err := RunPrune(PruneOptions{Session: "test-session", Apply: true, HomeDir: homeDir})
-			if err == nil || !strings.Contains(err.Error(), "refusing to prune") {
-				t.Fatalf("RunPrune = (%+v, %v), want refusing-to-prune error", result, err)
-			}
-			if _, statErr := os.Stat(filepath.Join(tmp, "closed-workspaces")); statErr == nil {
-				t.Fatal("workspace close was attempted despite the failed task meta scan")
-			}
-		})
-	}
-}
-
-// TestRunPrune_NoStateDirMeansNoLiveTasks pins that absence is not an error.
-func TestRunPrune_NoStateDirMeansNoLiveTasks(t *testing.T) {
-	tmp := t.TempDir()
-	homeDir := filepath.Join(tmp, "home")
-	if err := os.MkdirAll(homeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	wsJSON := `[{"label":"` + Hometag(homeDir) + `","workspace_id":"wIdle","tab_count":0,"agent_status":"none"}]`
-	testutil.PrependPath(t, writeFakeHerdrPrune(t, tmp, wsJSON))
-
-	result, err := RunPrune(PruneOptions{Session: "test-session", Apply: true, HomeDir: homeDir})
-	if err != nil {
-		t.Fatalf("RunPrune with no state dir: %v", err)
-	}
-	if result.Closed != 1 {
-		t.Fatalf("Closed = %d, want 1", result.Closed)
 	}
 }
 

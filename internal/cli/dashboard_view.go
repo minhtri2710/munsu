@@ -793,9 +793,7 @@ func (d dashRows) Render(w io.Writer, m list.Model, index int, item list.Item) {
 // page names the group; a captain group's later rows hang under it as a tree.
 func (d dashRows) task(m list.Model, index int, it dashItem, paint func(*lipgloss.Style, string) string) string {
 	ts := it.row
-	word := fleet.PhaseFromProjection(*ts)
-	mark := markFor(word)
-	phase := dashText(word)
+	mark, phase := dashPhase(*ts)
 	state, hnStyle := &mark.style, styleFail.Bold(true)
 	hn, hnPaint := " ", &hnStyle
 	if fleet.HumanNeeded(*ts) {
@@ -827,6 +825,20 @@ func (d dashRows) task(m list.Model, index int, it dashItem, paint func(*lipglos
 	styles := [...]*lipgloss.Style{groupStyle, nil, state, sub, sub, sub, nil}
 	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.seat, func(col int, s string) string { return paint(styles[col], s) },
 		group, dashText(ts.ID), mark.icon+" "+phase, dashText(ts.Kind), dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model)), status)
+}
+
+// dashPhase is a row's phase mark and escaped word. A working or blocked row
+// whose seat the snapshot could not probe reads "<phase> unknown" with the
+// unknown mark, never its phase's colour.
+func dashPhase(ts fleet.TaskSnapshot) (stateMark, string) {
+	word := fleet.PhaseFromProjection(ts)
+	switch taskauthority.Phase(ts.CurrentState) {
+	case taskauthority.PhaseWorking, taskauthority.PhaseBlocked:
+		if ts.PaneAliveUnknown {
+			return unknownMark, dashText(word) + " unknown"
+		}
+	}
+	return markFor(word), dashText(word)
 }
 
 // dashGroup is the group a row is listed under: "general" for the primary

@@ -139,7 +139,7 @@ func TestGrokGuardStopHookActive(t *testing.T) {
 	runGit(t, tmpDir, "init")
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 
 	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
 	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
@@ -182,7 +182,7 @@ func TestGrokGuardBlindTurn(t *testing.T) {
 	runGit(t, tmpDir, "init")
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 
 	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
 	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {
@@ -227,7 +227,7 @@ func TestGrokGuardHealthyExit(t *testing.T) {
 	runGit(t, tmpDir, "init")
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	initHomeWithTask(t, tmpDir, "test-task", "ship")
 
 	beat := fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())
 	if err := os.WriteFile(filepath.Join(metaDir, ".last-watcher-beat"), []byte(beat), 0644); err != nil {

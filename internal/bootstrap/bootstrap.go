@@ -233,15 +233,6 @@ func gcOrphanDataDirs(homeDir string, reclaim ReclaimTaskDataDir) []string {
 			if time.Since(info.ModTime()) < gracePeriod {
 				return errors.New("data directory is still within retention grace")
 			}
-			metaPath, err := home.MetaFilePath(homeDir, id)
-			if err != nil {
-				return err
-			}
-			if _, err := os.Stat(metaPath); err == nil {
-				return errors.New("task metadata still exists")
-			} else if !os.IsNotExist(err) {
-				return err
-			}
 			statusPath, err := home.StatusFilePath(homeDir, id)
 			if err != nil {
 				return err

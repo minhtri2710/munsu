@@ -37,7 +37,7 @@ func TestSoldierWritableFilesReadOnlyAsRegularFiles(t *testing.T) {
 			return fmt.Sprint(ReportExists(h, "t1", 1))
 		}, "true", "false"},
 		{"scout safety check", func(h string) string { return ReportPath(h, "t1", 1) }, func(h string) string {
-			if err := scoutSafetyCheck(Options{ID: "t1", HomeDir: h}, nil, 1); err != nil {
+			if err := scoutSafetyCheck(Options{ID: "t1", HomeDir: h}, 1); err != nil {
 				return err.Error()
 			}
 			return "ok"

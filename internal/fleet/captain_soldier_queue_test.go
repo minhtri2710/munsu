@@ -261,6 +261,39 @@ func TestSendToSoldierRefusesATaskWithNoBoundEndpoint(t *testing.T) {
 	}
 }
 
+// TestSoldierSeat pins the check a soldier receiver and a soldier sender's
+// provenance rest on: only a task whose current generation holds an endpoint
+// and is not retired is a hosted soldier.
+func TestSoldierSeat(t *testing.T) {
+	homeDir := t.TempDir()
+	c := seedBoundSoldierTask(t, homeDir, "bound", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
+	canonicalCreateTask(t, c, "queued", taskauthority.KindShip, "")
+	seedBoundSoldierTask(t, homeDir, "retired", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@2"})
+	retireSoldier(t, c, "retired")
+	for _, tc := range []struct {
+		task, want string
+	}{
+		{"queued", "home " + homeDir + ` hosts no live soldier seat for task "queued"`},
+		{"retired", "home " + homeDir + ` hosts no live soldier seat for task "retired"`},
+		{"unknown", "home " + homeDir + ` hosts no soldier task "unknown"`},
+		{"captain:c1", "home " + homeDir + ` hosts no soldier task "captain:c1"`},
+		{"bound", ""},
+	} {
+		t.Run(tc.task, func(t *testing.T) {
+			err := SoldierSeat(homeDir)(tc.task)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("SoldierSeat(%s) = %v, want hosted", tc.task, err)
+				}
+				return
+			}
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+				t.Fatalf("SoldierSeat(%s) = %v, want %q", tc.task, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestFlushPendingSoldierCommands_FlushesNotificationRef verifies that flush
 // sends a NotificationRef (not raw line) for the oldest pending command.
 func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
@@ -869,10 +902,7 @@ func TestSoldierAckHasAProductionWriter(t *testing.T) {
 
 			// The soldier's own home is the dispatching home; its receiver identity is
 			// its task ID.
-			if err := home.WriteMeta(captainHome, soldierTaskID, map[string]string{"kind": "ship"}); err != nil {
-				t.Fatal(err)
-			}
-			recv, err := home.NewSoldierReceiver(captainHome, soldierTaskID)
+			recv, err := home.NewSoldierReceiver(captainHome, soldierTaskID, SoldierSeat(captainHome))
 			if err != nil {
 				t.Fatalf("NewSoldierReceiver: %v", err)
 			}

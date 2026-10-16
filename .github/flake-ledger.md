@@ -9,7 +9,7 @@ accounting, and its only power is the deadline: when a deadline passes with the
 entry still `open`, the `invariants` lane goes red on **every** open PR,
 including PRs that have nothing to do with the flake. Whoever needs to merge
 next has to deal with it. That is on purpose -- a flake has no natural owner, so
-the mechanism appoints one.
+whoever needs `main` green next is the one who fixes it.
 
 ## How a row gets here
 
@@ -17,10 +17,8 @@ The `Flake ledger` workflow runs `.github/scripts/flake-sweep.sh` over what CI
 already ran, per **attempt**, and goes red with the exact diff on its run
 summary. It prepares no branch for you: GitHub Actions is not permitted to open
 pull requests in this repository, so the lane stops at reporting and a person
-applies that diff by running `.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>`
-locally. The `--owner` value must not be empty, whitespace-only, or `TBD`,
-and otherwise must match the anchored `BEO-<number>` format; name the real issue
-that will fix the flake. No pull-request check observes the window: the
+applies that diff by running `.github/scripts/flake-sweep.sh sync` locally.
+No pull-request check observes the window: the
 workflow stays red after each `main` run until someone applies the diff. The
 sweep is not a sampler: it never re-runs anything and it computes no failure
 rate. Four pushes to `main` on 2026-08-14 13:40-13:41 produced three red
@@ -58,9 +56,8 @@ is not evidence of a fix. The ledger only ever accuses -- absence from it proves
 nothing about a test, and a green streak proves nothing about an entry.
 
 `fixed:` is not a silencer. If the sweep observes the test flaking again after
-the fix was declared, the row goes back to `open` with a fresh deadline,
-keeping the issue that owns the fix -- marking a test fixed can never be a way
-to make its re-flakes silent.
+the fix was declared, the row goes back to `open` with a fresh deadline --
+marking a test fixed can never be a way to make its re-flakes silent.
 
 ## Columns
 
@@ -71,7 +68,6 @@ to make its re-flakes silent.
 | `first_seen` | `<sha>@<run_id>/<attempt>` -- the attempt is the part a later rerun cannot invalidate |
 | `last_seen` | the newest observation the sweep has seen, same `<sha>@<run_id>/<attempt>` format as `first_seen`; bot-maintained, and the sweep is red while it lags the evidence |
 | `deadline` | `YYYY-MM-DD`, 14 days from filing by default |
-| `owner_issue` | the issue that will fix it. `TBD` is refused: filing the flake and filing the work are the same act |
 | `state` | `open`, or `fixed:<sha>` naming the commit that landed the fix |
 
 `fixed:` is the one state no deadline is compared against, so it is the one
@@ -95,24 +91,19 @@ against `main`. Both need the API, so only the post-merge `Flake ledger`
 workflow runs them, to report the diff and propose remediation.
 
 The rows between the markers below are machine-maintained. File new rows with
-`.github/scripts/flake-sweep.sh sync --owner <ISSUE_ID>` as described above. Edit
-`deadline`, `owner_issue` and `state` by hand; the sweep keeps all three on a row
-that already exists, so a hand edit survives the next sweep -- with the single
-exception named above, where a `fixed:` row seen flaking again is reopened and has
-its `state` and `deadline` rewritten (never its `owner_issue`). Leave `test`,
-`lane`, `first_seen` and `last_seen` to the sweep, and if you disagree with a row,
-argue with it in the owning issue rather than deleting it -- the sweep will re-add
-it on the next `main` run.
-
-`owner_issue` is on that list because one `sync --owner` gives *every* row it files
-the same issue, and re-running `sync` with a different one changes nothing -- the
-preserve-on-re-run rule that protects a hand-moved owner from being clobbered is the same
-rule that refuses to move a row. So when a sweep files two flakes that belong to
-two issues, the second one is moved here, by hand, and stays moved.
+`.github/scripts/flake-sweep.sh sync` as described above. Edit `deadline` and
+`state` by hand; the sweep keeps both on a row that already exists, so a hand
+edit survives the next sweep -- with the single exception named above, where a
+`fixed:` row seen flaking again is reopened and has its `state` and `deadline`
+rewritten. Leave `test`, `lane`, `first_seen` and `last_seen` to the sweep.
+Deleting a row you disagree with does not remove it -- the sweep re-adds it on
+the next `main` run; a row the evidence does not support is a bug in
+`flake-sweep.sh`.
 
 <!-- flake-ledger:begin -->
-| test | lane | first_seen | last_seen | deadline | owner_issue | state |
-| --- | --- | --- | --- | --- | --- | --- |
-| TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 282f6cfb@31680287927/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
-| TestStoreWriteAckRefusesUnusableAckRecords | race | e31d83a1@32094709771/1 | e31d83a1@32094709771/1 | 2026-09-01 | BEO-115 | fixed:8eafcd37 |
+| test | lane | first_seen | last_seen | deadline | state |
+| --- | --- | --- | --- | --- | --- |
+| TestCaptainSeatRequests | race | 15a3423a@38778045954/1 | f9b02805@38780344478/1 | 2026-10-30 | fixed:da04dc62 |
+| TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 282f6cfb@31680287927/1 | 2026-08-30 | fixed:7e295ea |
+| TestStoreWriteAckRefusesUnusableAckRecords | race | e31d83a1@32094709771/1 | e31d83a1@32094709771/1 | 2026-09-01 | fixed:8eafcd37 |
 <!-- flake-ledger:end -->
