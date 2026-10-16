@@ -10,8 +10,10 @@ import (
 // second extension status row.
 const piFooterRows = 4
 
-// piStats matches the start of pi's stats row, e.g. "0.0%/256k (auto) • xp".
-var piStats = regexp.MustCompile(`^\d+(\.\d+)?%/\d+k\b`)
+// piStats matches the start of pi's stats row: the usage tokens pi 1.2.0's
+// footer can print (↑input ↓output Rcache-read Wcache-write CHcache-hit%
+// $cost), then the context stat, e.g. "↑9.2k ↓5 3.6%/256k (auto) • xp".
+var piStats = regexp.MustCompile(`^(?:(?:[↑↓RW]\d+(?:\.\d)?[kM]?|CH\d+\.\d%|\$\d+\.\d{3}(?: \(sub\))?) )*\d+(\.\d+)?%/\d+k\b`)
 
 // ClassifyPiComposer judges a capture of the bottom rows of a pi pane. Empty
 // means a blank row, a rule line, one blank row (spaces and NBSP ignored), a

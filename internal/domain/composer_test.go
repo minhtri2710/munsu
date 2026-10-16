@@ -30,8 +30,7 @@ func runComposerCases(t *testing.T, cases []composerCase) {
 // panes taken 2026-10-16, with the agy banner's account email replaced by
 // user@example.com. agy-trust is a zero-byte capture. agy-cleared still held
 // the draft because C-u was rejected. agy-busy has its working row directly
-// above the upper rule, and pi-after's stats row starts with token counts;
-// both read as Unknown. The synthetic rows are the review probes of #951 at
+// above the upper rule and reads as Unknown. The synthetic rows are the review probes of #951 at
 // 186efc2d and 99e637b9, each of which an earlier parse read as Empty.
 func TestComposerCaptures(t *testing.T) {
 	want := map[string]Verdict{
@@ -41,7 +40,7 @@ func TestComposerCaptures(t *testing.T) {
 		"agy-empty.txt":   Empty,
 		"agy-pending.txt": Pending,
 		"agy-trust.txt":   Unknown,
-		"pi-after.txt":    Unknown,
+		"pi-after.txt":    Empty,
 		"pi-busy.txt":     Empty,
 		"pi-cleared.txt":  Empty,
 		"pi-empty.txt":    Empty,
@@ -161,7 +160,9 @@ func TestComposerRules(t *testing.T) {
 		{"pi cwd as a ~ path", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piCwd, "~/Work/munsu")), Empty},
 		{"pi first footer row is not a path", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piCwd, "Work/munsu")), Unknown},
 		{"pi second footer row has no stats", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "(auto) • xp")), Unknown},
-		{"pi stats row led by other text", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "x "+piStatsRow)), Unknown},
+		{"pi stats row led by every usage token", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "↑9.2k ↓5 R1.2M W340k CH87.5% $0.123 (sub) "+piStatsRow)), Empty},
+		{"pi stats row led by draft text", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "keep 3.6%/256k • x")), Unknown},
+		{"pi stats row led by a word starting with a token letter", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "Read 3.6%/256k • x")), Unknown},
 		{"pi stats row without a bullet", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "0.0%/256k (auto) xp")), Unknown},
 		{"pi stats row with a longer unit", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "0.0%/256kb (auto) • xp")), Unknown},
 		{"pi upper rule missing", ClassifyPiComposer, edit("pi-cleared.txt", func(r []string) []string { return r[piBlank:] }), Unknown},
