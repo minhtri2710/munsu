@@ -16,10 +16,6 @@ func init() {
 	orchestrator.BuildVersion = Version
 }
 
-var (
-	homeOverride string
-)
-
 // ExactArgs returns a cobra.PositionalArgs validator that wraps cobra.ExactArgs
 // but includes the command's Use string in the error message so users see the
 // expected format (especially important when descriptions need quoting).
@@ -73,7 +69,7 @@ with no requirement to live inside a specific project checkout.`,
 		DisableSuggestions: true,
 		PersistentPreRunE:  guardWatcherPreRunE(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
+			homeDir, err := home.Resolve(homeFlag(cmd))
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
 			}
@@ -87,7 +83,7 @@ with no requirement to live inside a specific project checkout.`,
 	}
 
 	// Global persistent flags
-	root.PersistentFlags().StringVar(&homeOverride, "home", "", "munsu home directory (overrides MUNSU_HOME)")
+	root.PersistentFlags().String("home", "", "munsu home directory (overrides MUNSU_HOME)")
 
 	// All commands
 	root.AddCommand(newHomeCmd())
