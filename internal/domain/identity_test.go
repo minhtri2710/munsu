@@ -76,11 +76,23 @@ func TestCompileTimeDistinctIdentityTypes(t *testing.T) {
 func takeTask(_ TaskID) error { return nil }
 
 func TestConstructorsRejectUnsafeValues(t *testing.T) {
-	// Values must be contained, non-empty slugs with no path/colon separators.
-	bad := []string{"", ".", "..", "a/b", "a\\b", "a:b", "/abs", "a b"}
-	for _, v := range bad {
-		if _, err := NewTaskID(v); !errors.Is(err, ErrInvalidIdentity) {
-			t.Errorf("NewTaskID(%q): got %v, want ErrInvalidIdentity", v, err)
+	// Values must be contained, non-empty slugs with no path/colon separators,
+	// spaces or control characters.
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{
+		{"", false}, {".", false}, {"..", false}, {"a/b", false}, {"a\\b", false},
+		{"a:b", false}, {"/abs", false}, {"a b", false},
+		{"a\x00b", false}, {"a\x7fb", false},
+		{"task-1.b_2", true},
+	} {
+		_, err := NewTaskID(tc.value)
+		if tc.ok && err != nil {
+			t.Errorf("NewTaskID(%q): %v, want accepted", tc.value, err)
+		}
+		if !tc.ok && !errors.Is(err, ErrInvalidIdentity) {
+			t.Errorf("NewTaskID(%q): got %v, want ErrInvalidIdentity", tc.value, err)
 		}
 	}
 }
