@@ -65,6 +65,7 @@ func TestListClaimedLeasesSkipsShapesItCannotRead(t *testing.T) {
 	writeLeaseFixture(t, home, ".home-write-123", "lease-tmp\tgeneral\t2000\t1500\n"+claimedWakeLine)
 	writeLeaseFixture(t, home, "lease-empty", "")
 	writeLeaseFixture(t, home, "lease-short-header", "lease-short-header\tgeneral\n"+claimedWakeLine)
+	writeLeaseFixture(t, home, "lease-three-fields", "lease-three-fields\tgeneral\t2000\n"+claimedWakeLine)
 	writeLeaseFixture(t, home, "lease-bad-expiry", "lease-bad-expiry\tgeneral\tsoon\t1500\n"+claimedWakeLine)
 	writeLeaseFixture(t, home, "lease-no-wakes", "lease-no-wakes\tgeneral\t2000\t1500\nnot a wake line\n")
 	writeLeaseFixture(t, home, "bad:id", "bad:id\tgeneral\t2000\t1500\n"+claimedWakeLine)

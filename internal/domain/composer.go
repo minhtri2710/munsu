@@ -11,11 +11,6 @@ const (
 	// Pending means the composer has unsubmitted real content (typed text
 	// that the agent has not yet submitted). NOT a safe injection target.
 	Pending
-	// Busy means the composer has a submitted command or action in progress
-	// (e.g. OpenCode "o Running..."). The agent is actively executing and
-	// will return to Empty when done. NOT a safe injection target, but
-	// distinct from Pending for diagnostic purposes.
-	Busy
 	// Unknown means the row is not a recognised harness composer (e.g. a bare
 	// dead-shell prompt) and is never a safe injection target.
 	Unknown
