@@ -226,7 +226,7 @@ func (h jsonHookHarness) install(scope Scope, cwd string, dryRun bool) (targetPa
 		return "", false, "", err
 	}
 	if existing != "" {
-		content, err = mergeHookEventArrays(targetPath, existing, content)
+		content, err = mergeHookEventArrays(targetPath, existing, content, munsuBin)
 		if err != nil {
 			return "", false, "", err
 		}

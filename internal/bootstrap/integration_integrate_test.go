@@ -1305,7 +1305,7 @@ func TestMergeHookEventArrays(t *testing.T) {
   }
 }`
 
-	merged, err := mergeHookEventArrays("hooks.json", existing, generated)
+	merged, err := mergeHookEventArrays("hooks.json", existing, generated, "/x/munsu")
 	if err != nil {
 		t.Fatalf("merge failed: %v", err)
 	}
@@ -1874,74 +1874,96 @@ var hookFileTargets = map[string]string{
 }
 
 // TestHookMergeReinstallKeepsOneMunsuEntry installs twice over a user-owned
-// hooks file: each event carries munsu's entries exactly once and the user's
-// entry survives.
+// hooks file, clean or still holding munsu entries an earlier install wrote
+// with JSON quoting: each event carries munsu's current entries exactly once
+// and the user's entry survives.
 func TestHookMergeReinstallKeepsOneMunsuEntry(t *testing.T) {
 	for _, name := range []string{"claude", "codex", "grok"} {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			homeDir := filepath.Join(dir, "home")
-			projectDir := filepath.Join(dir, "project")
-			munsuBin := filepath.Join(dir, "munsu")
-			SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
-			defer ResetMunsuPathResolver()
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/legacy=%v", name, legacy), func(t *testing.T) {
+				dir := t.TempDir()
+				homeDir := filepath.Join(dir, "home")
+				projectDir := filepath.Join(dir, "project")
+				munsuBin := filepath.Join(dir, "munsu")
+				SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+				defer ResetMunsuPathResolver()
 
-			target := filepath.Join(projectDir, hookFileTargets[name])
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				t.Fatal(err)
-			}
-			user := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-command"}]}]}}`
-			if err := os.WriteFile(target, []byte(user), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			for i := 0; i < 2; i++ {
-				if _, err := Install(homeDir, projectDir, name, ScopeProject, false); err != nil {
-					t.Fatalf("install %d: %v", i+1, err)
+				target := filepath.Join(projectDir, hookFileTargets[name])
+				if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+					t.Fatal(err)
 				}
-			}
-
-			data, err := os.ReadFile(target)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var parsed struct {
-				Hooks map[string][]struct {
-					Hooks []struct {
-						Command string `json:"command"`
-					} `json:"hooks"`
-				} `json:"hooks"`
-			}
-			if err := json.Unmarshal(data, &parsed); err != nil {
-				t.Fatal(err)
-			}
-			userEntries := 0
-			for event, matchers := range parsed.Hooks {
-				munsuEntries := 0
-				for _, m := range matchers {
-					for _, h := range m.Hooks {
-						switch {
-						case strings.Contains(h.Command, munsuBin):
-							munsuEntries++
-						case h.Command == "user-command":
-							userEntries++
+				user := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-command"}]}]}}`
+				binJSON, _ := json.Marshal(munsuBin)
+				if legacy {
+					legacyCommand := func(args string) string {
+						cmd := string(binJSON) + " " + args
+						if name == "grok" {
+							cmd = "bash -lc 'exec " + cmd + "'"
 						}
+						c, _ := json.Marshal(cmd)
+						return string(c)
+					}
+					// The grok target is its SessionStart-only hook file.
+					preTool := ""
+					if name != "grok" {
+						preTool = `,"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":` + legacyCommand("integrate safety-check --harness "+name) + `}]}]`
+					}
+					user = `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":` + legacyCommand("integrate sessionstart-nudge") + `},{"type":"command","command":"user-command"}]}]` + preTool + `}}`
+				}
+				if err := os.WriteFile(target, []byte(user), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				for i := 0; i < 2; i++ {
+					if _, err := Install(homeDir, projectDir, name, ScopeProject, false); err != nil {
+						t.Fatalf("install %d: %v", i+1, err)
 					}
 				}
-				// Claude and Codex register two PreToolUse matchers (Bash and
-				// the native write tools); every other event has one entry.
-				want := 1
-				if event == "PreToolUse" && name != "grok" {
-					want = 2
+
+				data, err := os.ReadFile(target)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if munsuEntries != want {
-					t.Errorf("event %s: %d munsu entries after reinstall, want %d:\n%s", event, munsuEntries, want, data)
+				var parsed struct {
+					Hooks map[string][]struct {
+						Hooks []struct {
+							Command string `json:"command"`
+						} `json:"hooks"`
+					} `json:"hooks"`
 				}
-			}
-			if userEntries != 1 {
-				t.Errorf("user entry count = %d, want 1:\n%s", userEntries, data)
-			}
-		})
+				if err := json.Unmarshal(data, &parsed); err != nil {
+					t.Fatal(err)
+				}
+				userEntries := 0
+				for event, matchers := range parsed.Hooks {
+					munsuEntries := 0
+					for _, m := range matchers {
+						for _, h := range m.Hooks {
+							switch {
+							case strings.Contains(h.Command, string(binJSON)):
+								t.Errorf("event %s kept a JSON-quoted munsu entry %q:\n%s", event, h.Command, data)
+							case strings.Contains(h.Command, munsuBin):
+								munsuEntries++
+							case h.Command == "user-command":
+								userEntries++
+							}
+						}
+					}
+					// Claude and Codex register two PreToolUse matchers (Bash and
+					// the native write tools); every other event has one entry.
+					want := 1
+					if event == "PreToolUse" && name != "grok" {
+						want = 2
+					}
+					if munsuEntries != want {
+						t.Errorf("event %s: %d munsu entries after reinstall, want %d:\n%s", event, munsuEntries, want, data)
+					}
+				}
+				if userEntries != 1 {
+					t.Errorf("user entry count = %d, want 1:\n%s", userEntries, data)
+				}
+			})
+		}
 	}
 }
 

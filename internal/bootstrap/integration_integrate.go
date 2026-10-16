@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
@@ -718,10 +717,10 @@ func parseExistingHookJSON(path, existing string) (map[string]interface{}, error
 }
 
 // mergeHookEventArrays merges munsu's generated per-event hook arrays into the
-// existing hooks file at path. Munsu's entries run first; any earlier copy of
-// a munsu entry is dropped so a reinstall replaces it instead of adding a
-// duplicate, and every user-owned entry is kept in order.
-func mergeHookEventArrays(path, existing, generated string) (string, error) {
+// existing hooks file at path. Munsu's entries run first; any munsu-owned hook
+// already in the event (munsuOwnedCommand) is dropped so a reinstall replaces
+// it instead of adding a duplicate, and every user-owned hook is kept in order.
+func mergeHookEventArrays(path, existing, generated, munsuBin string) (string, error) {
 	existingJSON, err := parseExistingHookJSON(path, existing)
 	if err != nil {
 		return "", err
@@ -744,11 +743,19 @@ func mergeHookEventArrays(path, existing, generated string) (string, error) {
 		if !ok {
 			continue
 		}
+		var genCommands []string
+		for _, entry := range genList {
+			for _, hook := range entryHooks(entry) {
+				if cmd, ok := hook.(map[string]interface{})["command"].(string); ok {
+					genCommands = append(genCommands, cmd)
+				}
+			}
+		}
 		existingList, _ := existingHooks[event].([]interface{})
 		merged := append([]interface{}{}, genList...)
 		for _, entry := range existingList {
-			if !containsHookEntry(genList, entry) {
-				merged = append(merged, entry)
+			if kept, ok := withoutMunsuHooks(entry, genCommands, munsuBin); ok {
+				merged = append(merged, kept)
 			}
 		}
 		existingHooks[event] = merged
@@ -757,9 +764,57 @@ func mergeHookEventArrays(path, existing, generated string) (string, error) {
 	return marshalJSON(existingJSON)
 }
 
-func containsHookEntry(list []interface{}, entry interface{}) bool {
-	for _, candidate := range list {
-		if reflect.DeepEqual(candidate, entry) {
+func entryHooks(entry interface{}) []interface{} {
+	m, _ := entry.(map[string]interface{})
+	hooks, _ := m["hooks"].([]interface{})
+	return hooks
+}
+
+// withoutMunsuHooks drops the munsu-owned hooks from an existing matcher
+// entry. It reports false when nothing user-owned is left of the entry.
+func withoutMunsuHooks(entry interface{}, genCommands []string, munsuBin string) (interface{}, bool) {
+	hooks := entryHooks(entry)
+	if len(hooks) == 0 {
+		return entry, true
+	}
+	var kept []interface{}
+	for _, hook := range hooks {
+		cmd, _ := hook.(map[string]interface{})["command"].(string)
+		if !munsuOwnedCommand(cmd, genCommands, munsuBin) {
+			kept = append(kept, hook)
+		}
+	}
+	if len(kept) == len(hooks) {
+		return entry, true
+	}
+	if len(kept) == 0 {
+		return nil, false
+	}
+	copied := make(map[string]interface{})
+	for k, v := range entry.(map[string]interface{}) {
+		copied[k] = v
+	}
+	copied["hooks"] = kept
+	return copied, true
+}
+
+// munsuOwnedCommand reports whether cmd is one of the generated commands, or
+// runs munsuBin with the same arguments under any quoting an earlier install
+// used: the text after the binary path, quote characters trimmed, matches.
+func munsuOwnedCommand(cmd string, genCommands []string, munsuBin string) bool {
+	argsAfterBin := func(s string) (string, bool) {
+		i := strings.Index(s, munsuBin)
+		if i < 0 {
+			return "", false
+		}
+		return strings.TrimLeft(s[i+len(munsuBin):], `'"\`), true
+	}
+	got, gotOK := argsAfterBin(cmd)
+	for _, gen := range genCommands {
+		if cmd == gen {
+			return true
+		}
+		if want, ok := argsAfterBin(gen); ok && gotOK && want == got {
 			return true
 		}
 	}

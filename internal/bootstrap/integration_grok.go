@@ -274,7 +274,7 @@ func (a *GrokAdapter) InstallGrokHooks() (targetPaths []string, written bool, co
 			return nil, false, "", err
 		}
 		if existing != "" {
-			content, err = mergeHookEventArrays(targetPath, existing, content)
+			content, err = mergeHookEventArrays(targetPath, existing, content, munsuBin)
 			if err != nil {
 				return nil, false, "", err
 			}
