@@ -9,7 +9,7 @@
 # ---------------------------------------------------------------------------
 #
 # A rerun overwrites a run's `conclusion`. Four consecutive pushes to main on
-# 2026-08-14 13:40-13:41 produced three red `integration` lanes; two of those
+# 2026-08-14 13:40-13:41 produced three red "Integration tests" jobs; two of those
 # runs read `success` today, because they were rerun afterwards. `gh run list`
 # says that cluster was 2 red out of 4. It was 3.
 #
@@ -65,9 +65,6 @@
 #   - A flake red on two consecutive main runs is filed as a regression, and
 #     someone will bisect for nothing. The fast path covers most of that, not
 #     all of it.
-#   - `build` and `race` run without -v, so for those lanes a test that turned
-#     into `t.Skip` is indistinguishable from one that passes. Only
-#     `integration` runs -v (ci.yml). Closing that is what v1's `-json` is for.
 #   - A self-heal caused by a fix in a *dependency* of the test's package is
 #     filed as a flake. The touch check below only knows the test's own
 #     directory; a call-graph is out of scope at this size.
@@ -147,7 +144,6 @@ lane_key() {
 	case "$1" in
 	"Build and test") echo build ;;
 	"Race detector") echo race ;;
-	"Integration tests") echo integration ;;
 	*) echo "" ;;
 	esac
 }
@@ -250,14 +246,13 @@ observe() {
 		# nothing to say. Measured, not assumed.
 		#
 		# Every lane in ci.yml runs unconditionally (no `if:`), so "the run was
-		# green" does mean "each of these three lanes was green". A lane that
+		# green" does mean "each of these lanes was green". A lane that
 		# grows an `if:` would read as green here while never having run; that
 		# is the one thing to re-check before adding one.
 		if [ "$attempts" = "1" ] && [ "$conclusion" = "success" ]; then
 			printf 'run\t%s\t1\t%s\t%s\n' "$run_id" "$sha" "$created"
 			printf 'job\t%s\t1\tbuild\tsuccess\n' "$run_id"
 			printf 'job\t%s\t1\trace\tsuccess\n' "$run_id"
-			printf 'job\t%s\t1\tintegration\tsuccess\n' "$run_id"
 			continue
 		fi
 		for a in $(seq 1 "$attempts"); do
@@ -891,7 +886,7 @@ selftest() {
 	done
 
 	# All the scenarios below run against one record set: reopen.obs.tsv observes
-	# TestReopens (integration) flaking on runs 3001 and 3003, so the observed
+	# TestReopens (race) flaking on runs 3001 and 3003, so the observed
 	# set is a single pair, first_seen aaaa1111@3001/1, last_seen cccc3333@3003/1.
 	# What changes between them is the ledger they are compared against.
 	local ledger msg expect
@@ -919,7 +914,7 @@ selftest() {
 	scratch_ledger "$ledger"
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
 	case "$msg" in
-	*"no entry in"*"TestReopens (integration)"*) ;;
+	*"no entry in"*"TestReopens (race)"*) ;;
 	*)
 		echo "::error::unfiled scenario: check() did not report an observed flake missing from the ledger" >&2
 		printf '%s\n' "$msg" >&2
@@ -930,7 +925,7 @@ selftest() {
 		echo "::error::unfiled scenario: sync() failed" >&2
 		failed=1
 	}
-	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| TBD | open |' "$ledger"; then
+	if ! grep -q '| TestReopens | race | aaaa1111@3001/1 | cccc3333@3003/1 |.*| TBD | open |' "$ledger"; then
 		echo "::error::unfiled scenario: sync did not file the observed flake with owner_issue TBD" >&2
 		failed=1
 	fi
@@ -949,7 +944,7 @@ selftest() {
 		echo "::error::owner scenario: sync --owner $owner_fixture failed" >&2
 		failed=1
 	}
-	if ! grep -q "| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| $owner_fixture | open |" "$ledger"; then
+	if ! grep -q "| TestReopens | race | aaaa1111@3001/1 | cccc3333@3003/1 |.*| $owner_fixture | open |" "$ledger"; then
 		echo "::error::owner scenario: sync --owner $owner_fixture did not write the validated owner into the filed row" >&2
 		failed=1
 	fi
@@ -1010,7 +1005,7 @@ selftest() {
 	#
 	# Mutation this answers: apply OWNER to every row sync writes rather than
 	# only to the ones it is adding.
-	local kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
+	local kept='| TestReopens | race | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |'
 	scratch_ledger "$ledger" "$kept"
 	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
 		echo "::error::owner scenario: sync --owner $owner_fixture failed over a row that already existed" >&2
@@ -1026,7 +1021,7 @@ selftest() {
 	# the ledger documents, distinct from the fixed-row reopen rule in scenario 3.
 	#
 	# Mutation this answers: force every existing row sync emits to use `open`.
-	local state_kept='| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
+	local state_kept='| TestReopens | race | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
 	scratch_ledger "$ledger" "$state_kept"
 	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync --owner "$owner_fixture" >/dev/null || {
 		echo "::error::state scenario: sync --owner $owner_fixture failed over a row with no newer evidence" >&2
@@ -1047,12 +1042,12 @@ selftest() {
 	# with `if false`, or drop the `part[2] in inwindow` test in
 	# ledger_in_scope().
 	scratch_ledger "$ledger" \
-		'| TestOutsideWindow | integration | eeee5555@2999/1 | eeee5555@2999/1 | 9999-12-31 | BEO-99 | open |' \
-		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
-		'| TestVanished | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 9999-12-31 | BEO-99 | open |'
+		'| TestOutsideWindow | race | eeee5555@2999/1 | eeee5555@2999/1 | 9999-12-31 | BEO-99 | open |' \
+		'| TestReopens | race | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
+		'| TestVanished | race | aaaa1111@3001/1 | aaaa1111@3001/1 | 9999-12-31 | BEO-99 | open |'
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
 	case "$msg" in
-	*"can no longer derive"*"TestVanished (integration)"*) ;;
+	*"can no longer derive"*"TestVanished (race)"*) ;;
 	*)
 		echo "::error::unfounded scenario: check() did not report an in-scope row the evidence no longer supports" >&2
 		printf '%s\n' "$msg" >&2
@@ -1089,7 +1084,7 @@ selftest() {
 	# Mutation this answers: drop the `stale` block in check(), or the
 	# `newer "$last_seen" "$recorded_last"` reopen branch in sync().
 	scratch_ledger "$ledger" \
-		'| TestReopens | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | BEO-99 | fixed:abc1234 |'
+		'| TestReopens | race | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | BEO-99 | fixed:abc1234 |'
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
 	case "$msg" in
 	*reopened*) ;;
@@ -1103,7 +1098,7 @@ selftest() {
 		echo "::error::reopen scenario: sync() failed" >&2
 		failed=1
 	}
-	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| BEO-99 | open |' "$ledger"; then
+	if ! grep -q '| TestReopens | race | aaaa1111@3001/1 | cccc3333@3003/1 |.*| BEO-99 | open |' "$ledger"; then
 		echo "::error::reopen scenario: sync did not reopen the fixed row with a fresh deadline" >&2
 		failed=1
 	fi
@@ -1120,15 +1115,15 @@ selftest() {
 	# Mutation this answers: drop the `verdict != "on-main"` filter in
 	# verify_fixed(), or default a missing answer to "on-main".
 	scratch_ledger "$ledger" \
-		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |' \
-		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |' \
-		'| TestFixedUnknown | integration | cccc3333@2997/1 | cccc3333@2997/1 | 9999-12-31 | BEO-99 | fixed:deadbee |' \
-		'| TestFixedUnchecked | integration | dddd4444@2996/1 | dddd4444@2996/1 | 9999-12-31 | BEO-99 | fixed:cafe123 |'
+		'| TestFixedOnMain | race | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |' \
+		'| TestFixedOffMain | race | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |' \
+		'| TestFixedUnknown | race | cccc3333@2997/1 | cccc3333@2997/1 | 9999-12-31 | BEO-99 | fixed:deadbee |' \
+		'| TestFixedUnchecked | race | dddd4444@2996/1 | dddd4444@2996/1 | 9999-12-31 | BEO-99 | fixed:cafe123 |'
 	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" verify-fixed 2>&1 || true)"
 	for expect in \
-		"TestFixedOffMain (integration): fixed:f00dbab is a commit" \
-		"TestFixedUnknown (integration): fixed:deadbee is not a commit" \
-		"TestFixedUnchecked (integration): fixed:cafe123 was not checked"; do
+		"TestFixedOffMain (race): fixed:f00dbab is a commit" \
+		"TestFixedUnknown (race): fixed:deadbee is not a commit" \
+		"TestFixedUnchecked (race): fixed:cafe123 was not checked"; do
 		case "$msg" in
 		*"$expect"*) ;;
 		*)
@@ -1144,7 +1139,7 @@ selftest() {
 		;;
 	esac
 	scratch_ledger "$ledger" \
-		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
+		'| TestFixedOnMain | race | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
 	if ! SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" verify-fixed >/dev/null 2>&1; then
 		echo "::error::fixed-sha scenario: verify-fixed is red on a ledger whose only fix ref is on main" >&2
 		failed=1

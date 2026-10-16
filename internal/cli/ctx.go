@@ -55,11 +55,20 @@ func (c *Ctx) TaskAuthorityFor(homeDir string) (*taskauthority.Canonical, error)
 	return taskauthority.NewCanonical(h)
 }
 
+// homeFlag returns the --home value of the executing command, or "" when cmd
+// is not under the root command.
+func homeFlag(cmd *cobra.Command) string {
+	if f := cmd.Flag("home"); f != nil {
+		return f.Value.String()
+	}
+	return ""
+}
+
 // withHome wraps a cobra RunE so the handler receives a resolved Ctx instead
-// of calling home.Resolve(homeOverride) itself.
+// of resolving the home itself.
 func withHome(fn func(cmd *cobra.Command, args []string, ctx Ctx) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		homeDir, err := home.Resolve(homeOverride)
+		homeDir, err := home.Resolve(homeFlag(cmd))
 		if err != nil {
 			return fmt.Errorf("resolving home: %w", err)
 		}
