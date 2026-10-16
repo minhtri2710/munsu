@@ -16,10 +16,7 @@ import (
 )
 
 func TestInvalidClosedSetInputsRefuse(t *testing.T) {
-	savedChoice := skillChoice
-	skillChoice = "invalid"
-	t.Cleanup(func() { skillChoice = savedChoice })
-	if err := runSkillInstall(nil, t.TempDir()); err == nil || !strings.Contains(err.Error(), "invalid --skill value") {
+	if err := runSkillInstall("invalid", t.TempDir()); err == nil || !strings.Contains(err.Error(), "invalid --skill value") {
 		t.Fatalf("runSkillInstall error = %v, want invalid skill refusal", err)
 	}
 	if _, err := resolveIntegrateScope("invalid"); err == nil || !strings.Contains(err.Error(), "unsupported scope") {
@@ -54,10 +51,6 @@ func captureOutput(fn func()) (stdout, stderr string) {
 // TestInitWithoutSkillFlagOrEnvSkips verifies that init skips skill install
 // when neither --skill nor MUNSU_INIT_SKILL is set.
 func TestInitWithoutSkillFlagOrEnvSkips(t *testing.T) {
-	savedChoice := skillChoice
-	skillChoice = ""
-	t.Cleanup(func() { skillChoice = savedChoice })
-
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_INIT_SKILL", "")
@@ -88,10 +81,6 @@ func TestInitWithoutSkillFlagOrEnvSkips(t *testing.T) {
 // TestInitSkillLocalFlag verifies that --skill local installs skills, and that
 // a second run replaces the installed copy.
 func TestInitSkillLocalFlag(t *testing.T) {
-	savedChoice := skillChoice
-	skillChoice = skillLocal
-	t.Cleanup(func() { skillChoice = savedChoice })
-
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
@@ -139,10 +128,6 @@ func TestInitSkillLocalFlag(t *testing.T) {
 
 // TestInitSkillGlobalFlag verifies that --skill global installs skills.
 func TestInitSkillGlobalFlag(t *testing.T) {
-	savedChoice := skillChoice
-	skillChoice = skillGlobal
-	t.Cleanup(func() { skillChoice = savedChoice })
-
 	tmpHome, err := os.MkdirTemp("", "munsu-global-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -187,10 +172,6 @@ func TestInitSkillGlobalFlag(t *testing.T) {
 // TestInitEnvOverride verifies that MUNSU_INIT_SKILL=local, with no --skill
 // flag, installs munsu-ops under <home>/.agents/skills.
 func TestInitEnvOverride(t *testing.T) {
-	savedChoice := skillChoice
-	skillChoice = ""
-	t.Cleanup(func() { skillChoice = savedChoice })
-
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_INIT_SKILL", "local")
@@ -224,9 +205,6 @@ func TestInitEnvOverride(t *testing.T) {
 // resolve a captain harness (fail-closed-able). The flat soldier-harness pin
 // remains for diagnostics compatibility.
 func TestInitWritesFleetBaseDocument(t *testing.T) {
-	savedChoice := skillChoice
-	skillChoice = ""
-	t.Cleanup(func() { skillChoice = savedChoice })
 	t.Setenv("MUNSU_INIT_SKILL", "skip")
 
 	tmpDir := t.TempDir()
@@ -259,9 +237,6 @@ func TestInitWritesFleetBaseDocument(t *testing.T) {
 }
 
 func TestInitReconfigureCorruptBaseFails(t *testing.T) {
-	savedChoice, savedReconfigure := skillChoice, reconfigure
-	t.Cleanup(func() { skillChoice, reconfigure = savedChoice, savedReconfigure })
-	skillChoice = ""
 	t.Setenv("MUNSU_INIT_SKILL", "skip")
 
 	tmpDir := t.TempDir()
@@ -291,9 +266,6 @@ func TestInitReconfigureCorruptBaseFails(t *testing.T) {
 }
 
 func TestInitCorruptBaseFails(t *testing.T) {
-	savedChoice, savedReconfigure := skillChoice, reconfigure
-	t.Cleanup(func() { skillChoice, reconfigure = savedChoice, savedReconfigure })
-	skillChoice, reconfigure = "", false
 	t.Setenv("MUNSU_INIT_SKILL", "skip")
 
 	tmpDir := t.TempDir()

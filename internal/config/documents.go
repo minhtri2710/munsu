@@ -34,16 +34,14 @@ type DispatchCandidate struct {
 }
 
 type DispatchProfile struct {
-	Name           string              `json:"name,omitempty"`
-	Match          []string            `json:"match,omitempty"`
-	When           string              `json:"when,omitempty"`
-	Harness        string              `json:"harness,omitempty"`
-	Model          string              `json:"model,omitempty"`
-	Effort         string              `json:"effort,omitempty"`
-	SelectStrategy string              `json:"select,omitempty"`
-	Why            string              `json:"why,omitempty"`
-	Use            []DispatchCandidate `json:"use,omitempty"`
-	Scaffold       string              `json:"scaffold,omitempty"`
+	Name     string              `json:"name,omitempty"`
+	Match    []string            `json:"match,omitempty"`
+	Harness  string              `json:"harness,omitempty"`
+	Model    string              `json:"model,omitempty"`
+	Effort   string              `json:"effort,omitempty"`
+	Why      string              `json:"why,omitempty"`
+	Use      []DispatchCandidate `json:"use,omitempty"`
+	Scaffold string              `json:"scaffold,omitempty"`
 }
 
 // A dispatch profile's Scaffold picks the Soldier charter for its runtime.
@@ -80,8 +78,9 @@ type CaptainProfile struct {
 // fixed argv. forge accepts github and gitlab; the github adapter takes neither
 // path nor args (it runs gh-axi and gh from PATH). worktree accepts treehouse
 // with a required absolute path and no args; without it the worktree port is
-// git worktree. A tool on PATH
-// with no entry is not used. A configured step whose probe is not Ready is refused
+// git worktree. quota accepts quota-axi with a required absolute path and no
+// args; it orders a profile's use candidates by remaining quota, and without it
+// the first candidate is taken. A tool on PATH with no entry is not used. A configured step whose probe is not Ready is refused
 // and never falls back to its baseline; the operator
 // removes the entry to run the baseline.
 type ToolEntry struct {
@@ -99,6 +98,7 @@ type ProjectOverlay struct {
 	DispatchProfiles []DispatchProfile `json:"dispatchProfiles,omitempty"`
 	Forge            *ToolEntry        `json:"forge,omitempty"`
 	Worktree         *ToolEntry        `json:"worktree,omitempty"`
+	Quota            *ToolEntry        `json:"quota,omitempty"`
 	// FenceWritableRoots are extra absolute directories the write fence leaves
 	// writable for this project's soldiers. FenceUnsupported "allow" lets this
 	// project's seats launch unfenced on a host with no write fence. Both are
@@ -118,7 +118,7 @@ type ResolvedStep struct {
 }
 
 // FleetBaseConfig is the fleet-wide overlay. Tool entries are project-only, so
-// it has no Forge or Worktree field and a fleet base document cannot carry one.
+// it has no Forge, Worktree or Quota field and a fleet base document cannot carry one.
 // Keep its fields in step with ProjectOverlay.
 type FleetBaseConfig struct {
 	SoldierHarness   string            `json:"soldierHarness,omitempty"`
@@ -159,6 +159,7 @@ type ResolvedProjectConfig struct {
 	CaptainProfile     CaptainProfile    `json:"captainProfile,omitempty"`
 	ForgeStep          ResolvedStep      `json:"forgeStep"`
 	WorktreeStep       ResolvedStep      `json:"worktreeStep"`
+	QuotaStep          ResolvedStep      `json:"quotaStep"`
 	FenceWritableRoots []string          `json:"fenceWritableRoots,omitempty"`
 	FenceUnsupported   string            `json:"fenceUnsupported,omitempty"`
 	Digest             string            `json:"digest"`
@@ -190,14 +191,14 @@ func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, pro
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	return ResolveProjectWithSteps(base, facts, forge, resolveToolStep(effective.Worktree, probe))
+	return ResolveProjectWithSteps(base, facts, forge, resolveToolStep(effective.Worktree, probe), resolveToolStep(effective.Quota, probe))
 }
 
 func baselineStep() ResolvedStep {
 	return ResolvedStep{Baseline: true, ProbeState: "baseline", Reason: "no tool configured"}
 }
 
-func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, forgeStep, worktreeStep ResolvedStep) (ResolvedProjectConfig, error) {
+func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, forgeStep, worktreeStep, quotaStep ResolvedStep) (ResolvedProjectConfig, error) {
 	if err := base.Validate(); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -224,7 +225,14 @@ func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, forgeSt
 	if !stepMatchesEntry(worktreeStep, effective.Worktree) {
 		return ResolvedProjectConfig{}, fmt.Errorf("resolved worktree step does not match the project overlay")
 	}
-	digest, err := projectDigest(effective, forgeStep, worktreeStep)
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: quota-balanced needs a Ready quota-axi)
+	if err := validateResolvedStep("quota", quotaAdapters, quotaStep); err != nil {
+		return ResolvedProjectConfig{}, err
+	}
+	if !stepMatchesEntry(quotaStep, effective.Quota) {
+		return ResolvedProjectConfig{}, fmt.Errorf("resolved quota step does not match the project overlay")
+	}
+	digest, err := projectDigest(effective, forgeStep, worktreeStep, quotaStep)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
@@ -237,6 +245,7 @@ func ResolveProjectWithSteps(base FleetBaseDocument, facts ProjectFacts, forgeSt
 		CaptainProfile:     base.CaptainProfile,
 		ForgeStep:          cloneResolvedStep(forgeStep),
 		WorktreeStep:       cloneResolvedStep(worktreeStep),
+		QuotaStep:          cloneResolvedStep(quotaStep),
 		FenceWritableRoots: append([]string(nil), effective.FenceWritableRoots...),
 		FenceUnsupported:   effective.FenceUnsupported,
 		Digest:             digest,
@@ -314,12 +323,13 @@ func resolveToolStep(entry *ToolEntry, probe func(ToolEntry) ResolvedStep) Resol
 	return result
 }
 
-func projectDigest(config ProjectOverlay, forge, worktree ResolvedStep) (string, error) {
+func projectDigest(config ProjectOverlay, forge, worktree, quota ResolvedStep) (string, error) {
 	payload := struct {
 		Config       ProjectOverlay `json:"config"`
 		ForgeStep    ResolvedStep   `json:"forgeStep"`
 		WorktreeStep ResolvedStep   `json:"worktreeStep"`
-	}{cloneOverlay(config), cloneResolvedStep(forge), cloneResolvedStep(worktree)}
+		QuotaStep    ResolvedStep   `json:"quotaStep"`
+	}{cloneOverlay(config), cloneResolvedStep(forge), cloneResolvedStep(worktree), cloneResolvedStep(quota)}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal resolved project config: %w", err)
@@ -353,6 +363,9 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	if src.Worktree != nil {
 		dst.Worktree = cloneToolEntry(src.Worktree)
 	}
+	if src.Quota != nil {
+		dst.Quota = cloneToolEntry(src.Quota)
+	}
 	if len(src.FenceWritableRoots) > 0 {
 		dst.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
 	}
@@ -366,6 +379,7 @@ func cloneOverlay(src ProjectOverlay) ProjectOverlay {
 	result.DispatchProfiles = cloneProfiles(src.DispatchProfiles)
 	result.Forge = cloneToolEntry(src.Forge)
 	result.Worktree = cloneToolEntry(src.Worktree)
+	result.Quota = cloneToolEntry(src.Quota)
 	result.FenceWritableRoots = append([]string(nil), src.FenceWritableRoots...)
 	return result
 }
@@ -423,18 +437,27 @@ func cloneProfiles(src []DispatchProfile) []DispatchProfile {
 var (
 	forgeAdapters    = map[string]bool{"github": true, "gitlab": true}
 	worktreeAdapters = map[string]bool{"treehouse": true}
+	quotaAdapters    = map[string]bool{"quota-axi": true}
 )
 
 func ValidateProjectTools(overlay ProjectOverlay) error {
-	if entry := overlay.Worktree; entry != nil {
-		if !worktreeAdapters[entry.Adapter] {
-			return fmt.Errorf("worktree tool has unknown adapter %q", entry.Adapter)
+	for _, port := range []struct {
+		name     string
+		entry    *ToolEntry
+		adapters map[string]bool
+	}{{"worktree", overlay.Worktree, worktreeAdapters}, {"quota", overlay.Quota, quotaAdapters}} {
+		entry := port.entry
+		if entry == nil {
+			continue
+		}
+		if !port.adapters[entry.Adapter] {
+			return fmt.Errorf("%s tool has unknown adapter %q", port.name, entry.Adapter)
 		}
 		if !filepath.IsAbs(entry.Path) {
-			return fmt.Errorf("worktree adapter %s requires an absolute path", entry.Adapter)
+			return fmt.Errorf("%s adapter %s requires an absolute path", port.name, entry.Adapter)
 		}
 		if len(entry.Args) != 0 {
-			return fmt.Errorf("worktree adapter %s does not accept args", entry.Adapter)
+			return fmt.Errorf("%s adapter %s does not accept args", port.name, entry.Adapter)
 		}
 	}
 	entry := overlay.Forge
