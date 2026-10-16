@@ -239,7 +239,7 @@ func SoldierSeat(homeDir string) home.SoldierSeatCheck {
 		if err != nil {
 			return fmt.Errorf("home %s hosts no soldier task %q: %w", homeDir, id, err)
 		}
-		if agg.Phase == tauth.PhaseRetired || endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint) == nil {
+		if endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint) == nil {
 			return fmt.Errorf("home %s hosts no live soldier seat for task %q", homeDir, id)
 		}
 		return nil

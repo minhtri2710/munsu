@@ -51,7 +51,7 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
 	// A canonical task whose worktree binding names the branch.
-	bindClaimWorktree(t, cliCanonicalForHome(t, home), "observe-me", filepath.Join(home, "branch-name"), false)
+	bindClaimWorktree(t, home, "observe-me", filepath.Join(home, "branch-name"), false)
 	t.Setenv("MUNSU_HOME", home)
 
 	output, err := runContract(t, []string{"task", "observe", "observe-me"})

@@ -84,7 +84,7 @@ func TestShipSafetyCheck_CanonicalManifest(t *testing.T) {
 	tmp := t.TempDir()
 	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("canonical manifest should pass: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestShipSafetyCheckUsesCanonicalPathAndDigest(t *testing.T) {
 			LaunchID: "launch-test", ManifestSHA256: digest,
 		},
 	}
-	if _, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, binding, false); err != nil {
+	if _, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, binding, false, false); err != nil {
 		t.Fatalf("canonical path and digest should override projections: %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestShipSafetyCheckUsesCanonicalPathAndDigest(t *testing.T) {
 func TestShipSafetyCheckRefusesMissingCanonicalManifestEvidence(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "no canonical launch manifest evidence") {
 		t.Fatalf("error = %v, want missing canonical manifest refusal", err)
 	}
@@ -121,7 +121,7 @@ func TestShipSafetyCheck_ModifiedManifestArtifact(t *testing.T) {
 	modifiedBrief := []byte("# Task: modified\n\nMODIFIED brief.\n")
 	os.WriteFile(filepath.Join(wt, BriefName), modifiedBrief, 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("modified manifest artifact should block")
 	}
@@ -162,7 +162,7 @@ func TestShipSafetyCheck_TrackedFileBlocks(t *testing.T) {
 	// Now modify the tracked file.
 	os.WriteFile(filepath.Join(wt, "tracked.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("tracked modified file should block")
 	}
@@ -178,7 +178,7 @@ func TestShipSafetyCheck_UnlistedFileBlocks(t *testing.T) {
 	// Write an untracked file not in the manifest.
 	os.WriteFile(filepath.Join(wt, "rogue.txt"), []byte("not a launch artifact\n"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("unlisted untracked file should block")
 	}
@@ -194,7 +194,7 @@ func TestShipSafetyCheck_MissingManifestBlocks(t *testing.T) {
 	// Remove the manifest file.
 	os.Remove(filepath.Join(wt, ManifestName))
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("missing manifest should block")
 	}
@@ -210,7 +210,7 @@ func TestShipSafetyCheck_CorruptManifestBlocks(t *testing.T) {
 	// Corrupt the manifest file.
 	os.WriteFile(filepath.Join(wt, ManifestName), []byte("{invalid json}"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("corrupt manifest should block")
 	}
@@ -227,7 +227,7 @@ func TestShipSafetyCheck_UnknownManifestVersionBlocks(t *testing.T) {
 	content := `{"manifest_version":"soldier-manifest-v99","artifacts":[]}`
 	os.WriteFile(filepath.Join(wt, ManifestName), []byte(content), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("unknown manifest version should block")
 	}
@@ -243,7 +243,7 @@ func TestShipSafetyCheck_WrongManifestDigestBlocks(t *testing.T) {
 	// Use a wrong expected manifest digest in meta.
 	wrongDigest := "0000000000000000000000000000000000000000000000000000000000000000"
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, wrongDigest), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, wrongDigest), false, false)
 	if err == nil {
 		t.Fatal("wrong manifest digest should block")
 	}
@@ -259,7 +259,7 @@ func TestShipSafetyCheck_IgnoredDigestMatch(t *testing.T) {
 	// The manifest entry files are in .gitignore, so they're "ignored" by git.
 	// VerifyLaunchArtifacts checks them directly (not through porcelain).
 	// This test ensures the canonical case works when files are in .gitignore.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("ignored digest-match artifacts should pass: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestShipSafetyCheck_IgnoredDigestMismatch(t *testing.T) {
 	// checks it directly.
 	os.WriteFile(filepath.Join(wt, BriefName), []byte("modified ignored content"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("ignored digest-mismatch artifact should block")
 	}
@@ -305,7 +305,7 @@ func TestShipSafetyCheck_ManifestTrackedBlocks(t *testing.T) {
 		t.Fatalf("git commit: %s", out)
 	}
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("tracked manifest should block")
 	}
@@ -326,7 +326,7 @@ func TestShipSafetyCheck_ManifestModifiedBlocks(t *testing.T) {
 	modifiedData = strings.Replace(modifiedData, "\"sha256\": \"", "\"sha256\": \"00", 1) // change digest
 	os.WriteFile(filepath.Join(wt, ManifestName), []byte(modifiedData), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("modified manifest should block")
 	}
@@ -344,7 +344,7 @@ func TestShipSafetyCheck_EmptyExpectedManifestSHA(t *testing.T) {
 	binding := &taskauthority.WorktreeBinding{Path: wt, LaunchManifest: &taskauthority.LaunchManifestEvidence{
 		OperationID: "manifest-op", LaunchID: "launch-test", ManifestSHA256: "", RecordedAt: 1,
 	}}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, binding, false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, binding, false, false)
 	if err == nil {
 		t.Fatal("empty manifest SHA should block")
 	}
@@ -358,7 +358,7 @@ func TestShipSafetyCheck_NoLaunchManifestSHAInMeta(t *testing.T) {
 	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
 	// Without canonical launch-manifest evidence the check must block.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, &taskauthority.WorktreeBinding{Path: wt}, false, false)
 	if err == nil {
 		t.Fatal("missing manifest SHA should block")
 	}
@@ -416,7 +416,7 @@ func TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks(t *testing.T) {
 	binding := &taskauthority.WorktreeBinding{Path: wt, LaunchManifest: &taskauthority.LaunchManifestEvidence{
 		OperationID: "manifest-op", LaunchID: "launch-test", ManifestSHA256: originalDigest, RecordedAt: 1,
 	}}
-	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, binding, false)
+	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, binding, false, false)
 	if err == nil {
 		t.Fatal("tampered charter with a refreshed manifest should disagree with the canonical anchor")
 	}
@@ -451,7 +451,7 @@ func TestShipSafetyCheck_CommittedSoldierWorkPasses(t *testing.T) {
 		}
 	}
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("committed Soldier work should not block: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestShipSafetyCheck_UnlistedIgnoredFileBlocks(t *testing.T) {
 
 	// The ignored file is not in the manifest. With --ignored=matching, git status
 	// will show it. It should block.
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("unlisted ignored file should block")
 	}

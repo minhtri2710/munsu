@@ -99,14 +99,9 @@ func TestCanonicalRetireIdempotentReplay(t *testing.T) {
 
 func TestCanonicalRetireReleasesResourceBindings(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
+	mustBindWorktree(t, c, "t1")
 
-	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindWorktree(mustOperation(t, "op-wt-retire", wt), wt); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-
-	req := retireRequest(t, c, "t1", preconditionOf(1, 2))
+	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
 	if _, err := c.Retire(mustOperation(t, "op-retire-wt", req), req); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -126,7 +121,7 @@ func TestCanonicalRetireReleasesResourceBindings(t *testing.T) {
 	if agg.Retirement == nil {
 		t.Fatalf("retirement evidence missing")
 	}
-	if agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "lease-wt" || agg.Retirement.Worktree.FenceToken != "fence-wt" {
+	if agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "wt-res-t1" || agg.Retirement.Worktree.FenceToken != "wt-fence-t1" {
 		t.Fatalf("retirement evidence = %+v", agg.Retirement)
 	}
 	if agg.Retirement.OperationID != "op-retire-wt" {
@@ -142,18 +137,9 @@ func TestCanonicalRetireReleasesResourceBindings(t *testing.T) {
 // is part of the Task generation document, durably rereadable.
 func TestCanonicalRetireEvidenceSurvivesReopen(t *testing.T) {
 	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
+	_, rev := launchToWorking(t, c, "t1")
 
-	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindWorktree(mustOperation(t, "op-wt-ev-retire", wt), wt); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-	ep := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-ep-ev-retire", ep), ep); err != nil {
-		t.Fatalf("BindEndpoint: %v", err)
-	}
-
-	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
+	req := retireRequest(t, c, "t1", preconditionOf(1, rev))
 	if _, err := c.Retire(mustOperation(t, "op-retire-ev", req), req); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -170,16 +156,16 @@ func TestCanonicalRetireEvidenceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != PhaseRetired || agg.Endpoint != nil || agg.Worktree != nil {
+	if agg.Phase != PhaseRetired || agg.Endpoint != nil || agg.Worktree != nil || agg.AcquiredEndpoint != nil {
 		t.Fatalf("retired aggregate = %+v", agg)
 	}
 	if agg.Retirement == nil {
 		t.Fatalf("retirement evidence lost across reopen")
 	}
-	if agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "lease-wt" || agg.Retirement.Worktree.FenceToken != "fence-wt" {
+	if agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "wt-res-t1" || agg.Retirement.Worktree.FenceToken != "wt-fence-t1" {
 		t.Fatalf("worktree evidence = %+v", agg.Retirement.Worktree)
 	}
-	if agg.Retirement.Endpoint == nil || agg.Retirement.Endpoint.LeaseID != "lease-ep" || agg.Retirement.Endpoint.FenceToken != "fence-ep" {
+	if agg.Retirement.Endpoint == nil || agg.Retirement.Endpoint.LeaseID != "ep-res-t1" || agg.Retirement.Endpoint.FenceToken != "ep-fence-t1" {
 		t.Fatalf("endpoint evidence = %+v", agg.Retirement.Endpoint)
 	}
 	if agg.Retirement.OperationID != "op-retire-ev" {
@@ -192,14 +178,9 @@ func TestCanonicalRetireEvidenceSurvivesReopen(t *testing.T) {
 // unchanged.
 func TestCanonicalRetireReplayReturnsSameEvidence(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
+	mustBindWorktree(t, c, "t1")
 
-	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindWorktree(mustOperation(t, "op-wt-rp", wt), wt); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-
-	req := retireRequest(t, c, "t1", preconditionOf(1, 2))
+	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
 	op := mustOperation(t, "op-retire-rp", req)
 	first, err := c.Retire(op, req)
 	if err != nil {
@@ -220,7 +201,7 @@ func TestCanonicalRetireReplayReturnsSameEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Retirement == nil || agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "lease-wt" {
+	if agg.Retirement == nil || agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "wt-res-t1" {
 		t.Fatalf("evidence after replay = %+v", agg.Retirement)
 	}
 }

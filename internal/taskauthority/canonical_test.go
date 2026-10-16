@@ -334,21 +334,12 @@ func TestCanonicalReopen(t *testing.T) {
 // DEPENDENCY ruling).
 func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
+	// Launch the generation to working with its resource leases bound.
+	_, rev := launchToWorking(t, c, "t1")
 
-	// Bind the generation's resource leases (revision 2 worktree, 3 endpoint).
-	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindWorktree(mustOperation(t, "op-reopen-hist-wt", wt), wt); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-	ep := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-reopen-hist-ep", ep), ep); err != nil {
-		t.Fatalf("BindEndpoint: %v", err)
-	}
-
-	// Retire generation 1 (revision 4), preserving the ownership evidence and
-	// committing the durable active cleanup claim atomically.
-	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
+	// Retire generation 1 (revision rev+1), preserving the ownership evidence
+	// and committing the durable active cleanup claim atomically.
+	req := retireRequest(t, c, "t1", preconditionOf(1, rev))
 	if _, err := c.Retire(mustOperation(t, "op-reopen-hist-retire", req), req); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -364,14 +355,14 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 	reopen := CanonicalReopenRequest{
 		HomeID:       c.HomeID(),
 		TaskID:       mustTaskID(t, "t1"),
-		Precondition: preconditionOf(1, 4),
+		Precondition: preconditionOf(1, rev+1),
 		Reason:       "reopen",
 	}
 	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-blocked", reopen), reopen); !errors.Is(err, ErrConflict) {
 		t.Fatalf("Reopen with active cleanup claim = %v, want ErrConflict", err)
 	}
 
-	// Complete the cleanup claim (revision 5): the claim is reconciled and
+	// Complete the cleanup claim (revision rev+2): the claim is reconciled and
 	// the retired task becomes reopenable.
 	if err := c.ReconcileRetirementCleanup(mustTaskID(t, "t1"), 1, CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatalf("ReconcileRetirementCleanup: %v", err)
@@ -384,9 +375,9 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 		t.Fatalf("cleanup claim not reconciled to completed: %+v", agg.CleanupClaim)
 	}
 
-	// Reopen into generation 2 (the superseded record keeps revision 6 via
-	// the supersession bump).
-	reopen.Precondition = preconditionOf(1, 5)
+	// Reopen into generation 2 (the superseded record keeps revision rev+3
+	// via the supersession bump).
+	reopen.Precondition = preconditionOf(1, rev+2)
 	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-reopen", reopen), reopen); err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
@@ -400,11 +391,11 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 	if hist.Current {
 		t.Fatalf("historical read reports current truth: %+v", hist)
 	}
-	if hist.Generation != 1 || hist.Phase != PhaseRetired || hist.Revision != 6 {
+	if hist.Generation != 1 || hist.Phase != PhaseRetired || uint64(hist.Revision) != rev+3 {
 		// Reopen marks the superseded record with one more revision (the
 		// supersession bump, mirroring the transfer path); the retired phase
 		// and evidence are what the historical read must preserve.
-		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision 6", hist.Generation, hist.Phase, hist.Revision)
+		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision %d", hist.Generation, hist.Phase, hist.Revision, rev+3)
 	}
 	if hist.Retirement == nil {
 		t.Fatalf("historical retirement evidence missing")
@@ -415,10 +406,10 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 	if hist.Retirement.Generation != 1 || hist.Retirement.OperationID != "op-reopen-hist-retire" {
 		t.Fatalf("retirement evidence = %+v, want generation 1 operation op-reopen-hist-retire", hist.Retirement)
 	}
-	if hist.Retirement.Worktree == nil || hist.Retirement.Worktree.LeaseID != "lease-wt" || hist.Retirement.Worktree.FenceToken != "fence-wt" {
+	if hist.Retirement.Worktree == nil || hist.Retirement.Worktree.LeaseID != "wt-res-t1" || hist.Retirement.Worktree.FenceToken != "wt-fence-t1" {
 		t.Fatalf("worktree evidence = %+v", hist.Retirement.Worktree)
 	}
-	if hist.Retirement.Endpoint == nil || hist.Retirement.Endpoint.LeaseID != "lease-ep" || hist.Retirement.Endpoint.FenceToken != "fence-ep" {
+	if hist.Retirement.Endpoint == nil || hist.Retirement.Endpoint.LeaseID != "ep-res-t1" || hist.Retirement.Endpoint.FenceToken != "ep-fence-t1" {
 		t.Fatalf("endpoint evidence = %+v", hist.Retirement.Endpoint)
 	}
 

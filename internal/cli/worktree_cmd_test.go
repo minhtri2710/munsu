@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
@@ -26,19 +25,13 @@ func setupClaimedWorktreeReturn(t *testing.T) (worktreePath, tracePath string) {
 	}
 	auth := testAuthorityFor(t, homeDir)
 	taskID := mustTaskIDFor(t, "claimed-task")
-	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "claimed worktree", Kind: "ship", Reason: "worktree return test"}
+	registerProject(t, homeDir, "claimed-project")
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "claimed worktree", Kind: "ship", Project: mustCLIProjectID(t, "claimed-project"), Reason: "worktree return test"}
 	if _, err := auth.Create(mustCanonicalOp(t, "claimed-worktree-create", create), create); err != nil {
 		t.Fatalf("creating canonical task: %v", err)
 	}
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		t.Fatalf("reading canonical task: %v", err)
-	}
-	binding := taskauthority.WorktreeBinding{RepositoryIdentity: "repo", Path: worktreePath, GitDir: "git", CommonDir: "common", BaseHead: "head", LeaseID: "claimed-lease", FenceToken: "claimed-fence", BoundAtUnix: 1}
-	bind := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Binding: binding, Reason: "worktree return test"}
-	if _, err := auth.BindWorktree(mustCanonicalOp(t, "claimed-worktree-bind", bind), bind); err != nil {
-		t.Fatalf("binding canonical worktree: %v", err)
-	}
+	binding := taskauthority.WorktreeBinding{RepositoryIdentity: "repo", Path: worktreePath, GitDir: "git", CommonDir: "common", BaseHead: "head", BoundAtUnix: 1}
+	bindLaunchWorktree(t, auth, beginTestLaunch(t, auth, "claimed-task", "tmux"), binding)
 	tracePath = filepath.Join(homeDir, "treehouse-returns")
 	fakeTreehouseProject(t, homeDir, "#!/bin/sh\n"+
 		"if [ \"$1\" = \"status\" ] && [ \"$2\" = \"--json\" ]; then\n"+

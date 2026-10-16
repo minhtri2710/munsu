@@ -138,52 +138,24 @@ func mustWorkingShipTask(t *testing.T, c *taskauthority.Canonical, taskID string
 func mustWorkingShipTaskAt(t *testing.T, c *taskauthority.Canonical, taskID, wtPath string) string {
 	t.Helper()
 	mustFleetCreate(t, c, taskID)
-	tid := mustFleetTaskID(t, taskID)
-	agg, err := c.Get(tid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bw := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       c.HomeID(),
-		TaskID:       tid,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding: taskauthority.WorktreeBinding{
-			RepositoryIdentity: "repo-" + taskID,
-			Path:               wtPath,
-			GitDir:             filepath.Join(wtPath, ".git"),
-			CommonDir:          "/repo/.git",
-			BaseHead:           deliveryTestHead,
-			LeaseID:            "lease-wt-" + taskID,
-			FenceToken:         "fence-wt-" + taskID,
-			BoundAtUnix:        time.Now().Unix(),
-		},
-		Reason: "spawn",
-	}
-	if _, err := c.BindWorktree(mustFleetOperation(t, "op-del-bindwt-"+taskID, bw), bw); err != nil {
-		t.Fatalf("BindWorktree(%s): %v", taskID, err)
-	}
-	agg2, err := c.Get(tid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	be := taskauthority.CanonicalBindEndpointRequest{
-		HomeID:       c.HomeID(),
-		TaskID:       tid,
-		Precondition: domain.Of(uint64(agg2.Generation), uint64(agg2.Revision)),
-		Binding: taskauthority.EndpointBinding{
-			Backend:      "tmux",
-			Handle:       "@1",
-			LeaseID:      "lease-ep-" + taskID,
-			FenceToken:   "fence-ep-" + taskID,
-			SessionOwner: "session-" + taskID,
-			Incarnation:  "inc-" + taskID, // opaque launch incarnation (contract)
-			BoundAtUnix:  time.Now().Unix(),
-		},
-		Reason: "spawn",
-	}
-	if _, err := c.BindEndpoint(mustFleetOperation(t, "op-del-bindep-"+taskID, be), be); err != nil {
-		t.Fatalf("BindEndpoint(%s): %v", taskID, err)
-	}
+	launchToWorking(t, c, taskID, taskauthority.WorktreeBinding{
+		RepositoryIdentity: "repo-" + taskID,
+		Path:               wtPath,
+		GitDir:             filepath.Join(wtPath, ".git"),
+		CommonDir:          "/repo/.git",
+		BaseHead:           deliveryTestHead,
+		LeaseID:            "lease-wt-" + taskID,
+		FenceToken:         "fence-wt-" + taskID,
+		BoundAtUnix:        time.Now().Unix(),
+	}, taskauthority.EndpointBinding{
+		Backend:      "tmux",
+		Handle:       "@1",
+		LeaseID:      "lease-ep-" + taskID,
+		FenceToken:   "fence-ep-" + taskID,
+		SessionOwner: "session-" + taskID,
+		Incarnation:  "inc-" + taskID, // opaque launch incarnation (contract)
+		BoundAtUnix:  time.Now().Unix(),
+	})
 	return wtPath
 }
 

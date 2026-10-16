@@ -87,6 +87,56 @@ func (c *Canonical) BeginCleanup(op domain.Operation, req CanonicalBeginCleanupR
 	})
 }
 
+// CanonicalBeginArtifactDisposalRequest records on the active cleanup claim
+// that worktree launch-artifact disposal has begun. The request is the typed
+// intent for the operation digest.
+type CanonicalBeginArtifactDisposalRequest struct {
+	HomeID           domain.HomeID
+	TaskID           domain.TaskID
+	Precondition     domain.Precondition
+	ClaimOperationID string
+	ClaimGeneration  Generation
+	Reason           string
+}
+
+func (r CanonicalBeginArtifactDisposalRequest) DigestBytes() ([]byte, error) {
+	return json.Marshal(struct {
+		HomeID           string     `json:"home_id"`
+		TaskID           string     `json:"task_id"`
+		Generation       uint64     `json:"generation"`
+		Revision         uint64     `json:"revision"`
+		ClaimOperationID string     `json:"claim_operation_id"`
+		ClaimGeneration  Generation `json:"claim_generation"`
+		Reason           string     `json:"reason,omitempty"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision, r.ClaimOperationID, r.ClaimGeneration, r.Reason})
+}
+
+// BeginArtifactDisposal marks the active cleanup claim as disposing the
+// retired worktree's launch artifacts. Fleet commits it before removing any
+// artifact, so a resume that finds the manifest already removed can tell an
+// interrupted disposal from a manifest that was never there. An already-marked
+// claim is a no-op; a claim that is not active fails closed.
+func (c *Canonical) BeginArtifactDisposal(op domain.Operation, req CanonicalBeginArtifactDisposalRequest) (Outcome, error) {
+	if err := c.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := validateClaimIdentity(req.ClaimOperationID, req.ClaimGeneration); err != nil {
+		return Outcome{}, err
+	}
+	return c.mutateTaskCleanup(op, req.TaskID, req.Precondition, cleanupGate{operationID: req.ClaimOperationID, generation: req.ClaimGeneration}, func(cur Aggregate) (Aggregate, error) {
+		if cur.CleanupClaim == nil || cur.CleanupClaim.Status != CleanupActive {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s cleanup claim is not active; artifact disposal requires the active claim", cur.TaskID, cur.Generation)
+		}
+		if cur.CleanupClaim.ArtifactsDisposing {
+			return cur, nil
+		}
+		next := cur.clone()
+		next.CleanupClaim.ArtifactsDisposing = true
+		next.Revision++
+		return next, nil
+	})
+}
+
 // CanonicalCompleteCleanupRequest describes reconciliation of an active cleanup
 // claim to completed after evidence-pinned releases and projection removal
 // succeed. The request is the typed intent for the operation digest.

@@ -152,7 +152,7 @@ func TestWorktreePoolArtifactHygieneCleanUnanchoredTreeHasNoLaunchOwner(t *testi
 	}
 }
 
-func TestWorktreePoolArtifactHygieneRejectsMissingArtifactOnRetry(t *testing.T) {
+func TestWorktreePoolArtifactHygieneResumesRecordedDisposalOnRetry(t *testing.T) {
 	opts, auth, worktree := retireScoutFixture(t, true)
 	opts.Force = true
 	interrupted := &recordingTeardown{alive: false, returnErr: errors.New("simulated provider-return interruption")}
@@ -163,31 +163,26 @@ func TestWorktreePoolArtifactHygieneRejectsMissingArtifactOnRetry(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != "active" {
-		t.Fatalf("first cleanup claim=%+v, want active pending custody", agg.CleanupClaim)
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != "active" || !agg.CleanupClaim.ArtifactsDisposing {
+		t.Fatalf("first cleanup claim=%+v, want active pending custody with disposal recorded", agg.CleanupClaim)
 	}
 
-	// Disposal completed before provider return failed. A missing canonical
-	// manifest is not a completion receipt, so retry must retain custody.
+	// Disposal completed before provider return failed. A missing manifest is
+	// not a completion receipt; the claim's disposal record is, so the retry
+	// returns the worktree. TestRetirementResumeAcrossArtifactDisposal pins
+	// the refusal when no record exists.
 	if _, err := os.Lstat(filepath.Join(worktree, ManifestName)); !os.IsNotExist(err) {
 		t.Fatalf("interrupted provider return left manifest present: %v", err)
 	}
 
 	retry := &recordingTeardown{alive: false}
-	_, err = RetireTask(opts, retry, fakeRetirementJournals{}, auth)
-	if err == nil {
-		t.Fatal("retry treated an absent declared artifact as completed disposal")
+	if _, err := RetireTask(opts, retry, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("retry after a recorded disposal: %v", err)
 	}
-	if len(retry.returned) != 0 {
-		t.Fatalf("retry returned worktree despite absent artifact evidence: %v", retry.returned)
+	if len(retry.returned) != 1 || retry.returned[0] != worktree {
+		t.Fatalf("retry returned=%v, want one return of %s", retry.returned, worktree)
 	}
-	agg, err = auth.Get(mustTaskID(t, opts.ID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != "active" {
-		t.Fatalf("cleanup claim=%+v, want active pending custody", agg.CleanupClaim)
-	}
+	assertClaimCompleted(t, auth, opts.ID, 1)
 }
 
 func TestWorktreePoolArtifactHygieneRejectsAbsentWorktreeOnRetry(t *testing.T) {

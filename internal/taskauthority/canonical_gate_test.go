@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// gateScene is a task authorized for delivery at deliveryHead (revision 5,
-// authorization operation "op-auth-gate").
+// gateScene is a task authorized for delivery at deliveryHead (revision
+// deliveryReadyRev+1, authorization operation "op-auth-gate").
 func gateScene(t *testing.T) (*Canonical, DeliveryAuthorization) {
 	t.Helper()
 	c, _, _ := newTestCanonical(t)

@@ -166,57 +166,22 @@ func deliveryGuardShip(t *testing.T, taskID string) string {
 	initHomeWithTask(t, homeDir, taskID, "ship")
 
 	auth := cliCanonicalForHome(t, homeDir)
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	agg, err := auth.Get(tid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tid := mustTaskIDFor(t, taskID)
 	worktree := deliveryGuardWorktree(t)
-	bw := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       tid,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding: taskauthority.WorktreeBinding{
-			RepositoryIdentity: "repo-" + taskID,
-			Path:               worktree,
-			GitDir:             filepath.Join(worktree, ".git"),
-			CommonDir:          "/repo/.git",
-			BaseHead:           deliveryGuardHead,
-			LeaseID:            "lease-wt-" + taskID,
-			FenceToken:         "fence-wt-" + taskID,
-			BoundAtUnix:        time.Now().Unix(),
-		},
-		Reason: "delivery guard fixture",
-	}
-	if _, err := auth.BindWorktree(mustCanonicalOp(t, "op-guard-bindwt-"+taskID, bw), bw); err != nil {
-		t.Fatalf("BindWorktree(%s): %v", taskID, err)
-	}
-
-	agg2, err := auth.Get(tid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	be := taskauthority.CanonicalBindEndpointRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       tid,
-		Precondition: domain.Of(uint64(agg2.Generation), uint64(agg2.Revision)),
-		Binding: taskauthority.EndpointBinding{
-			Backend:      "tmux",
-			Handle:       "@1",
-			LeaseID:      "lease-ep-" + taskID,
-			FenceToken:   "fence-ep-" + taskID,
-			SessionOwner: "session-" + taskID,
-			Incarnation:  "inc-" + taskID,
-			BoundAtUnix:  time.Now().Unix(),
-		},
-		Reason: "delivery guard fixture",
-	}
-	if _, err := auth.BindEndpoint(mustCanonicalOp(t, "op-guard-bindep-"+taskID, be), be); err != nil {
-		t.Fatalf("BindEndpoint(%s): %v", taskID, err)
-	}
+	begin := beginTestLaunch(t, auth, taskID, "tmux")
+	bindLaunchWorktree(t, auth, begin, taskauthority.WorktreeBinding{
+		RepositoryIdentity: "repo-" + taskID,
+		Path:               worktree,
+		GitDir:             filepath.Join(worktree, ".git"),
+		CommonDir:          "/repo/.git",
+		BaseHead:           deliveryGuardHead,
+		BoundAtUnix:        time.Now().Unix(),
+	})
+	launchToWorking(t, auth, begin, taskauthority.EndpointBinding{
+		Handle:       "@1",
+		SessionOwner: "session-" + taskID,
+		BoundAtUnix:  time.Now().Unix(),
+	})
 
 	// BindEndpoint is the transition into working: delivery requires a
 	// working task, and there is no separate start on this path.

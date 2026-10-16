@@ -168,7 +168,7 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 	md := setupRetirementTestManifest(t, wt)
 
 	// Clean state should pass
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass for clean branch: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 	// Set up manifest (writes all launch artifacts).
 	md := setupRetirementTestManifest(t, wt)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only known launch artifacts are dirty: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 	// Write an unknown untracked file (should cause failure).
 	os.WriteFile(filepath.Join(wt, "arbitrary.txt"), []byte("unknown\n"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file exists alongside known artifacts")
 	}
@@ -279,7 +279,7 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 	// Write an unknown untracked file.
 	os.WriteFile(filepath.Join(wt, "rogue.txt"), []byte("rogue\n"), 0644)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file coexists with known artifacts")
 	}
@@ -337,7 +337,7 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 	// Set up manifest (writes all launch artifacts including launch script).
 	md := setupRetirementTestManifest(t, wt)
 
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only launch artifacts are dirty: %v", err)
 	}
@@ -350,14 +350,14 @@ func TestShipSafetyCheck_NoRemoteBranch(t *testing.T) {
 	setupGitRepo(t, wt, "") // no remote
 
 	md := setupRetirementTestManifest(t, wt)
-	_, err := shipSafetyCheck(Options{}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{}, nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail without remote")
 	}
 }
 
 func TestShipSafetyCheck_NoWorktreeInMeta(t *testing.T) {
-	_, err := shipSafetyCheck(Options{ID: "test"}, nil, fakeTeardown{}, nil, nil, false)
+	_, err := shipSafetyCheck(Options{ID: "test"}, nil, fakeTeardown{}, nil, nil, false, false)
 	if err == nil || !strings.Contains(err.Error(), "no canonical worktree path") {
 		t.Fatalf("error = %v, want canonical worktree refusal", err)
 	}

@@ -550,10 +550,11 @@ func TestGuardReleaseHoldRefusesUnsafeHoldID(t *testing.T) {
 
 // --- canonical_launch.go: the launch chain -------------------------------
 
-// launchToWorking drives one task through the full launch chain — intent,
-// worktree, manifest anchor, acquired endpoint, launch evidence, bind — and leaves it working.
-// It returns the committed intent and the working revision.
-func launchToWorking(t *testing.T, c *Canonical, taskID string) (CanonicalBeginSpawnRequest, uint64) {
+// launchToBindable drives one task through the launch chain up to the final
+// bind — intent, worktree, manifest anchor, acquired endpoint "handle-<taskID>",
+// launch evidence — and returns the committed intent and the revision the bind
+// must carry.
+func launchToBindable(t *testing.T, c *Canonical, taskID string) (CanonicalBeginSpawnRequest, uint64) {
 	t.Helper()
 	mustCreate(t, c, taskID)
 	intent, rev := mustBeginSpawn(t, c, taskID, preconditionOf(1, 1))
@@ -579,12 +580,15 @@ func launchToWorking(t *testing.T, c *Canonical, taskID string) (CanonicalBeginS
 	if _, err := c.RecordLaunch(mustOperation(t, "op-l2w-record-"+taskID, record), record); err != nil {
 		t.Fatalf("RecordLaunch(%s): %v", taskID, err)
 	}
-	rev++
+	return intent, rev + 1
+}
 
-	be := CanonicalBindEndpointRequest{
-		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID),
-		Precondition: preconditionOf(1, rev), Binding: launchEndpointBinding(intent, "handle-"+taskID), Reason: "spawn",
-	}
+// launchToWorking runs launchToBindable and the final bind, leaving the task
+// working. It returns the committed intent and the working revision.
+func launchToWorking(t *testing.T, c *Canonical, taskID string) (CanonicalBeginSpawnRequest, uint64) {
+	t.Helper()
+	intent, rev := launchToBindable(t, c, taskID)
+	be := bindEndpointRequest(c, taskID, preconditionOf(1, rev))
 	if _, err := c.BindEndpoint(mustOperation(t, "op-l2w-bindep-"+taskID, be), be); err != nil {
 		t.Fatalf("BindEndpoint(%s): %v", taskID, err)
 	}

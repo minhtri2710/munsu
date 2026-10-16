@@ -46,8 +46,9 @@ func (r CanonicalRetireRequest) DigestBytes() ([]byte, error) {
 // phase. It is exact-generation and idempotent: the request carries the
 // expected Generation/Revision precondition, and reusing the same Operation
 // ID with the same digest replays the durable prior outcome. The retired
-// generation releases its ACTIVE endpoint/worktree ownership (Endpoint and
-// Worktree become nil — the generation is no longer an active binding owner)
+// generation releases its ACTIVE endpoint/worktree ownership (Endpoint,
+// Worktree and AcquiredEndpoint become nil — the generation is no longer an
+// active binding owner)
 // while preserving the exact ownership evidence durably in Retirement for
 // #412's resource release and diagnostics. A stale precondition, a generation
 // that is not current, an already-retired generation, or a reserved-for-
@@ -90,6 +91,7 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 		}
 		next.Endpoint = nil
 		next.Worktree = nil
+		next.AcquiredEndpoint = nil
 		// A durable cleanup claim is committed atomically WITH the retirement:
 		// the generation is pinned against Reopen/BindEndpoint/
 		// acquisition from the instant the retire commits, so no window exists

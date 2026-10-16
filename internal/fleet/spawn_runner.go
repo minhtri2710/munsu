@@ -2470,9 +2470,9 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 // and the recorded launch evidence in ONE atomic operation that transitions
 // queued → working. Only this operation transitions the phase; it requires the
 // bound worktree, the recorded acquired endpoint (AttachEndpoint), the
-// recorded launch evidence (RecordLaunch), and the exact intent fence when a
-// launch intent exists. A task another run of the identical launch bound in
-// the meantime replays idempotently. The returned Outcome is
+// recorded launch evidence (RecordLaunch), and the exact intent fence. A task
+// another run of the identical launch bound in the meantime replays
+// idempotently. The returned Outcome is
 // the authoritative spawn receipt: its Generation is the exact generation the
 // attestation evidence binds to.
 func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {

@@ -34,7 +34,7 @@ func TestWorktreeReclaimRefusesUnreadableTaskDocument(t *testing.T) {
 	}
 
 	const id = "task-live"
-	bindClaimWorktree(t, testAuthorityFor(t, tmpDir), id, "/pool/wt-live", false)
+	bindClaimWorktree(t, tmpDir, id, "/pool/wt-live", false)
 	if err := os.WriteFile(filepath.Join(tmpDir, "state", "task-authority", "tasks", id, "current.json"), []byte("{corrupt"), 0o600); err != nil {
 		t.Fatalf("corrupting the task document: %v", err)
 	}
@@ -625,18 +625,11 @@ func recordTreehouseLease(t *testing.T, homeDir string) {
 	if err != nil || overlay.Worktree == nil {
 		t.Fatalf("treehouse overlay = %+v, err=%v", overlay, err)
 	}
+	registerProject(t, homeDir, "munsu")
 	cliSeedCanonicalTask(t, homeDir, "leased-task", "ship")
 	auth := cliCanonicalForHome(t, homeDir)
-	taskID := mustTaskIDFor(t, "leased-task")
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding := taskauthority.WorktreeBinding{RepositoryIdentity: "repo", Path: filepath.Join(t.TempDir(), "leased"), GitDir: "git", CommonDir: "common", BaseHead: "head", LeaseID: "leased-lease", FenceToken: "leased-fence", Treehouse: overlay.Worktree.Path, BoundAtUnix: 1}
-	bind := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), Binding: binding, Reason: "reclaim test"}
-	if _, err := auth.BindWorktree(mustCanonicalOp(t, "leased-bind", bind), bind); err != nil {
-		t.Fatal(err)
-	}
+	binding := taskauthority.WorktreeBinding{RepositoryIdentity: "repo", Path: filepath.Join(t.TempDir(), "leased"), GitDir: "git", CommonDir: "common", BaseHead: "head", Treehouse: overlay.Worktree.Path, BoundAtUnix: 1}
+	bindLaunchWorktree(t, auth, beginTestLaunch(t, auth, "leased-task", "tmux"), binding)
 	if err := config.StoreProjectOverlay(homeDir, treehouseProject, config.ProjectOverlay{}); err != nil {
 		t.Fatal(err)
 	}
@@ -948,16 +941,13 @@ func TestWorktreeReclaimSparesAuthoritativelyBoundWorktree(t *testing.T) {
 		Owner:       "general",
 		Description: "authoritative worktree test",
 		Kind:        "ship",
+		Project:     mustCLIProjectID(t, "authoritative-project"),
 		Reason:      "reclaim test",
 	}
+	registerProject(t, tmpDir, "authoritative-project")
 	if _, err := auth.Create(mustCanonicalOp(t, "reclaim-authoritative-create", createReq), createReq); err != nil {
 		t.Fatalf("creating task authority record: %v", err)
 	}
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		t.Fatalf("reading task authority record: %v", err)
-	}
-
 	orphanDir := filepath.Join(tmpDir, ".worktrees", "authoritative")
 	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
 		t.Fatalf("creating orphan worktree: %v", err)
@@ -966,26 +956,14 @@ func TestWorktreeReclaimSparesAuthoritativelyBoundWorktree(t *testing.T) {
 	if err := os.WriteFile(orphanGit, []byte("gitdir: /nowhere"), 0o644); err != nil {
 		t.Fatalf("seeding orphan worktree: %v", err)
 	}
-	binding := taskauthority.WorktreeBinding{
+	bindLaunchWorktree(t, auth, beginTestLaunch(t, auth, "authoritative-live", "tmux"), taskauthority.WorktreeBinding{
 		RepositoryIdentity: "repo",
 		Path:               orphanDir,
 		GitDir:             "git",
 		CommonDir:          "common",
 		BaseHead:           "head",
-		LeaseID:            "lease",
-		FenceToken:         "fence",
 		BoundAtUnix:        time.Now().Unix(),
-	}
-	bindReq := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       taskID,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding:      binding,
-		Reason:       "reclaim test",
-	}
-	if _, err := auth.BindWorktree(mustCanonicalOp(t, "reclaim-authoritative-bind", bindReq), bindReq); err != nil {
-		t.Fatalf("binding authoritative worktree: %v", err)
-	}
+	})
 
 	root := NewRootCommand()
 	root.SetOut(new(strings.Builder))

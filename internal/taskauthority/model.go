@@ -391,6 +391,9 @@ type CleanupClaim struct {
 	Status       CleanupStatus `json:"status"`
 	ClaimedAt    int64         `json:"claimed_at"`
 	ReconciledAt int64         `json:"reconciled_at,omitempty"`
+	// ArtifactsDisposing records that worktree launch-artifact disposal has
+	// begun (BeginArtifactDisposal), so a resume may find the manifest gone.
+	ArtifactsDisposing bool `json:"artifacts_disposing,omitempty"`
 }
 
 // Aggregate is the authoritative record of one Task Generation.

@@ -57,8 +57,8 @@ func TestReadWithProbeProbesUnboundAcquiredEndpoint(t *testing.T) {
 			}
 			if tc.retire {
 				RetireTask(Options{HomeDir: f.homeDir, ID: f.taskID, Force: true}, &recordingTeardown{alive: true}, fakeRetirementJournals{}, f.auth)
-				if agg := f.aggregate(); agg.Phase != taskauthority.PhaseRetired || agg.AcquiredEndpoint == nil {
-					t.Fatalf("fixture phase %q acquired %v, want retired still naming the acquired endpoint", agg.Phase, agg.AcquiredEndpoint)
+				if agg := f.aggregate(); agg.Phase != taskauthority.PhaseRetired || agg.AcquiredEndpoint != nil || agg.Retirement == nil || agg.Retirement.Acquired == nil {
+					t.Fatalf("fixture phase %q acquired %v retirement %+v, want retired with the acquired endpoint released into retirement evidence", agg.Phase, agg.AcquiredEndpoint, agg.Retirement)
 				}
 			}
 			probe := &stateProbe{alive: true}

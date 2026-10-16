@@ -114,8 +114,8 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 14 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 14", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 15 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 15", agg.Phase, agg.Revision)
 	}
 
 	if result.IsError() {
@@ -161,14 +161,36 @@ func TestMergeAndRetireResumeKeepsReportContinuity(t *testing.T) {
 	}
 }
 
+// The retry is not forced, so its safety check runs against what the failed
+// attempt left: after a failed worktree return the artifacts are disposed.
 func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		first          fakeTeardown
+		failedAt       taskauthority.Revision
+		recordDisposal bool
+	}{
+		// Revision 13 = done, then retire committed the durable claim; the
+		// failed attempt's BeginCleanup was a no-op (claim already active).
+		{"session dispose fails", fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, 13, false},
+		// The disposal record is revision 14, committed before the return.
+		{"worktree return fails after disposal", fakeTeardown{mergeStatus: landedStatus(), alive: true, returnWorktreeErr: errors.New("pool full")}, 14, false},
+		// A crash after the disposal record and before any removal leaves the
+		// canonical manifest and every artifact in place.
+		{"crash after the disposal record, before removal", fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, 13, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) { mergeAndRetireResumesCleanup(t, tc.first, tc.failedAt, tc.recordDisposal) })
+	}
+}
+
+func mergeAndRetireResumesCleanup(t *testing.T, firstTeardown fakeTeardown, failedAt taskauthority.Revision, recordDisposal bool) {
 	homeDir := t.TempDir()
 	taskID := "test-cleanup-failure"
 	auth := mergedShipFixture(t, homeDir, taskID)
 
 	// First attempt: the canonical Retire op commits (durable receipt) but the
-	// saga-side cleanup fails at the session dispose step.
-	first := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, fakeRetirementJournals{}, auth)
+	// saga-side cleanup fails.
+	first := MergeAndRetire(homeDir, taskID, deliverRequest(), firstTeardown, fakeRetirementJournals{}, auth)
 	if first == nil || first.TeardownError == nil {
 		t.Fatal("expected teardown error on cleanup failure")
 	}
@@ -184,15 +206,13 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	}
 
 	// The committed retirement stands and the canonical completed delivery
-	// outcome is preserved. Revision 13 = done, then retire committed the
-	// durable claim; the failed first attempt's BeginCleanup was a no-op
-	// (claim already active), so the aggregate carries exactly those bumps.
+	// outcome is preserved.
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 13 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 13", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != failedAt {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision %d", agg.Phase, agg.Revision, failedAt)
 	}
 	// The exact ownership evidence is preserved durably.
 	if agg.Retirement == nil || agg.Retirement.Endpoint == nil || agg.Retirement.Worktree == nil {
@@ -205,11 +225,16 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if outcome.Status != taskauthority.DeliveryOutcomeCompleted {
 		t.Fatalf("canonical delivery outcome = %q, want completed", outcome.Status)
 	}
+	if recordDisposal {
+		if _, err := beginArtifactDisposal(auth, mustTaskID(t, taskID), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),
-	// the retired phase is observed (no double transition, only the claim
-	// completion advances revision 13 -> 14), and the cleanup resumes to
-	// completion.
+	// the retired phase is observed (no double transition, only the disposal
+	// record and the claim completion advance to 15), and the cleanup resumes
+	// to completion.
 	second := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{mergeStatus: landedStatus(), alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
 		t.Fatal("expected non-nil retry result")
@@ -224,8 +249,8 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 14 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 14 (claim completion only)", agg.Revision)
+	if agg.Revision != 15 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 15 (disposal record and claim completion only)", agg.Revision)
 	}
 }
 
@@ -281,14 +306,14 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 	}
 
 	// Resume: the retired phase is observed (same stable Operation identity
-	// replays the durable receipt; only the claim completion advances the
-	// revision) and the cleanup completes.
+	// replays the durable receipt; only the artifact-disposal record and the
+	// claim completion advance the revision) and the cleanup completes.
 	_, err = RetireTask(opts, fakeTeardown{mergeStatus: landedStatus(), alive: true}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 13 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 13", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 14 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 14", agg)
 	}
 }

@@ -24,9 +24,11 @@ func testSeat() LaunchSeat {
 
 const (
 	reviewBaseSHA = "0000111122223333444455556666777788889999"
-	// shipIncarnation is the endpoint incarnation endpointBinding gives a
-	// ship task: the authoring soldier instance a verdict must name.
-	shipIncarnation = "inc-bind"
+	// shipIncarnation is the endpoint incarnation the launch chain gives ship1:
+	// the authoring soldier instance a verdict must name.
+	shipIncarnation = "inc-ship1"
+	// workingShipRev is the revision workingShip leaves a ship task at.
+	workingShipRev = 7
 )
 
 func reviewTree(head string) domain.TreeState {
@@ -99,40 +101,23 @@ func workingReview(t *testing.T, c *Canonical, reviewID, target, head string) ui
 }
 
 // mustRecordVerdict records the PASS verdict of review task reviewID for head
-// on the ship task and returns the ship task's next revision.
+// on the ship task, authored by the task's launch incarnation, and returns the
+// ship task's next revision.
 func mustRecordVerdict(t *testing.T, c *Canonical, taskID, reviewID, head string, rev uint64) uint64 {
 	t.Helper()
-	req := CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev), Verdict: reviewVerdict(reviewID, head)}
+	v := reviewVerdict(reviewID, head)
+	v.Author = "inc-" + taskID
+	req := CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Precondition: preconditionOf(1, rev), Verdict: v}
 	if _, err := c.RecordReviewVerdict(mustOperation(t, "op-verdict-"+taskID+"-"+reviewID, req), req); err != nil {
 		t.Fatalf("RecordReviewVerdict(%s): %v", taskID, err)
 	}
 	return rev + 1
 }
 
-// workingShip creates a ship task and binds its worktree and endpoint, leaving
-// it working at revision 3.
+// workingShip launches a ship task to working at workingShipRev.
 func workingShip(t *testing.T, c *Canonical, taskID string) {
 	t.Helper()
-	mustCreate(t, c, taskID)
-	for _, step := range []struct {
-		name string
-		do   func() error
-	}{
-		{"BindWorktree", func() error {
-			req := bindWorktreeRequest(c, taskID, preconditionOf(1, 1))
-			_, err := c.BindWorktree(mustOperation(t, "op-ship-wt-"+taskID, req), req)
-			return err
-		}},
-		{"BindEndpoint", func() error {
-			req := bindEndpointRequest(c, taskID, preconditionOf(1, 2))
-			_, err := c.BindEndpoint(mustOperation(t, "op-ship-ep-"+taskID, req), req)
-			return err
-		}},
-	} {
-		if err := step.do(); err != nil {
-			t.Fatalf("%s(%s): %v", step.name, taskID, err)
-		}
-	}
+	launchToWorking(t, c, taskID)
 }
 
 func TestCanonicalCreateReviewRequiresAWorkingShipTarget(t *testing.T) {
@@ -234,7 +219,8 @@ func TestReviewRefusals(t *testing.T) {
 		}},
 		{name: "bind worktree allows a ship task", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "ship1")
-			req := bindWorktreeRequest(c, "ship1", preconditionOf(1, 1))
+			_, rev := mustBeginSpawn(t, c, "ship1", preconditionOf(1, 1))
+			req := bindWorktreeRequest(c, "ship1", preconditionOf(1, rev))
 			_, err := c.BindWorktree(mustOperation(t, "op-bind-wt-ship", req), req)
 			return err
 		}},
@@ -302,20 +288,20 @@ func TestReviewRefusals(t *testing.T) {
 		{name: "record verdict allows a task with its worktree and endpoint bound", run: func(t *testing.T, c *Canonical) error {
 			workingShip(t, c, "ship1")
 			workingReview(t, c, "rev1", "ship1", deliveryHead)
-			mustRecordVerdict(t, c, "ship1", "rev1", deliveryHead, 3)
+			mustRecordVerdict(t, c, "ship1", "rev1", deliveryHead, workingShipRev)
 			return nil
 		}},
 
 		{name: "authorize delivery refuses a mixed prose and code delivery without a verdict", class: ErrPrecondition, want: "delivery authorization requires a review verdict for head", run: func(t *testing.T, c *Canonical) error {
 			workingShip(t, c, "ship1")
-			req := authorizeRequest(c, "ship1", preconditionOf(1, 3))
+			req := authorizeRequest(c, "ship1", preconditionOf(1, workingShipRev))
 			req.Diff = mixedDeliveryDiff()
 			_, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-mixed", req), req)
 			return err
 		}},
 		{name: "authorize delivery allows a prose-only delivery without a verdict", run: func(t *testing.T, c *Canonical) error {
 			workingShip(t, c, "ship1")
-			req := authorizeRequest(c, "ship1", preconditionOf(1, 3))
+			req := authorizeRequest(c, "ship1", preconditionOf(1, workingShipRev))
 			req.Diff = proseDeliveryDiff()
 			res, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-prose", req), req)
 			if err == nil && (res.Authorization.Basis != DeliveryBasisProseOnly || res.Authorization.Verdict != (domain.ReviewVerdict{})) {
@@ -325,12 +311,12 @@ func TestReviewRefusals(t *testing.T) {
 		}},
 		{name: "authorize delivery refuses a task with no recorded verdict", class: ErrPrecondition, want: "delivery authorization requires a review verdict for head", run: func(t *testing.T, c *Canonical) error {
 			workingShip(t, c, "ship1")
-			return authorize(t, c, 3)
+			return authorize(t, c, workingShipRev)
 		}},
 		{name: "authorize delivery allows a task with a passing verdict", run: func(t *testing.T, c *Canonical) error {
 			workingShip(t, c, "ship1")
 			workingReview(t, c, "rev1", "ship1", deliveryHead)
-			rev := mustRecordVerdict(t, c, "ship1", "rev1", deliveryHead, 3)
+			rev := mustRecordVerdict(t, c, "ship1", "rev1", deliveryHead, workingShipRev)
 			return authorize(t, c, rev)
 		}},
 	})
@@ -426,7 +412,7 @@ func TestCanonicalRecordLaunchCarriesTheReviewTreeExactlyForReviews(t *testing.T
 }
 
 // verdictScene is a working ship task "ship1" (endpoint incarnation
-// shipIncarnation, revision 3) and a working review task "rev1" reading it at
+// shipIncarnation, revision workingShipRev) and a working review task "rev1" reading it at
 // deliveryHead.
 func verdictScene(t *testing.T) *Canonical {
 	t.Helper()
@@ -446,12 +432,12 @@ func TestCanonicalRecordReviewVerdictStoresOneReplaceableRecord(t *testing.T) {
 	c := verdictScene(t)
 	v := reviewVerdict("rev1", deliveryHead)
 
-	out, err := recordVerdict(t, c, "op-verdict-1", 3, v)
+	out, err := recordVerdict(t, c, "op-verdict-1", workingShipRev, v)
 	if err != nil {
 		t.Fatalf("RecordReviewVerdict: %v", err)
 	}
-	if out.Revision != 4 {
-		t.Fatalf("outcome revision = %d, want 4", out.Revision)
+	if out.Revision != workingShipRev+1 {
+		t.Fatalf("outcome revision = %d, want %d", out.Revision, workingShipRev+1)
 	}
 	agg, err := c.Get(mustTaskID(t, "ship1"))
 	if err != nil {
@@ -461,14 +447,14 @@ func TestCanonicalRecordReviewVerdictStoresOneReplaceableRecord(t *testing.T) {
 		t.Fatalf("stored verdict = %+v, want the recorded verdict under op-verdict-1", agg.ReviewVerdict)
 	}
 
-	replay, err := recordVerdict(t, c, "op-verdict-1", 3, v)
-	if err != nil || !replay.Replayed || replay.Revision != 4 {
-		t.Fatalf("replay = %+v, %v, want a replayed outcome at revision 4", replay, err)
+	replay, err := recordVerdict(t, c, "op-verdict-1", workingShipRev, v)
+	if err != nil || !replay.Replayed || replay.Revision != workingShipRev+1 {
+		t.Fatalf("replay = %+v, %v, want a replayed outcome at revision %d", replay, err, workingShipRev+1)
 	}
 
 	failed := v
 	failed.Outcome = domain.VerdictFail
-	if _, err := recordVerdict(t, c, "op-verdict-2", 4, failed); err != nil {
+	if _, err := recordVerdict(t, c, "op-verdict-2", workingShipRev+1, failed); err != nil {
 		t.Fatalf("second verdict: %v", err)
 	}
 	agg, _ = c.Get(mustTaskID(t, "ship1"))
@@ -527,9 +513,9 @@ func TestCanonicalRecordReviewVerdictRefusals(t *testing.T) {
 			c := verdictScene(t)
 			v := good
 			tc.mutate(&v)
-			_, err := recordVerdict(t, c, "op-verdict-refused", 3, v)
+			_, err := recordVerdict(t, c, "op-verdict-refused", workingShipRev, v)
 			wantErrSubstring(t, err, tc.want, "RecordReviewVerdict")
-			if agg, _ := c.Get(mustTaskID(t, "ship1")); agg.ReviewVerdict != nil || agg.Revision != 3 {
+			if agg, _ := c.Get(mustTaskID(t, "ship1")); agg.ReviewVerdict != nil || agg.Revision != workingShipRev {
 				t.Fatalf("refused verdict left revision %d, record %+v", agg.Revision, agg.ReviewVerdict)
 			}
 		})
@@ -539,7 +525,7 @@ func TestCanonicalRecordReviewVerdictRefusals(t *testing.T) {
 		c := verdictScene(t)
 		v := good
 		v.ReviewerTask = "ghost"
-		if _, err := recordVerdict(t, c, "op-verdict-ghost", 3, v); !errors.Is(err, ErrNotFound) {
+		if _, err := recordVerdict(t, c, "op-verdict-ghost", workingShipRev, v); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("RecordReviewVerdict by an unknown reviewer = %v, want ErrNotFound", err)
 		}
 	})
@@ -548,7 +534,7 @@ func TestCanonicalRecordReviewVerdictRefusals(t *testing.T) {
 		c := verdictScene(t)
 		workingShip(t, c, "ship2")
 		workingReview(t, c, "rev2", "ship2", deliveryHead)
-		_, err := recordVerdict(t, c, "op-verdict-other", 3, reviewVerdict("rev2", deliveryHead))
+		_, err := recordVerdict(t, c, "op-verdict-other", workingShipRev, reviewVerdict("rev2", deliveryHead))
 		wantErrSubstring(t, err, `reviews "ship2", not task ship1`, "RecordReviewVerdict by the reviewer of another task")
 	})
 
@@ -560,7 +546,7 @@ func TestCanonicalRecordReviewVerdictRefusals(t *testing.T) {
 			agg.LaunchEvidence = &ev
 			return agg
 		})
-		_, err := recordVerdict(t, c, "op-verdict-no-tree", 3, good)
+		_, err := recordVerdict(t, c, "op-verdict-no-tree", workingShipRev, good)
 		wantErrSubstring(t, err, "recorded no tree before its review", "RecordReviewVerdict by a reviewer with no launch tree")
 	})
 
@@ -570,7 +556,7 @@ func TestCanonicalRecordReviewVerdictRefusals(t *testing.T) {
 		if err := createReview(t, c, "rev1", "ship1", deliveryHead); err != nil {
 			t.Fatal(err)
 		}
-		_, err := recordVerdict(t, c, "op-verdict-unbound", 3, good)
+		_, err := recordVerdict(t, c, "op-verdict-unbound", workingShipRev, good)
 		wantErrSubstring(t, err, "is not the bound endpoint instance", "RecordReviewVerdict by a reviewer that never launched")
 	})
 
@@ -598,19 +584,19 @@ func TestCanonicalAuthorizeDeliveryReliesOnTheHeadBoundVerdictAndRecordsTheWords
 		c := verdictScene(t)
 		failed := reviewVerdict("rev1", deliveryHead)
 		failed.Outcome = domain.VerdictFail
-		if _, err := recordVerdict(t, c, "op-verdict-fail", 3, failed); err != nil {
+		if _, err := recordVerdict(t, c, "op-verdict-fail", workingShipRev, failed); err != nil {
 			t.Fatal(err)
 		}
-		_, err := authorize(c, 4, "op-auth-failed-verdict", nil)
+		_, err := authorize(c, workingShipRev+1, "op-auth-failed-verdict", nil)
 		wantErrSubstring(t, err, "delivery authorization refused: review verdict is", "AuthorizeDelivery on a failing verdict")
 	})
 
 	t.Run("records the verdict and the words it relied on", func(t *testing.T) {
 		c := verdictScene(t)
-		if _, err := recordVerdict(t, c, "op-verdict-ok", 3, reviewVerdict("rev1", deliveryHead)); err != nil {
+		if _, err := recordVerdict(t, c, "op-verdict-ok", workingShipRev, reviewVerdict("rev1", deliveryHead)); err != nil {
 			t.Fatal(err)
 		}
-		res, err := authorize(c, 4, "op-auth-ok", nil)
+		res, err := authorize(c, workingShipRev+1, "op-auth-ok", nil)
 		if err != nil {
 			t.Fatalf("AuthorizeDelivery: %v", err)
 		}

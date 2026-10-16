@@ -108,7 +108,7 @@ func TestObservationEventPort_Sources_UnresolvableSkipped(t *testing.T) {
 }
 
 // mustBindCLIEndpoint commits a live, bound ship task through the canonical
-// operations: create, bind its worktree, bind ep as its endpoint.
+// operations: create, launch over its worktree, bind ep as its endpoint.
 func mustBindCLIEndpoint(t *testing.T, homeDir, id string, ep taskauthority.EndpointBinding) {
 	t.Helper()
 	h, err := home.Open(homeDir)
@@ -138,29 +138,17 @@ func mustBindCLIEndpoint(t *testing.T, homeDir, id string, ep taskauthority.Endp
 		}
 		return o
 	}
-	precondition := func() domain.Precondition {
-		agg, err := c.Get(tid)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
-	}
 	create := taskauthority.CanonicalCreateRequest{HomeID: c.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: taskauthority.KindShip, Reason: "create"}
 	if _, err := c.Create(op("create", create), create); err != nil {
 		t.Fatal(err)
 	}
-	wt := taskauthority.CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Reason: "bind", Binding: taskauthority.WorktreeBinding{
+	begin := beginTestLaunch(t, c, id, ep.Backend)
+	bindLaunchWorktree(t, c, begin, taskauthority.WorktreeBinding{
 		RepositoryIdentity: "repo", Path: "/wt/" + id, GitDir: "/repo/.git/worktrees/" + id, CommonDir: "/repo/.git",
-		BaseHead: strings.Repeat("a", 40), LeaseID: "lease-wt", FenceToken: "fence-wt", BoundAtUnix: 1,
-	}}
-	if _, err := c.BindWorktree(op("bind-wt", wt), wt); err != nil {
-		t.Fatal(err)
-	}
-	ep.LeaseID, ep.FenceToken, ep.Incarnation, ep.BoundAtUnix = "lease-ep", "fence-ep", "inc-ep", 1
-	bind := taskauthority.CanonicalBindEndpointRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Binding: ep, Reason: "bind"}
-	if _, err := c.BindEndpoint(op("bind-ep", bind), bind); err != nil {
-		t.Fatal(err)
-	}
+		BaseHead: strings.Repeat("a", 40), BoundAtUnix: 1,
+	})
+	ep.BoundAtUnix = 1
+	launchToWorking(t, c, begin, ep)
 }
 
 func mustWriteCLIMeta(t *testing.T, homeDir, id string, kv map[string]string) {
