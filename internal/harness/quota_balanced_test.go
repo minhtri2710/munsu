@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -88,14 +89,21 @@ func TestResolveDispatchSelectionQuotaTool(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		script  string
+		timeout time.Duration
 		want    string
 		wantErr string
 	}{
 		{name: "no quota tool takes the first candidate", want: "codex"},
 		{name: "quota-axi orders the candidates", script: "#!/bin/sh\n[ \"$1\" = --json ] || exit 2\ncat <<'EOF'\n" + report + "\nEOF\n", want: "pi"},
 		{name: "quota-axi failure is refused", script: "#!/bin/sh\nexit 1\n", wantErr: "quota-axi"},
+		{name: "quota-axi that hangs is refused", script: "#!/bin/sh\nexec sleep 30\n", timeout: 200 * time.Millisecond, wantErr: "did not finish within 200ms"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.timeout != 0 {
+				orig := quotaProbeTimeout
+				quotaProbeTimeout = tc.timeout
+				t.Cleanup(func() { quotaProbeTimeout = orig })
+			}
 			cfg := &DispatchConfig{Profiles: []DispatchProfile{{
 				Name: "balanced", Match: []string{"*"},
 				Use: []DispatchCandidate{{Harness: "codex", Model: "c"}, {Harness: "pi", Model: "p"}},
