@@ -334,7 +334,7 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(statusPath, []byte("needs-decision [key=x]: PR https://example/1 needs a call\n"), 0644); err != nil {
+	if err := os.WriteFile(statusPath, []byte("needs-decision: PR https://example/1 needs a call [key=x]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -379,7 +379,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 
 	// 2) Captain answers on parent return channel (no pane required).
 	captainID := "captain:munsu"
-	statusLine := "blocked [key=return-channel-e2e]: closed-loop proof needs a decision"
+	statusLine := "blocked: closed-loop proof needs a decision [key=return-channel-e2e]"
 	if err := mhome.AppendStatus(homeDir, captainID, statusLine); err != nil {
 		t.Fatal(err)
 	}
@@ -884,23 +884,51 @@ func TestArmBackground_ClearsStaleIdentity(t *testing.T) {
 	}
 }
 
-// A watcher whose home is deleted under it exits on the failed beat instead of
-// resurrecting the state directory.
-func TestRunExitsOnABeatFailureAfterTheStateDirectoryIsRemoved(t *testing.T) {
-	homeDir := t.TempDir()
-	removeState := func(d time.Duration) *time.Ticker {
-		if err := os.RemoveAll(filepath.Join(homeDir, "state")); err != nil {
-			t.Fatal(err)
-		}
-		return time.NewTicker(time.Millisecond)
-	}
+// A failed cycle ends the watcher and leaves its error in the event log; a
+// watcher whose home is deleted under it exits without resurrecting the state
+// directory.
+func TestRunExitsOnABeatFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		removeState bool
+	}{
+		{name: "state directory removed", removeState: true},
+		{name: "beat path blocked", removeState: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			breakBeat := func(d time.Duration) *time.Ticker {
+				if tc.removeState {
+					if err := os.RemoveAll(filepath.Join(homeDir, "state")); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					ClearBeat(homeDir)
+					if err := os.MkdirAll(filepath.Join(mhome.WatcherBeatPath(homeDir), "blocker"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return time.NewTicker(time.Millisecond)
+			}
 
-	reason, err := run(homeDir, removeState, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, nil, NoopActiveDeliveryPort{})
-	if err == nil || !strings.Contains(err.Error(), "writing watcher beat") || reason != nil {
-		t.Fatalf("run = %+v, %v, want a writing-watcher-beat error and no wake", reason, err)
-	}
-	if _, statErr := os.Stat(filepath.Join(homeDir, "state")); !os.IsNotExist(statErr) {
-		t.Fatalf("the state directory was recreated: %v", statErr)
+			reason, err := run(homeDir, breakBeat, nil, testEndpointProbe{}, testCycleSender{}, NoopWatcherHooks{}, nil, nil, NoopActiveDeliveryPort{})
+			if err == nil || !strings.Contains(err.Error(), "writing watcher beat") || reason != nil {
+				t.Fatalf("run = %+v, %v, want a writing-watcher-beat error and no wake", reason, err)
+			}
+			if tc.removeState {
+				if _, statErr := os.Stat(filepath.Join(homeDir, "state")); !os.IsNotExist(statErr) {
+					t.Fatalf("the state directory was recreated: %v", statErr)
+				}
+				return
+			}
+			records, _, err := EventsAfter(homeDir, 0, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 1 || records[0].Type != "watcher.cycle.failed" || !strings.Contains(records[0].Payload, "writing watcher beat") {
+				t.Fatalf("event log = %+v, want one watcher.cycle.failed record naming the beat failure", records)
+			}
+		})
 	}
 }
 

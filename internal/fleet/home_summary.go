@@ -463,6 +463,6 @@ func lastStatusMessage(homeDir, id string) string {
 	if err != nil || len(lines) == 0 {
 		return ""
 	}
-	msg, _ := home.ParseStatusKey(lines[len(lines)-1])
+	msg, _ := domain.SplitStatusKey(lines[len(lines)-1])
 	return strings.TrimSpace(msg)
 }

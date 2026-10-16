@@ -286,16 +286,6 @@ type DrainCycle struct {
 	State        string   `json:"state"` // clean | actionable
 }
 
-// EventRecord is one typed event log entry.
-type EventRecord struct {
-	EventID   uint64 `json:"event_id"`
-	Timestamp int64  `json:"timestamp"`
-	Type      string `json:"type"`
-	Producer  string `json:"producer,omitempty"`
-	Key       string `json:"key,omitempty"`
-	Payload   string `json:"payload"`
-}
-
 // EventAppend is the result of appending a typed event.
 type EventAppend struct {
 	EventID   uint64 `json:"event_id"`
@@ -307,15 +297,6 @@ type EventAppend struct {
 type BackendCapabilities struct {
 	Backend  string   `json:"backend"`
 	Features []string `json:"features"`
-}
-
-// SpawnReceipt is the compact, successful spawn result.
-type SpawnReceipt struct {
-	TaskID    string `json:"task_id"`
-	SessionID string `json:"session_id"`
-	Worktree  string `json:"worktree"`
-	Branch    string `json:"branch"`
-	State     string `json:"state"`
 }
 
 // MessageResult represents success and idempotent no-op acknowledgements.
@@ -336,14 +317,6 @@ type InboxReceiveResult struct {
 type EmptyResult struct {
 	Count   int    `json:"count"`
 	Context string `json:"context"`
-}
-
-// TruncatedResult preserves a preview and an explicit retrieval escape hatch.
-type TruncatedResult struct {
-	Preview     string `json:"preview"`
-	TotalChars  int    `json:"total_chars"`
-	Truncated   bool   `json:"truncated"`
-	FullCommand string `json:"full_command"`
 }
 
 // SessionStart is the structured session-start digest.

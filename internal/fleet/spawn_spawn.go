@@ -99,34 +99,8 @@ func ResolveBriefProject(homeDir, projectName string, selectMode bool) (mode, ta
 // refuses create/unlink/rename elsewhere in logs/".
 func ensureReflog(gitDir, ref string) error {
 	logs := filepath.Join(gitDir, "logs")
-	parts := strings.Split(ref, "/")
-	dirs := []string{logs}
-	parent := logs
-	for _, p := range parts[:len(parts)-1] {
-		parent = filepath.Join(parent, p)
-		dirs = append(dirs, parent)
-	}
-	for _, d := range dirs {
-		fi, err := os.Lstat(d)
-		if os.IsNotExist(err) {
-			if err := os.Mkdir(d, 0o755); err != nil {
-				if !errors.Is(err, os.ErrExist) {
-					return fmt.Errorf("reflog dir %s: %w", d, err)
-				}
-				// A concurrent spawn created it first; classify the winner's
-				// entry by the same rules instead of refusing the race loser.
-				if fi, err = os.Lstat(d); err != nil {
-					return fmt.Errorf("reflog dir %s: %w", d, err)
-				}
-			} else {
-				continue
-			}
-		} else if err != nil {
-			return fmt.Errorf("reflog dir %s: %w", d, err)
-		}
-		if !fi.IsDir() {
-			return fmt.Errorf("reflog dir %s is a symlink or not a directory; refusing to launch", d)
-		}
+	if err := ensureDirs(parentDirs(logs, ref)); err != nil {
+		return err
 	}
 	reflog := filepath.Join(logs, filepath.FromSlash(ref))
 	fi, err := os.Lstat(reflog)
@@ -154,9 +128,53 @@ func ensureReflog(gitDir, ref string) error {
 	return nil
 }
 
-// ensureBranchReflog is ensureReflog for the branch's refs/heads reflog.
+// ensureBranchReflog pre-creates the branch's namespace dirs under refs/heads,
+// which the fence refuses the seat creating, removing or renaming, and its
+// refs/heads reflog, both under ensureReflog's fail-closed rules.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: pre-create refs/heads/mu at spawn; seat cannot create/rename it)
 func ensureBranchReflog(gitDir, branch string) error {
+	if err := ensureDirs(parentDirs(filepath.Join(gitDir, "refs"), "heads/"+branch)); err != nil {
+		return err
+	}
 	return ensureReflog(gitDir, "refs/heads/"+branch)
+}
+
+// parentDirs returns base and every directory between it and the slashed rel.
+func parentDirs(base, rel string) []string {
+	dirs := []string{base}
+	parts := strings.Split(rel, "/")
+	for _, p := range parts[:len(parts)-1] {
+		dirs = append(dirs, filepath.Join(dirs[len(dirs)-1], p))
+	}
+	return dirs
+}
+
+// ensureDirs creates each missing directory in order and refuses one that is a
+// symlink or not a directory.
+func ensureDirs(dirs []string) error {
+	for _, d := range dirs {
+		fi, err := os.Lstat(d)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(d, 0o755); err != nil {
+				if !errors.Is(err, os.ErrExist) {
+					return fmt.Errorf("dir %s: %w", d, err)
+				}
+				// A concurrent spawn created it first; classify the winner's
+				// entry by the same rules instead of refusing the race loser.
+				if fi, err = os.Lstat(d); err != nil {
+					return fmt.Errorf("dir %s: %w", d, err)
+				}
+			} else {
+				continue
+			}
+		} else if err != nil {
+			return fmt.Errorf("dir %s: %w", d, err)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("dir %s is a symlink or not a directory; refusing to launch", d)
+		}
+	}
+	return nil
 }
 
 // ensureRemoteReflogs pre-creates, as ensureReflog does, the reflog of every

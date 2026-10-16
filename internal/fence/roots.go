@@ -129,11 +129,15 @@ func lexicalPath(p string) error {
 	if !filepath.IsAbs(p) || filepath.Clean(p) != p {
 		return fmt.Errorf("path %q is not absolute and clean", p)
 	}
-	if strings.ContainsFunc(p, func(c rune) bool { return c < 0x20 || c == 0x7f }) {
+	if hasControl(p) {
 		return fmt.Errorf("path %q holds a control character", p)
 	}
 	if p == "/" {
 		return fmt.Errorf("path is the filesystem root")
 	}
 	return nil
+}
+
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, func(c rune) bool { return c < 0x20 || c == 0x7f })
 }

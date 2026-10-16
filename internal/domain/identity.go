@@ -133,10 +133,11 @@ func NewOperationID(value string) (OperationID, error) {
 }
 
 func validateScopedValue(value string) error {
-	if value == "" || value == "." || value == ".." || path.Base(value) != value || strings.ContainsAny(value, `/\\:`) || strings.IndexFunc(value, isSpace) >= 0 {
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: typed IDs reject C0 controls and DEL)
+	if value == "" || value == "." || value == ".." || path.Base(value) != value || strings.ContainsAny(value, `/\\:`) || strings.IndexFunc(value, isSpaceOrControl) >= 0 {
 		return fmt.Errorf("%w: %q", ErrInvalidIdentity, value)
 	}
 	return nil
 }
 
-func isSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }
+func isSpaceOrControl(r rune) bool { return r == ' ' || r < 0x20 || r == 0x7f }

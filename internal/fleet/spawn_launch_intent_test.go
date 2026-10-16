@@ -309,7 +309,7 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID,
 		SnapshotDigest: r.projectConfig.SnapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
-		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence,
 		PathDirs: r.seatPath, TaskKind: r.kind,
 		HomeID: f.auth.HomeID().Value(), SeatEnv: testSeatEnv(),
 	})

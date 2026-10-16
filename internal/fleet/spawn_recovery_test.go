@@ -1032,7 +1032,7 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 		LaunchArgs:     f.runner.launchArgs,
 		LaunchID:       f.runner.launchID,
 		Generation:     agg.Generation.String(),
-		EndpointFence:  f.runner.epFenceToken(),
+		EndpointFence:  f.runner.launch.EndpointFenceToken,
 	})
 	if err != nil {
 		t.Fatalf("buildLaunchArtifact: %v", err)
@@ -1116,7 +1116,7 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 		LaunchArgs:     f.runner.launchArgs,
 		LaunchID:       f.runner.launchID,
 		Generation:     agg.Generation.String(),
-		EndpointFence:  f.runner.epFenceToken(),
+		EndpointFence:  f.runner.launch.EndpointFenceToken,
 	})
 	if err != nil {
 		t.Fatalf("buildLaunchArtifact: %v", err)
@@ -1177,7 +1177,7 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 		LaunchArgs:     f.runner.launchArgs,
 		LaunchID:       f.runner.launchID,
 		Generation:     agg.Generation.String(),
-		EndpointFence:  f.runner.epFenceToken(),
+		EndpointFence:  f.runner.launch.EndpointFenceToken,
 	})
 	if err != nil {
 		t.Fatalf("buildLaunchArtifact: %v", err)
@@ -1341,7 +1341,7 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 		LaunchArgs:     f.runner.launchArgs,
 		LaunchID:       f.runner.launchID,
 		Generation:     agg.Generation.String(),
-		EndpointFence:  f.runner.epFenceToken(),
+		EndpointFence:  f.runner.launch.EndpointFenceToken,
 	}
 	first, err := buildLaunchArtifact(in)
 	if err != nil {

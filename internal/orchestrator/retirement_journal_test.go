@@ -39,7 +39,7 @@ func TestPrepareForcedRetirementEvidenceCopiesStatus(t *testing.T) {
 func TestFinalizeRetirementJournalsClosesActivities(t *testing.T) {
 	h := t.TempDir()
 	id := "task"
-	if err := home.AppendStatus(h, id, "working [key=build]: running"); err != nil {
+	if err := home.AppendStatus(h, id, "working: running [key=build]"); err != nil {
 		t.Fatal(err)
 	}
 	steps, err := FinalizeRetirementJournals(h, id)
@@ -53,7 +53,7 @@ func TestFinalizeRetirementJournalsClosesActivities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := lines[len(lines)-1]; !strings.Contains(got, "resolved [key=build]") {
+	if got := lines[len(lines)-1]; got != "resolved: soldier torn down [key=build]" {
 		t.Fatalf("last status = %q", got)
 	}
 }

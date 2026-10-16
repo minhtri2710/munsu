@@ -161,8 +161,8 @@ func (r *Runner) authorizeEndpoint(obs SpawnEndpointObservation, ep CreatedEndpo
 		backend:     ep.Backend,
 		handle:      ep.Handle,
 		incarnation: ep.Incarnation,
-		leaseID:     r.epReservationID(),
-		fenceToken:  r.epFenceToken(),
+		leaseID:     r.launch.EndpointReservationID,
+		fenceToken:  r.launch.EndpointFenceToken,
 		generation:  gen,
 		revision:    rev,
 		acquired:    true, // in-process creation receipt or durable AcquiredEndpoint
@@ -1588,8 +1588,8 @@ func (r *Runner) createSession() error {
 		PreferredBackend: backendName,
 		TabName:          tabName,
 		Cwd:              r.cwd,
-		ReservationID:    r.epReservationID(),
-		FenceToken:       r.epFenceToken(),
+		ReservationID:    r.launch.EndpointReservationID,
+		FenceToken:       r.launch.EndpointFenceToken,
 	}
 	// The mandatory reservation-aware create contract find-or-creates the
 	// endpoint under the exact reservation on EVERY call (first attempt AND
@@ -1734,7 +1734,7 @@ func (r *Runner) attachEndpoint() error {
 			a.SessionOwner != r.endpoint.SessionOwner || a.WorkspaceID != r.endpoint.WorkspaceID || a.TabID != r.endpoint.TabID || a.Incarnation != r.endpoint.Incarnation {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint %s/%s does not match created endpoint %s/%s; refuse", a.Backend, a.Handle, r.endpoint.Backend, r.endpoint.Handle)
 		}
-		if r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken) {
+		if a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint does not match the launch endpoint reservation fence; refuse")
 		}
 		return nil
@@ -1745,8 +1745,8 @@ func (r *Runner) attachEndpoint() error {
 		Precondition: prec,
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      r.epReservationID(),
-		FenceToken:   r.epFenceToken(),
+		LeaseID:      r.launch.EndpointReservationID,
+		FenceToken:   r.launch.EndpointFenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
@@ -2129,7 +2129,7 @@ func (r *Runner) submitLaunch() error {
 			WorktreePath: r.cwd, LaunchDir: r.launchDir, Review: r.review, HomeDir: r.homeDir,
 			TaskID: r.args.ID, TaskKind: r.kind, SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin,
 			LaunchArgs: r.launchArgs, LaunchID: r.launchID, Generation: agg.Generation.String(),
-			EndpointFence: r.epFenceToken(), Fence: r.fence, PathDirs: r.seatPath,
+			EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence, PathDirs: r.seatPath,
 			SeatEnv: r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 		})
 	} else if r.preparedLaunch == nil || r.preparedFiles == nil {
@@ -2246,7 +2246,7 @@ func (r *Runner) prepareAndPersistLaunchManifest() error {
 	artifact, scriptBytes, err := prepareLaunchScript(LaunchArtifactInput{
 		WorktreePath: r.cwd, LaunchDir: r.launchDir, HomeDir: r.homeDir, TaskID: r.args.ID, TaskKind: r.kind,
 		SnapshotDigest: snapshotDigest, LaunchBin: r.launchBin, LaunchArgs: r.launchArgs,
-		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.epFenceToken(), Fence: r.fence,
+		LaunchID: r.launchID, Generation: agg.Generation.String(), EndpointFence: r.launch.EndpointFenceToken, Fence: r.fence,
 		PathDirs: r.seatPath,
 		SeatEnv:  r.seatEnv, HomeID: r.args.Authority.HomeID().Value(),
 	})
@@ -2371,7 +2371,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			// Ambiguous readings are never "died" (unknown != dead).
 			if dead := authorizeAbsence(status, exactEndpointProof{
 				backend: r.endpoint.Backend, handle: r.endpoint.Handle, incarnation: r.endpoint.Incarnation,
-				leaseID: r.epReservationID(), fenceToken: r.epFenceToken(),
+				leaseID: r.launch.EndpointReservationID, fenceToken: r.launch.EndpointFenceToken,
 				generation: gen, revision: rev,
 			}); dead.Absent() {
 				return fmt.Errorf("window died while waiting for ready")
@@ -2520,22 +2520,6 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	return out, nil
-}
-
-// epReservationID and epFenceToken return the launch intent's one-time
-// endpoint reservation identities (empty when no intent is committed).
-func (r *Runner) epReservationID() string {
-	if r.launch != nil {
-		return r.launch.EndpointReservationID
-	}
-	return ""
-}
-
-func (r *Runner) epFenceToken() string {
-	if r.launch != nil {
-		return r.launch.EndpointFenceToken
-	}
-	return ""
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

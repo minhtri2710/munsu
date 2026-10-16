@@ -14,8 +14,7 @@ import (
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
 func setHomeEnv(t *testing.T, path string) {
 	t.Helper()
-	os.Setenv("MUNSU_HOME", path)
-	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
+	t.Setenv("MUNSU_HOME", path)
 }
 
 func TestDurableFilePathValidatesSuffixWithoutRejectingDotExtensions(t *testing.T) {
@@ -432,10 +431,8 @@ func TestStateDir(t *testing.T) {
 }
 
 func TestMetaPath_RespectsHomeOverride(t *testing.T) {
-	os.Unsetenv("MUNSU_HOME")
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	fullPath, err := MetaFilePath(tmp, "test-id")
 	if err != nil {
@@ -468,10 +465,8 @@ func TestStateDirCreatedByWrite(t *testing.T) {
 
 func TestResolveIntegration(t *testing.T) {
 	// Verify home.Resolve works with MUNSU_HOME set
-	os.Unsetenv("MUNSU_HOME")
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	h, err := Resolve("")
 	if err != nil {
@@ -479,32 +474,5 @@ func TestResolveIntegration(t *testing.T) {
 	}
 	if h != tmp {
 		t.Errorf("home.Resolve() = %q, want %q", h, tmp)
-	}
-}
-
-func TestParseStatusKey(t *testing.T) {
-	tests := []struct {
-		line    string
-		message string
-		key     string
-	}{
-		{"working: started", "working: started", ""},
-		{"needs-decision: pick approach [key=approach]", "needs-decision: pick approach", "approach"},
-		{"resolved: chose A [key=approach]", "resolved: chose A", "approach"},
-		{"blocked: waiting [key=dep]", "blocked: waiting", "dep"},
-		{"done: all done [key=task-1]", "done: all done", "task-1"},
-		{"key only [key=]", "key only [key=]", ""},
-		{"no brackets", "no brackets", ""},
-		{"[key=value]", "", "value"}, // bare key, extracts key with empty message
-	}
-
-	for _, tt := range tests {
-		msg, key := ParseStatusKey(tt.line)
-		if msg != tt.message {
-			t.Errorf("ParseStatusKey(%q) message = %q, want %q", tt.line, msg, tt.message)
-		}
-		if key != tt.key {
-			t.Errorf("ParseStatusKey(%q) key = %q, want %q", tt.line, key, tt.key)
-		}
 	}
 }

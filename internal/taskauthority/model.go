@@ -503,22 +503,16 @@ func validateScoutContract(def TaskDefinition) error {
 }
 
 // NewAggregate builds the first Generation of a task with Revision one and
-// phase queued, validating the request fields.
-func NewAggregate(taskID, owner, description, kind, project, parentTaskID string) (Aggregate, error) {
+// phase queued, validating the definition.
+func NewAggregate(taskID string, def TaskDefinition) (Aggregate, error) {
 	agg := Aggregate{
 		SchemaVersion: TaskAuthoritySchema,
 		TaskID:        taskID,
 		Generation:    1,
 		Revision:      FirstRevision,
 		Current:       true,
-		Definition: TaskDefinition{
-			Owner:        owner,
-			Description:  description,
-			Kind:         kind,
-			Project:      project,
-			ParentTaskID: parentTaskID,
-		},
-		Phase: PhaseQueued,
+		Definition:    def,
+		Phase:         PhaseQueued,
 	}
 	if err := validateAggregate(agg); err != nil {
 		return Aggregate{}, err
@@ -527,6 +521,7 @@ func NewAggregate(taskID, owner, description, kind, project, parentTaskID string
 }
 
 // validateAggregate checks record-level invariants: identity, phase, owner,
+// the kind contract (scout scope, review binding),
 // and generation-bound bindings. It does not evaluate lifecycle transitions.
 func validateAggregate(agg Aggregate) error {
 	if agg.SchemaVersion != TaskAuthoritySchema {
@@ -546,6 +541,13 @@ func validateAggregate(agg Aggregate) error {
 	}
 	if strings.TrimSpace(agg.Definition.Owner) == "" {
 		return validationError("task %s/%s missing owner", agg.TaskID, agg.Generation)
+	}
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 2/3: receive validates scout/review contracts)
+	if err := validateScoutContract(agg.Definition); err != nil {
+		return err
+	}
+	if err := validateReviewContract(agg.Definition); err != nil {
+		return err
 	}
 	if agg.Endpoint != nil {
 		if err := validateEndpointBinding(*agg.Endpoint); err != nil {

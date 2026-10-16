@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -372,28 +373,77 @@ func TestAckWakesNonexistentLease(t *testing.T) {
 }
 
 func TestLeaseExpiryReclaim(t *testing.T) {
+	for _, tc := range []struct {
+		consumer string
+		refused  bool
+	}{
+		{"munsu:afk", false},
+		{"a\nb", true},
+	} {
+		t.Run(tc.consumer, func(t *testing.T) {
+			home := t.TempDir()
+			writeQueueLines(t, home, []string{
+				"1780000000\t1\tsignal\tkey1\tpayload1",
+			})
+
+			result, err := ClaimWakes(home, tc.consumer, 0, 10)
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "contains a control character") {
+					t.Fatalf("ClaimWakes(%q) error = %v, want the control-character refusal", tc.consumer, err)
+				}
+				if entries, _ := os.ReadDir(LeaseDir(home)); len(entries) != 0 {
+					t.Fatalf("refused claim wrote leases %v", entries)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Wakes) != 1 {
+				t.Fatalf("claimed %d wakes, want 1", len(result.Wakes))
+			}
+
+			result2, err := ClaimWakes(home, "consumer2", 60, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result2.Reclaimed != 1 || len(result2.Wakes) != 1 || result2.Wakes[0].Payload != "payload1" {
+				t.Fatalf("second claim = reclaimed %d, wakes %+v, want payload1 reclaimed", result2.Reclaimed, result2.Wakes)
+			}
+		})
+	}
+}
+
+// Expired leases go back ahead of records queued after their claim, oldest
+// claim first, and count as queued until a claim reclaims them.
+func TestExpiredLeaseReclaimsAheadOfNewerRecords(t *testing.T) {
 	home := t.TempDir()
 	writeQueueLines(t, home, []string{
-		"1780000000\t1\tsignal\tkey1\tpayload1",
+		"1700000000\t1\tsignal\ta1\tp",
+		"1700000000\t2\tsignal\ta2\tp",
 	})
-
-	result, err := ClaimWakes(home, "consumer", 0, 10)
+	for i := range 2 {
+		at := time.Unix(1700000000+int64(i), 0)
+		if _, err := claimWakesAt(home, "consumer", 10, 1, func() time.Time { return at }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !HasQueuedWakes(home) {
+		t.Fatal("HasQueuedWakes = false with only expired leases holding wakes")
+	}
+	if err := EnqueueWake(home, "signal", "b", "p"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := claimWakesAt(home, "consumer", 10, 3, func() time.Time { return time.Unix(1700000100, 0) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Wakes) != 1 {
-		t.Fatalf("claimed %d wakes, want 1", len(result.Wakes))
+	var keys []string
+	for _, w := range result.Wakes {
+		keys = append(keys, w.Key)
 	}
-
-	result2, err := ClaimWakes(home, "consumer2", 60, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result2.Reclaimed < 1 {
-		t.Errorf("expected reclaimed >= 1, got %d", result2.Reclaimed)
-	}
-	if len(result2.Wakes) < 1 {
-		t.Errorf("expected at least 1 wake in new claim, got %d", len(result2.Wakes))
+	if strings.Join(keys, ",") != "a1,a2,b" {
+		t.Fatalf("claim order = %v, want [a1 a2 b]", keys)
 	}
 }
 

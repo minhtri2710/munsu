@@ -81,6 +81,10 @@ func ClaimWakes(homeDir, consumer string, leaseSeconds, limit int) (*ClaimResult
 }
 
 func claimWakesAt(homeDir, consumer string, leaseSeconds, limit int, now func() time.Time) (result *ClaimResult, err error) {
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: claim refuses consumer with tab/newline/C0; forged wake record)
+	if strings.IndexFunc(consumer, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return nil, fmt.Errorf("wake consumer %q contains a control character", consumer)
+	}
 	lock, err := acquireWakeLock(homeDir)
 	if err != nil {
 		return nil, err
@@ -265,9 +269,11 @@ func reclaimExpiredLeasesLocked(homeDir string, now func() time.Time) (int, erro
 
 	reclaimNow := now().Unix()
 	reclaimed := 0
-	queueRecords, queueLoaded := []WakeRecord(nil), false
 
-	for _, entry := range entries {
+	// Leases are visited newest first and each is put at the queue head, so
+	// the oldest claim ends up first, ahead of every record queued since.
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
 		if entry.IsDir() {
 			continue
 		}
@@ -283,63 +289,106 @@ func reclaimExpiredLeasesLocked(homeDir string, now func() time.Time) (int, erro
 			}
 			return reclaimed, err
 		}
-		parts := strings.SplitN(header, "\t", 4)
-		if len(parts) < 3 {
+		parsed, ok := parseLeaseHeader(header)
+		if !ok {
 			if err := applyWakeMutationLocked(homeDir, wakeMutation{leaseAction: wakeLeaseActionRemove, leaseID: leaseID}); err != nil {
 				return reclaimed, err
 			}
 			continue
 		}
-		expiresAt, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
-		if err != nil {
-			if err := applyWakeMutationLocked(homeDir, wakeMutation{leaseAction: wakeLeaseActionRemove, leaseID: leaseID}); err != nil {
-				return reclaimed, err
-			}
-			continue
-		}
-		if reclaimNow < expiresAt {
+		if reclaimNow < parsed.expiresAt {
 			continue
 		}
 
-		var requeued []WakeRecord
-		for _, line := range lines {
-			record, ok := decodeWakeRecordLine(line)
-			if !ok {
-				continue
-			}
-			if wakeResolutionCompleted(homeDir, record.Epoch+":"+record.Seq) {
-				continue
-			}
-			requeued = append(requeued, record)
-		}
-
-		if len(requeued) == 0 {
-			if err := applyWakeMutationLocked(homeDir, wakeMutation{leaseAction: wakeLeaseActionRemove, leaseID: leaseID}); err != nil {
-				return reclaimed, err
-			}
-			continue
-		}
-		if !queueLoaded {
-			queueRecords, err = readWakeQueue(homeDir)
-			if err != nil {
-				return reclaimed, err
-			}
-			queueLoaded = true
-		}
-		queueRecords = append(queueRecords, requeued...)
-		if err := applyWakeMutationLocked(homeDir, wakeMutation{
-			queueFirst:  true,
-			queueSet:    true,
-			queueData:   wakeQueueData(queueRecords),
-			leaseAction: wakeLeaseActionRemove,
-			leaseID:     leaseID,
-		}); err != nil {
+		requeued := unresolvedLeaseRecords(homeDir, lines)
+		if err := requeueLeaseLocked(homeDir, leaseID, requeued); err != nil {
 			return reclaimed, err
 		}
 		reclaimed += len(requeued)
 	}
 
 	return reclaimed, nil
+}
+
+// ReleaseWakeLease puts the unresolved records of leaseID back at the head of
+// the queue and removes the lease, in one mutation under the wake lock. It is
+// for a claimant that knows it delivered none of them.
+func ReleaseWakeLease(homeDir, leaseID string) (err error) {
+	if err := validateLeaseID(leaseID); err != nil {
+		return err
+	}
+	lock, err := acquireWakeLock(homeDir)
+	if err != nil {
+		return err
+	}
+	defer joinWakeLockError(&err, lock)
+	if err := recoverWakeMutationLocked(homeDir); err != nil {
+		return err
+	}
+	leasePath, err := validatedLeasePath(homeDir, leaseID)
+	if err != nil {
+		return err
+	}
+	_, lines, err := readLease(homeDir, leaseID, leasePath)
+	if err != nil {
+		return err
+	}
+	return requeueLeaseLocked(homeDir, leaseID, unresolvedLeaseRecords(homeDir, lines))
+}
+
+// unresolvedLeaseRecords decodes a lease's record lines, dropping those whose
+// resolution completed.
+func unresolvedLeaseRecords(homeDir string, lines []string) []WakeRecord {
+	var records []WakeRecord
+	for _, line := range lines {
+		record, ok := decodeWakeRecordLine(line)
+		if !ok || wakeResolutionCompleted(homeDir, record.Epoch+":"+record.Seq) {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+// requeueLeaseLocked puts records at the head of the queue and removes leaseID
+// in one mutation.
+func requeueLeaseLocked(homeDir, leaseID string, records []WakeRecord) error {
+	if len(records) == 0 {
+		return applyWakeMutationLocked(homeDir, wakeMutation{leaseAction: wakeLeaseActionRemove, leaseID: leaseID})
+	}
+	queue, err := readWakeQueue(homeDir)
+	if err != nil {
+		return err
+	}
+	return applyWakeMutationLocked(homeDir, wakeMutation{
+		queueFirst:  true,
+		queueSet:    true,
+		queueData:   wakeQueueData(append(records, queue...)),
+		leaseAction: wakeLeaseActionRemove,
+		leaseID:     leaseID,
+	})
+}
+
+// leaseHeader is the first line of a lease file, as claimWakesLocked writes it:
+// "<lease-id>\t<consumer>\t<expires-at>\t<claimed-at>".
+type leaseHeader struct {
+	consumer             string
+	expiresAt, claimedAt int64
+}
+
+// parseLeaseHeader is the one reader of a lease header; reclaim and the lease
+// lister both use it, so they act on the same leases.
+func parseLeaseHeader(header string) (leaseHeader, bool) {
+	parts := strings.Split(header, "\t")
+	if len(parts) != 4 {
+		return leaseHeader{}, false
+	}
+	expiresAt, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+	if err != nil {
+		return leaseHeader{}, false
+	}
+	claimedAt, _ := strconv.ParseInt(strings.TrimSpace(parts[3]), 10, 64)
+	return leaseHeader{consumer: parts[1], expiresAt: expiresAt, claimedAt: claimedAt}, true
 }
 
 func readLease(homeDir, leaseID, leasePath string) (string, []string, error) {

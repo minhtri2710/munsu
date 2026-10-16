@@ -456,8 +456,7 @@ func TestRun_NeverLaunchedIsRefused(t *testing.T) {
 
 func TestRun_SafetyCheckGenerationFailsClosedWithoutAuthority(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	// The scout safety check answers for a canonical generation, so a nil
 	// authority fails closed before any report is resolved.
@@ -474,8 +473,7 @@ func TestRun_SafetyCheckGenerationFailsClosedWithoutAuthority(t *testing.T) {
 // some other generation's report.
 func TestRun_PinnedTeardownConflictPreemptsReportCheck(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "pinned-conflict")
 	seedWorktreeEvidence(t, auth, "pinned-conflict", t.TempDir(), "lease-wt", "fence-wt")
@@ -493,8 +491,7 @@ func TestRun_PinnedTeardownConflictPreemptsReportCheck(t *testing.T) {
 
 func TestRun_ForceSkipsSafety(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "nonexistent")
 	seedWorktreeEvidence(t, auth, "nonexistent", t.TempDir(), "lease-wt", "fence-wt")
@@ -511,8 +508,7 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 
 func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "scout-test")
 	seedWorktreeEvidence(t, auth, "scout-test", t.TempDir(), "lease-wt", "fence-wt")
@@ -535,8 +531,7 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 
 func TestRun_ForcePreservesReport(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "scout-report")
 
@@ -589,8 +584,7 @@ func TestRun_ForcePreservesReport(t *testing.T) {
 
 func TestRun_ForcePreservesBriefForSweep(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "stub-brief")
 
@@ -630,8 +624,7 @@ func hasStep(steps []string, want string) bool {
 
 func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "test-residual")
 	// The canonical launch names the pi harness, so its adapter artifacts are
@@ -783,8 +776,7 @@ func scoutHoldsAllow(t *testing.T) {
 
 func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("MUNSU_HOME", tmp)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", tmp)
 
 	auth := canonicalScoutTestAuth(t, tmp, "scout-test")
 

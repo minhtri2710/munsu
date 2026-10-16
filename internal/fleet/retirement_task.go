@@ -1352,14 +1352,14 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 	resolved := map[string]bool{}
 	needs := map[string]bool{}
 	for _, line := range statusLines {
-		_, key := home.ParseStatusKey(line)
+		_, key := domain.SplitStatusKey(line)
 		if key == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "resolved:") {
+		switch domain.LineVerb(line) {
+		case "resolved":
 			resolved[key] = true
-		}
-		if strings.HasPrefix(line, "needs-decision:") {
+		case "needs-decision":
 			needs[key] = true
 		}
 	}

@@ -22,7 +22,7 @@ func TestReportMarkIsInvisibleToStatusParsers(t *testing.T) {
 	}{
 		{"report line", domain.ReportStatusLine("needs-decision", "pick a db", "db"), true, "needs-decision", "needs-decision: pick a db", "db"},
 		{"unmarked line", "needs-decision: pick a db [key=db]", false, "needs-decision", "needs-decision: pick a db", "db"},
-		{"mark with no key", "needs-decision: pick a db [report]", false, "needs-decision", "", ""},
+		{"mark with no key", "needs-decision: pick a db [report]", false, "needs-decision", "needs-decision: pick a db [report]", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := domain.IsReportLine(tc.line); got != tc.report {
@@ -31,11 +31,8 @@ func TestReportMarkIsInvisibleToStatusParsers(t *testing.T) {
 			if got := domain.LineVerb(tc.line); got != tc.verb {
 				t.Errorf("LineVerb(%q) = %q, want %q", tc.line, got, tc.verb)
 			}
-			if tc.key == "" {
-				return
-			}
-			if message, key := ParseStatusKey(tc.line); message != tc.message || key != tc.key {
-				t.Errorf("ParseStatusKey(%q) = %q, %q, want %q, %q", tc.line, message, key, tc.message, tc.key)
+			if message, key := domain.SplitStatusKey(tc.line); message != tc.message || key != tc.key {
+				t.Errorf("SplitStatusKey(%q) = %q, %q, want %q, %q", tc.line, message, key, tc.message, tc.key)
 			}
 		})
 	}
@@ -130,18 +127,6 @@ func TestDeriveReportWakes(t *testing.T) {
 			}
 			return append(got, reportWakePayloads(t, h)...)
 		}, []string{"t1: failed: red [key=default]"}},
-		{"AFK drain with no watcher", func(t *testing.T, h string) []string {
-			appendReport(t, h, "t1", "failed", "red")
-			records, err := DrainWakesExcludingKind(h, "process-event")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got []string
-			for _, r := range records {
-				got = append(got, r.Payload)
-			}
-			return append(got, reportWakePayloads(t, h)...)
-		}, []string{"t1: failed: red [key=default]"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.steps(t, t.TempDir()); !slices.Equal(got, tc.want) {
@@ -156,23 +141,24 @@ func TestDeriveReportWakes(t *testing.T) {
 func TestDeriveReportWakesLogsASkippedTask(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		corrupt   bool
+		cursor    string
 		wantLogs  int
 		wantWakes []string
 	}{
-		{"unreadable cursor", true, 1, []string{"t2: done: shipped [key=default]"}},
-		{"readable cursor", false, 0, []string{"t1: failed: red [key=default]", "t2: done: shipped [key=default]"}},
+		{"unreadable cursor", "{", 1, []string{"t2: done: shipped [key=default]"}},
+		{"negative cursor", `{"next":-1}`, 1, []string{"t2: done: shipped [key=default]"}},
+		{"readable cursor", "", 0, []string{"t1: failed: red [key=default]", "t2: done: shipped [key=default]"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := t.TempDir()
 			appendReport(t, h, "t1", "failed", "red")
 			appendReport(t, h, "t2", "done", "shipped")
-			if tc.corrupt {
+			if tc.cursor != "" {
 				p, err := ReportCursorPath(h, "t1")
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+				if err := os.WriteFile(p, []byte(tc.cursor), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -365,7 +365,6 @@ func TestPropagateConfig_FirstChangeHappyPath(t *testing.T) {
 	// Set up parent config.
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
 
 	// Parent shared data.
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
@@ -545,7 +544,6 @@ func TestPropagateConfig_NoParentConfig_MirrorDeletions(t *testing.T) {
 	// Write stale inheritable files in captain (parent has nothing).
 	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
 	os.WriteFile(filepath.Join(captainHome, "config", "soldier-harness"), []byte("old\n"), 0644)
-	os.WriteFile(filepath.Join(captainHome, "config", "soldier-dispatch.json"), []byte("old_dispatch\n"), 0644)
 	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
 	os.WriteFile(filepath.Join(captainHome, "data", "general-shared.md"), []byte("old shared\n"), 0644)
 	os.WriteFile(filepath.Join(captainHome, "data", "projects.md"), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644)

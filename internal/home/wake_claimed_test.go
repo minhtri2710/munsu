@@ -65,6 +65,7 @@ func TestListClaimedLeasesSkipsShapesItCannotRead(t *testing.T) {
 	writeLeaseFixture(t, home, ".home-write-123", "lease-tmp\tgeneral\t2000\t1500\n"+claimedWakeLine)
 	writeLeaseFixture(t, home, "lease-empty", "")
 	writeLeaseFixture(t, home, "lease-short-header", "lease-short-header\tgeneral\n"+claimedWakeLine)
+	writeLeaseFixture(t, home, "lease-three-fields", "lease-three-fields\tgeneral\t2000\n"+claimedWakeLine)
 	writeLeaseFixture(t, home, "lease-bad-expiry", "lease-bad-expiry\tgeneral\tsoon\t1500\n"+claimedWakeLine)
 	writeLeaseFixture(t, home, "lease-no-wakes", "lease-no-wakes\tgeneral\t2000\t1500\nnot a wake line\n")
 	writeLeaseFixture(t, home, "bad:id", "bad:id\tgeneral\t2000\t1500\n"+claimedWakeLine)
@@ -88,6 +89,33 @@ func TestListClaimedLeasesSkipsShapesItCannotRead(t *testing.T) {
 	}
 	if got := leases[0].Wakes[0].Resolution; got != "" {
 		t.Fatalf("unparsable resolution read as %q, want none", got)
+	}
+}
+
+// The lease lister and reclaim read a header the same way: an expired lease the
+// lister reports holding a wake is exactly one reclaim requeues.
+func TestLeaseListerAndReclaimAgreeOnHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name, header string
+		held         bool
+	}{
+		{"four fields", "lease-a\tgeneral\t2000\t1500", true},
+		{"three fields", "lease-a\tgeneral\t2000", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeLeaseFixture(t, home, "lease-a", tc.header+"\n"+claimedWakeLine)
+			if got := hasExpiredLeaseWake(home, time.Now()); got != tc.held {
+				t.Fatalf("hasExpiredLeaseWake = %v, want %v", got, tc.held)
+			}
+			result, err := ClaimWakes(home, "munsu:afk", 60, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := result.Reclaimed == 1; got != tc.held {
+				t.Fatalf("reclaimed %d, want lister and reclaim to agree on held=%v", result.Reclaimed, tc.held)
+			}
+		})
 	}
 }
 

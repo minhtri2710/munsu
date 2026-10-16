@@ -65,7 +65,7 @@ func TestGenerationNext(t *testing.T) {
 }
 
 func TestNewAggregateStartsAtFirstRevision(t *testing.T) {
-	agg, err := NewAggregate("t1", "owner", "work", "ship", "proj", "")
+	agg, err := NewAggregate("t1", TaskDefinition{Owner: "owner", Description: "work", Kind: "ship", Project: "proj"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestDispatchHoldScopeMatches(t *testing.T) {
 }
 
 func TestAggregateJSONIsDeterministic(t *testing.T) {
-	agg, _ := NewAggregate("t1", "owner", "work", "ship", "proj", "p0")
+	agg, _ := NewAggregate("t1", TaskDefinition{Owner: "owner", Description: "work", Kind: "ship", Project: "proj", ParentTaskID: "p0"})
 	first, err := json.Marshal(agg)
 	if err != nil {
 		t.Fatal(err)

@@ -65,7 +65,7 @@ func TestPopupHumanNeededNamesVerbAndTaskOnTheTaskBackendAndAuditsIt(t *testing.
 	seedBoundSoldier(t, homeDir, "task-b", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s2:p1", SessionOwner: "s2"})
 
 	popupHumanNeeded(homeDir, []humanNeededEvent{
-		{TaskID: "task-a", Line: "needs-decision [key=x]: pick a branch"},
+		{TaskID: "task-a", Line: "needs-decision: pick a branch [key=x]"},
 		{TaskID: "task-b", Line: "failed: CI red"},
 	})
 
