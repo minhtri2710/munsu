@@ -225,6 +225,9 @@ func TestPathDirDenies(t *testing.T) {
 		{"an empty entry", []string{""}, "", `PATH directory "" is not absolute`},
 		{"a dot entry", []string{"."}, "", `PATH directory "." is not absolute`},
 		{"a relative shim dir", []string{"/usr/bin"}, "git-shim/bin", `PATH directory "git-shim/bin" is not absolute`},
+		{"a dot-dot entry", []string{"/usr/bin", "/usr/../usr/bin"}, "", "is not absolute and clean"},
+		{"a dot entry inside a path", []string{"/usr/./bin"}, "", "is not absolute and clean"},
+		{"a control character under a missing top-level dir", []string{"/fence-no-such-top-dir/a\x01b"}, "", "control character"},
 		{"an entry that does not resolve", []string{"/usr/bin", filepath.Join(file, "bin")}, "", "PATH directory " + filepath.Join(file, "bin")},
 		{"absolute entries", []string{"/usr/bin", "/usr/local/bin/", "/fence-no-such-top-dir/bin"}, "", ""},
 		{"an absolute shim dir", []string{"/usr/bin", "/usr/local/bin/"}, "/usr/local/git-shim/bin", ""},
@@ -360,44 +363,68 @@ func TestResolvePathRefusals(t *testing.T) {
 	}
 }
 
-// A dangling link resolves to its target, where a write through it lands. A
-// target whose lexical clean could name a directory the kernel does not reach,
-// or a chain past the hop bound, is refused.
-func TestResolvePathFollowsDanglingLinks(t *testing.T) {
+// walkPath resolves as the kernel does and names every link on the way, each
+// of which a seat could replace to move where a write through the path lands.
+// A .. after a missing name, or a chain past the hop bound, is refused.
+func TestWalkPathFollowsEveryLink(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	at := func(names ...string) []string {
+		var out []string
+		for _, n := range names {
+			out = append(out, filepath.Join(root, n))
+		}
+		return out
+	}
 	link := func(name, target string) string {
-		p := filepath.Join(root, name)
-		if err := os.Symlink(target, p); err != nil {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
 			t.Fatal(err)
 		}
-		return p
+		return filepath.Join(root, name)
 	}
+	for _, d := range []string{"ereal", filepath.Join("rdir", "bin"), filepath.Join("deep", "dir")} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link("e2", "ereal")
+	link("d2", "dmissing")
+	link("ldir", filepath.Join(root, "rdir"))
+	link("sub", "deep/dir")
 	// c0 -> c1 -> ... -> c<maxLinkHops> -> c<maxLinkHops+1>, which is missing.
 	for i := 0; i <= maxLinkHops; i++ {
 		link("c"+strconv.Itoa(i), "c"+strconv.Itoa(i+1))
 	}
 	for _, tt := range []struct {
-		name, path, want, wantErr string
+		name, path, want string
+		links            []string // nil: not checked
+		wantErr          string
 	}{
-		{"a relative target", link("rel", "a/b"), filepath.Join(root, "a", "b"), ""},
-		{"a leading .. in the target", link("up", "../"+filepath.Base(root)+"-up"), root + "-up", ""},
-		{"a .. past the target's first name", link("mid", "a/../x"), "", "past its first name"},
-		{"a chain at the hop bound", filepath.Join(root, "c1"), filepath.Join(root, "c"+strconv.Itoa(maxLinkHops+1)), ""},
-		{"a chain past the hop bound", filepath.Join(root, "c0"), "", "too many links"},
+		{"a dangling relative target", link("rel", "a/b"), filepath.Join(root, "a", "b"), at("rel"), ""},
+		{"a leading .. in the target", link("up", "../"+filepath.Base(root)+"-up"), root + "-up", at("up"), ""},
+		{"an existing chain", link("e1", "e2"), filepath.Join(root, "ereal"), at("e1", "e2"), ""},
+		{"a dangling chain", link("d1", "d2"), filepath.Join(root, "dmissing"), at("d1", "d2"), ""},
+		{"a link into a symlinked dir", link("s", filepath.Join(root, "ldir", "bin")), filepath.Join(root, "rdir", "bin"), at("s", "ldir"), ""},
+		{"a .. after a link resolves past it", link("phys", "sub/../x"), filepath.Join(root, "deep", "x"), at("phys", "sub"), ""},
+		{"a .. after a missing name", link("mid", "a/../x"), "", nil, "follows the missing"},
+		{"a chain at the hop bound", filepath.Join(root, "c1"), filepath.Join(root, "c"+strconv.Itoa(maxLinkHops+1)), nil, ""},
+		{"a chain past the hop bound", filepath.Join(root, "c0"), "", nil, "too many links"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolvePath(tt.path, false)
+			got, links, _, err := walkPath(tt.path)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("resolvePath = %q, %v; want an error containing %q", got, err, tt.wantErr)
+					t.Fatalf("walkPath = %q, %v; want an error containing %q", got, err, tt.wantErr)
 				}
 				return
 			}
 			if err != nil || got != tt.want {
-				t.Fatalf("resolvePath = %q, %v; want %q", got, err, tt.want)
+				t.Fatalf("walkPath = %q, %v; want %q", got, err, tt.want)
+			}
+			if tt.links != nil && !slices.Equal(links, tt.links) {
+				t.Fatalf("links = %q, want %q", links, tt.links)
 			}
 		})
 	}

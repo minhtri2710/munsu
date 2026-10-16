@@ -241,32 +241,31 @@ func New(l Launch) (*Fence, error) {
 }
 
 // pathDirDenies returns the PATH directories (and the shim dir) as given and
-// symlink-resolved, and the names of all their ancestors split into locked and
-// removable. Every ancestor of the shim dir is locked. For any other PATH dir
-// an ancestor that is itself a writable root is removable (outside every root
-// the profile already refuses it too), and every other ancestor is locked. A
-// relative or empty entry names the seat's working directory, which the fence
-// cannot refuse, so it is an error: the caller keeps such entries off the
-// seat's PATH. An entry that does not resolve is an error too, so the launch
-// refuses rather than leave the directory a write lands in undenied.
+// symlink-resolved, with every symlink resolving them follows, and the names
+// of all their ancestors split into locked and removable. Every ancestor of
+// the shim dir is locked. For any other PATH dir an ancestor that is itself a
+// writable root is removable (outside every root the profile already refuses
+// it too), and every other ancestor is locked. A relative or empty entry names
+// the seat's working directory, which the fence cannot refuse, so it is an
+// error: the caller keeps such entries off the seat's PATH. An entry with a .
+// or .. name, or that does not resolve, is an error too, so the launch refuses
+// rather than leave the directory a write lands in, or a link on the way to
+// it, undenied.
 func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked, removable []string, err error) {
 	expand := func(in []string) (out []string, err error) {
 		for _, d := range in {
 			if !filepath.IsAbs(d) {
 				return nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
 			}
-			d = filepath.Clean(d)
-			r, err := resolvePath(d, false)
-			if err != nil {
-				// resolvePath refuses resolving through "/". A tree missing from
-				// its top-level name down is its own resolution, and only root
-				// can create it.
-				if _, lerr := os.Lstat("/" + strings.Split(d, "/")[1]); !os.IsNotExist(lerr) {
-					return nil, fmt.Errorf("fence: PATH directory %s: %w", d, err)
-				}
-				r = d
+			d = strings.TrimRight(d, "/")
+			if err := lexicalPath(d); err != nil {
+				return nil, fmt.Errorf("fence: PATH directory: %w", err)
 			}
-			out = append(out, d, r)
+			r, links, _, err := walkPath(d)
+			if err != nil {
+				return nil, fmt.Errorf("fence: PATH directory %s: %w", d, err)
+			}
+			out = append(append(out, d, r), links...)
 		}
 		return dedupe(out), nil
 	}
@@ -630,16 +629,6 @@ func ancestors(paths ...string) []string {
 // exist is resolved through its nearest existing ancestor unless mustExist, and
 // a dangling symlink on the way to its target, where a write through it lands.
 func resolvePath(p string, mustExist bool) (string, error) {
-	return resolveHops(p, mustExist, 0)
-}
-
-// maxLinkHops bounds the dangling links resolveHops follows, as the kernel
-// bounds a lookup (MAXSYMLINKS).
-const maxLinkHops = 32
-
-// resolveHops is resolvePath having followed hops dangling links.
-// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: follow dangling PATH links, deny target, propagate resolve errors)
-func resolveHops(p string, mustExist bool, hops int) (string, error) {
 	if err := lexicalPath(p); err != nil {
 		return "", err
 	}
@@ -650,33 +639,69 @@ func resolveHops(p string, mustExist bool, hops int) (string, error) {
 	if mustExist || !os.IsNotExist(err) {
 		return "", err
 	}
-	parent, err := resolveHops(filepath.Dir(p), false, hops)
+	r, _, missing, err := walkPath(p)
 	if err != nil {
 		return "", err
 	}
-	p = filepath.Join(parent, filepath.Base(p))
-	// The parent resolved, so p is missing or the dangling link EvalSymlinks
-	// stopped at.
-	target, err := os.Readlink(p)
-	if err != nil {
-		return p, nil
+	if filepath.Dir(missing) == "/" {
+		return "", fmt.Errorf("path %q resolves through the filesystem root", p)
 	}
-	if hops >= maxLinkHops {
-		return "", fmt.Errorf("path %q: too many links", p)
+	return r, nil
+}
+
+// maxLinkHops bounds the symlinks walkPath follows, as the kernel bounds a
+// lookup (MAXSYMLINKS).
+const maxLinkHops = 32
+
+// walkPath resolves the lexically valid p one name at a time as the kernel
+// does, following every symlink, existing or dangling, on one hop budget. It
+// returns the resolved path, every link it followed (each by its resolved
+// name), and the first name found missing ("" when the whole path exists). A
+// write through p lands at the resolved path, and replacing any of those links
+// moves it, so a caller denying p denies them all. A ".." after a missing name
+// is refused: the kernel's answer depends on what is created there later.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: follow dangling PATH links, deny target, propagate resolve errors)
+func walkPath(p string) (resolved string, links []string, missing string, err error) {
+	cur, todo, hops := "/", strings.Split(p, "/"), 0
+	for len(todo) > 0 {
+		name := todo[0]
+		todo = todo[1:]
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, name)
+		fi, err := os.Lstat(next)
+		if os.IsNotExist(err) {
+			if slices.Contains(todo, "..") {
+				return "", nil, "", fmt.Errorf("path %q: a .. follows the missing %s", p, next)
+			}
+			return filepath.Join(append([]string{next}, todo...)...), links, next, nil
+		}
+		if err != nil {
+			return "", nil, "", err
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if hops++; hops > maxLinkHops {
+			return "", nil, "", fmt.Errorf("path %q: too many links", p)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", nil, "", err
+		}
+		links = append(links, next)
+		if filepath.IsAbs(target) {
+			cur = "/"
+		}
+		todo = append(strings.Split(target, "/"), todo...)
 	}
-	// The link's directory is resolved, so only a leading ".." cleans to where
-	// the kernel goes; a later one may follow a link the lexical clean skips.
-	rest := strings.Split(target, "/")
-	for len(rest) > 0 && rest[0] == ".." {
-		rest = rest[1:]
-	}
-	if slices.Contains(rest, "..") {
-		return "", fmt.Errorf("path %q: dangling link target %q has a .. past its first name", p, target)
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(parent, target)
-	}
-	return resolveHops(filepath.Clean(target), false, hops+1)
+	return cur, links, "", nil
 }
 
 // within reports whether child is root or lies under it.

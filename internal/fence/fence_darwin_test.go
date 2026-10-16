@@ -1024,6 +1024,34 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	if err := os.Symlink("danglingtarget", filepath.Join(l.root, "danglingbin")); err != nil {
 		t.Fatal(err)
 	}
+	// Every link on the way to a PATH dir is one the seat must not replace: an
+	// existing chain and a dangling chain under a temp root, a link outside every
+	// root through a link in the worktree, and a link into a symlinked dir.
+	symlinks := func(pairs ...string) {
+		for i := 0; i < len(pairs); i += 2 {
+			if err := os.Symlink(pairs[i+1], pairs[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	chain1, chain2 := filepath.Join(l.root, "chain1"), filepath.Join(l.root, "chain2")
+	dchain1, dchain2 := filepath.Join(l.root, "dchain1"), filepath.Join(l.root, "dchain2")
+	olink1, olink2 := filepath.Join(out, "olink1"), filepath.Join(l.worktree, "olink2")
+	subLink, linkDir := filepath.Join(out, "sublink"), filepath.Join(l.root, "linkdir")
+	mkdirs(t, filepath.Join(l.root, "chainreal"), filepath.Join(out, "otarget"), filepath.Join(l.root, "realdir", "bin"))
+	symlinks(chain2, "chainreal", chain1, "chain2",
+		dchain2, "dchaintarget", dchain1, "dchain2",
+		olink2, filepath.Join(out, "otarget"), olink1, olink2,
+		linkDir, filepath.Join(l.root, "realdir"), subLink, filepath.Join(linkDir, "bin"))
+	replace := func(link, entry string) []string {
+		return []string{"/bin/sh", "-c", `rm "$1" && mkdir -p "$1/bin" && touch "$2/git"`, "sh", link, entry}
+	}
+	// A PATH dir and a link to one still run what they hold.
+	for _, d := range []string{tmpBin, realBin} {
+		if err := os.WriteFile(filepath.Join(d, "hello"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// A PATH dir deeper under a harness root: its middle directory is strictly
 	// inside the root, the root itself is not.
 	deepBin := filepath.Join(claudeCache, "deep", "mid", "bin")
@@ -1046,7 +1074,8 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	})
 	piAgentBin := filepath.Join(uhome, ".pi", "agent", "bin")
 	mkdirs(t, filepath.Join(l.stateDir(), "bin"), piAgentBin)
-	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, filepath.Join(l.root, "danglingbin"), "/usr/bin"}
+	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, filepath.Join(l.root, "danglingbin"),
+		chain1, dchain1, olink1, subLink, "/usr/bin"}
 	sl, rl := l.soldier(), l.reviewer()
 	sl.Files = []string{filepath.Join(state, "T-1.status")}
 	sl.PathDirs, rl.PathDirs = pathDirs, pathDirs
@@ -1087,6 +1116,12 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"soldier writes beside a symlinked PATH dir's real directory", soldier, []string{touchBin, filepath.Join(l.root, "realbin-sibling", "f")}, false, "", ""},
 		{"soldier creates a dangling PATH link's target", soldier, []string{"/bin/mkdir", danglingTarget}, true, danglingTarget, ""},
 		{"soldier writes an unrelated temp path beside a dangling PATH link", soldier, []string{touchBin, filepath.Join(l.root, "dangling-sibling")}, false, "", ""},
+		{"soldier replaces the middle link of a PATH link chain", soldier, replace(chain2, chain1), true, filepath.Join(chain2, "git"), chain2},
+		{"soldier replaces the middle link of a dangling PATH link chain", soldier, replace(dchain2, dchain1), true, filepath.Join(dchain2, "git"), dchain2},
+		{"soldier replaces a worktree link an outside PATH link points through", soldier, replace(olink2, olink1), true, filepath.Join(olink2, "git"), olink2},
+		{"soldier replaces a symlinked dir a PATH link points into", soldier, replace(linkDir, subLink), true, filepath.Join(linkDir, "bin", "git"), linkDir},
+		{"soldier runs a program in a PATH dir", soldier, []string{filepath.Join(tmpBin, "hello")}, false, "", ""},
+		{"soldier runs a program through a symlinked PATH dir", soldier, []string{filepath.Join(linkBin, "hello")}, false, "", ""},
 		{"soldier writes its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "f")}, false, "", ""},
 		{"soldier writes its task status", soldier, []string{touchBin, filepath.Join(state, "T-1.status")}, false, "", ""},
 		{"soldier writes beside a harness PATH dir", soldier, []string{touchBin, filepath.Join(claudeCache, "f")}, false, "", ""},
