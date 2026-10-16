@@ -107,9 +107,8 @@ project whose worktree tool entry configures treehouse. Reclaim without
 	reclaimCmd := &cobra.Command{
 		Use:   "reclaim",
 		Short: "Reclaim worktrees not claimed by active tasks",
-		Long: `Reclaim worktrees not referenced by active task metadata or
-canonical task bindings. If task metadata or task authority cannot be read,
-the command aborts without reclaiming anything.
+		Long: `Reclaim worktrees not referenced by canonical task bindings. If task
+authority cannot be read, the command aborts without reclaiming anything.
 
 This command releases only provider-listed worktrees with no task, retirement,
 or launch-reservation claim. A reported lease holder that cannot be reconciled

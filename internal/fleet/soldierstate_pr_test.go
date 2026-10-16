@@ -27,9 +27,6 @@ func TestReadTaskPR(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			homeDir := t.TempDir()
-			if err := home.WriteMeta(homeDir, id, map[string]string{"kind": "ship"}); err != nil {
-				t.Fatal(err)
-			}
 			for _, line := range tt.status {
 				if err := home.AppendStatus(homeDir, id, line); err != nil {
 					t.Fatal(err)

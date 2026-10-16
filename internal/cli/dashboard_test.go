@@ -268,7 +268,7 @@ func ids(tasks []fleet.TaskSnapshot) []string {
 // For a healthy home the dashboard shows exactly Snapshot's rows.
 func TestDashboardRowsEqualSnapshot(t *testing.T) {
 	homeDir := t.TempDir()
-	writeTaskMeta(t, homeDir, "alpha", "ship")
+	initHomeWithTask(t, homeDir, "alpha", "ship")
 	cliSeedCanonicalTask(t, homeDir, "bravo", "scout")
 	cliSeedCanonicalTask(t, homeDir, "charlie", "ship")
 

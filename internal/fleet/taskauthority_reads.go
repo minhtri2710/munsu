@@ -217,3 +217,31 @@ func LiveWorkspaceIDs(homeDir string) (map[string]bool, error) {
 	}
 	return ids, nil
 }
+
+// SoldierSeat returns the check that homeDir hosts a live soldier seat for a
+// task: its current generation holds an endpoint and is not retired. It reads
+// committed state only, so a fenced soldier seat can run it.
+func SoldierSeat(homeDir string) home.SoldierSeatCheck {
+	return func(id string) error {
+		taskID, err := domain.NewTaskID(id)
+		if err != nil {
+			return fmt.Errorf("home %s hosts no soldier task %q: %w", homeDir, id, err)
+		}
+		h, err := home.OpenCommitted(homeDir)
+		if err != nil {
+			return fmt.Errorf("home %s hosts no soldier task %q: %w", homeDir, id, err)
+		}
+		c, err := tauth.NewCanonical(h)
+		if err != nil {
+			return fmt.Errorf("home %s hosts no soldier task %q: %w", homeDir, id, err)
+		}
+		agg, err := c.Get(taskID)
+		if err != nil {
+			return fmt.Errorf("home %s hosts no soldier task %q: %w", homeDir, id, err)
+		}
+		if agg.Phase == tauth.PhaseRetired || endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint) == nil {
+			return fmt.Errorf("home %s hosts no live soldier seat for task %q", homeDir, id)
+		}
+		return nil
+	}
+}

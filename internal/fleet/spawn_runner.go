@@ -374,9 +374,6 @@ func (r *Runner) launchPhases(reviewing bool) (taskauthority.Outcome, error) {
 	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
 		return taskauthority.Outcome{}, err
 	}
-	if err := r.writeTaskMeta(); err != nil {
-		return taskauthority.Outcome{}, err
-	}
 	return r.confirmSpawn()
 }
 
@@ -2558,46 +2555,6 @@ func newEndpointToken() string {
 	// process instead of reporting failure, so there is no branch to take.
 	rand.Read(buf)
 	return fmt.Sprintf("%x", buf)
-}
-
-// Phase 14: writeTaskMeta writes the task metadata file. The side file is a
-// pre-transition runtime observation projection (Task 4.2, Task 7.8
-// adjudication): it carries the runtime-only fields that describe the live
-// soldier session (window, worktree, harness, backend, mode, yolo, model,
-// endpoint metadata) and never
-// acts as a writer of record for authoritative Task Aggregate fields (kind,
-// project, description, owner, generation, state). Existing projection
-// fields are preserved; runtime fields are overlaid. Nothing reconciles
-// Authoritative fields into it: readers take them from the canonical aggregate.
-func (r *Runner) writeTaskMeta() error {
-	yoloVal := "off"
-	if r.args.Yolo {
-		yoloVal = "on"
-	}
-	err := home.UpdateMeta(r.homeDir, r.args.ID, func(meta map[string]string) error {
-		put := func(k, v string) {
-			if v != "" {
-				meta[k] = v
-			}
-		}
-		put("window", r.windowID)
-		put("worktree", r.wtPath)
-		put("harness", r.harness)
-		put("backend", r.endpoint.Backend)
-		put("mode", r.effectiveMode)
-		put("yolo", yoloVal)
-		if r.model != "" {
-			put("model", r.model)
-		}
-		put(backend.MetaSessionOwner, r.endpoint.SessionOwner)
-		put(backend.MetaWorkspaceID, r.endpoint.WorkspaceID)
-		put(backend.MetaTabID, r.endpoint.TabID)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("writing task meta: %w", err)
-	}
-	return nil
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

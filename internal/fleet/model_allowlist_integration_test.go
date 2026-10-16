@@ -35,16 +35,11 @@ func spawnContext(t *testing.T, homeDir string) {
 
 func assertNoTaskSideEffects(t *testing.T, homeDir, id string) {
 	t.Helper()
-	metaPath, err := home.MetaFilePath(homeDir, id)
-	if err != nil {
-		t.Fatal(err)
-	}
 	statusPath, err := home.StatusFilePath(homeDir, id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
-		metaPath,
 		statusPath,
 		filepath.Join(homeDir, "state", ".task-authority", "aggregates", id),
 		filepath.Join(homeDir, "data", id),

@@ -403,23 +403,12 @@ func ParseStatusKey(line string) (message, key string) {
 	return line, ""
 }
 
-// MetaEntry represents a single task entry from state meta files.
-type MetaEntry struct {
-	ID         string
-	Kind       string
-	LastStatus string // last line from .status file, key stripped
-}
-
-// ListMeta reads all meta files from the state directory and returns them.
-// It reads *.meta files, extracts the kind, and reads the last status line
-// from the corresponding .status file for each task.
 // ListMetaIDs returns the logical task IDs of every .meta file in the state
 // directory, reversing the durable key so enumeration and the write path agree
 // on the logical id. Stems that are not a key this home persisted are skipped.
 // It reads no meta contents, so it fails only on a directory-level error; a
 // caller that must not miss a task can therefore ReadMeta each id and decide
-// for itself whether an unreadable projection is fatal. ListMeta layers a
-// read of every entry on top of this and fails on the first unreadable one.
+// for itself whether an unreadable projection is fatal.
 func ListMetaIDs(homeDir string) ([]string, error) {
 	sd := StateDir(homeDir)
 	if err := validateStatePath(homeDir, sd, false); err != nil {
@@ -456,38 +445,6 @@ func ListMetaIDs(homeDir string) ([]string, error) {
 		}
 	}
 	return taskIDs, nil
-}
-
-func ListMeta(homeDir string) ([]MetaEntry, error) {
-	taskIDs, err := ListMetaIDs(homeDir)
-	if err != nil {
-		return nil, err
-	}
-
-	var result []MetaEntry
-	for _, id := range taskIDs {
-		meta, err := ReadMeta(homeDir, id)
-		if err != nil {
-			return nil, err
-		}
-
-		// Read last status line
-		lastStatus := ""
-		if statusLines, err := ReadStatus(homeDir, id); err == nil && len(statusLines) > 0 {
-			lastLine := statusLines[len(statusLines)-1]
-			msg, _ := ParseStatusKey(lastLine)
-			lastStatus = msg
-		}
-
-		kind := meta["kind"]
-		result = append(result, MetaEntry{
-			ID:         id,
-			Kind:       kind,
-			LastStatus: lastStatus,
-		})
-	}
-
-	return result, nil
 }
 
 // lockPath returns the path to the advisory lock file for a meta file.

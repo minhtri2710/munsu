@@ -19,7 +19,7 @@ func contractReceiver(t *testing.T, homeDir, identity string, rank Rank) *Receiv
 			t.Fatalf("SeedCaptainProvenance: %v", err)
 		}
 	}
-	recv, err := NewReceiver(homeDir)
+	recv, err := NewReceiver(homeDir, seatsOf(homeDir))
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
