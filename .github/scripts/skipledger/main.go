@@ -1,16 +1,15 @@
 // Command skipledger compares the tests the CI lanes skipped with
 // .github/skips.allow, in both directions.
 //
-//	skipledger check <allow> <lane.json>...   print unlisted skips and stale rows
+//	skipledger check <allow> <lane.json>...   fail on unlisted skips and stale rows
 //
 // Each lane file is `go test -json` output; the lane name is its file name
 // without .json. A skip is a test-level event with action "skip". The reason is
 // the last `file_test.go:N: message` line the test printed before it skipped.
 //
-// check is report-only: findings print and the exit status stays 0. An input
-// that cannot be read is the one failure, because the lane would then have
-// observed nothing and a clean report would be false. Rows match on package and
-// test; the reason column is documentation and is not compared.
+// check prints every finding and fails when there is one, or when an input
+// cannot be read: a lane that observed nothing cannot read as clean. Rows match
+// on package and test; the reason column is documentation and is not compared.
 package main
 
 import (
@@ -74,7 +73,9 @@ func run(args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		report(out, args[1], rows, skips)
+		if n := report(out, args[1], rows, skips); n > 0 {
+			return fmt.Errorf("%d finding(s) against %s: add a row for each unlisted skip, delete each stale row", n, filepath.Base(args[1]))
+		}
 		return nil
 	}
 	return errors.New(usage)
@@ -161,7 +162,7 @@ func readAllow(path string) (map[key]row, error) {
 	return rows, sc.Err()
 }
 
-func report(out io.Writer, allow string, rows map[key]row, skips map[key]*skip) {
+func report(out io.Writer, allow string, rows map[key]row, skips map[key]*skip) int {
 	name := filepath.Base(allow)
 	var unlisted []*skip
 	for k, s := range skips {
@@ -181,7 +182,7 @@ func report(out io.Writer, allow string, rows map[key]row, skips map[key]*skip) 
 	fmt.Fprintf(out, "skipledger: %d skipped test(s), %d row(s) in %s\n", len(skips), len(rows), name)
 	if len(unlisted) == 0 && len(stale) == 0 {
 		fmt.Fprintln(out, "skipledger: every skip is listed and every row is skipped")
-		return
+		return 0
 	}
 	fmt.Fprintf(out, "unlisted skips (no row in %s): %d\n", name, len(unlisted))
 	for _, s := range unlisted {
@@ -191,6 +192,7 @@ func report(out io.Writer, allow string, rows map[key]row, skips map[key]*skip) 
 	for _, r := range stale {
 		fmt.Fprintf(out, "  %s %s %s\n", r.pkg, r.test, r.reason)
 	}
+	return len(unlisted) + len(stale)
 }
 
 func lessKey(a, b key) bool {
