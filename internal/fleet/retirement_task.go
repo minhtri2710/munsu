@@ -163,6 +163,35 @@ func beginRetirementCleanup(authority *taskauthority.Canonical, taskID domain.Ta
 	return nil
 }
 
+// beginArtifactDisposal records on the active cleanup claim that launch
+// artifact disposal has begun and returns the committed aggregate.
+func beginArtifactDisposal(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) (taskauthority.Aggregate, error) {
+	cur, err := authority.Get(taskID)
+	if err != nil {
+		return taskauthority.Aggregate{}, err
+	}
+	req := taskauthority.CanonicalBeginArtifactDisposalRequest{
+		HomeID:           authority.HomeID(),
+		TaskID:           taskID,
+		Precondition:     domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
+		ClaimGeneration:  claimGen,
+		Reason:           "retirement artifact disposal",
+	}
+	opID, err := domain.NewOperationID(taskCleanupOperationID("dispose", taskID.Value(), claimGen))
+	if err != nil {
+		return taskauthority.Aggregate{}, err
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return taskauthority.Aggregate{}, err
+	}
+	if _, err := authority.BeginArtifactDisposal(op, req); err != nil {
+		return taskauthority.Aggregate{}, err
+	}
+	return authority.Get(taskID)
+}
+
 // AbortRetirementCleanup releases the active cleanup claim of the given
 // retired generation WITHOUT completing cleanup. It refuses while a preserved
 // endpoint is live or ambiguously observed, and refreshes the data directory
@@ -996,19 +1025,34 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			// reopen/rebind that landed since the probe can never authorize
 			// returning a resource now owned by the reopened generation
 			// (TOCTOU guard).
-			if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
+			fenced, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current)
+			if err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return fence: %w", opts.ID, err))
+			}
+			// The return refuses any untracked file, so the artifacts (the
+			// manifest last) are removed before it. The claim records that
+			// disposal began before anything is removed: a resume after a
+			// failed return finds the manifest gone and re-runs the removal.
+			if !fenced.CleanupClaim.ArtifactsDisposing {
+				if err := verifyWorktreeLaunchArtifacts(wtPath, ev.Worktree); err != nil {
+					if !opts.Force {
+						return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w", opts.ID, err))
+					}
+					return cleanupPending(fmt.Errorf("teardown %s: launch artifact disposal refused: %w", opts.ID, err))
+				}
+				disposing, err := beginArtifactDisposal(authority, taskID, claimGen)
+				if err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: recording artifact disposal: %w", opts.ID, err))
+				}
+				evidence.current = &disposing
 			}
 			poolLock, err := LockWorktreePool(opts.HomeDir)
 			if err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: locking worktree pool for artifact disposal: %w", opts.ID, err))
 			}
-			if err := disposeWorktreeLaunchArtifacts(wtPath, ev.Worktree); err != nil {
+			if err := removeWorktreeLaunchArtifacts(wtPath, ev.Worktree); err != nil {
 				_ = poolLock.Release()
-				if !opts.Force {
-					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w", opts.ID, err))
-				}
-				return cleanupPending(fmt.Errorf("teardown %s: launch artifact disposal refused: %w", opts.ID, err))
+				return cleanupPending(fmt.Errorf("teardown %s: launch artifact disposal failed: %w", opts.ID, err))
 			}
 			if err := backend.ReturnWorktree(opts.HomeDir, ev.Worktree.Treehouse, wtPath); err != nil {
 				_ = poolLock.Release()
@@ -1753,7 +1797,9 @@ func reapWorktreeHolders(homeDir, taskID, wtPath string) (map[int]bool, error) {
 	return killed, fmt.Errorf("holders of %s outlived the reap wait", wtPath)
 }
 
-func disposeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.WorktreeBinding) error {
+// verifyWorktreeLaunchArtifacts proves, before disposal begins, that the
+// worktree holds exactly the canonical launch artifacts and nothing unlisted.
+func verifyWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.WorktreeBinding) error {
 	manifestFile := filepath.Join(worktreePath, ManifestName)
 	if _, err := os.Lstat(manifestFile); os.IsNotExist(err) {
 		if binding != nil && binding.LaunchManifest != nil {
@@ -1782,36 +1828,58 @@ func disposeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.
 	}
 	manifestPaths := manifest.ArtifactPaths()
 	manifestPaths[ManifestName] = true
-	if err := verifyUnlistedWorktreeClean(worktreePath, manifestPaths); err != nil {
-		return err
-	}
+	return verifyUnlistedWorktreeClean(worktreePath, manifestPaths)
+}
+
+// removeWorktreeLaunchArtifacts removes the launch artifacts once disposal is
+// recorded, the manifest last. It is idempotent: an absent path is already
+// removed, so an interrupted removal re-runs. Only a manifest carrying the
+// canonical digest names what to remove; any other manifest is removed alone,
+// and whatever it leaves behind makes the worktree return refuse.
+func removeWorktreeLaunchArtifacts(worktreePath string, binding *taskauthority.WorktreeBinding) error {
 	root, err := os.OpenRoot(worktreePath)
 	if err != nil {
 		return fmt.Errorf("opening worktree root for artifact disposal: %w", err)
 	}
 	defer root.Close()
-	var guardDir string
-	for _, entry := range manifest.Artifacts {
-		if isDeferredGuardIdentityPath(entry.Path) {
-			guardDir = filepath.ToSlash(filepath.Dir(filepath.FromSlash(entry.Path)))
-			continue
+	remove := func(name, what string) error {
+		if err := root.Remove(filepath.FromSlash(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("removing %s: %w", what, err)
 		}
-		if err := root.Remove(filepath.FromSlash(entry.Path)); err != nil {
-			return fmt.Errorf("removing proven launch artifact %s: %w", entry.Path, err)
+		return nil
+	}
+	data, err := root.ReadFile(ManifestName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading launch manifest for disposal: %w", err)
+	}
+	if binding != nil && binding.LaunchManifest != nil && sha256Content(data) == binding.LaunchManifest.ManifestSHA256 {
+		manifest, err := ReadManifest(worktreePath)
+		if err != nil {
+			return err
+		}
+		var guardDir string
+		for _, entry := range manifest.Artifacts {
+			if isDeferredGuardIdentityPath(entry.Path) {
+				guardDir = filepath.ToSlash(filepath.Dir(filepath.FromSlash(entry.Path)))
+				continue
+			}
+			if err := remove(entry.Path, "proven launch artifact "+entry.Path); err != nil {
+				return err
+			}
+		}
+		if guardDir != "" {
+			if err := remove(guardDir+"/identity", "proven launch guard identity"); err != nil {
+				return err
+			}
+			if err := remove(guardDir, "empty launch guard directory"); err != nil {
+				return err
+			}
 		}
 	}
-	if guardDir != "" {
-		if err := root.Remove(filepath.Join(filepath.FromSlash(guardDir), "identity")); err != nil {
-			return fmt.Errorf("removing proven launch guard identity: %w", err)
-		}
-		if err := root.Remove(filepath.FromSlash(guardDir)); err != nil {
-			return fmt.Errorf("removing empty launch guard directory: %w", err)
-		}
-	}
-	if err := root.Remove(ManifestName); err != nil {
-		return fmt.Errorf("removing proven launch manifest: %w", err)
-	}
-	return nil
+	return remove(ManifestName, "launch manifest")
 }
 
 func verifyUnlistedWorktreeClean(worktreePath string, declared map[string]bool) error {

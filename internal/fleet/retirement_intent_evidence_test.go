@@ -93,7 +93,7 @@ func TestRetirementIntentEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("after resume: generation=%d revision=%d phase=%s claim=%s return_calls=%d revision_delta=%d", after.Generation, after.Revision, after.Phase, cleanupStatus(after.CleanupClaim), len(second.returned), after.Revision-before.Revision)
-		if after.Revision != before.Revision+1 || len(second.returned) != 1 {
+		if after.Revision != before.Revision+2 || len(second.returned) != 1 {
 			t.Fatalf("cleanup resume was not exactly once: before=%d after=%d returned=%v", before.Revision, after.Revision, second.returned)
 		}
 	})

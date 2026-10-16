@@ -133,6 +133,11 @@ func TestCleanupClaimRefusals(t *testing.T) {
 	reopen := func(t *testing.T, c *Canonical) error {
 		return stepReopen(t, c, "t1", currentRev(t, c))
 	}
+	beginDisposal := func(t *testing.T, c *Canonical) error {
+		req := CanonicalBeginArtifactDisposalRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, currentRev(t, c)), ClaimOperationID: claimOp, ClaimGeneration: 1, Reason: "dispose"}
+		_, err := c.BeginArtifactDisposal(mustOperation(t, fmt.Sprintf("op-dispose-%d", req.Precondition.Revision), req), req)
+		return err
+	}
 
 	runRefusalRows(t, []refusalRow{
 		{name: "begin cleanup refuses a newer generation", class: ErrConflict, want: "cannot be asserted on a newer generation", run: func(t *testing.T, c *Canonical) error {
@@ -163,6 +168,28 @@ func TestCleanupClaimRefusals(t *testing.T) {
 			}
 			if got := currentRev(t, c); got != rev {
 				t.Fatalf("the no-op advanced the revision %d -> %d", rev, got)
+			}
+			return nil
+		}},
+
+		{name: "begin artifact disposal refuses a completed claim", class: ErrConflict, want: "cleanup claim is not active; artifact disposal requires the active claim", run: func(t *testing.T, c *Canonical) error {
+			retired(t, c)
+			reconcileCleanup(t, c, "t1", 1, CleanupCompleted)
+			return beginDisposal(t, c)
+		}},
+		{name: "begin artifact disposal allows the active claim once and replays as a no-op", run: func(t *testing.T, c *Canonical) error {
+			retired(t, c)
+			mustStep(t, beginDisposal(t, c))
+			rev := currentRev(t, c)
+			if err := beginDisposal(t, c); err != nil {
+				return err
+			}
+			agg, err := c.Get(mustTaskID(t, "t1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !agg.CleanupClaim.ArtifactsDisposing || uint64(agg.Revision) != rev {
+				t.Fatalf("claim %+v at revision %d, want disposing recorded once at %d", agg.CleanupClaim, agg.Revision, rev)
 			}
 			return nil
 		}},

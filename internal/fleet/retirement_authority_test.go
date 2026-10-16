@@ -114,8 +114,8 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 14 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 14", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 15 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 15", agg.Phase, agg.Revision)
 	}
 
 	if result.IsError() {
@@ -207,8 +207,9 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	}
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),
-	// the retired phase is observed (no double transition, only the claim
-	// completion advances revision 13 -> 14), and the cleanup resumes to
+	// the retired phase is observed (no double transition, only the disposal
+	// record and the claim completion advance revision 13 -> 15), and the
+	// cleanup resumes to
 	// completion.
 	second := MergeAndRetire(homeDir, taskID, deliverRequest(), fakeTeardown{mergeStatus: landedStatus(), alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
@@ -224,8 +225,8 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 14 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 14 (claim completion only)", agg.Revision)
+	if agg.Revision != 15 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 15 (disposal record and claim completion only)", agg.Revision)
 	}
 }
 
@@ -281,14 +282,14 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 	}
 
 	// Resume: the retired phase is observed (same stable Operation identity
-	// replays the durable receipt; only the claim completion advances the
-	// revision) and the cleanup completes.
+	// replays the durable receipt; only the artifact-disposal record and the
+	// claim completion advance the revision) and the cleanup completes.
 	_, err = RetireTask(opts, fakeTeardown{mergeStatus: landedStatus(), alive: true}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 13 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 13", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 14 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 14", agg)
 	}
 }

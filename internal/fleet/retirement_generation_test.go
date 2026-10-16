@@ -778,10 +778,11 @@ func activeCleanupClaimAllow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != revAfterCrash+1 {
+	if agg.Revision != revAfterCrash+2 {
 		// The retry replays the durable retire receipt without re-committing;
-		// the only revision advance is the cleanup-claim completion mutation.
-		t.Fatalf("retry advanced revision %d -> %d, want exactly one claim-completion bump", revAfterCrash, agg.Revision)
+		// the only revision advances are the artifact-disposal record and the
+		// cleanup-claim completion.
+		t.Fatalf("retry advanced revision %d -> %d, want the disposal record and the claim-completion bump", revAfterCrash, agg.Revision)
 	}
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("resume returned=%v, want evidence worktree %s", second.returned, wtDir)
@@ -827,6 +828,91 @@ func TestRetirementCrashResumeAfterWorktreeReturnInterruption(t *testing.T) {
 	}
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("resume returned=%v, want evidence worktree %s", second.returned, wtDir)
+	}
+}
+
+// A resume across artifact disposal: once the claim records that disposal
+// began, whatever the interrupted removal left is removed again before the
+// return; without that record an absent manifest still refuses.
+func TestRetirementResumeAcrossArtifactDisposal(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		recorded  bool
+		interrupt func(t *testing.T, wtDir string, binding *taskauthority.WorktreeBinding)
+		want      string
+	}{
+		{name: "manifest absent without a disposal record refuses", interrupt: func(t *testing.T, wtDir string, _ *taskauthority.WorktreeBinding) {
+			mustRemove(t, filepath.Join(wtDir, ManifestName))
+		}, want: "canonical launch manifest is absent; cleanup completion cannot be inferred"},
+		{name: "recorded before any removal", recorded: true, interrupt: func(*testing.T, string, *taskauthority.WorktreeBinding) {}},
+		{name: "recorded mid-removal", recorded: true, interrupt: func(t *testing.T, wtDir string, _ *taskauthority.WorktreeBinding) {
+			mustRemove(t, filepath.Join(wtDir, CharterName))
+		}},
+		{name: "recorded after removal, manifest absent", recorded: true, interrupt: func(t *testing.T, wtDir string, binding *taskauthority.WorktreeBinding) {
+			if err := removeWorktreeLaunchArtifacts(wtDir, binding); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "recorded with a stale manifest left", recorded: true, interrupt: func(t *testing.T, wtDir string, binding *taskauthority.WorktreeBinding) {
+			if err := removeWorktreeLaunchArtifacts(wtDir, binding); err != nil {
+				t.Fatal(err)
+			}
+			writeTestManifestRaw(t, wtDir, `{"manifest_version":"stale","artifacts":[]}`)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			taskID := "dispose-resume"
+			auth := canonicalMergeTestAuth(t, homeDir, taskID)
+			wtDir := filepath.Join(homeDir, "worktrees", taskID)
+			os.MkdirAll(wtDir, 0755)
+			seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+			seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
+			opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+			// The first run stops at the endpoint dispose, before the worktree.
+			if _, err := RetireTask(opts, &recordingTeardown{alive: true, disposeErr: errors.New("window busy")}, fakeRetirementJournals{}, auth); err == nil {
+				t.Fatal("expected pending cleanup")
+			}
+			if tc.recorded {
+				if _, err := beginArtifactDisposal(auth, mustTaskID(t, taskID), 1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			agg, err := auth.Get(mustTaskID(t, taskID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.interrupt(t, wtDir, agg.Retirement.Worktree)
+
+			resume := &recordingTeardown{alive: true}
+			_, err = RetireTask(opts, resume, fakeRetirementJournals{}, auth)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) || len(resume.returned) != 0 {
+					t.Fatalf("resume = %v returned=%v, want refusal %q and no return", err, resume.returned, tc.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resume: %v", err)
+			}
+			if len(resume.returned) != 1 || resume.returned[0] != wtDir {
+				t.Fatalf("resume returned=%v, want %s", resume.returned, wtDir)
+			}
+			for _, name := range append([]string{ManifestName}, CoreLaunchArtifactNames...) {
+				if _, err := os.Lstat(filepath.Join(wtDir, name)); !os.IsNotExist(err) {
+					t.Fatalf("%s survived disposal: %v", name, err)
+				}
+			}
+			assertClaimCompleted(t, auth, taskID, taskauthority.Generation(1))
+		})
+	}
+}
+
+func mustRemove(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
 	}
 }
 
