@@ -1,19 +1,52 @@
 package domain
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestFoldOpenDecisions(t *testing.T) {
-	got := FoldOpenDecisions([]string{"needs-decision[key=x]: choose", "resolved[key=x]: done"})
-	if len(got) != 0 {
-		t.Fatalf("got=%v", got)
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  []Decision
+	}{
+		{"keyed decisions resolve independently", []string{
+			ReportStatusLine("needs-decision", "which db?", "db"),
+			ReportStatusLine("blocked", "redis?", "cache"),
+			"resolved: postgres [key=db]",
+		}, []Decision{{Key: "cache", Verb: "blocked", Summary: "redis?"}}},
+		{"unkeyed decision resolves default", []string{"needs-decision: choose", "resolved: done"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FoldOpenDecisions(tc.lines); !slices.Equal(got, tc.want) {
+				t.Fatalf("FoldOpenDecisions = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
+
 func TestFoldOpenActivities(t *testing.T) {
-	got := FoldOpenActivities([]string{"working[key=x]: work", "done[key=x]: done"})
-	if len(got) != 0 {
-		t.Fatalf("got=%v", got)
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  []Activity
+	}{
+		{"keyed phases close independently", []string{
+			ReportStatusLine("working", "phase one", "p1"),
+			ReportStatusLine("working", "phase two", "p2"),
+			ReportStatusLine("done", "phase one shipped", "p1"),
+		}, []Activity{{Key: "p2", Verb: "working", Summary: "phase two"}}},
+		{"unkeyed phase is default", []string{"working: work"}, []Activity{{Key: "default", Verb: "working", Summary: "work"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FoldOpenActivities(tc.lines); !slices.Equal(got, tc.want) {
+				t.Fatalf("FoldOpenActivities = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
+
 func TestClassifyAbsorb(t *testing.T) {
 	if ClassifyAbsorb("paused: wait") != Paused {
 		t.Fatal("paused")
@@ -84,12 +117,12 @@ func TestLineVerb(t *testing.T) {
 	}{
 		{"done: task complete", "done"},
 		{"failed: something broke", "failed"},
-		{"working [key=phase1]: Phase 1", "working"},
-		{"needs-decision [key=approach]: Pick approach", "needs-decision"},
+		{"working: Phase 1 [key=phase1]", "working"},
+		{"needs-decision: Pick approach [key=approach] [report]", "needs-decision"},
 		{"blocked: waiting", "blocked"},
-		{"resolved [key=approach]: Chose React", "resolved"},
+		{"resolved: Chose React [key=approach]", "resolved"},
 		{"paused: waiting", "paused"},
-		{"  working [key=x]: note  ", "working"},
+		{"  working: note [key=x]  ", "working"},
 		{"no colon here ", "no colon here"},
 	}
 	for _, tt := range tests {
@@ -108,7 +141,7 @@ func TestGeneralRelevantIsOnlyWhatNeedsTheHuman(t *testing.T) {
 		{"needs-decision: pick a schema", true},
 		{"blocked: missing auth", true},
 		{"failed: CI red", true},
-		{"blocked[key=x]: waiting", true},
+		{"blocked: waiting [key=x]", true},
 		{"task-2 blocked: missing auth", true},
 		{"done: shipped", false},
 		{"done: PR ready, checks green, merged", false},

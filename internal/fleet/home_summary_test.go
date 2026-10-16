@@ -59,7 +59,7 @@ func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 	if err := mhome.WriteMeta(home, "t-decision", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := mhome.AppendStatus(home, "t-decision", "needs-decision [key=approach]: pick A or B"); err != nil {
+	if err := mhome.AppendStatus(home, "t-decision", "needs-decision: pick A or B [key=approach]"); err != nil {
 		t.Fatal(err)
 	}
 	if err := mhome.WriteMeta(home, "t-done", map[string]string{"kind": "ship"}); err != nil {
@@ -143,7 +143,7 @@ func TestSummarizeCaptainHome_OmittedCaps(t *testing.T) {
 func TestLastParentStatus(t *testing.T) {
 	parent := t.TempDir()
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	if err := mhome.AppendStatus(parent, "captain:api", "done [key=x]: PR https://example/1"); err != nil {
+	if err := mhome.AppendStatus(parent, "captain:api", "done: PR https://example/1 [key=x]"); err != nil {
 		t.Fatal(err)
 	}
 	got := LastParentStatus(parent, "api")

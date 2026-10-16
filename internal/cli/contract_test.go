@@ -838,7 +838,7 @@ func TestFleetSnapshotParentReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stale parent event claims working while home is idle.
-	if err := mhome.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
+	if err := mhome.AppendStatus(home, "captain:domain-alpha", "working: Sample rollout Phase 7 [key=phase7]"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", home)

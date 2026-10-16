@@ -351,7 +351,7 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(statusPath, []byte("needs-decision [key=x]: PR https://example/1 needs a call\n"), 0644); err != nil {
+	if err := os.WriteFile(statusPath, []byte("needs-decision: PR https://example/1 needs a call [key=x]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -396,7 +396,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 
 	// 2) Captain answers on parent return channel (no pane required).
 	captainID := "captain:munsu"
-	statusLine := "blocked [key=return-channel-e2e]: closed-loop proof needs a decision"
+	statusLine := "blocked: closed-loop proof needs a decision [key=return-channel-e2e]"
 	if err := mhome.AppendStatus(homeDir, captainID, statusLine); err != nil {
 		t.Fatal(err)
 	}

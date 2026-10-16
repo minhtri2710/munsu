@@ -108,35 +108,37 @@ type StatusMatch struct {
 // --- Internal helpers matching fm-classify-lib.sh functions ---
 
 // LineVerb extracts the leading verb word from a status line.
-// Strips optional [key=<slug>] marker before the colon.
 func LineVerb(line string) string {
 	before, _, _ := strings.Cut(line, ":")
-	if idx := strings.Index(before, "[key="); idx >= 0 {
-		before = strings.TrimSpace(before[:idx])
-	}
 	return strings.TrimSpace(before)
 }
 
-// lineNote extracts text after the first colon, trimmed.
+// splitStatusKey splits the trailing " [key=<key>]" ReportStatusLine writes,
+// before any report mark, off line. A line without one returns key "".
+func splitStatusKey(line string) (rest, key string) {
+	body := strings.TrimSuffix(line, reportMark)
+	if strings.HasSuffix(body, "]") {
+		if i := strings.LastIndex(body, " [key="); i >= 0 {
+			return body[:i], body[i+len(" [key=") : len(body)-1]
+		}
+	}
+	return line, ""
+}
+
+// lineNote extracts the text after the first colon, without its key, trimmed.
 func lineNote(line string) string {
-	_, note, found := strings.Cut(line, ":")
+	rest, _ := splitStatusKey(line)
+	_, note, found := strings.Cut(rest, ":")
 	if found {
 		return strings.TrimSpace(note)
 	}
-	return strings.TrimSpace(line)
+	return strings.TrimSpace(rest)
 }
 
-// decisionKey extracts the optional [key=<slug>] from a status line, or "default".
+// decisionKey extracts the trailing [key=<slug>] from a status line, or "default".
 func decisionKey(line string) string {
-	before, _, _ := strings.Cut(line, ":")
-	if idx := strings.Index(before, "[key="); idx >= 0 {
-		rest := before[idx+5:] // skip "[key="
-		if end := strings.Index(rest, "]"); end >= 0 {
-			key := rest[:end]
-			if key != "" && isValidKey(key) {
-				return key
-			}
-		}
+	if _, key := splitStatusKey(line); isValidKey(key) {
+		return key
 	}
 	return "default"
 }

@@ -62,7 +62,7 @@ func FinalizeRetirementJournals(homeDir, taskID string) ([]string, error) {
 		return steps, err
 	}
 	for _, activity := range home.OpenActivities(statusPath) {
-		line := fmt.Sprintf("resolved [key=%s]: soldier torn down", activity.Key)
+		line := fmt.Sprintf("resolved: soldier torn down [key=%s]", activity.Key)
 		if err := home.AppendStatus(homeDir, taskID, line); err != nil {
 			return steps, err
 		}

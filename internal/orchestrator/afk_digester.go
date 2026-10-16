@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -113,7 +114,7 @@ func (d *Digester) Feed(digest *Digest) {
 			Key:     wd.Key,
 			Payload: wd.Payload,
 			Ref:     wd.Ref,
-			Type:    classifyEscalationType(wd.Payload),
+			Type:    classifyEscalationType(wd.Key, wd.Payload),
 			At:      now,
 		})
 		d.escalatedCount++
@@ -241,13 +242,21 @@ func writeDigestFile(path string, data []byte) error {
 	return nil
 }
 
-// classifyEscalationType determines the escalation type from a payload string.
-func classifyEscalationType(payload string) EscalationType {
+// classifyEscalationType determines the escalation type from a payload: the
+// status verb of a status-line payload, or of a report payload after its
+// "<key>: " prefix, decides first; prose keywords classify the rest.
+func classifyEscalationType(key, payload string) EscalationType {
+	switch domain.LineVerb(strings.TrimPrefix(payload, key+": ")) {
+	case "needs-decision", "blocked":
+		return EscalationDecision
+	case "failed":
+		return EscalationFailure
+	}
 	lower := strings.ToLower(payload)
 	switch {
 	case containsAny(lower, "needs-decision", "blocked", "which", "decision"):
 		return EscalationDecision
-	case containsAny(lower, "failed:", "failure", "broken", "error"):
+	case containsAny(lower, "failure", "broken", "error"):
 		return EscalationFailure
 	case containsAny(lower, "credential", "auth", "token", "login"):
 		return EscalationCredential

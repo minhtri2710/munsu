@@ -173,7 +173,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
    would act on and the needs-decision/blocked/paused/done/failed states.
 5. If you hit the same obstacle twice, run `+"`"+`munsu report blocked "{why}"`+"`"+` and stop; munsu will help.
 6. If a decision belongs to a human, run `+"`"+`munsu report needs-decision "{summary of options}"`+"`"+` and stop.
-7. To close an open wake key, append the line `+"`"+`resolved [key=<slug>]: {summary}`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
+7. To close an open wake key, append the line `+"`"+`resolved: {summary} [key=<slug>]`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
 
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
@@ -189,7 +189,7 @@ Put the done evidence in the message body of a commit on your branch; the Review
 - For each test you added or changed for a behaviour change, a red-proof row: the command you ran on the pre-change code with only that test applied (run it before you change production code), its non-zero exit code and the failure line; or `+"`"+`n/a: <reason>`+"`"+` when the change adds no behaviour, such as a pure refactor.
 - For each new function, type or module, a reuse-search row: the code search you ran before writing it (`+"`"+`semble`+"`"+` or `+"`"+`zg`+"`"+`), the query and the hits, and why no hit served.
 When delivery is complete, run `+"`"+`munsu report done "{summary}"`+"`"+` and stop.
-Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`.
+Before that, close every open keyed decision with `+"`"+`resolved: {summary} [key=<slug>]`+"`"+`.
 `, id, repo, id, modeLine+"\n"+deliveryRules), nil
 }
 
@@ -234,7 +234,7 @@ that answers for this generation; never read or reuse another generation's.
 2. Stay inside this worktree; modify nothing outside it.
 3. Report status via `+"`"+`munsu report`+"`"+`:
    `+"`"+`munsu report <state> "<msg>" [--key <slug>]`+"`"+`
-4. To close an open wake key, append the line `+"`"+`resolved [key=<slug>]: {summary}`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
+4. To close an open wake key, append the line `+"`"+`resolved: {summary} [key=<slug>]`+"`"+` to your status file `+"`"+`$MUNSU_HOME/state/$MUNSU_TASK_ID.status`+"`"+`. Repeating the same resolved key is safe.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
 `, id, scope, repo, id, ReportName(gen), modeLine), nil
