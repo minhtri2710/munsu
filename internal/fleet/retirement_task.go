@@ -1286,10 +1286,7 @@ func safetyCheck(opts Options, kind string, backend BoundTeardown, authority *ta
 		if err != nil {
 			return nil, fmt.Errorf("reading delivery identity: %w", err)
 		}
-		if disposing {
-			return disposingShipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
-		}
-		return shipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch)
+		return shipSafetyCheck(opts, ident, backend, authority, binding, partialLaunch, disposing)
 	}
 }
 
@@ -1384,8 +1381,11 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 // shipSafetyCheck verifies work is landed before teardown. It separates
 // cleanliness checks (dirty worktree) from merge-proof checks (topology-aware
 // PR merge verification of the delivery identity, deliveryIdentity's).
-// Returns proof strings emitted during merge-proof checks.
-func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
+// Returns proof strings emitted during merge-proof checks. A disposing
+// generation's artifacts were verified before disposal was recorded and are
+// being removed, so only a manifest still carrying the canonical digest
+// declares paths and no artifact is re-verified.
+func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch, disposing bool) ([]string, error) {
 	if binding == nil || binding.Path == "" {
 		return nil, fmt.Errorf("no canonical worktree path for %s", opts.ID)
 	}
@@ -1396,7 +1396,6 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 		return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
 	}
 	wtPath := binding.Path
-	expectedManifestSHA := binding.LaunchManifest.ManifestSHA256
 
 	// --- Cleanliness checks (always run) ---
 
@@ -1408,14 +1407,28 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 		return nil, fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
-	// Never derive the expected digest from the manifest being verified.
+	var manifest *LaunchManifest
+	if disposing {
+		var err error
+		if manifest, err = disposingManifest(wtPath, binding); err != nil {
+			return nil, fmt.Errorf("worktree %s: %w (use --force to override)", wtPath, err)
+		}
+	} else {
+		// Never derive the expected digest from the manifest being verified.
 
-	// Verify launch artifacts using the manifest. The deferred guard directory
-	// is a runtime launch marker, not task-produced work; artifact verification
-	// separately enforces its exact path, identity bytes and single-child shape.
-	if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
-		return nil, fmt.Errorf("worktree %s: launch artifact verification failed: %w (use --force to override)", wtPath, err)
+		// Verify launch artifacts using the manifest. The deferred guard directory
+		// is a runtime launch marker, not task-produced work; artifact verification
+		// separately enforces its exact path, identity bytes and single-child shape.
+		if err := VerifyLaunchArtifacts(wtPath, binding.LaunchManifest.ManifestSHA256); err != nil {
+			return nil, fmt.Errorf("worktree %s: launch artifact verification failed: %w (use --force to override)", wtPath, err)
+		}
+		var err error
+		if manifest, err = ReadManifest(wtPath); err != nil {
+			return nil, fmt.Errorf("reading manifest for unlisted check: %w", err)
+		}
 	}
+	// Build a set of manifest artifact paths for quick lookup.
+	manifestPaths := manifest.ArtifactPaths()
 
 	// Check for unlisted dirt: files not in the manifest that are dirty.
 	// Use --ignored=matching so ignored files (including manifest entries)
@@ -1427,13 +1440,6 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 	if err != nil {
 		return nil, fmt.Errorf("checking git status: %w", err)
 	}
-
-	// Build a set of manifest artifact paths for quick lookup.
-	manifest, manifestErr := ReadManifest(wtPath)
-	if manifestErr != nil {
-		return nil, fmt.Errorf("reading manifest for unlisted check: %w", manifestErr)
-	}
-	manifestPaths := manifest.ArtifactPaths()
 
 	var remaining []string
 	if len(out) > 0 {
@@ -1469,39 +1475,7 @@ func shipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend Bound
 	if len(remaining) > 0 {
 		return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)\n  %s", wtPath, strings.Join(remaining, "\n  "))
 	}
-	return shipLandedCheck(opts, wtPath, ident, backend, authority, partialLaunch)
-}
 
-// disposingShipSafetyCheck is shipSafetyCheck for a retired generation whose
-// cleanup claim records artifact disposal. The artifacts were verified before
-// that record and disposal removes them, so it checks only the worktree's
-// unlisted content and the landed work.
-func disposingShipSafetyCheck(opts Options, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, binding *taskauthority.WorktreeBinding, partialLaunch bool) ([]string, error) {
-	if binding == nil || binding.Path == "" {
-		return nil, fmt.Errorf("no canonical worktree path for %s", opts.ID)
-	}
-	if partialLaunch && ident != nil {
-		return nil, fmt.Errorf("partial launch %s cannot carry delivery identity", opts.ID)
-	}
-	wtPath := binding.Path
-	manifest, err := disposingManifest(wtPath, binding)
-	if err != nil {
-		return nil, fmt.Errorf("worktree %s: %w (use --force to override)", wtPath, err)
-	}
-	declared := map[string]bool{}
-	if manifest != nil {
-		declared = manifest.ArtifactPaths()
-		declared[ManifestName] = true
-	}
-	if err := verifyUnlistedWorktreeClean(wtPath, declared); err != nil {
-		return nil, fmt.Errorf("worktree %s: %w (use --force to override)", wtPath, err)
-	}
-	return shipLandedCheck(opts, wtPath, ident, backend, authority, partialLaunch)
-}
-
-// shipLandedCheck proves a ship task's work is landed: the delivery identity's
-// provider-confirmed merge, else the local or remote branch.
-func shipLandedCheck(opts Options, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical, partialLaunch bool) ([]string, error) {
 	// --- Merge-proof checks (topology-aware) ---
 
 	// If the task has a delivery identity, use provider-confirmed PR status

@@ -165,21 +165,25 @@ func TestMergeAndRetireResumeKeepsReportContinuity(t *testing.T) {
 // attempt left: after a failed worktree return the artifacts are disposed.
 func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		first    fakeTeardown
-		failedAt taskauthority.Revision
+		name           string
+		first          fakeTeardown
+		failedAt       taskauthority.Revision
+		recordDisposal bool
 	}{
 		// Revision 13 = done, then retire committed the durable claim; the
 		// failed attempt's BeginCleanup was a no-op (claim already active).
-		{"session dispose fails", fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, 13},
+		{"session dispose fails", fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, 13, false},
 		// The disposal record is revision 14, committed before the return.
-		{"worktree return fails after disposal", fakeTeardown{mergeStatus: landedStatus(), alive: true, returnWorktreeErr: errors.New("pool full")}, 14},
+		{"worktree return fails after disposal", fakeTeardown{mergeStatus: landedStatus(), alive: true, returnWorktreeErr: errors.New("pool full")}, 14, false},
+		// A crash after the disposal record and before any removal leaves the
+		// canonical manifest and every artifact in place.
+		{"crash after the disposal record, before removal", fakeTeardown{mergeStatus: landedStatus(), alive: true, disposeErr: errors.New("window busy")}, 13, true},
 	} {
-		t.Run(tc.name, func(t *testing.T) { mergeAndRetireResumesCleanup(t, tc.first, tc.failedAt) })
+		t.Run(tc.name, func(t *testing.T) { mergeAndRetireResumesCleanup(t, tc.first, tc.failedAt, tc.recordDisposal) })
 	}
 }
 
-func mergeAndRetireResumesCleanup(t *testing.T, firstTeardown fakeTeardown, failedAt taskauthority.Revision) {
+func mergeAndRetireResumesCleanup(t *testing.T, firstTeardown fakeTeardown, failedAt taskauthority.Revision, recordDisposal bool) {
 	homeDir := t.TempDir()
 	taskID := "test-cleanup-failure"
 	auth := mergedShipFixture(t, homeDir, taskID)
@@ -220,6 +224,11 @@ func mergeAndRetireResumesCleanup(t *testing.T, firstTeardown fakeTeardown, fail
 	}
 	if outcome.Status != taskauthority.DeliveryOutcomeCompleted {
 		t.Fatalf("canonical delivery outcome = %q, want completed", outcome.Status)
+	}
+	if recordDisposal {
+		if _, err := beginArtifactDisposal(auth, mustTaskID(t, taskID), 1); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),

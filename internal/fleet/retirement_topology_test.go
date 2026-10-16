@@ -192,7 +192,7 @@ func dirtyTreeAllow(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _, md := setupTopologyRepo(t, tmp)
 
-	if _, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false); err != nil {
+	if _, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false); err != nil {
 		t.Fatalf("clean branch should pass from canonical path/digest: %v", err)
 	}
 }
@@ -204,7 +204,7 @@ func dirtyTreeBlock(t *testing.T) {
 
 	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("changes"), 0644)
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("dirty worktree should fail")
 	}
@@ -249,7 +249,7 @@ func localOnlyLandingCheck(t *testing.T, merged, pushed bool) error {
 	c, homeDir := newFleetCanonical(t)
 	seedCanonicalQueuedTask(t, c, "local", "general")
 	seedSourceContract(t, c, "local", taskauthority.DeliveryStep{Baseline: true, ProbeState: "baseline"})
-	_, err := shipSafetyCheck(Options{HomeDir: homeDir, ID: "local"}, nil, fakeTeardown{}, c, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(Options{HomeDir: homeDir, ID: "local"}, nil, fakeTeardown{}, c, testWorktreeBinding(wt, md), false, false)
 	return err
 }
 
@@ -273,7 +273,7 @@ func localOnlyPushedUnmergedAllow(t *testing.T) {
 
 func TestShipSafetyCheck_Topology_NoWorktreeInMeta(t *testing.T) {
 	// Missing canonical worktree binding should fail.
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, nil, false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, nil, false, false)
 	if err == nil {
 		t.Fatal("should fail when no canonical worktree binding exists")
 	}
@@ -282,7 +282,7 @@ func TestShipSafetyCheck_Topology_NoWorktreeInMeta(t *testing.T) {
 func TestShipSafetyCheck_Topology_NonexistentWorktree(t *testing.T) {
 	// Nonexistent worktree should fail
 	tmp := t.TempDir()
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(filepath.Join(tmp, "nonexistent"), strings.Repeat("0", 64)), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(filepath.Join(tmp, "nonexistent"), strings.Repeat("0", 64)), false, false)
 	if err == nil {
 		t.Fatal("should fail when worktree does not exist")
 	}
@@ -299,7 +299,7 @@ func TestShipSafetyCheck_Topology_NoRemoteBranchFallback(t *testing.T) {
 	setupGitRepo(t, wt, "") // no remote
 
 	md := setupTopologyManifest(t, wt)
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), nil, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("should fail without remote branch when no identity")
 	}
@@ -328,7 +328,7 @@ func TestShipSafetyCheck_Topology_MergedPRWithDeletedHead(t *testing.T) {
 	cmd.Env = gitEnv
 	_ = cmd.Run()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("merged PR with deleted head should pass: %v", err)
 	}
@@ -361,7 +361,7 @@ func mergedMatchingHeadAllow(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("merged PR with existing branch should pass: %v", err)
 	}
@@ -383,7 +383,7 @@ func closedUnmergedBlock(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("closed unmerged PR should fail")
 	}
@@ -406,7 +406,7 @@ func openUnmergedBlock(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("open unmerged PR should fail")
 	}
@@ -424,7 +424,7 @@ func TestShipSafetyCheck_Topology_ProviderUnavailable(t *testing.T) {
 	cleanup := applyMockPRStatus(t, nil, fmt.Errorf("gh CLI not available"))
 	defer cleanup()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("unavailable provider should fail")
 	}
@@ -450,7 +450,7 @@ func wrongPRHeadBlock(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("mismatched head should fail")
 	}
@@ -484,7 +484,7 @@ func TestShipSafetyCheck_Topology_EmitProof(t *testing.T) {
 	cmd.Env = gitEnv
 	_ = cmd.Run()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("should accept merged PR with deleted head: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedDeletedHead(t *testing.T) {
 	cmd.Env = gitEnv
 	_ = cmd.Run()
 
-	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("merged PR with deleted head should pass: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedOrdinaryMerge(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("merged PR with existing branch should pass: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 
 	// Ancestry check is not a blocker — provider MERGED + head SHA match
 	// are sufficient proof. Teardown should succeed even though ancestry fails.
-	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("orphan head should not block teardown: %v", err)
 	}
@@ -740,7 +740,7 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 	defer cleanup()
 
 	// Provider MERGED + head SHA match + MergedSHA ancestry verified
-	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	proofs, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("squash merge should pass: %v", err)
 	}
@@ -771,7 +771,7 @@ func TestShipSafetyCheck_Topology_ProviderEmptyState(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err := shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("empty provider state should fail")
 	}
@@ -841,7 +841,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 	}
 
 	// shipSafetyCheck should succeed without Force
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("regression: no upstream + deleted head + complete identity should pass: %v", err)
 	}
@@ -886,7 +886,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 	}, nil)
 	defer cleanup()
 
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false)
+	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, nil, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("empty provider HeadSHA should fail closed")
 	}
@@ -929,7 +929,7 @@ func outcomeCompletedAllow(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, auth, testWorktreeBinding(wt, md), false)
+	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, auth, testWorktreeBinding(wt, md), false, false)
 	if err != nil {
 		t.Fatalf("merged with canonical completed outcome should pass: %v", err)
 	}
@@ -968,7 +968,7 @@ func outcomeNotCompletedBlock(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, auth, testWorktreeBinding(wt, md), false)
+	_, err = shipSafetyCheck(contractedMergeCheckOptions(t, "test"), ident, fakeTeardown{}, auth, testWorktreeBinding(wt, md), false, false)
 	if err == nil {
 		t.Fatal("expected error for non-completed canonical delivery outcome")
 	}

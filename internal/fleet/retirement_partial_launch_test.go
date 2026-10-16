@@ -90,7 +90,7 @@ func TestShipSafetyCheckPartialLaunchRefusesDeliveryIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			binding := testWorktreeBinding(t.TempDir(), strings.Repeat("a", 64))
-			_, err := shipSafetyCheck(Options{ID: "partial-identity"}, tc.ident, fakeTeardown{}, nil, binding, true)
+			_, err := shipSafetyCheck(Options{ID: "partial-identity"}, tc.ident, fakeTeardown{}, nil, binding, true, false)
 			if tc.refused != (err != nil && strings.Contains(err.Error(), refusal)) {
 				t.Fatalf("shipSafetyCheck error = %v, want refused=%v", err, tc.refused)
 			}
