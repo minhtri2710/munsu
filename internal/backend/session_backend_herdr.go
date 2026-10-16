@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // HerdrBackend implements Backend using the herdr CLI.
@@ -38,6 +39,9 @@ type HerdrBackend struct {
 
 	// protocolCache caches the detected API protocol version. -1 = not checked.
 	protocolCache int
+
+	eventsOnce sync.Once
+	events     *HerdrEventSource
 
 	// lastCreate stores the last tab-creation result for MetaExtras.
 	lastCreate *herdrLastCreate
@@ -657,16 +661,21 @@ func (h *HerdrBackend) Teardown(windowID string) error {
 // used; wire/protocol detail stays adapter-owned. See HerdrEventSource for
 // the capability/version gate and normalization contract.
 func (h *HerdrBackend) Wait(ctx context.Context, endpoint EndpointRef, after EventCursor) (ObservationSignal, error) {
-	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}
-	return src.Wait(ctx, endpoint, after)
+	return h.eventSource().Wait(ctx, endpoint, after)
 }
 
 // After implements the adapter-owned cursor ordering for the herdr surface.
 // See HerdrEventSource.After: cursor semantics stay adapter-
 // owned; the orchestrator never parses or compares cursors itself.
 func (h *HerdrBackend) After(next, prev EventCursor) bool {
-	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}
-	return src.After(next, prev)
+	return h.eventSource().After(next, prev)
+}
+
+// eventSource returns the backend's one event source, so its capability
+// probe runs once per backend rather than once per Wait.
+func (h *HerdrBackend) eventSource() *HerdrEventSource {
+	h.eventsOnce.Do(func() { h.events = &HerdrEventSource{Session: h.Session} })
+	return h.events
 }
 
 // Capability probes the installed herdr CLI and returns capability info.

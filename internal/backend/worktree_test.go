@@ -100,14 +100,18 @@ func TestGitWorktree_Status(t *testing.T) {
 
 func TestReservedGitWorktreePath(t *testing.T) {
 	homeDir := t.TempDir()
-	repoPath := filepath.Join(t.TempDir(), "repo")
+	repoPath := t.TempDir()
 	reservationID := "reservation-1"
 
-	path, ok := ReservedGitWorktreePath(homeDir, repoPath, reservationID)
-	if !ok {
-		t.Fatal("ReservedGitWorktreePath returned ok=false for a non-empty reservation")
+	path, err := ReservedGitWorktreePath(homeDir, repoPath, reservationID)
+	if err != nil {
+		t.Fatalf("ReservedGitWorktreePath: %v", err)
 	}
-	want := filepath.Join(homeDir, ".worktrees", stableHash(repoPath+"\x00"+reservationID))
+	canonical, err := filepath.EvalSymlinks(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(homeDir, ".worktrees", stableHash(canonical+"\x00"+reservationID))
 	if path != want {
 		t.Fatalf("ReservedGitWorktreePath = %q, want %q", path, want)
 	}
@@ -115,8 +119,55 @@ func TestReservedGitWorktreePath(t *testing.T) {
 		t.Fatalf("ReservedGitWorktreePath created %q: stat error = %v", path, err)
 	}
 
-	if path, ok := ReservedGitWorktreePath(homeDir, repoPath, ""); ok || path != "" {
-		t.Fatalf("ReservedGitWorktreePath with empty reservation = (%q, %v), want (\"\", false)", path, ok)
+	if path, err := ReservedGitWorktreePath(homeDir, repoPath, ""); err == nil || path != "" {
+		t.Fatalf("ReservedGitWorktreePath with empty reservation = (%q, %v), want an error", path, err)
+	}
+}
+
+// Each row acquires a worktree for two repos under one home; each worktree
+// must check out its own repo.
+func TestGitWorktree_GetChecksOutTheNamedRepo(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		get  func(t *testing.T, p *gitWorktreeProvider, repo string) (string, error)
+	}{
+		{"relative path", func(t *testing.T, p *gitWorktreeProvider, repo string) (string, error) {
+			t.Chdir(repo)
+			return p.Get(".", false)
+		}},
+		{"empty dir at the derived path", func(t *testing.T, p *gitWorktreeProvider, repo string) (string, error) {
+			canonical, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(p.getWorktreeBase(), stableHash(canonical)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return p.Get(repo, false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &gitWorktreeProvider{homeDir: t.TempDir()}
+			for _, marker := range []string{"a.txt", "b.txt"} {
+				repo := t.TempDir()
+				runCmd(t, repo, "git", "init")
+				runCmd(t, repo, "git", "config", "user.email", "test@test.com")
+				runCmd(t, repo, "git", "config", "user.name", "Test")
+				if err := os.WriteFile(filepath.Join(repo, marker), []byte(marker), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				runCmd(t, repo, "git", "add", ".")
+				runCmd(t, repo, "git", "commit", "-m", "initial")
+
+				wt, err := tc.get(t, p, repo)
+				if err != nil {
+					t.Fatalf("Get for %s: %v", marker, err)
+				}
+				if _, err := os.Stat(filepath.Join(wt, marker)); err != nil {
+					t.Fatalf("worktree %s for the %s repo lacks %s: %v", wt, marker, marker, err)
+				}
+			}
+		})
 	}
 }
 

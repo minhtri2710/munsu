@@ -151,10 +151,10 @@ func TestWorktreeReclaimSparesReservedUnboundWorktree(t *testing.T) {
 		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "reclaim-reserved-launch", launchReq), launchReq); err != nil {
 			return nil, fmt.Errorf("committing launch intent: %w", err)
 		}
-		var ok bool
-		reservedPath, ok = backend.ReservedGitWorktreePath(homeDir, repoPath, reservationID)
-		if !ok {
-			return nil, fmt.Errorf("resolving reserved worktree path: path=%q ok=%v", reservedPath, ok)
+		var err error
+		reservedPath, err = backend.ReservedGitWorktreePath(homeDir, repoPath, reservationID)
+		if err != nil {
+			return nil, fmt.Errorf("resolving reserved worktree path: %w", err)
 		}
 		reservedGit = filepath.Join(reservedPath, ".git")
 		if err := os.MkdirAll(reservedPath, 0o755); err != nil {
@@ -304,9 +304,9 @@ func TestWorktreeReclaimAllowsRetiredReservation(t *testing.T) {
 	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
 		t.Fatalf("completing canonical retirement cleanup for fixture: %v", err)
 	}
-	reservedPath, ok := backend.ReservedGitWorktreePath(tmpDir, repoPath, reservationID)
-	if !ok {
-		t.Fatalf("reserved path = %q, ok=%v", reservedPath, ok)
+	reservedPath, err := backend.ReservedGitWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil {
+		t.Fatalf("reserved path: %v", err)
 	}
 	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -398,9 +398,9 @@ func unboundReservationFixture(t *testing.T) (*taskauthority.Canonical, domain.T
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "held-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
-	reservedPath, ok := backend.ReservedGitWorktreePath(tmpDir, repoPath, heldReservationID)
-	if !ok {
-		t.Fatalf("reserved path = %q, ok=%v", reservedPath, ok)
+	reservedPath, err := backend.ReservedGitWorktreePath(tmpDir, repoPath, heldReservationID)
+	if err != nil {
+		t.Fatalf("reserved path: %v", err)
 	}
 	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -707,9 +707,9 @@ func TestWorktreeReclaimSparesRetiredWorktreeEvidence(t *testing.T) {
 	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "retired-launch", launch), launch); err != nil {
 		t.Fatal(err)
 	}
-	reservedPath, ok := backend.ReservedGitWorktreePath(tmpDir, repoPath, reservationID)
-	if !ok {
-		t.Fatalf("reserved path = %q, ok=%v", reservedPath, ok)
+	reservedPath, err := backend.ReservedGitWorktreePath(tmpDir, repoPath, reservationID)
+	if err != nil {
+		t.Fatalf("reserved path: %v", err)
 	}
 	if out, err := exec.Command("/usr/bin/git", "-C", repoPath, "worktree", "add", "--detach", reservedPath, "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)

@@ -104,9 +104,13 @@ func (s *HerdrEventSource) Wait(ctx context.Context, endpoint EndpointRef, after
 		}
 	}
 
-	args := []string{"--session", s.Session, "agent", "wait", endpoint.Handle,
+	session := HandleSession(endpoint.Handle)
+	if session == "" {
+		session = s.Session
+	}
+	args := []string{"--session", session, "agent", "wait", herdrPaneID(endpoint.Handle),
 		"--timeout", strconv.FormatInt(timeoutMS, 10)}
-	stdout, stderr, err := runBackendEventCommand(ctx, time.Duration(timeoutMS)*time.Millisecond, bin, args, "", []string{"HERDR_SESSION=" + s.Session})
+	stdout, stderr, err := runBackendEventCommand(ctx, time.Duration(timeoutMS)*time.Millisecond, bin, args, "", []string{"HERDR_SESSION=" + session})
 	if err != nil {
 		if ctx.Err() != nil {
 			// Caller cancellation takes precedence over the package bound.
@@ -179,8 +183,8 @@ func (s *HerdrEventSource) parseAgentWait(endpoint EndpointRef, raw []byte) (Obs
 	if res.StateChangeSeq > 0 {
 		sig.Cursor = EventCursor(strconv.FormatUint(res.StateChangeSeq, 10))
 	}
-	if res.PaneID != "" && endpoint.Handle != "" && res.PaneID != endpoint.Handle {
-		sig.Detail += fmt.Sprintf(" (response pane %q != requested %q)", res.PaneID, endpoint.Handle)
+	if pane := herdrPaneID(endpoint.Handle); res.PaneID != "" && pane != "" && res.PaneID != pane {
+		sig.Detail += fmt.Sprintf(" (response pane %q != requested %q)", res.PaneID, pane)
 	}
 	return sig, nil
 }
