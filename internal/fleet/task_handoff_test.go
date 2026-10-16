@@ -248,11 +248,15 @@ func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 
 // TestHandoffCarriesTheWholeDefinition proves the destination re-creates a
 // task with the source definition, only the owner changed: a dropped scout
-// scope leaves a task no launch accepts.
+// scope leaves a task no launch accepts. Every field the scout can carry is
+// set, so a dropped field fails the equality, not only a validator. A review
+// handoff is not seeded: its target must be a working ship with a bound
+// worktree and endpoint.
 func TestHandoffCarriesTheWholeDefinition(t *testing.T) {
 	parent, captain := seedHandoffPair(t)
 	src := mustAuthority(t, parent)
-	req := taskauthority.CanonicalCreateRequest{HomeID: src.HomeID(), TaskID: mustTransferTaskID(t, "SCOUT-1"), Owner: "general", Description: "scout", Kind: taskauthority.KindScout, Project: mustTransferProjectID(t, "munsu"), ScoutScope: "map the repo", Reason: "test seed"}
+	seedCanonicalQueuedTask(t, src, "TASK-0", "general")
+	req := taskauthority.CanonicalCreateRequest{HomeID: src.HomeID(), TaskID: mustTransferTaskID(t, "SCOUT-1"), Owner: "general", Description: "scout", Kind: taskauthority.KindScout, Project: mustTransferProjectID(t, "munsu"), ParentTaskID: mustTransferTaskID(t, "TASK-0"), ScoutScope: "map the repo", Reason: "test seed"}
 	if _, err := src.Create(mustTransferOp(t, "seed-create-SCOUT-1", req), req); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
