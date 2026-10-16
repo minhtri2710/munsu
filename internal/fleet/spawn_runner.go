@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -1337,7 +1336,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 	}
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	if agg.Worktree != nil {
-		if r.launch != nil && (agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken) {
+		if agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken {
 			return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: committed worktree binding does not match the launch worktree reservation fence; refuse")
 		}
 		// The adopted path is re-classified, not trusted. The fence proves the
@@ -1354,13 +1353,7 @@ func (r *Runner) bindWorktree() (BoundWorktree, error) {
 		r.cwd, r.launchDir = bw.Path(), bw.Path()
 		return bw, nil
 	}
-	var leaseID, fenceToken string
-	if r.launch != nil {
-		leaseID, fenceToken = r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken
-	} else {
-		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
-	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken, r.launchWorktreeTool())
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken, r.launchWorktreeTool())
 	if err != nil {
 		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
@@ -2477,9 +2470,9 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 // and the recorded launch evidence in ONE atomic operation that transitions
 // queued → working. Only this operation transitions the phase; it requires the
 // bound worktree, the recorded acquired endpoint (AttachEndpoint), the
-// recorded launch evidence (RecordLaunch), and the exact intent fence when a
-// launch intent exists. A task another run of the identical launch bound in
-// the meantime replays idempotently. The returned Outcome is
+// recorded launch evidence (RecordLaunch), and the exact intent fence. A task
+// another run of the identical launch bound in the meantime replays
+// idempotently. The returned Outcome is
 // the authoritative spawn receipt: its Generation is the exact generation the
 // attestation evidence binds to.
 func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
@@ -2495,20 +2488,16 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
-		if r.launch != nil && (agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken) {
+		if agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken {
 			return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: committed endpoint binding does not match the launch endpoint reservation fence; refuse")
 		}
 		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
 	}
-	leaseID, fenceToken := r.epReservationID(), r.epFenceToken()
-	if r.launch == nil {
-		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
-	}
 	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      leaseID,
-		FenceToken:   fenceToken,
+		LeaseID:      r.launch.EndpointReservationID,
+		FenceToken:   r.launch.EndpointFenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
@@ -2547,14 +2536,6 @@ func (r *Runner) epFenceToken() string {
 		return r.launch.EndpointFenceToken
 	}
 	return ""
-}
-
-func newEndpointToken() string {
-	buf := make([]byte, 16)
-	// crypto/rand.Read cannot return an error: since Go 1.24 it terminates the
-	// process instead of reporting failure, so there is no branch to take.
-	rand.Read(buf)
-	return fmt.Sprintf("%x", buf)
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

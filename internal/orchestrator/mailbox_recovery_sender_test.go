@@ -48,7 +48,7 @@ func TestRecoverInboxDeliversToTheTaskPane(t *testing.T) {
 		}, taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:p1", SessionOwner: "s"}, "pi"},
 		{"soldier", "task-1", func(t *testing.T, home string) {
 			seedBoundSoldier(t, home, "task-1", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
-		}, taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1", LeaseID: "lease-ep", FenceToken: "fence-ep", Incarnation: "inc-ep", BoundAtUnix: 1}, ""},
+		}, taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1", LeaseID: "lease-ep", FenceToken: "fence-ep", Incarnation: "inc-ep", BoundAtUnix: 1}, "claude"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()

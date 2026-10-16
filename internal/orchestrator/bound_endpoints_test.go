@@ -38,7 +38,7 @@ func seedTask(t *testing.T, homeDir, id string) (*taskauthority.Canonical, domai
 }
 
 // seedBoundSoldier commits a live, bound ship task through the canonical
-// operations: create, bind its worktree, bind ep as its endpoint.
+// launch chain, ending with ep bound as its endpoint.
 func seedBoundSoldier(t *testing.T, homeDir, id string, ep taskauthority.EndpointBinding) {
 	t.Helper()
 	c, tid := seedTask(t, homeDir, id)
@@ -49,6 +49,18 @@ func seedBoundSoldier(t *testing.T, homeDir, id string, ep taskauthority.Endpoin
 		}
 		return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	}
+	ep.LeaseID, ep.FenceToken, ep.Incarnation, ep.BoundAtUnix = "lease-ep", "fence-ep", "inc-ep", 1
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), SnapshotDigest: strings.Repeat("c", 64),
+		Backend: ep.Backend, Harness: "claude", Mode: "direct-PR", Kind: taskauthority.KindShip,
+		LaunchID: "launch-" + id, WindowLabel: "window-" + id,
+		WorktreeReservationID: "lease-wt", WorktreeFenceToken: "fence-wt",
+		EndpointReservationID: ep.LeaseID, EndpointFenceToken: ep.FenceToken, EndpointIncarnation: ep.Incarnation,
+		SeatPathDirs: []string{"/usr/bin"}, SeatEnv: taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}, Reason: "spawn",
+	}
+	if _, err := c.BeginSpawn(testOperation(t, "begin-"+id, begin), begin); err != nil {
+		t.Fatal(err)
+	}
 	wt := taskauthority.CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Reason: "bind", Binding: taskauthority.WorktreeBinding{
 		RepositoryIdentity: "repo", Path: "/wt/" + id, GitDir: "/repo/.git/worktrees/" + id, CommonDir: "/repo/.git",
 		BaseHead: strings.Repeat("a", 40), LeaseID: "lease-wt", FenceToken: "fence-wt", BoundAtUnix: 1,
@@ -56,7 +68,29 @@ func seedBoundSoldier(t *testing.T, homeDir, id string, ep taskauthority.Endpoin
 	if _, err := c.BindWorktree(testOperation(t, "bind-wt-"+id, wt), wt); err != nil {
 		t.Fatal(err)
 	}
-	ep.LeaseID, ep.FenceToken, ep.Incarnation, ep.BoundAtUnix = "lease-ep", "fence-ep", "inc-ep", 1
+	manifest := taskauthority.CanonicalRecordLaunchManifestRequest{
+		HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), LaunchID: begin.LaunchID,
+		WorktreeLeaseID: "lease-wt", WorktreeFenceToken: "fence-wt", ManifestSHA256: strings.Repeat("d", 64), Reason: "manifest",
+	}
+	if _, err := c.RecordLaunchManifest(testOperation(t, "manifest-"+id, manifest), manifest); err != nil {
+		t.Fatal(err)
+	}
+	attach := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Backend: ep.Backend, Handle: ep.Handle,
+		LeaseID: ep.LeaseID, FenceToken: ep.FenceToken, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID,
+		Incarnation: ep.Incarnation, Reason: "attach",
+	}
+	if _, err := c.AttachEndpoint(testOperation(t, "attach-"+id, attach), attach); err != nil {
+		t.Fatal(err)
+	}
+	record := taskauthority.CanonicalRecordLaunchRequest{
+		HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), LaunchID: begin.LaunchID,
+		CommandDigest: strings.Repeat("e", 64), Reason: "record",
+		Seat: taskauthority.LaunchSeat{Argv: []string{"claude"}, PromptDigest: strings.Repeat("f", 64), Fence: taskauthority.FenceRecord{Reason: "no fence on this host"}},
+	}
+	if _, err := c.RecordLaunch(testOperation(t, "record-"+id, record), record); err != nil {
+		t.Fatal(err)
+	}
 	bind := taskauthority.CanonicalBindEndpointRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Binding: ep, Reason: "bind"}
 	if _, err := c.BindEndpoint(testOperation(t, "bind-ep-"+id, bind), bind); err != nil {
 		t.Fatal(err)
@@ -90,7 +124,7 @@ func TestLiveBoundEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []BoundEndpoint{{TaskID: "bound", Endpoint: taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:p1", SessionOwner: "s", WorkspaceID: "w1", TabID: "t1", LeaseID: "lease-ep", FenceToken: "fence-ep", Incarnation: "inc-ep", BoundAtUnix: 1}}}
+	want := []BoundEndpoint{{TaskID: "bound", Endpoint: taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:p1", SessionOwner: "s", WorkspaceID: "w1", TabID: "t1", LeaseID: "lease-ep", FenceToken: "fence-ep", Incarnation: "inc-ep", BoundAtUnix: 1}, Harness: "claude"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("LiveBoundEndpoints = %+v, want %+v", got, want)
 	}

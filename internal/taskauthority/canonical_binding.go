@@ -31,7 +31,7 @@ func (r CanonicalBindWorktreeRequest) DigestBytes() ([]byte, error) {
 // worktree lease to a task. The mutation is generation-bound and fenced: the
 // request carries the expected Generation/Revision precondition, and the
 // committed worktree binding is stored on the task's current Aggregate.
-// When the generation carries a committed launch intent (BeginSpawn), the
+// The generation must carry a committed launch intent (BeginSpawn), and the
 // binding must match the intent's worktree reservation fence exactly: the
 // binding's lease ID and fence token must be the reservation identities
 // generated before acquisition. Binding an already-bound generation fails
@@ -56,7 +56,11 @@ func (c *Canonical) BindWorktree(op domain.Operation, req CanonicalBindWorktreeR
 		if cur.Worktree != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already has a worktree binding", cur.TaskID, cur.Generation)
 		}
-		if cur.Launch != nil && (req.Binding.LeaseID != cur.Launch.WorktreeReservationID || req.Binding.FenceToken != cur.Launch.WorktreeFenceToken) {
+		// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: BindWorktree refuses a task with no launch intent; stale runner wedges a reopened generation)
+		if cur.Launch == nil {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no launch intent; bind worktree requires a committed launch intent", cur.TaskID, cur.Generation)
+		}
+		if req.Binding.LeaseID != cur.Launch.WorktreeReservationID || req.Binding.FenceToken != cur.Launch.WorktreeFenceToken {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s worktree binding does not match the launch worktree reservation fence", cur.TaskID, cur.Generation)
 		}
 		next := cur.clone()
@@ -94,9 +98,9 @@ func (r CanonicalBindEndpointRequest) DigestBytes() ([]byte, error) {
 // Generation/Revision precondition. The mutation requires a bound worktree (a
 // review task owns none and requires its committed launch intent instead),
 // a queued phase, and no existing endpoint binding, and it evaluates
-// durable Dispatch Holds for the spawn action before committing. When the
-// generation carries a committed launch intent (BeginSpawn), the operation
-// additionally requires the recorded acquired endpoint (AttachEndpoint) and
+// durable Dispatch Holds for the spawn action before committing. A bound
+// worktree implies a committed launch intent (BeginSpawn), so the operation
+// also requires the recorded acquired endpoint (AttachEndpoint) and
 // the recorded launch evidence (RecordLaunch), the binding must match the
 // intent's endpoint reservation fence exactly, and the binding must carry the
 // exact identity of the recorded acquired endpoint (a different endpoint can
@@ -126,19 +130,17 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 		if cur.Endpoint != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already has an endpoint binding", cur.TaskID, cur.Generation)
 		}
-		if cur.Launch != nil {
-			if cur.AcquiredEndpoint == nil {
-				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded acquired endpoint; bind endpoint requires the acquired endpoint of the launch", cur.TaskID, cur.Generation)
-			}
-			if cur.LaunchEvidence == nil {
-				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded launch evidence; bind endpoint requires launch evidence before working", cur.TaskID, cur.Generation)
-			}
-			if req.Binding.LeaseID != cur.Launch.EndpointReservationID || req.Binding.FenceToken != cur.Launch.EndpointFenceToken {
-				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s endpoint binding does not match the launch endpoint reservation fence", cur.TaskID, cur.Generation)
-			}
-			if !endpointBindingMatchesAcquired(req.Binding, *cur.AcquiredEndpoint) {
-				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s endpoint binding does not match the recorded acquired endpoint", cur.TaskID, cur.Generation)
-			}
+		if cur.AcquiredEndpoint == nil {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded acquired endpoint; bind endpoint requires the acquired endpoint of the launch", cur.TaskID, cur.Generation)
+		}
+		if cur.LaunchEvidence == nil {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded launch evidence; bind endpoint requires launch evidence before working", cur.TaskID, cur.Generation)
+		}
+		if req.Binding.LeaseID != cur.Launch.EndpointReservationID || req.Binding.FenceToken != cur.Launch.EndpointFenceToken {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s endpoint binding does not match the launch endpoint reservation fence", cur.TaskID, cur.Generation)
+		}
+		if !endpointBindingMatchesAcquired(req.Binding, *cur.AcquiredEndpoint) {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s endpoint binding does not match the recorded acquired endpoint", cur.TaskID, cur.Generation)
 		}
 		holds, err := c.listHolds()
 		if err != nil {

@@ -23,29 +23,12 @@ func (p fixedProbe) Probe(string, taskauthority.EndpointBinding, string) (bool, 
 // which makes it working.
 func bindSoldier(t *testing.T, c *taskauthority.Canonical, taskID string, ep taskauthority.EndpointBinding) {
 	t.Helper()
-	tid, err := domain.NewTaskID(taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	precondition := func() domain.Precondition {
-		agg, err := c.Get(tid)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
-	}
-	wt := taskauthority.CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Reason: "bind", Binding: taskauthority.WorktreeBinding{
+	wt := taskauthority.WorktreeBinding{
 		RepositoryIdentity: "repo", Path: "/wt/" + taskID, GitDir: "/repo/.git/worktrees/" + taskID, CommonDir: "/repo/.git",
 		BaseHead: strings.Repeat("a", 40), LeaseID: "lease-wt-" + taskID, FenceToken: "fence-wt", BoundAtUnix: 1,
-	}}
-	if _, err := c.BindWorktree(mustFleetOperation(t, "op-bind-wt-"+taskID, wt), wt); err != nil {
-		t.Fatal(err)
 	}
 	ep.LeaseID, ep.FenceToken, ep.Incarnation, ep.BoundAtUnix = "lease-ep-"+taskID, "fence-ep", "inc-"+taskID, 1
-	bind := taskauthority.CanonicalBindEndpointRequest{HomeID: c.HomeID(), TaskID: tid, Precondition: precondition(), Binding: ep, Reason: "bind"}
-	if _, err := c.BindEndpoint(mustFleetOperation(t, "op-bind-ep-"+taskID, bind), bind); err != nil {
-		t.Fatal(err)
-	}
+	launchToWorking(t, c, taskID, wt, ep)
 }
 
 // setupObservationHome seeds a canonical home with a task bound to a tmux

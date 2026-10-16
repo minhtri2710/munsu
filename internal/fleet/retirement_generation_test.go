@@ -46,68 +46,71 @@ func seedWorktreeEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, p
 // git worktree when treehouse is empty.
 func seedWorktreeEvidenceVia(t *testing.T, auth *taskauthority.Canonical, taskID, path, lease, fence, treehouse string) {
 	t.Helper()
-	agg, err := auth.Get(mustTaskID(t, taskID))
-	if err != nil {
-		t.Fatal(err)
+	wt := taskauthority.WorktreeBinding{
+		RepositoryIdentity: "repo-" + taskID,
+		Path:               path,
+		GitDir:             filepath.Join(path, ".git"),
+		CommonDir:          filepath.Join(filepath.Dir(path), ".git"),
+		BaseHead:           strings.Repeat("a", 40),
+		LeaseID:            lease,
+		FenceToken:         fence,
+		Treehouse:          treehouse,
+		BoundAtUnix:        time.Now().Unix(),
 	}
-	req := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       mustTaskID(t, taskID),
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding: taskauthority.WorktreeBinding{
-			RepositoryIdentity: "repo-" + taskID,
-			Path:               path,
-			GitDir:             filepath.Join(path, ".git"),
-			CommonDir:          filepath.Join(filepath.Dir(path), ".git"),
-			BaseHead:           strings.Repeat("a", 40),
-			LeaseID:            lease,
-			FenceToken:         fence,
-			Treehouse:          treehouse,
-			BoundAtUnix:        time.Now().Unix(),
-		},
-		Reason: "spawn",
-	}
-	op, err := domain.NewOperation(mustOpID(t, "op-bind-wt-"+taskID+"-"+lease), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := auth.BindWorktree(op, req); err != nil {
-		t.Fatalf("BindWorktree(%s): %v", taskID, err)
-	}
+	// The launch intent reserves the endpoint seedEndpointEvidence later binds:
+	// its lease and fence are the worktree ones with "wt" read as "ep".
+	ep := retirementEndpoint(taskID, "", strings.Replace(lease, "wt", "ep", 1), strings.Replace(fence, "wt", "ep", 1))
+	launchBindWorktree(t, auth, taskID, wt, ep)
 }
 
 // seedEndpointEvidence binds one generation-scoped endpoint lease through the
 // canonical Authority (which also marks the generation working) at the task's
-// current generation/revision.
+// current generation/revision. seedWorktreeEvidence must have reserved it. A
+// worktree directory that exists gets the launch artifacts and manifest the
+// launch anchors, so retirement disposes them as it would a real launch's.
 func seedEndpointEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, handle, lease, fence string) {
 	t.Helper()
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := taskauthority.CanonicalBindEndpointRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       mustTaskID(t, taskID),
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding: taskauthority.EndpointBinding{
-			Backend:      "tmux",
-			Handle:       handle,
-			LeaseID:      lease,
-			FenceToken:   fence,
-			SessionOwner: "session-" + taskID,
-			WorkspaceID:  "ws-" + taskID,
-			TabID:        "tab-" + taskID,
-			Incarnation:  "inc-" + taskID,
-			BoundAtUnix:  time.Now().Unix(),
-		},
-		Reason: "spawn",
+	if agg.Worktree != nil && agg.Worktree.LaunchManifest == nil && agg.Launch != nil {
+		if info, err := os.Stat(agg.Worktree.Path); err == nil && info.IsDir() {
+			if _, err := os.Stat(filepath.Join(agg.Worktree.Path, ".git")); os.IsNotExist(err) {
+				if out, err := exec.Command("git", "init", "-q", agg.Worktree.Path).CombinedOutput(); err != nil {
+					t.Fatalf("git init %s: %v\n%s", agg.Worktree.Path, err, out)
+				}
+			}
+			setupTestLaunchFiles(t, agg.Worktree.Path)
+			digest := writeTestManifest(t, agg.Worktree.Path, nil, taskID, agg.Launch.LaunchID, agg.Generation.String(), agg.Launch.EndpointFenceToken)
+			recordLaunchManifestAnchor(t, auth, taskID, digest)
+		}
 	}
-	op, err := domain.NewOperation(mustOpID(t, "op-bind-ep-"+taskID+"-"+lease), req)
-	if err != nil {
+	launchBindEndpoint(t, auth, taskID, retirementEndpoint(taskID, handle, lease, fence))
+}
+
+// resetPoolWorktree empties dir: the pool hands a reused worktree out clean.
+func resetPoolWorktree(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.BindEndpoint(op, req); err != nil {
-		t.Fatalf("BindEndpoint(%s): %v", taskID, err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func retirementEndpoint(taskID, handle, lease, fence string) taskauthority.EndpointBinding {
+	return taskauthority.EndpointBinding{
+		Backend:      "tmux",
+		Handle:       handle,
+		LeaseID:      lease,
+		FenceToken:   fence,
+		SessionOwner: "session-" + taskID,
+		WorkspaceID:  "ws-" + taskID,
+		TabID:        "tab-" + taskID,
+		Incarnation:  "inc-" + taskID,
+		BoundAtUnix:  time.Now().Unix(),
 	}
 }
 
@@ -496,8 +499,8 @@ func tryBindWorktreeExpectClaimConflict(t *testing.T, auth *taskauthority.Canoni
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.BindWorktree(op, req); !errors.Is(err, taskauthority.ErrConflict) {
-		t.Fatalf("BindWorktree at barrier (claim active) = %v, want ErrConflict", err)
+	if _, err := auth.BindWorktree(op, req); !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "has an active cleanup claim") {
+		t.Fatalf("BindWorktree at barrier (claim active) = %v, want the active cleanup claim conflict", err)
 	}
 }
 
@@ -529,8 +532,8 @@ func tryBindEndpointExpectClaimConflict(t *testing.T, auth *taskauthority.Canoni
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.BindEndpoint(op, req); !errors.Is(err, taskauthority.ErrConflict) {
-		t.Fatalf("BindEndpoint at barrier (claim active) = %v, want ErrConflict", err)
+	if _, err := auth.BindEndpoint(op, req); !errors.Is(err, taskauthority.ErrConflict) || !strings.Contains(err.Error(), "has an active cleanup claim") {
+		t.Fatalf("BindEndpoint at barrier (claim active) = %v, want the active cleanup claim conflict", err)
 	}
 }
 
@@ -892,6 +895,7 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	// The operator aborts the generation-1 claim (escape hatch) and reopens:
 	// generation 2 re-acquires the SAME endpoint handle under a NEW lease.
 	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
+	resetPoolWorktree(t, wtDir)
 	agg, err = auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -1108,6 +1112,7 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 
 	// Operator aborts (terminal) and reopens to generation 2.
 	abortCleanupFor(t, auth, homeDir, taskID, taskauthority.Generation(1))
+	resetPoolWorktree(t, wtDir)
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)

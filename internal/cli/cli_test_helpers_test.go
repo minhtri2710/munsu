@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -63,4 +64,82 @@ func cliCanonicalForHome(t *testing.T, homeDir string) *taskauthority.Canonical 
 		t.Fatal(err)
 	}
 	return c
+}
+
+func cliPrecondition(t *testing.T, auth *taskauthority.Canonical, tid domain.TaskID) domain.Precondition {
+	t.Helper()
+	agg, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+}
+
+// beginTestLaunch commits a launch intent on id's current generation.
+func beginTestLaunch(t *testing.T, auth *taskauthority.Canonical, id, backend string) taskauthority.CanonicalBeginSpawnRequest {
+	t.Helper()
+	tid := mustTaskIDFor(t, id)
+	agg, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := fmt.Sprintf("%s-g%d", id, agg.Generation)
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)), SnapshotDigest: guardDigest("snapshot:" + g),
+		Backend: backend, Harness: "pi", Model: "opus", Effort: "high", Mode: "direct-PR", Kind: agg.Definition.Kind, Project: agg.Definition.Project,
+		LaunchID: "launch-" + g, WindowLabel: "window-" + g,
+		WorktreeReservationID: "wt-res-" + g, WorktreeFenceToken: "wt-fence-" + g,
+		EndpointReservationID: "ep-res-" + g, EndpointFenceToken: "ep-fence-" + g, EndpointIncarnation: "inc-" + g,
+		SeatPathDirs: []string{"/usr/bin"}, SeatEnv: taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}, Reason: "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustCanonicalOp(t, "op-begin-"+g, begin), begin); err != nil {
+		t.Fatalf("BeginSpawn(%s): %v", g, err)
+	}
+	return begin
+}
+
+// bindLaunchWorktree binds wt under begin's worktree reservation fence.
+func bindLaunchWorktree(t *testing.T, auth *taskauthority.Canonical, begin taskauthority.CanonicalBeginSpawnRequest, wt taskauthority.WorktreeBinding) {
+	t.Helper()
+	wt.LeaseID, wt.FenceToken = begin.WorktreeReservationID, begin.WorktreeFenceToken
+	req := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: begin.TaskID, Precondition: cliPrecondition(t, auth, begin.TaskID), Binding: wt, Reason: "spawn"}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "op-bindwt-"+begin.LaunchID, req), req); err != nil {
+		t.Fatalf("BindWorktree(%s): %v", begin.LaunchID, err)
+	}
+}
+
+// launchToWorking records the manifest, acquired endpoint and launch evidence
+// of begin's bound worktree, then binds ep under the endpoint fence.
+func launchToWorking(t *testing.T, auth *taskauthority.Canonical, begin taskauthority.CanonicalBeginSpawnRequest, ep taskauthority.EndpointBinding) {
+	t.Helper()
+	tid, id := begin.TaskID, begin.LaunchID
+	manifest := taskauthority.CanonicalRecordLaunchManifestRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: cliPrecondition(t, auth, tid), LaunchID: begin.LaunchID,
+		WorktreeLeaseID: begin.WorktreeReservationID, WorktreeFenceToken: begin.WorktreeFenceToken,
+		ManifestSHA256: guardDigest("manifest:" + id), Reason: "manifest prepared",
+	}
+	if _, err := auth.RecordLaunchManifest(mustCanonicalOp(t, "op-manifest-"+id, manifest), manifest); err != nil {
+		t.Fatalf("RecordLaunchManifest(%s): %v", id, err)
+	}
+	ep.Backend, ep.LeaseID, ep.FenceToken, ep.Incarnation = begin.Backend, begin.EndpointReservationID, begin.EndpointFenceToken, begin.EndpointIncarnation
+	attach := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: cliPrecondition(t, auth, tid), Backend: ep.Backend, Handle: ep.Handle,
+		LeaseID: ep.LeaseID, FenceToken: ep.FenceToken, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID,
+		Incarnation: ep.Incarnation, Reason: "attach",
+	}
+	if _, err := auth.AttachEndpoint(mustCanonicalOp(t, "op-attach-"+id, attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint(%s): %v", id, err)
+	}
+	record := taskauthority.CanonicalRecordLaunchRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Precondition: cliPrecondition(t, auth, tid), LaunchID: begin.LaunchID,
+		CommandDigest: guardDigest("launch:" + id), Reason: "record",
+		Seat: taskauthority.LaunchSeat{Argv: []string{begin.Harness}, PromptDigest: guardDigest("prompt"), Fence: taskauthority.FenceRecord{Reason: "no fence on this host"}},
+	}
+	if _, err := auth.RecordLaunch(mustCanonicalOp(t, "op-record-"+id, record), record); err != nil {
+		t.Fatalf("RecordLaunch(%s): %v", id, err)
+	}
+	bind := taskauthority.CanonicalBindEndpointRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: cliPrecondition(t, auth, tid), Binding: ep, Reason: "spawn"}
+	if _, err := auth.BindEndpoint(mustCanonicalOp(t, "op-bindep-"+id, bind), bind); err != nil {
+		t.Fatalf("BindEndpoint(%s): %v", id, err)
+	}
 }

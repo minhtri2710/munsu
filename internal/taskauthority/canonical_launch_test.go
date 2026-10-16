@@ -154,35 +154,22 @@ func TestCanonicalBeginSpawnCommitsLaunchIntent(t *testing.T) {
 }
 
 func TestCanonicalBeginSpawnRejectsAcquiredBindings(t *testing.T) {
+	const want = "already holds acquired bindings; launch intent must precede resource acquisition"
 	c, _, _ := newTestCanonical(t)
-	mustCreate(t, c, "t1")
 
-	// A bound worktree proves resource acquisition already happened: the
-	// durable intent must precede it, so BeginSpawn fails closed.
-	bw := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindWorktree(mustOperation(t, "op-wt-1", bw), bw); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-	req := launchRequest(c, "t1", preconditionOf(1, 2))
-	if _, err := c.BeginSpawn(mustOperation(t, "op-begin-after-wt", req), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("BeginSpawn after worktree binding = %v, want ErrConflict", err)
-	}
+	// A bound worktree proves resource acquisition already happened: even the
+	// identical intent, which would otherwise re-commit as a no-op, fails closed.
+	_, agg := mustBindWorktree(t, c, "t1")
+	req := launchRequest(c, "t1", preconditionOf(1, uint64(agg.Revision)))
+	_, err := c.BeginSpawn(mustOperation(t, "op-begin-after-wt", req), req)
+	wantErrSubstring(t, err, want, "BeginSpawn after worktree binding")
 
 	// Same for an endpoint-bound (working) task.
 	c2, _, _ := newTestCanonical(t)
-	mustCreate(t, c2, "t2")
-	bw2 := bindWorktreeRequest(c2, "t2", preconditionOf(1, 1))
-	if _, err := c2.BindWorktree(mustOperation(t, "op-wt-2", bw2), bw2); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-	be2 := bindEndpointRequest(c2, "t2", preconditionOf(1, 2))
-	if _, err := c2.BindEndpoint(mustOperation(t, "op-be-2", be2), be2); err != nil {
-		t.Fatalf("BindEndpoint: %v", err)
-	}
-	req2 := launchRequest(c2, "t2", preconditionOf(1, 3))
-	if _, err := c2.BeginSpawn(mustOperation(t, "op-begin-after-ep", req2), req2); !errors.Is(err, ErrConflict) {
-		t.Fatalf("BeginSpawn after endpoint binding = %v, want ErrConflict", err)
-	}
+	_, rev := launchToWorking(t, c2, "t2")
+	req2 := launchRequest(c2, "t2", preconditionOf(1, rev))
+	_, err = c2.BeginSpawn(mustOperation(t, "op-begin-after-ep", req2), req2)
+	wantErrSubstring(t, err, want, "BeginSpawn after endpoint binding")
 }
 
 func TestCanonicalBeginSpawnRequiresQueuedPhase(t *testing.T) {

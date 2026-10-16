@@ -380,25 +380,28 @@ func seedTaskTreehouse(t *testing.T, homeDir, record, tool string) {
 		t.Fatal(err)
 	}
 	canonicalCreateTask(t, auth, "held", "ship", "")
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(1, 1),
+		SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: "pi", Model: "opus", Effort: "high",
+		Mode: "direct-PR", Kind: "ship", Project: "alpha", ParentTaskID: "parent", LaunchID: "launch-held",
+		WindowLabel: "window-held", WorktreeReservationID: "wt-res", WorktreeFenceToken: "wt-fence",
+		EndpointReservationID: "ep-res", EndpointFenceToken: "ep-fence", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-held", Reason: "spawn",
+		SeatEnv: testSeatEnv(),
+	}
 	if record == "launch" {
-		begin := taskauthority.CanonicalBeginSpawnRequest{
-			HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(1, 1),
-			SnapshotDigest: strings.Repeat("a", 64), Backend: "tmux", Harness: "pi", Model: "opus", Effort: "high",
-			Mode: "direct-PR", Kind: "ship", Project: "alpha", ParentTaskID: "parent", LaunchID: "launch-held",
-			WindowLabel: "window-held", WorktreeReservationID: "wt-res", WorktreeFenceToken: "wt-fence", WorktreeTool: tool,
-			EndpointReservationID: "ep-res", EndpointFenceToken: "ep-fence", SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "inc-held", Reason: "spawn",
-			SeatEnv: testSeatEnv(),
-		}
-		if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-held", begin), begin); err != nil {
-			t.Fatal(err)
-		}
+		begin.WorktreeTool = tool
+	}
+	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-held", begin), begin); err != nil {
+		t.Fatal(err)
+	}
+	if record == "launch" {
 		return
 	}
 	bind := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(1, 1), Reason: "spawn",
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "held"), Precondition: domain.Of(1, 2), Reason: "spawn",
 		Binding: taskauthority.WorktreeBinding{
 			RepositoryIdentity: "repo-held", Path: filepath.Join(homeDir, "worktrees", "held"), GitDir: "git", CommonDir: "common",
-			BaseHead: strings.Repeat("a", 40), LeaseID: "lease-wt", FenceToken: "fence-wt", Treehouse: tool, BoundAtUnix: 1,
+			BaseHead: strings.Repeat("a", 40), LeaseID: begin.WorktreeReservationID, FenceToken: begin.WorktreeFenceToken, Treehouse: tool, BoundAtUnix: 1,
 		},
 	}
 	if _, err := auth.BindWorktree(mustFleetOperation(t, "op-bind-held", bind), bind); err != nil {

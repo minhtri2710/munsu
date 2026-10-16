@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -34,7 +33,7 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesAuthorizationIdentity(t *test
 		req := deliverRequest()
 		authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 			HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-			Precondition: domain.Of(1, 5), Kind: req.Kind, Identity: req.Identity,
+			Precondition: newLaunchStep(t, c, taskID).precondition(), Kind: req.Kind, Identity: req.Identity,
 			Preconditions: req.Preconditions, Words: deliveryWords(),
 		}
 		if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-currency-auth", authReq), authReq); err != nil {
@@ -75,7 +74,7 @@ func TestGuardBurnDownVerifyDeliveryCurrencyRefusesKindHeadAndPreconditions(t *t
 			req := deliverRequest()
 			authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
 				HomeID: c.HomeID(), TaskID: mustFleetTaskID(t, taskID),
-				Precondition: domain.Of(1, 5), Kind: req.Kind, Identity: req.Identity,
+				Precondition: newLaunchStep(t, c, taskID).precondition(), Kind: req.Kind, Identity: req.Identity,
 				Preconditions: req.Preconditions, Words: deliveryWords(),
 			}
 			if _, err := c.AuthorizeDelivery(mustFleetOperation(t, "op-currency-auth", authReq), authReq); err != nil {

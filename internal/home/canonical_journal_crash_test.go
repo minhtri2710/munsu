@@ -219,6 +219,62 @@ func bindEndpointReq(t *testing.T, c *ta.Canonical, prec domain.Precondition) ta
 	}}
 }
 
+// shipLaunch is t1's launch intent; its reservations are the lease and fence
+// tokens of worktreeBinding and bindEndpointReq.
+func shipLaunch(t *testing.T, c *ta.Canonical) ta.CanonicalBeginSpawnRequest {
+	return ta.CanonicalBeginSpawnRequest{
+		HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 1), SnapshotDigest: digestOf("snapshot:t1"),
+		Backend: "claude", Harness: "pi", Mode: "direct-PR", Kind: ta.KindShip, LaunchID: "launch-t1", WindowLabel: "window-t1",
+		WorktreeReservationID: "lease-wt", WorktreeFenceToken: "fence-wt",
+		EndpointReservationID: "lease-ep", EndpointFenceToken: "fence-ep", EndpointIncarnation: "inc-bind",
+		SeatPathDirs: []string{"/usr/bin"}, SeatEnv: ta.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}, Reason: "spawn",
+	}
+}
+
+// mustCreateLaunched creates t1 and commits shipLaunch, leaving it at revision 2.
+func mustCreateLaunched(t *testing.T, c *ta.Canonical) {
+	t.Helper()
+	mustCreate(t, c, "t1")
+	req := shipLaunch(t, c)
+	if _, err := c.BeginSpawn(mustOp(t, "op-begin-t1", req), req); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+}
+
+// mustLaunchFrom takes t1 with its worktree bound at revision rev through the
+// manifest, acquired endpoint, launch evidence and endpoint bind: working at rev+4.
+func mustLaunchFrom(t *testing.T, c *ta.Canonical, rev uint64) {
+	t.Helper()
+	l := shipLaunch(t, c)
+	manifest := ta.CanonicalRecordLaunchManifestRequest{
+		HomeID: c.HomeID(), TaskID: l.TaskID, Precondition: domain.Of(1, rev), LaunchID: l.LaunchID,
+		WorktreeLeaseID: l.WorktreeReservationID, WorktreeFenceToken: l.WorktreeFenceToken, ManifestSHA256: digestOf("manifest:t1"), Reason: "manifest",
+	}
+	if _, err := c.RecordLaunchManifest(mustOp(t, "op-manifest-t1", manifest), manifest); err != nil {
+		t.Fatalf("RecordLaunchManifest: %v", err)
+	}
+	attach := ta.CanonicalAttachEndpointRequest{
+		HomeID: c.HomeID(), TaskID: l.TaskID, Precondition: domain.Of(1, rev+1), Backend: l.Backend, Handle: "handle-1",
+		LeaseID: l.EndpointReservationID, FenceToken: l.EndpointFenceToken, SessionOwner: "owner", WorkspaceID: "ws", TabID: "tab",
+		Incarnation: l.EndpointIncarnation, Reason: "attach",
+	}
+	if _, err := c.AttachEndpoint(mustOp(t, "op-attach-t1", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	record := ta.CanonicalRecordLaunchRequest{
+		HomeID: c.HomeID(), TaskID: l.TaskID, Precondition: domain.Of(1, rev+2), LaunchID: l.LaunchID,
+		CommandDigest: digestOf("launch:t1"), Reason: "record",
+		Seat: ta.LaunchSeat{Argv: []string{"pi"}, PromptDigest: digestOf("prompt"), Fence: ta.FenceRecord{Reason: "no fence on this host"}},
+	}
+	if _, err := c.RecordLaunch(mustOp(t, "op-record-t1", record), record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+	be := bindEndpointReq(t, c, domain.Of(1, rev+3))
+	if _, err := c.BindEndpoint(mustOp(t, "op-bindep-t1", be), be); err != nil {
+		t.Fatalf("BindEndpoint: %v", err)
+	}
+}
+
 // reviewBaseSHA is the base commit the test verdict was reviewed against.
 const reviewBaseSHA = "0000111122223333444455556666777788889999"
 
@@ -276,28 +332,25 @@ func reviewTree() domain.TreeState {
 	return domain.TreeState{Head: deliveryHead, Porcelain: digestOf("porcelain:" + deliveryHead)}
 }
 
-// mustDeliveryTask leaves t1 working at revision 4 with the delivery bindings
+// mustDeliveryTask leaves t1 working at revision 8 with the delivery bindings
 // and the PASS verdict of its working review task rev1 for deliveryHead.
 func mustDeliveryTask(t *testing.T, c *ta.Canonical) {
 	t.Helper()
-	mustCreate(t, c, "t1")
+	mustCreateLaunched(t, c)
 	wt := worktreeBinding()
 	wt.BaseHead = deliveryHead
-	bw := bindWorktreeReq(t, c, domain.Of(1, 1), wt)
+	bw := bindWorktreeReq(t, c, domain.Of(1, 2), wt)
 	if _, err := c.BindWorktree(mustOp(t, "op-delivery-bindwt", bw), bw); err != nil {
 		t.Fatalf("BindWorktree: %v", err)
 	}
-	be := bindEndpointReq(t, c, domain.Of(1, 2))
-	if _, err := c.BindEndpoint(mustOp(t, "op-delivery-bindep", be), be); err != nil {
-		t.Fatalf("BindEndpoint: %v", err)
-	}
+	mustLaunchFrom(t, c, 3)
 	mustWorkingReview(t, c)
 	verdict := domain.ReviewVerdict{
 		Outcome: domain.VerdictPass, HeadSHA: deliveryHead, BaseSHA: reviewBaseSHA,
 		ReviewerTask: "rev1", ReviewerGeneration: 1, ReviewerIncarnation: "inc-rev1",
 		Author: "inc-bind", Before: reviewTree(), After: reviewTree(),
 	}
-	rv := ta.CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 3), Verdict: verdict}
+	rv := ta.CanonicalRecordReviewVerdictRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 7), Verdict: verdict}
 	if _, err := c.RecordReviewVerdict(mustOp(t, "op-delivery-verdict", rv), rv); err != nil {
 		t.Fatalf("RecordReviewVerdict: %v", err)
 	}
@@ -427,23 +480,18 @@ func TestCrashRecoveryBeginSpawn(t *testing.T) {
 
 func TestCrashRecoveryBindWorktree(t *testing.T) {
 	runCrashAtEveryStep(t, "t1", crashCase{
-		setup: func(t *testing.T, c *ta.Canonical) { mustCreate(t, c, "t1") },
+		setup: func(t *testing.T, c *ta.Canonical) { mustCreateLaunched(t, c) },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
-			req := bindWorktreeReq(t, c, domain.Of(1, 1), worktreeBinding())
+			req := bindWorktreeReq(t, c, domain.Of(1, 2), worktreeBinding())
 			out, err := c.BindWorktree(mustOp(t, "op-crash-bind", req), req)
 			return out.Replayed, err
 		},
 		check: func(t *testing.T, c *ta.Canonical) {
-			if agg := mustGet(t, c); agg.Worktree == nil || agg.Worktree.LeaseID != "lease-wt" || agg.Revision != 2 {
+			if agg := mustGet(t, c); agg.Worktree == nil || agg.Worktree.LeaseID != "lease-wt" || agg.Revision != 3 {
 				t.Fatalf("recovered aggregate = rev %d worktree %+v", agg.Revision, agg.Worktree)
 			}
 		},
-		after: func(t *testing.T, c *ta.Canonical) {
-			ep := bindEndpointReq(t, c, domain.Of(1, 2))
-			if _, err := c.BindEndpoint(mustOp(t, "op-bind-after-recovery", ep), ep); err != nil {
-				t.Fatalf("bind endpoint after recovery: %v", err)
-			}
-		},
+		after: func(t *testing.T, c *ta.Canonical) { mustLaunchFrom(t, c, 3) },
 	})
 }
 
@@ -555,20 +603,20 @@ func TestCrashRecoveryCommitTransfer(t *testing.T) {
 func TestCrashRecoveryRetire(t *testing.T) {
 	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
-			mustCreate(t, c, "t1")
-			req := bindWorktreeReq(t, c, domain.Of(1, 1), worktreeBinding())
+			mustCreateLaunched(t, c)
+			req := bindWorktreeReq(t, c, domain.Of(1, 2), worktreeBinding())
 			if _, err := c.BindWorktree(mustOp(t, "op-bind-wt", req), req); err != nil {
 				t.Fatalf("BindWorktree: %v", err)
 			}
 		},
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
-			req := ta.CanonicalRetireRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 2), Reason: "retire"}
+			req := ta.CanonicalRetireRequest{HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 3), Reason: "retire"}
 			out, err := c.Retire(mustOp(t, "op-crash-retire", req), req)
 			return out.Replayed, err
 		},
 		check: func(t *testing.T, c *ta.Canonical) {
 			agg := mustGet(t, c)
-			if agg.Phase != ta.PhaseRetired || agg.Worktree != nil || agg.Revision != 3 {
+			if agg.Phase != ta.PhaseRetired || agg.Worktree != nil || agg.Revision != 4 {
 				t.Fatalf("recovered retired aggregate = %+v", agg)
 			}
 			if agg.Retirement == nil || agg.Retirement.Worktree == nil || agg.Retirement.Worktree.LeaseID != "lease-wt" {
@@ -582,7 +630,7 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) { mustDeliveryTask(t, c) },
 		op: func(t *testing.T, c *ta.Canonical) (bool, error) {
-			req := authorizeReq(t, c, 4)
+			req := authorizeReq(t, c, 8)
 			out, err := c.AuthorizeDelivery(mustOp(t, "op-crash-auth", req), req)
 			return out.Replayed, err
 		},
@@ -594,11 +642,11 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read recovered currency: %v", err)
 			}
-			if !cur.Valid || cur.Revision != 5 || cur.Authorization == nil || cur.Authorization.OperationID != "op-crash-auth" {
+			if !cur.Valid || cur.Revision != 9 || cur.Authorization == nil || cur.Authorization.OperationID != "op-crash-auth" {
 				t.Fatalf("recovered currency = %+v", cur)
 			}
 			auth := cur.Authorization
-			if auth.OperationID != "op-crash-auth" || auth.Revision != 5 || auth.Identity != deliveryIdentity() {
+			if auth.OperationID != "op-crash-auth" || auth.Revision != 9 || auth.Identity != deliveryIdentity() {
 				t.Fatalf("recovered authorization = %+v", auth)
 			}
 		},
@@ -608,7 +656,7 @@ func TestCrashRecoveryDeliveryAuthorization(t *testing.T) {
 func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 	outcome := func(t *testing.T, c *ta.Canonical) ta.CanonicalDeliveryOutcomeRequest {
 		return ta.CanonicalDeliveryOutcomeRequest{
-			HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 5),
+			HomeID: c.HomeID(), TaskID: taskID(t, "t1"), Precondition: domain.Of(1, 9),
 			AuthorizationOperationID: "op-auth", Status: ta.DeliveryOutcomeCompleted, Detail: "merge confirmed",
 			MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		}
@@ -616,7 +664,7 @@ func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 	runCrashAtEveryStep(t, "t1", crashCase{
 		setup: func(t *testing.T, c *ta.Canonical) {
 			mustDeliveryTask(t, c)
-			req := authorizeReq(t, c, 4)
+			req := authorizeReq(t, c, 8)
 			if _, err := c.AuthorizeDelivery(mustOp(t, "op-auth", req), req); err != nil {
 				t.Fatalf("AuthorizeDelivery: %v", err)
 			}
@@ -636,7 +684,7 @@ func TestCrashRecoveryDeliveryOutcome(t *testing.T) {
 			}
 			// A distinct incompatible outcome still conflicts after recovery.
 			distinct := outcome(t, c)
-			distinct.Precondition = domain.Of(1, 6)
+			distinct.Precondition = domain.Of(1, 10)
 			distinct.Status = ta.DeliveryOutcomeRetryable
 			if _, err := c.CommitDeliveryOutcome(mustOp(t, "op-after-recovered", distinct), distinct); !errors.Is(err, ta.ErrConflict) {
 				t.Fatalf("distinct outcome after recovered terminal = %v, want ErrConflict", err)

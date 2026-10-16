@@ -198,22 +198,8 @@ func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationAndHead(t *
 	// Bind the reopened generation so the binding checks are reached, and
 	// move the worktree onto the task branch so the branch check does not
 	// mask them.
-	agg, err := auth.Get(mustTaskIDFor(t, "ship-2"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-2")
-	reopened := safetyWorktreeBinding(t, primary, worktree, "reopened-lease", "reopened-fence")
-	bindReq := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       mustTaskIDFor(t, "ship-2"),
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding:      reopened,
-		Reason:       "safety test",
-	}
-	if _, err := auth.BindWorktree(mustCanonicalOp(t, "safety-rebind-ship-2", bindReq), bindReq); err != nil {
-		t.Fatal(err)
-	}
+	bindLaunchWorktree(t, auth, beginTestLaunch(t, auth, "ship-2", "tmux"), safetyWorktreeBinding(t, primary, worktree))
 	if block, reason := runPiSafetyForGit(t, worktree, "git add file.txt"); block {
 		t.Fatalf("bound reopened generation blocked: %s", reason)
 	}
@@ -428,28 +414,13 @@ func bindSafetyWorktree(t *testing.T, taskID, primary, worktree string) string {
 	if _, err := auth.Create(mustCanonicalOp(t, "safety-create-"+taskID, createReq), createReq); err != nil {
 		t.Fatal(err)
 	}
-	agg, err := auth.Get(tid)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	binding := safetyWorktreeBinding(t, primary, worktree, "worktree-lease", "worktree-fence")
-	bindReq := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       tid,
-		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-		Binding:      binding,
-		Reason:       "safety test",
-	}
-	if _, err := auth.BindWorktree(mustCanonicalOp(t, "safety-bind-"+taskID, bindReq), bindReq); err != nil {
-		t.Fatal(err)
-	}
+	bindLaunchWorktree(t, auth, beginTestLaunch(t, auth, taskID, "tmux"), safetyWorktreeBinding(t, primary, worktree))
 	return homeDir
 }
 
 // safetyWorktreeBinding computes one canonical worktree binding for the
 // safety gate fixtures from the primary repository and its worktree.
-func safetyWorktreeBinding(t *testing.T, primary, worktree, leaseID, fenceToken string) taskauthority.WorktreeBinding {
+func safetyWorktreeBinding(t *testing.T, primary, worktree string) taskauthority.WorktreeBinding {
 	t.Helper()
 	repoID := gitOutputForSafety(t, primary, "rev-parse", "--git-common-dir")
 	gitDir := gitOutputForSafety(t, worktree, "rev-parse", "--git-dir")
@@ -465,8 +436,6 @@ func safetyWorktreeBinding(t *testing.T, primary, worktree, leaseID, fenceToken 
 		GitDir:             canonicalSafetyPath(t, resolveGitPathForSafety(worktree, gitDir)),
 		CommonDir:          canonicalSafetyPath(t, resolveGitPathForSafety(worktree, commonDir)),
 		BaseHead:           head,
-		LeaseID:            leaseID,
-		FenceToken:         fenceToken,
 		BoundAtUnix:        time.Now().Unix(),
 	}
 }

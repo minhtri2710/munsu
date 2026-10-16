@@ -45,7 +45,7 @@ func bindWorktreeRequest(c *Canonical, taskID string, prec domain.Precondition) 
 		HomeID:       c.HomeID(),
 		TaskID:       id,
 		Precondition: prec,
-		Binding:      worktreeBinding(),
+		Binding:      launchWorktreeBinding(launchRequest(c, taskID, prec)),
 		Reason:       "bind worktree",
 	}
 }
@@ -56,17 +56,20 @@ func bindEndpointRequest(c *Canonical, taskID string, prec domain.Precondition) 
 		HomeID:       c.HomeID(),
 		TaskID:       id,
 		Precondition: prec,
-		Binding:      endpointBinding(),
+		Binding:      launchEndpointBinding(launchRequest(c, taskID, prec), "handle-"+taskID),
 		Reason:       "spawn",
 	}
 }
 
-// mustBindWorktree creates a task then binds a worktree, returning the outcome
-// of the bind and the resulting aggregate.
+// mustBindWorktree creates a task, commits its launch intent and binds a
+// worktree under the intent's fence, returning the outcome of the bind and the
+// resulting aggregate.
 func mustBindWorktree(t *testing.T, c *Canonical, taskID string) (Outcome, Aggregate) {
 	t.Helper()
 	mustCreate(t, c, taskID)
-	out, err := c.BindWorktree(mustOperation(t, "op-bind-wt-"+taskID, bindWorktreeRequest(c, taskID, preconditionOf(1, 1))), bindWorktreeRequest(c, taskID, preconditionOf(1, 1)))
+	_, rev := mustBeginSpawn(t, c, taskID, preconditionOf(1, 1))
+	req := bindWorktreeRequest(c, taskID, preconditionOf(1, rev))
+	out, err := c.BindWorktree(mustOperation(t, "op-bind-wt-"+taskID, req), req)
 	if err != nil {
 		t.Fatalf("BindWorktree(%s): %v", taskID, err)
 	}
@@ -81,14 +84,14 @@ func TestCanonicalBindWorktree(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	out, agg := mustBindWorktree(t, c, "t1")
 
-	if out.Revision != 2 || out.Phase != PhaseQueued {
+	if out.Revision != 3 || out.Phase != PhaseQueued {
 		t.Fatalf("bind worktree outcome = %+v", out)
 	}
-	if agg.Worktree == nil || agg.Worktree.RepositoryIdentity != "repo" || agg.Worktree.LeaseID != "lease-wt" {
+	if agg.Worktree == nil || agg.Worktree.RepositoryIdentity != "repo" || agg.Worktree.LeaseID != "wt-res-t1" {
 		t.Fatalf("aggregate worktree = %+v", agg.Worktree)
 	}
-	if agg.Revision != 2 {
-		t.Fatalf("aggregate revision = %d, want 2", agg.Revision)
+	if agg.Revision != 3 {
+		t.Fatalf("aggregate revision = %d, want 3", agg.Revision)
 	}
 }
 
@@ -116,8 +119,9 @@ func TestCanonicalBindWorktreeStalePrecondition(t *testing.T) {
 func TestCanonicalBindWorktreeIdempotentReplay(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
+	_, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
 
-	req := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
+	req := bindWorktreeRequest(c, "t1", preconditionOf(1, rev))
 	op := mustOperation(t, "op-bind-wt-replay", req)
 	first, err := c.BindWorktree(op, req)
 	if err != nil {
@@ -138,15 +142,16 @@ func TestCanonicalBindWorktreeIdempotentReplay(t *testing.T) {
 func TestCanonicalBindWorktreeOperationReusedConflict(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")
+	_, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
 
-	req := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
+	req := bindWorktreeRequest(c, "t1", preconditionOf(1, rev))
 	op := mustOperation(t, "op-shared-bind", req)
 	if _, err := c.BindWorktree(op, req); err != nil {
 		t.Fatal(err)
 	}
 
 	// Reuse the same Operation ID with a different intent (a different worktree).
-	diff := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
+	diff := bindWorktreeRequest(c, "t1", preconditionOf(1, rev))
 	diff.Binding.Path = "/other/area"
 	reused, err := domain.NewOperation(op.ID, diff)
 	if err != nil {
@@ -159,25 +164,25 @@ func TestCanonicalBindWorktreeOperationReusedConflict(t *testing.T) {
 
 func TestCanonicalBindEndpoint(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	mustBindWorktree(t, c, "t1")
+	_, rev := launchToBindable(t, c, "t1")
 
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
+	req := bindEndpointRequest(c, "t1", preconditionOf(1, rev))
 	out, err := c.BindEndpoint(mustOperation(t, "op-bind-ep", req), req)
 	if err != nil {
 		t.Fatalf("BindEndpoint: %v", err)
 	}
-	if out.Phase != PhaseWorking || out.Revision != 3 {
+	if out.Phase != PhaseWorking || out.Revision != Revision(rev+1) {
 		t.Fatalf("bind endpoint outcome = %+v", out)
 	}
 	agg, err := c.Get(mustTaskID(t, "t1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Endpoint == nil || agg.Endpoint.Backend != "claude" || agg.Endpoint.LeaseID != "lease-ep" {
+	if agg.Endpoint == nil || agg.Endpoint.Backend != "claude" || agg.Endpoint.LeaseID != "ep-res-t1" {
 		t.Fatalf("aggregate endpoint = %+v", agg.Endpoint)
 	}
-	if agg.Phase != PhaseWorking || agg.Revision != 3 {
-		t.Fatalf("aggregate = phase %s rev %d, want working/3", agg.Phase, agg.Revision)
+	if agg.Phase != PhaseWorking || agg.Revision != Revision(rev+1) {
+		t.Fatalf("aggregate = phase %s rev %d, want working/%d", agg.Phase, agg.Revision, rev+1)
 	}
 }
 
@@ -218,27 +223,55 @@ func TestTaskBindingAndDispatchRefusals(t *testing.T) {
 		_, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-1", req), req)
 		return err
 	}
+	// reopenedGeneration leaves t1 at generation 2 revision 1 with no launch
+	// intent: generation 1 committed its launch intent, then completed from
+	// queued (no cleanup claim) and was reopened. It returns generation 1's
+	// intent, the fence a stale runner of that launch still holds.
+	reopenedGeneration := func(t *testing.T, c *Canonical) CanonicalBeginSpawnRequest {
+		mustCreate(t, c, "t1")
+		stale, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+		mustStep(t, stepComplete(t, c, "t1", rev, PhaseDone))
+		mustStep(t, stepReopen(t, c, "t1", rev+1))
+		return stale
+	}
+	bindWorktreeAt := func(t *testing.T, c *Canonical, prec domain.Precondition, intent CanonicalBeginSpawnRequest) error {
+		req := CanonicalBindWorktreeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, Binding: launchWorktreeBinding(intent), Reason: "spawn"}
+		_, err := c.BindWorktree(mustOperation(t, fmt.Sprintf("op-bindwt-g%d", prec.Generation), req), req)
+		return err
+	}
 
 	runRefusalRows(t, []refusalRow{
+		{name: "bind worktree refuses a reopened generation with no launch intent", class: ErrConflict, want: "has no launch intent; bind worktree requires a committed launch intent", run: func(t *testing.T, c *Canonical) error {
+			stale := reopenedGeneration(t, c)
+			return bindWorktreeAt(t, c, preconditionOf(2, 1), stale)
+		}},
+		{name: "bind worktree allows the reopened generation under its own launch intent", run: func(t *testing.T, c *Canonical) error {
+			reopenedGeneration(t, c)
+			intent := launchRequest(c, "t1", preconditionOf(2, 1))
+			intent.LaunchID, intent.WorktreeReservationID, intent.WorktreeFenceToken = "launch-t1-g2", "wt-res-t1-g2", "wt-fence-t1-g2"
+			_, err := c.BeginSpawn(mustOperation(t, "op-begin-t1-g2", intent), intent)
+			mustStep(t, err)
+			return bindWorktreeAt(t, c, preconditionOf(2, 2), intent)
+		}},
+
 		{name: "bind endpoint refuses a working task", class: ErrConflict, want: "bind endpoint requires queued", run: func(t *testing.T, c *Canonical) error {
-			mustBindWorktree(t, c, "t1")
-			mustStep(t, stepStart(t, c, "t1", 2))
-			return bindEndpoint(t, c, 3)
+			_, rev := launchToBindable(t, c, "t1")
+			mustStep(t, stepStart(t, c, "t1", rev))
+			return bindEndpoint(t, c, rev+1)
 		}},
 		{name: "bind endpoint refuses a queued task that kept its endpoint", class: ErrConflict, want: "already has an endpoint binding", run: func(t *testing.T, c *Canonical) error {
-			mustBindWorktree(t, c, "t1")
-			mustStep(t, bindEndpoint(t, c, 2))
-			mustStep(t, stepBlock(t, c, "t1", 3))
-			mustStep(t, stepUnblock(t, c, "t1", 4))
-			return bindEndpoint(t, c, 5)
+			_, rev := launchToWorking(t, c, "t1")
+			mustStep(t, stepBlock(t, c, "t1", rev))
+			mustStep(t, stepUnblock(t, c, "t1", rev+1))
+			return bindEndpoint(t, c, rev+2)
 		}},
 		{name: "bind endpoint refuses a task with no worktree", class: ErrConflict, want: "bind endpoint requires a bound worktree", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "t1")
 			return bindEndpoint(t, c, 1)
 		}},
 		{name: "bind endpoint allows a queued task with a worktree and no endpoint", run: func(t *testing.T, c *Canonical) error {
-			mustBindWorktree(t, c, "t1")
-			return bindEndpoint(t, c, 2)
+			_, rev := launchToBindable(t, c, "t1")
+			return bindEndpoint(t, c, rev)
 		}},
 
 		{name: "begin spawn refuses a working task", class: ErrConflict, want: "begin spawn requires queued", run: func(t *testing.T, c *Canonical) error {
@@ -263,15 +296,15 @@ func TestTaskBindingAndDispatchRefusals(t *testing.T) {
 			return stepStart(t, c, "t1", 1)
 		}},
 		{name: "bind endpoint refuses a task under a spawn hold", class: ErrDispatchHeld, want: "dispatch is held for t1", run: func(t *testing.T, c *Canonical) error {
-			mustBindWorktree(t, c, "t1")
+			_, rev := launchToBindable(t, c, "t1")
 			stepAddHold(t, c, DispatchActionSpawn)
-			return bindEndpoint(t, c, 2)
+			return bindEndpoint(t, c, rev)
 		}},
 		{name: "bind endpoint allows a task once its spawn hold is released", run: func(t *testing.T, c *Canonical) error {
-			mustBindWorktree(t, c, "t1")
+			_, rev := launchToBindable(t, c, "t1")
 			stepAddHold(t, c, DispatchActionSpawn)
 			stepReleaseHold(t, c)
-			return bindEndpoint(t, c, 2)
+			return bindEndpoint(t, c, rev)
 		}},
 		{name: "begin spawn refuses a task under a spawn hold", class: ErrDispatchHeld, want: "dispatch is held for t1", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "t1")
@@ -300,9 +333,9 @@ func TestTaskBindingAndDispatchRefusals(t *testing.T) {
 
 func TestCanonicalBindEndpointIdempotentReplay(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	mustBindWorktree(t, c, "t1")
+	_, rev := launchToBindable(t, c, "t1")
 
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
+	req := bindEndpointRequest(c, "t1", preconditionOf(1, rev))
 	op := mustOperation(t, "op-bind-ep-replay", req)
 	first, err := c.BindEndpoint(op, req)
 	if err != nil {
@@ -322,15 +355,15 @@ func TestCanonicalBindEndpointIdempotentReplay(t *testing.T) {
 
 func TestCanonicalBindEndpointOperationReusedConflict(t *testing.T) {
 	c, _, _ := newTestCanonical(t)
-	mustBindWorktree(t, c, "t1")
+	_, rev := launchToBindable(t, c, "t1")
 
-	req := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
+	req := bindEndpointRequest(c, "t1", preconditionOf(1, rev))
 	op := mustOperation(t, "op-shared-bind-ep", req)
 	if _, err := c.BindEndpoint(op, req); err != nil {
 		t.Fatal(err)
 	}
 
-	diff := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
+	diff := bindEndpointRequest(c, "t1", preconditionOf(1, rev))
 	diff.Binding.Handle = "handle-2"
 	reused, err := domain.NewOperation(op.ID, diff)
 	if err != nil {
@@ -346,15 +379,7 @@ func TestCanonicalBindEndpointOperationReusedConflict(t *testing.T) {
 // reopen and reread through a fresh Canonical.
 func TestCanonicalBindingsSurviveHomeReopen(t *testing.T) {
 	c, _, root := newTestCanonical(t)
-	mustCreate(t, c, "t1")
-	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
-	if _, err := c.BindWorktree(mustOperation(t, "op-wt-persist", wt), wt); err != nil {
-		t.Fatalf("BindWorktree: %v", err)
-	}
-	ep := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
-	if _, err := c.BindEndpoint(mustOperation(t, "op-ep-persist", ep), ep); err != nil {
-		t.Fatalf("BindEndpoint: %v", err)
-	}
+	_, rev := launchToWorking(t, c, "t1")
 
 	h2, err := home.Open(root)
 	if err != nil {
@@ -371,8 +396,8 @@ func TestCanonicalBindingsSurviveHomeReopen(t *testing.T) {
 	if agg.Worktree == nil || agg.Endpoint == nil {
 		t.Fatalf("bindings lost across reopen: worktree=%+v endpoint=%+v", agg.Worktree, agg.Endpoint)
 	}
-	if agg.Phase != PhaseWorking || agg.Revision != 3 {
-		t.Fatalf("reread aggregate = phase %s rev %d, want working/3", agg.Phase, agg.Revision)
+	if agg.Phase != PhaseWorking || uint64(agg.Revision) != rev {
+		t.Fatalf("reread aggregate = phase %s rev %d, want working/%d", agg.Phase, agg.Revision, rev)
 	}
 }
 
