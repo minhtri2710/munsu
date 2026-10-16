@@ -1030,24 +1030,45 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 	})
 }
 
-// A fresh row whose pane state is unknown is never rendered green.
+// A row whose seat health the snapshot could not determine reads "unknown"
+// and is never green; a probed seat and a phase with no seat keep their phase.
 func TestDashboardUnknownPhaseIsNeverGreen(t *testing.T) {
-	m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
+	unknown := func(ts fleet.TaskSnapshot) fleet.TaskSnapshot { ts.PaneAliveUnknown = true; return ts }
+	alive := row("t-alive", "working", "x", "primary", "")
+	alive.Window, alive.PaneAlive = "@1", true
+	m := send(resized(testDashModel(), 100, 40), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("t-first", "working", "x", "primary", ""),
 		{ID: "t-unk", Kind: "ship", PaneAliveUnknown: true, Source: "primary"},
+		unknown(row("t-wunk", "working", "x", "primary", "")),
+		unknown(row("t-bunk", "blocked", "x", "primary", "")),
+		alive,
+		unknown(row("t-dunk", "done", "x", "primary", "")),
 	}, nil, nil))
 	green := strings.SplitN(styleOK.Render("x"), "x", 2)[0]
-	found := false
-	for _, l := range strings.Split(m.frame(), "\n") {
-		if strings.Contains(l, "t-unk") {
-			found = true
-			if !strings.Contains(l, "unknown") || strings.Contains(l, green) {
-				t.Errorf("unknown-phase row is green or lacks its phase: %q", l)
+	frame := m.frame()
+	for _, tc := range []struct {
+		id, state string
+		green     bool
+	}{
+		{"t-unk", "? unknown", false},
+		{"t-wunk", "? working unknown", false},
+		{"t-bunk", "? blocked unknown", false},
+		{"t-alive", "● working ", true},
+		{"t-dunk", "✓ done ", true},
+	} {
+		var l string
+		for _, fl := range strings.Split(frame, "\n") {
+			if strings.Contains(fl, tc.id+" ") && strings.Contains(fl, "ship") {
+				l = fl
+				break
 			}
 		}
-	}
-	if !found {
-		t.Fatal("unknown-phase row not rendered")
+		if plain := ansiSeq.ReplaceAllString(l, ""); !strings.Contains(plain, tc.state) {
+			t.Errorf("%s: state %q not in row %q", tc.id, tc.state, plain)
+		}
+		if strings.Contains(l, green) != tc.green {
+			t.Errorf("%s: green = %v, want %v: %q", tc.id, !tc.green, tc.green, l)
+		}
 	}
 }
 
