@@ -409,6 +409,13 @@ const repeatedToolResult = await wakeTool.execute("tool-2", { key: "test-wake", 
 if (!repeatedToolResult.isError) throw new Error("repeated wake resolution should fail after pending wake is cleared");
 const ackCallsAfterRepeat = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (ackCallsAfterRepeat !== ackCallsAfterTool) throw new Error("repeated wake resolution must not ACK twice");
+// The resolve marker's key is its trailing one: a marker inside the summary is summary text.
+await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
+const inlineToolResult = await wakeTool.execute("tool-3", { key: "test-wake", summary: "saw [key=other] in the log" }, undefined, undefined, cmdCtx);
+const inlineAck = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").pop();
+if (inlineToolResult.isError || !inlineAck || inlineAck.args[inlineAck.args.indexOf("--summary") + 1] !== "saw [key=other] in the log") {
+  throw new Error("an inline [key=...] in a tool summary must stay summary text: " + JSON.stringify(inlineToolResult));
+}
 
 // --- Test 7: tool_call safety check works (fail-closed) ---
 const bashEvent: any = {
@@ -428,10 +435,13 @@ await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
 
 // Try mismatched key
 const resolveCountBeforeMismatch = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
-await cmdHandler("resolved [key=wrong-key]: Some summary", cmdCtx);
+await cmdHandler("resolved: Some summary [key=wrong-key]", cmdCtx);
 const resolveCountAfterMismatch = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (resolveCountAfterMismatch !== resolveCountBeforeMismatch) throw new Error("mismatched key must not ACK the pending wake");
-await cmdHandler("resolved [key=test-wake]: Clear before empty-key case", cmdCtx);
+// Only the trailing marker is a key: a marker inside the summary is summary text.
+await cmdHandler("resolved: Clear the [key=wrong-key] note before empty-key case", cmdCtx);
+const resolveCountAfterInlineMarker = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
+if (resolveCountAfterInlineMarker !== resolveCountAfterMismatch + 1) throw new Error("an inline [key=...] in the summary must not be read as the key");
 
 // An empty key is valid and must remain the exact resolve identity, not fall back to the event ID.
 mock.wakeKey = "";
@@ -450,7 +460,7 @@ if (!emptyKeyAck || emptyKeyAck.args[emptyKeyAck.args.indexOf("--event-id") + 1]
 mock.userMessages = [];
 await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
 const emptyKeyCommandAckBefore = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
-await cmdHandler("resolved [key=]: Clear empty-key wake", cmdCtx);
+await cmdHandler("resolved: Clear empty-key wake [key=]", cmdCtx);
 const emptyKeyCommandAckAfter = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (emptyKeyCommandAckAfter !== emptyKeyCommandAckBefore + 1) throw new Error("empty-key slash resolution should ACK exactly once");
 
@@ -488,7 +498,7 @@ for (const row of modeRows) {
   await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
   const claimed = claimCount() - claimsBefore;
   if (claimed !== (row.claims ? 1 : 0)) throw new Error("wake-delivery-mode " + row.name + ": claims=" + claimed + ", want " + (row.claims ? 1 : 0));
-  if (row.claims) await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
+  if (row.claims) await cmdHandler("resolved: clear the claimed wake [key=test-wake]", cmdCtx);
 }
 
 // --- Test 10: a soldier seat runs no session-start and claims no wakes ---
@@ -506,7 +516,7 @@ for (const row of roleRows) {
   await mock.fire(row.event, { reason: "startup" }, { ...mockCtx, sessionManager: { getEntries: () => [] }, isIdle: () => true });
   const ran = execCount(row.cmd) - before;
   if (ran !== (row.runs ? 1 : 0)) throw new Error(row.role + " " + row.event + ": " + row.cmd.join(" ") + " ran " + ran + " times, want " + (row.runs ? 1 : 0));
-  if (row.runs && row.event === "agent_settled") await cmdHandler("resolved [key=test-wake]: clear the claimed wake", cmdCtx);
+  if (row.runs && row.event === "agent_settled") await cmdHandler("resolved: clear the claimed wake [key=test-wake]", cmdCtx);
 }
 
 // --- Test 11: turn_end nudges only when the safety check passes the gate ---

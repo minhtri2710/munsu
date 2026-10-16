@@ -476,30 +476,3 @@ func TestResolveIntegration(t *testing.T) {
 		t.Errorf("home.Resolve() = %q, want %q", h, tmp)
 	}
 }
-
-func TestParseStatusKey(t *testing.T) {
-	tests := []struct {
-		line    string
-		message string
-		key     string
-	}{
-		{"working: started", "working: started", ""},
-		{"needs-decision: pick approach [key=approach]", "needs-decision: pick approach", "approach"},
-		{"resolved: chose A [key=approach]", "resolved: chose A", "approach"},
-		{"blocked: waiting [key=dep]", "blocked: waiting", "dep"},
-		{"done: all done [key=task-1]", "done: all done", "task-1"},
-		{"key only [key=]", "key only [key=]", ""},
-		{"no brackets", "no brackets", ""},
-		{"[key=value]", "", "value"}, // bare key, extracts key with empty message
-	}
-
-	for _, tt := range tests {
-		msg, key := ParseStatusKey(tt.line)
-		if msg != tt.message {
-			t.Errorf("ParseStatusKey(%q) message = %q, want %q", tt.line, msg, tt.message)
-		}
-		if key != tt.key {
-			t.Errorf("ParseStatusKey(%q) key = %q, want %q", tt.line, key, tt.key)
-		}
-	}
-}

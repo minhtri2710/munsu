@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -205,7 +206,7 @@ func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
 		if len(got) != 2 {
 			t.Fatalf("expected 2 lines, got %d", len(got))
 		}
-		msg, key := mhome.ParseStatusKey(got[1])
+		msg, key := domain.SplitStatusKey(got[1])
 		if !strings.Contains(msg, "failed") {
 			t.Errorf("expected failed status, got %q", msg)
 		}
@@ -240,7 +241,7 @@ func TestTerminalPhases_ResolvedOverridesWorking(t *testing.T) {
 	if !strings.Contains(last, "resolved") {
 		t.Errorf("last line = %q, want resolved", last)
 	}
-	msg, key := mhome.ParseStatusKey(last)
+	msg, key := domain.SplitStatusKey(last)
 	if msg == "" {
 		t.Error("expected non-empty message")
 	}

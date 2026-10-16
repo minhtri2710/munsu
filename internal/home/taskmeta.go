@@ -376,33 +376,6 @@ func ReadRegularFile(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.
-// Returns the cleaned message and the key (empty if none).
-func ParseStatusKey(line string) (message, key string) {
-	// Format: state: message [key=<slug>]
-	// Or just [key=<slug>] at the end.
-	// Try with space prefix first: " [key="
-	startMarker := " [key="
-	idx := strings.LastIndex(line, startMarker)
-	if idx < 0 {
-		// Try without space: "[key=" at start
-		startMarker = "[key="
-		idx = strings.LastIndex(line, startMarker)
-	}
-	if idx >= 0 {
-		end := strings.Index(line[idx+len(startMarker):], "]")
-		if end >= 0 {
-			keyVal := line[idx+len(startMarker) : idx+len(startMarker)+end]
-			if keyVal != "" {
-				key = keyVal
-				message = strings.TrimSpace(line[:idx])
-				return
-			}
-		}
-	}
-	return line, ""
-}
-
 // ListMetaIDs returns the logical task IDs of every .meta file in the state
 // directory, reversing the durable key so enumeration and the write path agree
 // on the logical id. Stems that are not a key this home persisted are skipped.

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // --- Digester tests ---
@@ -146,23 +148,33 @@ func TestDigesterConcurrentSafe(t *testing.T) {
 
 func TestClassifyEscalationType(t *testing.T) {
 	tests := []struct {
+		key     string
 		payload string
 		want    EscalationType
 	}{
-		{"PR merged", EscalationReviewReady},
-		{"needs-decision: which branch", EscalationDecision},
-		{"blocked: waiting for CI", EscalationDecision},
-		{"failed: build broken", EscalationFailure},
-		{"credential expired", EscalationCredential},
-		{"auth token invalid", EscalationCredential},
-		{"checks green", EscalationReviewReady},
-		{"all green", EscalationRoutine},
-		{"working: in progress", EscalationRoutine},
+		{"t1", "PR merged", EscalationReviewReady},
+		{"t1", "needs-decision: which branch", EscalationDecision},
+		{"t1", "blocked: waiting for CI", EscalationDecision},
+		{"t1", "failed: build broken", EscalationFailure},
+		{"t1", "t1: " + domain.ReportStatusLine("failed", "lint red", "decision-log"), EscalationFailure},
+		{"t1", "t1: " + domain.ReportStatusLine("needs-decision", "lint red", "decision-log"), EscalationDecision},
+		{"t1", "t1: done: fixed broken login error [key=default]", EscalationReviewReady},
+		{"t1", "t1: " + domain.ReportStatusLine("done", "shipped", "decision-log"), EscalationReviewReady},
+		{"t1", "resolved: was blocked: on auth token", EscalationRoutine},
+		{"t1", "awaiting_approval: blocked: merge needs Human sign-off", EscalationDecision},
+		{"t1", "t1: awaiting_approval: needs-decision: approve the migration? [key=default]", EscalationDecision},
+		{"t1", "amending: failed: CI red again", EscalationFailure},
+		{"t1", "endpoint probe failed: context deadline exceeded", EscalationFailure},
+		{"t1", "credential expired", EscalationCredential},
+		{"t1", "auth token invalid", EscalationCredential},
+		{"t1", "checks green", EscalationReviewReady},
+		{"t1", "all green", EscalationRoutine},
+		{"t1", "working: in progress", EscalationRoutine},
 	}
 	for _, tc := range tests {
-		got := classifyEscalationType(tc.payload)
+		got := classifyEscalationType(tc.key, tc.payload)
 		if got != tc.want {
-			t.Errorf("classifyEscalationType(%q) = %v, want %v", tc.payload, got, tc.want)
+			t.Errorf("classifyEscalationType(%q, %q) = %v, want %v", tc.key, tc.payload, got, tc.want)
 		}
 	}
 }

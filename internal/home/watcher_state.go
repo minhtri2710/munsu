@@ -51,9 +51,6 @@ func ReadWatcherBeat(h string) (ts int64, pid int, ok bool) {
 		return
 	}
 	_, e = fmt.Sscanf(strings.TrimSpace(string(b)), "%d %d", &ts, &pid)
-	if e != nil {
-		_, e = fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &ts)
-	}
 	return ts, pid, e == nil
 }
 func ClearWatcherBeat(h string) { _ = os.Remove(WatcherBeatPath(h)) }

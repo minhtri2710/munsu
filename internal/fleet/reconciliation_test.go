@@ -20,7 +20,7 @@ func TestReconcileParentStatus_StaleWorkingContradictsIdleHome(t *testing.T) {
 		State:  "externally_held",
 		Counts: HomeCounts{Blocked: 1, Queued: 1},
 	}
-	r := ReconcileParentStatus(sum, "working [key=phase7]: Sample rollout Phase 7")
+	r := ReconcileParentStatus(sum, "working: Sample rollout Phase 7 [key=phase7]")
 	if r.Provenance != "structured-home" {
 		t.Fatalf("provenance=%q want structured-home", r.Provenance)
 	}
@@ -39,7 +39,7 @@ func TestReconcileParentStatus_WorkingCorroborated(t *testing.T) {
 		Counts:         HomeCounts{ActiveChildren: 1, InFlight: 1},
 		ActiveChildren: []ChildBrief{{ID: "t1", Status: "working: x"}},
 	}
-	r := ReconcileParentStatus(sum, "working [key=t1]: implementing")
+	r := ReconcileParentStatus(sum, "working: implementing [key=t1]")
 	if r.Contradiction {
 		t.Fatalf("should corroborate: %+v", r)
 	}
@@ -50,7 +50,7 @@ func TestReconcileParentStatus_WorkingCorroborated(t *testing.T) {
 
 func TestReconcileParentStatus_NeedsDecisionContradicts(t *testing.T) {
 	sum := HomeSummary{Valid: true, State: "no_active_work"}
-	r := ReconcileParentStatus(sum, "needs-decision [key=api]: pick shape")
+	r := ReconcileParentStatus(sum, "needs-decision: pick shape [key=api]")
 	if !r.Contradiction {
 		t.Fatalf("expected contradiction: %+v", r)
 	}
@@ -58,7 +58,7 @@ func TestReconcileParentStatus_NeedsDecisionContradicts(t *testing.T) {
 
 func TestReconcileParentStatus_NeedsDecisionCorroborated(t *testing.T) {
 	sum := HomeSummary{Valid: true, State: "captain_decision"}
-	r := ReconcileParentStatus(sum, "needs-decision [key=api]: pick shape")
+	r := ReconcileParentStatus(sum, "needs-decision: pick shape [key=api]")
 	if r.Contradiction {
 		t.Fatalf("should corroborate: %+v", r)
 	}
@@ -67,7 +67,7 @@ func TestReconcileParentStatus_NeedsDecisionCorroborated(t *testing.T) {
 func TestReconcileParentStatus_DoneIsHistoricalOnly(t *testing.T) {
 	// Terminal parent events alone do not force contradiction.
 	sum := HomeSummary{Valid: true, State: "no_active_work"}
-	r := ReconcileParentStatus(sum, "done [key=phase7]: PR https://example/1")
+	r := ReconcileParentStatus(sum, "done: PR https://example/1 [key=phase7]")
 	if r.Contradiction {
 		t.Fatalf("done should not contradict idle home by itself: %+v", r)
 	}
