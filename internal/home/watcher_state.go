@@ -251,12 +251,31 @@ func newWakeRecord(kind, key, ref, payload string, at time.Time) WakeRecord {
 }
 
 // HasQueuedWakes reports whether a wake waits for a consumer. A report line no
-// wake carries yet counts: the next claim derives its wake.
+// wake carries yet counts: the next claim derives its wake. So does an unresolved
+// wake in an expired lease: the next claim reclaims it.
 func HasQueuedWakes(h string) bool {
 	if _, ok := OldestUnderivedReport(h); ok {
 		return true
 	}
-	return hasQueuedRecords(h)
+	return hasQueuedRecords(h) || hasExpiredLeaseWake(h, time.Now())
+}
+
+func hasExpiredLeaseWake(h string, now time.Time) bool {
+	leases, err := ListClaimedLeases(h)
+	if err != nil {
+		return true
+	}
+	for _, l := range leases {
+		if now.Unix() < l.ExpiresAt {
+			continue
+		}
+		for _, w := range l.Wakes {
+			if w.Resolution != resolutionCompleted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasQueuedRecords(h string) bool {
