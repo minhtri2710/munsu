@@ -297,23 +297,52 @@ func TestConfigSetCaptainHarnessMalformedBaseFailsClosed(t *testing.T) {
 	}
 }
 
-// TestConfigSetLaunchProfileRejectsCaptainHome verifies launch-profile keys
-// cannot be authored from a Captain home. A Captain home is identified by its
-// durable config/parent-home pointer (present before the first published
-// snapshot); the write is refused and no base.json is created.
-func TestConfigSetLaunchProfileRejectsCaptainHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
-	if err := config.Set(home, "parent-home", "/var/munsu/general"); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"soldier-harness", "model", "captain-harness"} {
-		if err := runConfigSet(t, "config", "set", key, "pi"); err == nil {
-			t.Fatalf("expected Captain-home rejection for %s", key)
+// TestFleetBaseMutatorsRejectCaptainHome verifies no fleet-base mutator
+// authors config/base.json from a Captain home (identified by its
+// config/parent-home pointer), while the General home still writes it.
+func TestFleetBaseMutatorsRejectCaptainHome(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		captain bool
+	}{
+		{[]string{"config", "set", "soldier-harness", "pi"}, true},
+		{[]string{"config", "set", "model", "pi"}, true},
+		{[]string{"config", "set", "captain-harness", "pi"}, true},
+		{[]string{"config", "set", "backend", "tmux"}, true},
+		{[]string{"config", "set", "backend", "tmux"}, false},
+		{[]string{"config", "dispatch", "set-default", "pi"}, true},
+		{[]string{"config", "dispatch", "set-default", "pi"}, false},
+	} {
+		name := strings.Join(tc.args, " ")
+		if tc.captain {
+			name += " in captain home"
 		}
-	}
-	if _, err := os.Stat(filepath.Join(home, config.BaseDocumentPath)); !os.IsNotExist(err) {
-		t.Fatalf("base document must not be created from a Captain home: %v", err)
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("MUNSU_HOME", home)
+			if tc.captain {
+				if err := config.Set(home, "parent-home", "/var/munsu/general"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := runConfigSet(t, tc.args...)
+			_, statErr := os.Stat(filepath.Join(home, config.BaseDocumentPath))
+			if tc.captain {
+				if err == nil || !strings.Contains(err.Error(), "from a Captain home") {
+					t.Fatalf("error = %v, want Captain-home refusal", err)
+				}
+				if !os.IsNotExist(statErr) {
+					t.Fatalf("base document must not be created from a Captain home: %v", statErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("General home write: %v", err)
+			}
+			if statErr != nil {
+				t.Fatalf("General home write did not author base document: %v", statErr)
+			}
+		})
 	}
 }
 
