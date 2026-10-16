@@ -43,8 +43,8 @@ func isURL(s string) bool {
 }
 
 // Add registers a project in the canonical Fleet Registry. If pathOrURL is a
-// URL, it is cloned first. If the name is already registered, the existing
-// entry is updated in-place.
+// URL, it is cloned first. Re-adding an identical definition is a no-op; a
+// different definition under the same name is refused.
 func Add(homeDir, name, pathOrURL string, yolo bool) error {
 	projectID, err := domain.NewProjectID(name)
 	if err != nil {
@@ -87,31 +87,6 @@ func Add(homeDir, name, pathOrURL string, yolo bool) error {
 	r, err := openRegistry(homeDir)
 	if err != nil {
 		return err
-	}
-	_, gerr := r.GetProject(projectID)
-	if gerr == nil {
-		// Update in-place: register the same ID with the new definition.
-		rev, err := r.ProjectRevision()
-		if err != nil {
-			return fmt.Errorf("reading project registry: %w", err)
-		}
-		req := RegisterProjectRequest{
-			HomeID:       r.HomeID(),
-			ProjectID:    projectID,
-			Name:         name,
-			Path:         pathOrURL,
-			Yolo:         yolo,
-			Precondition: preconditionOf(rev),
-			Reason:       "update",
-		}
-		if _, err := r.RegisterProject(opFor(req), req); err != nil {
-			return fmt.Errorf("writing project registry: %w", err)
-		}
-		fmt.Printf("Updated project %q (%s)\n", name, pathOrURL)
-		return nil
-	}
-	if !errors.Is(gerr, ErrNotFound) {
-		return fmt.Errorf("reading project registry: %w", gerr)
 	}
 	rev, err := r.ProjectRevision()
 	if err != nil {
