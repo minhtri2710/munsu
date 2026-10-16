@@ -156,23 +156,24 @@ func TestDeriveReportWakes(t *testing.T) {
 func TestDeriveReportWakesLogsASkippedTask(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		corrupt   bool
+		cursor    string
 		wantLogs  int
 		wantWakes []string
 	}{
-		{"unreadable cursor", true, 1, []string{"t2: done: shipped [key=default]"}},
-		{"readable cursor", false, 0, []string{"t1: failed: red [key=default]", "t2: done: shipped [key=default]"}},
+		{"unreadable cursor", "{", 1, []string{"t2: done: shipped [key=default]"}},
+		{"negative cursor", `{"next":-1}`, 1, []string{"t2: done: shipped [key=default]"}},
+		{"readable cursor", "", 0, []string{"t1: failed: red [key=default]", "t2: done: shipped [key=default]"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := t.TempDir()
 			appendReport(t, h, "t1", "failed", "red")
 			appendReport(t, h, "t2", "done", "shipped")
-			if tc.corrupt {
+			if tc.cursor != "" {
 				p, err := ReportCursorPath(h, "t1")
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(p, []byte("{"), 0o600); err != nil {
+				if err := os.WriteFile(p, []byte(tc.cursor), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}

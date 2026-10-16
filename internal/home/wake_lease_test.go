@@ -372,28 +372,29 @@ func TestAckWakesNonexistentLease(t *testing.T) {
 }
 
 func TestLeaseExpiryReclaim(t *testing.T) {
-	home := t.TempDir()
-	writeQueueLines(t, home, []string{
-		"1780000000\t1\tsignal\tkey1\tpayload1",
-	})
+	for _, consumer := range []string{"consumer", "a\tb"} {
+		t.Run(consumer, func(t *testing.T) {
+			home := t.TempDir()
+			writeQueueLines(t, home, []string{
+				"1780000000\t1\tsignal\tkey1\tpayload1",
+			})
 
-	result, err := ClaimWakes(home, "consumer", 0, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Wakes) != 1 {
-		t.Fatalf("claimed %d wakes, want 1", len(result.Wakes))
-	}
+			result, err := ClaimWakes(home, consumer, 0, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Wakes) != 1 {
+				t.Fatalf("claimed %d wakes, want 1", len(result.Wakes))
+			}
 
-	result2, err := ClaimWakes(home, "consumer2", 60, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result2.Reclaimed < 1 {
-		t.Errorf("expected reclaimed >= 1, got %d", result2.Reclaimed)
-	}
-	if len(result2.Wakes) < 1 {
-		t.Errorf("expected at least 1 wake in new claim, got %d", len(result2.Wakes))
+			result2, err := ClaimWakes(home, "consumer2", 60, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result2.Reclaimed != 1 || len(result2.Wakes) != 1 || result2.Wakes[0].Payload != "payload1" {
+				t.Fatalf("second claim = reclaimed %d, wakes %+v, want payload1 reclaimed", result2.Reclaimed, result2.Wakes)
+			}
+		})
 	}
 }
 

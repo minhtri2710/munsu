@@ -61,6 +61,9 @@ func readReportCursor(h, id string) (reportCursor, error) {
 	if err := json.Unmarshal(data, &cur); err != nil {
 		return cur, fmt.Errorf("report cursor %s: %w", id, err)
 	}
+	if cur.Next < 0 {
+		return cur, fmt.Errorf("report cursor %s: negative next %d", id, cur.Next)
+	}
 	return cur, nil
 }
 
