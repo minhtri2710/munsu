@@ -233,7 +233,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
 			if err := cycle(); err != nil {
-				return nil, err
+				return nil, recordFatalCycle(homeDir, err)
 			}
 		case pulse, ok := <-eventPulses:
 			if !ok {
@@ -249,11 +249,25 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 				// The hint itself is never lifecycle truth and never sets a
 				// Task phase.
 				if err := cycle(); err != nil {
-					return nil, err
+					return nil, recordFatalCycle(homeDir, err)
 				}
 			}
 		}
 	}
+}
+
+// recordFatalCycle appends the cycle error that ends the watcher to the event
+// log, since a detached watcher's stderr goes nowhere, and returns it. A home
+// whose state directory is gone gets no record: writing one would recreate it.
+func recordFatalCycle(homeDir string, err error) error {
+	if _, statErr := os.Stat(filepath.Join(homeDir, "state")); statErr != nil {
+		return err
+	}
+	payload := strings.Join(strings.Fields(err.Error()), " ")
+	if _, logErr := Append(homeDir, "watcher.cycle.failed", "munsu:watcher", "", payload); logErr != nil {
+		return errors.Join(err, fmt.Errorf("recording watcher cycle failure: %w", logErr))
+	}
+	return err
 }
 
 // startWatcherProcess and signalWatcher are unexported seams for tests.
