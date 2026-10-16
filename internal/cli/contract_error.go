@@ -78,7 +78,11 @@ func writeContractError(writer io.Writer, contractErr *contractError, args []str
 			output = OutputJSON
 		}
 	}
-	encoded, encodeErr := Encode(contractErr.value, output)
+	var value any = contractErr.value
+	if contractErr.response != nil {
+		value = contractErr.response
+	}
+	encoded, encodeErr := Encode(value, output)
 	if encodeErr != nil {
 		return 1
 	}
