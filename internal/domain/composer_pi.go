@@ -12,8 +12,9 @@ const piFooterRows = 4
 
 // piStats matches the start of pi's stats row: the usage tokens pi 1.2.0's
 // footer can print (↑input ↓output Rcache-read Wcache-write CHcache-hit%
-// $cost), then the context stat, e.g. "↑9.2k ↓5 3.6%/256k (auto) • xp".
-var piStats = regexp.MustCompile(`^(?:(?:[↑↓RW]\d+(?:\.\d)?[kM]?|CH\d+\.\d%|\$\d+\.\d{3}(?: \(sub\))?) )*\d+(\.\d+)?%/\d+k\b`)
+// $cost), then the context stat with the window, e.g.
+// "↑9.2k ↓5 3.6%/256k (auto) • xp", "?/256k" or "12.5%/1.0M".
+var piStats = regexp.MustCompile(`^(?:(?:[↑↓RW]\d+(?:\.\d)?[kM]?|CH\d+\.\d%|\$\d+\.\d{3}(?: \(sub\))?) )*(?:\d+(\.\d+)?%|\?)/\d+(?:\.\d)?[kM]\b`)
 
 // ClassifyPiComposer judges a capture of the bottom rows of a pi pane. Empty
 // means a blank row, a rule line, one blank row (spaces and NBSP ignored), a

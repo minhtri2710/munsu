@@ -161,6 +161,8 @@ func TestComposerRules(t *testing.T) {
 		{"pi first footer row is not a path", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piCwd, "Work/munsu")), Unknown},
 		{"pi second footer row has no stats", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "(auto) • xp")), Unknown},
 		{"pi stats row led by every usage token", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "↑9.2k ↓5 R1.2M W340k CH87.5% $0.123 (sub) "+piStatsRow)), Empty},
+		{"pi stats row with an unknown context percent", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "?/256k (auto) • x")), Empty},
+		{"pi stats row with a window in millions", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "12.5%/1.0M (auto) • x")), Empty},
 		{"pi stats row led by draft text", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "keep 3.6%/256k • x")), Unknown},
 		{"pi stats row led by a word starting with a token letter", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "Read 3.6%/256k • x")), Unknown},
 		{"pi stats row without a bullet", ClassifyPiComposer, edit("pi-cleared.txt", setRow(piStats, "0.0%/256k (auto) xp")), Unknown},
