@@ -115,6 +115,7 @@ func TestWakeClaimResolveAckActualSyntax(t *testing.T) {
 // discovery exposes only tmux and herdr; all other runtime backends are not
 // part of this contract surface.
 func TestBackendCapabilitiesOnlyTmuxHerdr(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	for _, tc := range []struct {
 		backend string
 		want    string // "" allows

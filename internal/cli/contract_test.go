@@ -22,6 +22,7 @@ import (
 )
 
 func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	toon, err := runContract(t, []string{"capabilities"})
 	if err != nil {
 		t.Fatalf("capabilities: %v", err)
@@ -260,6 +261,8 @@ func TestFleetSnapshotDefinitiveEmpty(t *testing.T) {
 }
 
 func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
 	backend, err := runContract(t, []string{"backend", "capabilities", "--backend", "tmux"})
 	if err != nil {
 		t.Fatalf("backend capabilities: %v", err)
@@ -270,8 +273,6 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 
 	// Diagnostics must never probe to choose an adapter: omitting --backend is
 	// a typed missing-input failure, never an auto-select.
-	home := t.TempDir()
-	t.Setenv("MUNSU_HOME", home)
 	missing, err := runContract(t, []string{"backend", "capabilities"})
 	if err == nil {
 		t.Fatal("backend capabilities without --backend: expected typed missing-input error, got nil")
@@ -595,6 +596,7 @@ func TestWriteContractErrorRespectsOutputFlag(t *testing.T) {
 }
 
 func TestBackendCapabilitiesHasHelpHint(t *testing.T) {
+	t.Setenv("MUNSU_HOME", t.TempDir())
 	output, err := runContract(t, []string{"backend", "capabilities", "--backend", "tmux"})
 	if err != nil {
 		t.Fatalf("backend capabilities: %v", err)

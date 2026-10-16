@@ -26,7 +26,7 @@
 #   default        satisfied on ubuntu-latest, so every lane already compiles it
 #   race-excluded  only ever negated; deliberately kept out of the race lane
 
-integration	test-lane	Run by the "Integration tests" lane over the package set derived from the tag; a new tagged file joins the lane by existing.
+integration	test-lane	Run by the "Race detector" lane as `-race -tags integration ./...`; a new tagged file joins the lane by existing.
 darwin	goos-vet	`GOOS=darwin go vet ./...` covers every darwin-gated file, and also covers the `darwin || linux` files through their darwin branch.
 linux	default	Every `//go:build linux` file is compiled by every lane on ubuntu.
 race	race-excluded	Only appears as `//go:build !race` on internal/orchestrator/lifecycle_lifecycle_test.go. The lock and queue tests there measure their own timing, which the race detector distorts, so their absence from the race lane is intended rather than a gap.

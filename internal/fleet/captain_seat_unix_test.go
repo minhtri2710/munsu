@@ -17,14 +17,15 @@ import (
 )
 
 // fakeSeatMunsu records each run's cwd, args and seat variable to rec, prints
-// to stdout, exits 3 for "task fail" and waits for a signal for "task sleep".
+// to stdout, exits 3 for "task fail" and for "task sleep" records its pid and
+// becomes a 30-second sleep.
 func fakeSeatMunsu(t *testing.T, rec string) string {
 	t.Helper()
 	return testutil.WriteFakeExecutable(t, filepath.Join(t.TempDir(), "munsu"), "#!/bin/sh\n"+
 		"printf '%s|%s|%s\\n' \"$(pwd -P)\" \"$*\" \"${"+CaptainSeatEnv+"-unset}\" >> '"+rec+"'\n"+
 		"case \"$2\" in\n"+
 		"fail) exit 3;;\n"+
-		"sleep) trap 'echo term >> \""+rec+"\"; exit 143' TERM; sleep 30 & wait; exit 0;;\n"+
+		"sleep) echo \"pid $$\" >> '"+rec+"'; exec sleep 30;;\n"+
 		"esac\n"+
 		"echo out-from-seat\n")
 }
@@ -78,9 +79,9 @@ func sendSeatRequest(t *testing.T, socket string, args []string, fds []int, size
 	if _, _, err := c.WriteMsgUnix(head[:], oob, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Write(body); err != nil {
-		t.Fatal(err)
-	}
+	// The seat may refuse by the head and close before the body is written;
+	// its reply is the outcome.
+	_, _ = c.Write(body)
 	return c
 }
 
@@ -168,9 +169,14 @@ func TestCaptainSeatRequests(t *testing.T) {
 		os.Remove(rec)
 		_, fds := stdio(t)
 		c := sendSeatRequest(t, socket, []string{"task", "sleep"}, fds, 0)
-		waitFor(t, func() bool { return strings.Contains(records(), "task sleep") })
+		var pid int
+		waitFor(t, func() bool {
+			_, after, ok := strings.Cut(records(), "\npid ")
+			pid, _ = strconv.Atoi(strings.TrimSpace(after))
+			return ok && strings.HasSuffix(after, "\n")
+		})
 		c.Close()
-		waitFor(t, func() bool { return strings.Contains(records(), "term\n") })
+		waitFor(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
 	})
 	t.Run("ForwardCaptainSeat returns the exit code and the refusal", func(t *testing.T) {
 		wd, _ := os.Getwd()
@@ -180,6 +186,9 @@ func TestCaptainSeatRequests(t *testing.T) {
 		}
 		if code, err := ForwardCaptainSeat(socket, []string{"task", "list", "--home", "/g"}); code != 1 || err == nil || !strings.Contains(err.Error(), "--home is refused") {
 			t.Fatalf("ForwardCaptainSeat = %d, %v; want the --home refusal", code, err)
+		}
+		if code, err := ForwardCaptainSeat(socket, []string{"task", "list", strings.Repeat("x", captainSeatMaxRequest)}); code != 1 || err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("ForwardCaptainSeat = %d, %v; want the oversized refusal", code, err)
 		}
 	})
 }

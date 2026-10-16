@@ -19,7 +19,7 @@ func newConfigDispatchCmd() *cobra.Command {
 		Long: `Manage the soldier dispatch profile file used at spawn time.
 
 The dispatch profiles live in the fleet base document at $MUNSU_HOME/config/base.json
-and select harness/model/effort from ordered profiles (match/when rules).
+and select harness/model/effort from ordered profiles (match rules).
 
 Spawn precedence: CLI --harness/--model/--effort > matched profile >
 project Soldier harness and model.
@@ -134,7 +134,6 @@ func newConfigDispatchAddCmd() *cobra.Command {
 	var (
 		name     string
 		match    []string
-		when     string
 		hName    string
 		model    string
 		effort   string
@@ -146,7 +145,7 @@ func newConfigDispatchAddCmd() *cobra.Command {
 		Short: "Add or replace a dispatch profile",
 		Long: `Add a named profile to the fleet base document.
 
-Requires --name, --harness, and at least one of --match or --when.
+Requires --name, --harness, and at least one --match.
 --scaffold picks the Soldier charter for the profile's runtime: lean (the
 default) relies on CI and the independent reviewer; guided adds an explicit
 plan scaffold for a weaker or cheaper runtime.
@@ -162,8 +161,8 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 			if err := harness.ValidateHarness(hName); err != nil {
 				return fmt.Errorf("add: %w", err)
 			}
-			if len(match) == 0 && when == "" {
-				return fmt.Errorf("add: at least one --match or --when is required")
+			if len(match) == 0 {
+				return fmt.Errorf("add: at least one --match is required")
 			}
 			// Human words: quoted at config.ValidateScaffold.
 			if err := config.ValidateScaffold(scaffold); err != nil {
@@ -189,7 +188,6 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 			prof := config.DispatchProfile{
 				Name:     name,
 				Match:    append([]string(nil), match...),
-				When:     when,
 				Harness:  hName,
 				Model:    model,
 				Effort:   effort,
@@ -219,8 +217,7 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 		}),
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Profile name (required)")
-	cmd.Flags().StringArrayVar(&match, "match", nil, "Match token or phrase (repeatable)")
-	cmd.Flags().StringVar(&when, "when", "", "Free-form match prose (substring / phrase match)")
+	cmd.Flags().StringArrayVar(&match, "match", nil, "Match token, phrase or prose (repeatable)")
 	cmd.Flags().StringVar(&hName, "harness", "", "Target harness (required)")
 	cmd.Flags().StringVar(&model, "model", "", "Model id for this profile")
 	cmd.Flags().StringVar(&effort, "effort", "", "Effort/thinking level for this profile")
@@ -334,9 +331,6 @@ func formatDispatchFromBase(base config.FleetBaseDocument, path string) string {
 			label = fmt.Sprintf("#%d", i+1)
 		}
 		match := strings.Join(p.Match, ", ")
-		if match == "" && p.When != "" {
-			match = p.When
-		}
 		if match == "" {
 			match = "-"
 		}

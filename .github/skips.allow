@@ -1,23 +1,17 @@
 # Skips the CI coverage lanes take on purpose, one row per test:
-# `package test reason`. Derived from the ubuntu-latest lanes of ci.yml: no tmux or
-# herdr on PATH. The runner image ships Node.js, so no row skips
-# for a missing node. Environment skips appear here as the runner sees them.
-# The ledger is report only: `.github/scripts/skip-ledger.sh check` prints a
-# skip the lanes take that no row lists, and a row no lane takes; neither fails.
+# `package test reason`. Derived from the ubuntu-latest lanes of ci.yml: herdr is
+# not on PATH; tmux and Node.js are, so no row skips for either. Environment skips
+# appear here as the runner sees them. `.github/scripts/skip-ledger.sh check`
+# fails the guards job on a skip the lanes take that no row lists, and on a row
+# no lane takes.
 github.com/minhtri2710/munsu/internal/backend TestBackendForTask_HerdrSessionFallsBackToDefault herdr not on PATH (BackendForTask verifies the requested capability)
 github.com/minhtri2710/munsu/internal/backend TestBackendForTask_HerdrSessionFromMeta herdr not on PATH (BackendForTask verifies the requested capability)
 github.com/minhtri2710/munsu/internal/backend TestBackendForTask_HerdrSessionFromWindow herdr not on PATH (BackendForTask verifies the requested capability)
 github.com/minhtri2710/munsu/internal/backend TestResolve_HerdrUsesDefaultSessionNotHometag herdr not on PATH (Resolve verifies the requested capability)
-github.com/minhtri2710/munsu/internal/backend TestTmux_Alive_UnknownWindow tmux not on PATH
-github.com/minhtri2710/munsu/internal/backend TestTmux_AnchorKeepsServerAliveAcrossSessionChurn tmux not on PATH
-github.com/minhtri2710/munsu/internal/backend TestTmux_Capture_NoWindow tmux not on PATH
-github.com/minhtri2710/munsu/internal/backend TestTmux_NewWindow tmux not on PATH
-github.com/minhtri2710/munsu/internal/backend TestTmux_NewWindow_SessionAutoCreated tmux not on PATH
-github.com/minhtri2710/munsu/internal/backend TestTmux_SendKeys_NoWindow tmux not on PATH
-github.com/minhtri2710/munsu/internal/backend TestTmux_Teardown_AbsentTargetIsDone tmux not on PATH
 github.com/minhtri2710/munsu/internal/cli TestHelperNewWatcher not a helper invocation
 github.com/minhtri2710/munsu/internal/cli TestOrphanScanChildProcess helper process for TestOrphanScanReportsRealGarbageAndLeavesItRunning
 github.com/minhtri2710/munsu/internal/cli TestUnbufferedCaptainChild helper process for TestCaptainProbeOnTmuxFindsTheCaptainUnderItsSeat
+github.com/minhtri2710/munsu/internal/fleet TestCaptainSeatClientChild runs only as the captain of TestServeCaptainSeatRunsTheCaptain
 github.com/minhtri2710/munsu/internal/fleet TestOrphanScanChildProcess helper process for TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets
 github.com/minhtri2710/munsu/internal/orchestrator TestAFKDaemonChildProcess AFK daemon child process entry point
 github.com/minhtri2710/munsu/internal/orchestrator TestHelperDaemonIgnoresSIGTERM child process entry point for startSIGTERMIgnoringDaemon
