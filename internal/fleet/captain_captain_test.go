@@ -25,6 +25,8 @@ import (
 var fakeBinDir string
 var origPath string
 
+func init() { testMainFixtures = setupFleetTestFixtures }
+
 // setupFleetTestFixtures creates fake pi and munsu binaries in a temp PATH
 // fixture so captain tests never depend on the installed Pi binary. Its cleanup
 // function restores the original PATH.

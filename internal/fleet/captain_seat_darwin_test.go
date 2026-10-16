@@ -37,7 +37,6 @@ func TestFencedCaptainChild(t *testing.T) {
 // sends through its seat runs outside the fence: it writes there, and its
 // sandbox-exec does not nest (sandbox_apply refuses inside a sandbox).
 func TestFencedCaptainRunsItsSeatCommandsOutsideTheFence(t *testing.T) {
-	isolateHuman(t)
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)

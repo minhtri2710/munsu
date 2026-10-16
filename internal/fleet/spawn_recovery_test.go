@@ -604,7 +604,6 @@ type runFixture struct {
 // way the CLI does. Only the endpoint capability is a fake.
 func newRunFixture(t *testing.T, taskID string) *runFixture {
 	t.Helper()
-	isolateHuman(t)
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir()) // not a linked worktree, so spawn authority passes
 	homeDir := t.TempDir()

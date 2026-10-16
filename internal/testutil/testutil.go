@@ -2,7 +2,9 @@ package testutil
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,6 +66,43 @@ func PathInMessage(message, path string) bool {
 		return false
 	}
 	return strings.Contains(message, string(jsonPath[1:len(jsonPath)-1]))
+}
+
+// IsolatedHomeEnv holds the temp home IsolateUserHome made; a test binary
+// re-executed as a child inherits it and keeps its parent's home.
+const IsolatedHomeEnv = "MUNSU_TEST_ISOLATED_HOME"
+
+// IsolateUserHome points HOME at a fresh temp dir for a package's test run, so
+// no test reads or writes the Human's home. It first pins the go toolchain's
+// cache, module and env-file paths, so go children keep the Human's caches,
+// and unsets the variables that outrank HOME in harness, gh and XDG lookup.
+// The returned func removes the temp home.
+func IsolateUserHome() (func(), error) {
+	if os.Getenv(IsolatedHomeEnv) != "" {
+		return func() {}, nil
+	}
+	if _, err := exec.LookPath("go"); err == nil {
+		keys := []string{"GOCACHE", "GOMODCACHE", "GOPATH", "GOENV"}
+		out, err := exec.Command("go", append([]string{"env"}, keys...)...).Output()
+		if err != nil {
+			return nil, fmt.Errorf("go env: %w", err)
+		}
+		for i, v := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+			if i < len(keys) && v != "" {
+				os.Setenv(keys[i], v)
+			}
+		}
+	}
+	dir, err := os.MkdirTemp("", "munsu-test-home-")
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range []string{"PI_CODING_AGENT_DIR", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		os.Unsetenv(k)
+	}
+	os.Setenv("HOME", dir)
+	os.Setenv(IsolatedHomeEnv, dir)
+	return func() { os.RemoveAll(dir) }, nil
 }
 
 // SetUserHome points os.UserHomeDir at dir for the duration of the test.
