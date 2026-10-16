@@ -48,7 +48,7 @@ Run `munsu guard` after every fleet action. It checks for:
 
 ## Away mode (`munsu afk`)
 
-When the Human steps away, run `munsu afk` in its own pane. The foreground daemon takes the identity lock `state/.afk.lock`, sets the consent flag `state/.afk`, clears stale `state/.seen-*` and `state/.subsuper-*` markers, then every 30 s claims the queued wakes, appends them to the batched digest `state/.afk-digest`, and acks them once it is written. A stale or missing watcher beat adds one `[wedge]` entry per incident, so keep the watcher running. The daemon never repairs, merges, approves or writes to the General's pane; the watcher's wake dispatch defers every wake while `state/.afk` exists. SIGTERM/SIGINT stops it and clears the flag and lock. Every operation is scoped to one `MUNSU_HOME`.
+When the Human steps away, run `munsu afk` in its own pane. The foreground daemon takes the identity lock `state/.afk.lock`, sets the consent flag `state/.afk`, then every 30 s claims the queued wakes, appends them to the batched digest `state/.afk-digest`, and acks them once it is written. A stale or missing watcher beat adds one `[wedge]` entry per incident, so keep the watcher running. The daemon never repairs, merges, approves or writes to the General's pane; the watcher's wake dispatch defers every wake while `state/.afk` exists. SIGTERM/SIGINT stops it and clears the flag and lock. Every operation is scoped to one `MUNSU_HOME`.
 
 On return:
 
