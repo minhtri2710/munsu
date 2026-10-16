@@ -19,9 +19,8 @@ execute, so deleted or rotted tests fail the lane. Do not maintain a separate
 tool list; see the
 `Go tools under .github must vet and test` step in `.github/workflows/ci.yml`.
 
-CI (`.github/workflows/ci.yml`) also runs a `-race` lane and an `integration`
-tag lane. Tag lanes derive their package
-lists from the tag itself (`.github/scripts/build-tags.sh packages <tag>`), so
+CI (`.github/workflows/ci.yml`) also runs a `-race` lane over `-tags integration ./...`,
+which is also the `integration` tag lane, so
 adding a tagged file to a new package needs no workflow edit. Adding a *new*
 tag does: every tag must be classified in `.github/build-tags.manifest`, and
 the `invariants` job fails until it is. Write constraints as `//go:build` only
@@ -41,16 +40,16 @@ compared both ways against `.github/uncovered-guards.baseline`
 (`.github/scripts/uncovered-guards.sh check`). The guard set is derived from the
 tree (`.github/scripts/guardsites`), never declared, so a new guard with no test
 fails closed. The baseline header owns waiver admission and ratchet rules. It
-merges the coverage profiles of the default and `integration` lanes: on the default lane alone,
-branches covered only by the `integration` lane read as untested. When
+merges the coverage profiles of the default and race (`integration`) lanes: on the default lane alone,
+branches covered only by integration-tagged tests read as untested. When
 it goes red, write a test that builds the state the guard refuses, or add a line
 with a reason. Its rules are pinned by fixtures (`uncovered-guards.sh selftest`).
 
-The `guards` job also prints a skip ledger, report only: the tests the two coverage
-lanes skipped, compared both ways with `.github/skips.allow` (`.github/scripts/skip-ledger.sh check`).
-Unlisted skips and stale rows print and never fail the job; the job fails only when a
-lane's `go test -json` stream is missing. Each row names a test a lane skips on purpose
-and why; the reason column is documentation, matching is on package and test.
+The `guards` job also checks a skip ledger: the tests the two coverage lanes
+skipped, compared both ways with `.github/skips.allow` (`.github/scripts/skip-ledger.sh check`).
+An unlisted skip, a stale row, or a missing `go test -json` stream fails the job.
+Each row names a test a lane skips on purpose and why; the reason column is
+documentation, matching is on package and test.
 
 That job also enforces the flake ledger: a test CI caught being flaky on
 `main` has a row there with a deadline, and an `open` row past its deadline

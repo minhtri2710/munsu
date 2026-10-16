@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -11,18 +10,18 @@ import (
 var dashCard = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styleWarn.GetForeground()).Padding(0, 1)
 
 // detail describes the selected item: a failed source, a row with open
-// decision holds as a card with their options, or a task's task, seat and
-// phase facts.
-func (m dashboardModel) detail() []dashLine {
+// decision holds (held) with their options, or a task's task, seat and phase
+// facts.
+func (m dashboardModel) detail() (lines []dashLine, held bool) {
 	it, ok := m.list.SelectedItem().(dashItem)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	if f := it.failure; f != nil {
 		return dashFree(
 			styleFail.Render("source "+dashText(f.Source))+"  home "+dashText(dashOr(f.Home)),
 			styleFail.Render(dashText(fmt.Sprint(f.Err))),
-		)
+		), false
 	}
 	ts := it.row
 	if holds := m.holdsOf(*ts); len(holds) > 0 {
@@ -33,7 +32,7 @@ func (m dashboardModel) detail() []dashLine {
 		for _, o := range dashDecideOptions {
 			body = append(body, "- "+o.Key)
 		}
-		return dashFree(strings.Split(dashCard.Render(strings.Join(body, "\n")), "\n")...)
+		return dashFree(body...), true
 	}
 	phase := dashText(fleet.PhaseFromProjection(*ts))
 	if m.state() == stateStale {
@@ -52,5 +51,5 @@ func (m dashboardModel) detail() []dashLine {
 		dashBold.Render(dashText(ts.ID))+"  "+dashText(dashOr(ts.Kind))+"  project "+dashText(dashOr(ts.Project))+"  "+phase+"  "+dashText(dashGroup(it)),
 		"seat "+dashText(dashOr(ts.Harness))+" "+dashText(dashOr(ts.Model))+"  mode "+dashText(dashOr(ts.Mode))+"  window "+dashText(dashOr(ts.Window))+"  pane "+pane+"  worktree "+dashText(dashOr(ts.Worktree)),
 		"last "+dashText(dashOr(ts.LastStatus)),
-	)
+	), false
 }
