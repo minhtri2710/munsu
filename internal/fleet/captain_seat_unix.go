@@ -241,11 +241,14 @@ func ForwardCaptainSeat(socket string, args []string) (int, error) {
 	if _, _, err := c.WriteMsgUnix(head[:], syscall.UnixRights(0, 1, 2), nil); err != nil {
 		return 0, fmt.Errorf("captain seat: sending the request: %w", err)
 	}
-	if _, err := c.Write(body); err != nil {
-		return 0, fmt.Errorf("captain seat: sending the request: %w", err)
-	}
+	// The seat refuses a request by its head and closes without reading the
+	// body, so a failed body write still has the refusal waiting to be read.
+	_, sendErr := c.Write(body)
 	var reply captainSeatReply
 	if err := json.NewDecoder(c).Decode(&reply); err != nil {
+		if sendErr != nil {
+			return 0, fmt.Errorf("captain seat: sending the request: %w", sendErr)
+		}
 		return 0, fmt.Errorf("captain seat: reading the reply: %w", err)
 	}
 	if reply.Error != "" {
