@@ -127,10 +127,13 @@ func healthyModel(w, h int) dashboardModel {
 	m := resized(testDashModel(), w, h)
 	work := row("t-work", "working", "implementing", "primary", "")
 	work.LaunchedAt, work.PhaseChangedAt = dashNow.Add(-3*time.Hour).UnixNano(), dashNow.Add(-12*time.Minute).UnixNano()
+	work.ContextUsed, work.ContextWindow = 92_000, 256_000
+	capRow := row("t-cap", "working", "in captain home", "captain:alpha", "/h/captains/alpha")
+	capRow.ContextUsed = 9_241
 	m = send(m, goodRead(dashNow.Add(-3*time.Second), []fleet.TaskSnapshot{
 		work,
 		row("t-human", "blocked", "needs a decision", "primary", ""),
-		row("t-cap", "working", "in captain home", "captain:alpha", "/h/captains/alpha"),
+		capRow,
 		row("t-cap2", "queued", "waiting for a slot", "captain:alpha", "/h/captains/alpha"),
 		row("t-done", "done", "merged", "primary", ""),
 	}, nil, []orchestrator.Record{
@@ -969,7 +972,7 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		const shown = `c\u0085\u009b\u2028\xff`
 		r := goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t-1", Kind: "ship", CurrentState: "working", Source: "primary", CurrentDescription: in}}, nil,
 			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "t", Producer: "p", Key: "k", Payload: in}})
-		f := send(resized(testDashModel(), 130, 24), r).frame()
+		f := send(resized(testDashModel(), 133, 24), r).frame()
 		assertNoRaw(t, "other classes", f)
 		assertShown(t, "other classes", f, "-              "+shown, "t p k "+shown)
 
@@ -1055,6 +1058,47 @@ func TestDashboardAge(t *testing.T) {
 	}
 	if got := dashAge(dashNow, 0); got != "-" {
 		t.Errorf("dashAge(unknown) = %q, want -", got)
+	}
+}
+
+// CTX is the share of a known window, else pi's compact token count, and "-"
+// when the snapshot read no usage; every value fits the 4-cell column.
+func TestDashboardCtx(t *testing.T) {
+	for _, tc := range []struct {
+		used, window int
+		want         string
+	}{
+		{0, 0, "-"},
+		{0, 256_000, "-"},
+		{9_241, 256_000, "4%"},
+		{1_279, 256_000, "0%"},
+		{1_280, 256_000, "1%"},
+		{256_000, 256_000, "100%"},
+		{999, 0, "999"},
+		{1_000, 0, "1.0k"},
+		{9_241, 0, "9.2k"},
+		{9_949, 0, "9.9k"},
+		{9_950, 0, "10k"},
+		{999_499, 0, "999k"},
+		{999_500, 0, "1.0M"},
+		{1_349_999, 0, "1.3M"},
+		{9_949_999, 0, "9.9M"},
+		{9_950_000, 0, "10M"},
+		{99_499_999, 0, "99M"},
+	} {
+		if got := dashCtx(tc.used, tc.window); got != tc.want {
+			t.Errorf("dashCtx(%d, %d) = %q, want %q", tc.used, tc.window, got, tc.want)
+		}
+	}
+	// The column is drawn from list width 96, the terminal width less the panel borders.
+	for _, tc := range []struct {
+		width int
+		shown bool
+	}{{99, false}, {100, true}} {
+		m := healthyModel(tc.width, 32)
+		if got := strings.Contains(ansiSeq.ReplaceAllString(m.frame(), ""), " CTX "); m.listW() != tc.width-4 || got != tc.shown {
+			t.Errorf("width %d (list %d): CTX shown %v, want %v", tc.width, m.listW(), got, tc.shown)
+		}
 	}
 }
 

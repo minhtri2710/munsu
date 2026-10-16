@@ -22,3 +22,10 @@ func endpointStatusFromState(s EndpointObservationState) EndpointStatus {
 		return EndpointStatus{Lifecycle: LifecycleUnknown, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe}
 	}
 }
+
+type snapshotProbe struct {
+	status EndpointStatus
+	err    error
+}
+
+func (p snapshotProbe) ProbeEndpoint(EndpointRef) (EndpointStatus, error) { return p.status, p.err }

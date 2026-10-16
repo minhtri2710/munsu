@@ -128,13 +128,6 @@ func TestCaptainStatus_Unknown(t *testing.T) {
 	}
 }
 
-type snapshotProbe struct {
-	status EndpointStatus
-	err    error
-}
-
-func (p snapshotProbe) ProbeEndpoint(EndpointRef) (EndpointStatus, error) { return p.status, p.err }
-
 type refRecordingProbe struct{ got EndpointRef }
 
 func (p *refRecordingProbe) ProbeEndpoint(ref EndpointRef) (EndpointStatus, error) {
