@@ -78,18 +78,19 @@ func attentionModel(t *testing.T, h string, w, height int) dashboardModel {
 	return send(m, m.read())
 }
 
-// needsLines are the NEEDS YOU title and items of a frame, spaces collapsed.
+// needsLines are the NEEDS YOU title and items of a frame, in a panel or
+// indented below the title, spaces collapsed.
 func needsLines(frame string) []string {
 	var got []string
 	in := false
 	for _, l := range strings.Split(ansi.Strip(frame), "\n") {
-		l = strings.TrimRight(l, " ")
+		u := dashUnbox(l)
 		switch {
-		case strings.HasPrefix(l, "NEEDS YOU"):
+		case strings.HasPrefix(u, "NEEDS YOU"):
 			in = true
-			got = append(got, l)
-		case in && strings.HasPrefix(l, "  "):
-			got = append(got, strings.Join(strings.Fields(l), " "))
+			got = append(got, u)
+		case in && (strings.HasPrefix(l, "│ ") || strings.HasPrefix(l, "  ")):
+			got = append(got, strings.Join(strings.Fields(u), " "))
 		default:
 			in = false
 		}
@@ -208,7 +209,7 @@ func TestDashboardNeedsYou(t *testing.T) {
 		if len(lines) != 9 || !strings.HasSuffix(strings.TrimRight(lines[len(lines)-1], " "), "q quit") {
 			t.Fatalf("the footer is cut:\n%s", f)
 		}
-		if !strings.Contains(f, "NEEDS YOU 9 - showing 0") || !strings.Contains(f, "Failed sources and tasks - Showing 1 of 11") || !strings.Contains(f, "> x captain:broken") {
+		if !strings.Contains(f, "NEEDS YOU 9 - showing 0") || !strings.Contains(f, "Failed sources and tasks - Showing 1 of 11") || !strings.Contains(f, "▌ ✗ captain:broken") {
 			t.Fatalf("want the NEEDS YOU count line, the list title and its selected row:\n%s", f)
 		}
 	})

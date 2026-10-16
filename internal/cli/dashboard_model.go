@@ -142,6 +142,10 @@ type dashboardModel struct {
 	// included), of NEEDS YOU, of the detail pane and of the feed section
 	// (title included).
 	listH, needsH, detailH, feedH int
+	// look is the layout resize picked; dark is the terminal's background,
+	// which picks the theme.
+	look dashLook
+	dark bool
 
 	mode     dashMode
 	pending  *dashPending
@@ -192,6 +196,7 @@ func newDashboardModel(home, exe string) dashboardModel {
 		feed:    feed,
 		argv:    argv,
 		reading: true,
+		dark:    true,
 		readFleet: func() (*fleet.DisplaySnapshot, error) {
 			return fleet.SnapshotDisplay(home, snapshotDeps())
 		},
@@ -266,7 +271,7 @@ func (m dashboardModel) tickCmd() tea.Cmd {
 
 // Init issues the first read; newDashboardModel starts with a read in flight.
 func (m dashboardModel) Init() tea.Cmd {
-	return tea.Batch(m.readCmd(), m.tickCmd())
+	return tea.Batch(m.readCmd(), m.tickCmd(), tea.RequestBackgroundColor)
 }
 
 // startRead begins a read unless one is already in flight.
@@ -295,6 +300,8 @@ func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 			}
 			m.argv.SetYOffset(0) // a new width rewraps the command: show it from its first row
 		}
+	case tea.BackgroundColorMsg:
+		m.dark = msg.IsDark()
 	case dashTickMsg:
 		return m, tea.Batch(m.tickCmd(), m.startRead())
 	case dashRead:
