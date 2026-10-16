@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -77,43 +76,9 @@ func seedCanonicalShipTask(t *testing.T, homeDir, id, phase string) *taskauthori
 	return auth
 }
 
-// TestSnapshotCanonicalPhaseOverridesStaleProjection proves the snapshot
-// prefers canonical Authority state (Task 7.8 criterion 2): a stale .status
-// showing working cannot override an authoritative done phase, and tampered
-// .meta kind/project cannot override the canonical definition.
-func TestSnapshotCanonicalPhaseOverridesStaleProjection(t *testing.T) {
-	homeDir := t.TempDir()
-	seedCanonicalShipTask(t, homeDir, "t1", "done")
-	// Stale/tampered projection: meta claims a live scout on another project
-	// and the status log still says working.
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"window": "@win", "worktree": "/tmp/wt", "kind": "scout", "project": "hacked"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.AppendStatus(homeDir, "t1", "working: still working"); err != nil {
-		t.Fatal(err)
-	}
-	snap, err := Snapshot(homeDir, testSnapshotDeps(t))
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
-	if len(snap.Tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
-	}
-	ts := snap.Tasks[0]
-	if ts.CurrentState != "done" {
-		t.Fatalf("CurrentState = %q, want authoritative done (stale status cannot override)", ts.CurrentState)
-	}
-	if !ts.StatusLogSuperseded {
-		t.Fatalf("StatusLogSuperseded = false, want true (canonical record supersedes the log)")
-	}
-	if ts.Kind != "ship" || ts.Project != "proj-x" {
-		t.Fatalf("kind=%q project=%q, want canonical ship/proj-x (tampered meta cannot override)", ts.Kind, ts.Project)
-	}
-}
-
-// TestSnapshotIncludesCanonicalTasksWithoutMeta proves canonical tasks with
-// no .meta projection are still part of the fleet snapshot.
-func TestSnapshotIncludesCanonicalTasksWithoutMeta(t *testing.T) {
+// TestSnapshotIncludesQueuedCanonicalTasks proves a queued canonical task is
+// part of the fleet snapshot.
+func TestSnapshotIncludesQueuedCanonicalTasks(t *testing.T) {
 	homeDir := t.TempDir()
 	seedCanonicalShipTask(t, homeDir, "no-meta", "queued")
 	snap, err := Snapshot(homeDir, testSnapshotDeps(t))
@@ -129,40 +94,16 @@ func TestSnapshotIncludesCanonicalTasksWithoutMeta(t *testing.T) {
 	}
 }
 
-// TestSnapshotFailsClosedOnMetaOnlyTask proves the snapshot fails closed on a
-// task that exists in .meta alone, with no authoritative record (Task 7.8
-// legacy decision (a)): the legacy shape is never silently projected, and the
-// typed error names the heal path.
-func TestSnapshotFailsClosedOnMetaOnlyTask(t *testing.T) {
+// TestReadWithProbeFailsClosedWithoutCanonicalRecord proves observation fails
+// closed on a task with no canonical record.
+func TestReadWithProbeFailsClosedWithoutCanonicalRecord(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship", "window": "@1"}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Snapshot(homeDir, testSnapshotDeps(t))
-	if err == nil {
-		t.Fatal("Snapshot over a legacy meta-only task = nil error, want fail-closed rejection")
-	}
-	if !strings.Contains(err.Error(), "t1") || !testutil.PathInMessage(err.Error(), homeDir) {
-		t.Fatalf("clean-break error must carry task+home context, got: %v", err)
-	}
-}
-
-// TestReadWithProbeFailsClosedOnMetaOnlyTask proves observation fails closed
-// on the same legacy shape (clean break: no canonical record).
-func TestReadWithProbeFailsClosedOnMetaOnlyTask(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := home.Init(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := ReadWithProbe(homeDir, "t1", nil)
 	if err == nil {
-		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
+		t.Fatal("ReadSoldierState over a task with no canonical record = nil, want fail-closed")
 	}
 	if !testutil.PathInMessage(err.Error(), homeDir) {
 		t.Errorf("clean-break error must carry home context, got: %v", err)
@@ -176,10 +117,10 @@ func TestSummarizeCaptainHomePrefersCanonicalPhase(t *testing.T) {
 	homeDir := t.TempDir()
 	// Initialize the canonical home, then a canonically done child with a
 	// stale working status line: the authoritative phase wins.
-	seedCanonicalShipTask(t, homeDir, "t1", "done")
-	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
+	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
+	seedChild(t, homeDir, "t1", true)
 	if err := home.AppendStatus(homeDir, "t1", "working: implementing"); err != nil {
 		t.Fatal(err)
 	}

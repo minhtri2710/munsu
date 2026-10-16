@@ -16,7 +16,7 @@ const watcherBeatFile = "state/.last-watcher-beat"
 
 // ProcessEventWakeKind is the wake kind reserved for the durable process-event
 // source. Records of this kind are consumed only by DrainWakesOfKind: the
-// lease claim never hands them to an agent, the AFK drain never digests them,
+// lease claim never hands them to an agent or to the AFK digest,
 // and HasQueuedWakes does not count them.
 const ProcessEventWakeKind = "process-event"
 
@@ -189,19 +189,7 @@ func DrainWakes(h string) (records []WakeRecord, err error) {
 // kind, leaving the rest of the queue in place through the wake journal (the
 // same mutation path the lease claim uses, so a crash mid-write is recovered
 // on the next lock acquisition).
-func DrainWakesOfKind(h, kind string) ([]WakeRecord, error) {
-	return drainWakesPartition(h, false, func(r WakeRecord) bool { return r.Kind == kind })
-}
-
-// DrainWakesExcludingKind is the complement of DrainWakesOfKind: it removes
-// and returns every queued record whose Kind differs from kind.
-// It derives report wakes first: the AFK daemon drains with it, with or
-// without a watcher.
-func DrainWakesExcludingKind(h, kind string) ([]WakeRecord, error) {
-	return drainWakesPartition(h, true, func(r WakeRecord) bool { return r.Kind != kind })
-}
-
-func drainWakesPartition(h string, derive bool, take func(WakeRecord) bool) (records []WakeRecord, err error) {
+func DrainWakesOfKind(h, kind string) (records []WakeRecord, err error) {
 	lock, err := acquireWakeLock(h)
 	if err != nil {
 		return nil, err
@@ -210,18 +198,13 @@ func drainWakesPartition(h string, derive bool, take func(WakeRecord) bool) (rec
 	if err := recoverWakeMutationLocked(h); err != nil {
 		return nil, err
 	}
-	if derive {
-		if err := deriveReportWakesLocked(h, time.Now()); err != nil {
-			return nil, err
-		}
-	}
 	queue, err := readWakeQueue(h)
 	if err != nil {
 		return nil, err
 	}
 	var kept []WakeRecord
 	for _, r := range queue {
-		if take(r) {
+		if r.Kind == kind {
 			records = append(records, r)
 		} else {
 			kept = append(kept, r)
@@ -248,12 +231,31 @@ func newWakeRecord(kind, key, ref, payload string, at time.Time) WakeRecord {
 }
 
 // HasQueuedWakes reports whether a wake waits for a consumer. A report line no
-// wake carries yet counts: the next claim derives its wake.
+// wake carries yet counts: the next claim derives its wake. So does an unresolved
+// wake in an expired lease: the next claim reclaims it.
 func HasQueuedWakes(h string) bool {
 	if _, ok := OldestUnderivedReport(h); ok {
 		return true
 	}
-	return hasQueuedRecords(h)
+	return hasQueuedRecords(h) || hasExpiredLeaseWake(h, time.Now())
+}
+
+func hasExpiredLeaseWake(h string, now time.Time) bool {
+	leases, err := ListClaimedLeases(h)
+	if err != nil {
+		return true
+	}
+	for _, l := range leases {
+		if now.Unix() < l.ExpiresAt {
+			continue
+		}
+		for _, w := range l.Wakes {
+			if w.Resolution != resolutionCompleted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasQueuedRecords(h string) bool {

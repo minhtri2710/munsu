@@ -383,7 +383,7 @@ generation must pass its explicit generation here.
 			// (Task 7.7). The authoritative retirement transition commits
 			// through the Authority; the fleet teardown performs the saga-side
 			// cleanup after the durable receipt.
-			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, id)
+			taskHome, err := fleet.ResolveTaskHome(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("teardown %s: %w", id, err)
 			}

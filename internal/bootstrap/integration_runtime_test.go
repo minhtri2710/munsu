@@ -13,7 +13,7 @@ import (
 //  2. All event handlers and the command handler are registered
 //  3. session_start fires exactly once, invokes session-start command, appends entry
 //  4. agent_settled triggers wake claim and followUp (agent_end alone does NOT claim)
-//  5. turn_end guard does NOT duplicate followUp when pendingWake exists
+//  5. turn_end does NOT duplicate followUp when pendingWake exists
 //  6. tool_call blocks correctly with fail-closed safety
 //  7. The /munsu:wake resolved command acks properly with colon syntax
 //  8. agent_end alone (without agent_settled) does NOT trigger wake claim
@@ -179,10 +179,12 @@ class MockAPI {
   // config get wake-delivery-mode: an unset key exits 0 with no output.
   configGet: { code: number; stdout: string; stderr: string } = { code: 0, stdout: "", stderr: "" };
 
+  gateRefused: boolean = false;
+
   exec(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
     this.execCalls.push({ bin, args });
 
-    // safety-check: return contract envelope with no gate
+    // safety-check: return contract envelope, gate refused only when set
     if (args[0] === "integrate" && args[1] === "safety-check") {
       return Promise.resolve({
         code: 0,
@@ -193,7 +195,7 @@ class MockAPI {
           data: {
             identity: "unrelated",
             gate_capability: "gate-absent",
-            gate_refused: false,
+            gate_refused: this.gateRefused,
             block: false,
           },
         }),
@@ -246,11 +248,6 @@ class MockAPI {
         }),
         stderr: "",
       });
-    }
-
-    // guard: succeed
-    if (args[0] === "guard") {
-      return Promise.resolve({ code: 0, stdout: "guard condition found\n", stderr: "" });
     }
 
     // wake resolve: return proper contract envelope
@@ -521,6 +518,20 @@ for (const row of roleRows) {
   if (ran !== (row.runs ? 1 : 0)) throw new Error(row.role + " " + row.event + ": " + row.cmd.join(" ") + " ran " + ran + " times, want " + (row.runs ? 1 : 0));
   if (row.runs && row.event === "agent_settled") await cmdHandler("resolved: clear the claimed wake [key=test-wake]", cmdCtx);
 }
+
+// --- Test 11: turn_end nudges only when the safety check passes the gate ---
+const gateRows: Array<{ name: string; gateRefused: boolean; nudges: boolean }> = [
+  { name: "gate refused", gateRefused: true, nudges: false },
+  { name: "gate allows", gateRefused: false, nudges: true },
+];
+process.env.MUNSU_ROLE = "captain";
+for (const row of gateRows) {
+  mock.gateRefused = row.gateRefused;
+  const notes: string[] = [];
+  await mock.fire("turn_end", {}, { ...mockCtx, ui: { ...mockCtx.ui, notify: (m: string) => notes.push(m) } });
+  if ((notes.length > 0) !== row.nudges) throw new Error("turn_end " + row.name + ": notes=" + JSON.stringify(notes) + ", want nudge=" + row.nudges);
+}
+mock.gateRefused = false;
 delete process.env.MUNSU_ROLE;
 
 // All tests passed!

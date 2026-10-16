@@ -54,8 +54,8 @@ func TestTaskMetadataRejectsStateSymlinkWithoutTouchingTarget(t *testing.T) {
 	if _, err := ReadStatus(home, "task-1"); err == nil {
 		t.Fatal("ReadStatus accepted a symlinked state directory")
 	}
-	if _, err := ListMeta(home); err == nil {
-		t.Fatal("ListMeta accepted a symlinked state directory")
+	if _, err := ListMetaIDs(home); err == nil {
+		t.Fatal("ListMetaIDs accepted a symlinked state directory")
 	}
 	entries, err := os.ReadDir(outside)
 	if err != nil {
@@ -479,28 +479,5 @@ func TestResolveIntegration(t *testing.T) {
 	}
 	if h != tmp {
 		t.Errorf("home.Resolve() = %q, want %q", h, tmp)
-	}
-}
-
-// TestListMetaFailsOnUnreadableMeta pins that ListMeta never drops a task it
-// cannot read: an unreadable .meta beside a readable one is an error, not a
-// shorter listing that reads like fewer tasks.
-func TestListMetaFailsOnUnreadableMeta(t *testing.T) {
-	home := t.TempDir()
-	if err := WriteMeta(home, "readable", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	p, err := MetaFilePath(home, "unreadable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A line past bufio.Scanner's token limit makes ReadMeta fail on every
-	// platform without depending on file modes.
-	if err := os.WriteFile(p, []byte("kind="+strings.Repeat("x", 1<<17)+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := ListMeta(home)
-	if err == nil || !strings.Contains(err.Error(), "unreadable") {
-		t.Fatalf("ListMeta over an unreadable meta = %v, %v; want an error naming the task", entries, err)
 	}
 }

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -363,4 +365,20 @@ func findSkew(findings []SkewFinding, class SkewClassification) *SkewFinding {
 		}
 	}
 	return nil
+}
+
+func TestCollectSourceCheckoutsSkipsNonCheckout(t *testing.T) {
+	repo := t.TempDir()
+	plain := t.TempDir()
+	got := collectSourceCheckouts(plain, repo, runtimeIdentityProbe{
+		git: func(dir string, args ...string) (string, error) {
+			if dir == home.Canonical(plain) {
+				return "", errors.New("exit status 128")
+			}
+			return "abc123", nil
+		},
+	})
+	if len(got) != 1 || got[0].Path != home.Canonical(repo) || got[0].Error != "" {
+		t.Fatalf("source checkouts = %+v, want only %s without error", got, repo)
+	}
 }

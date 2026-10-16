@@ -11,7 +11,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -24,9 +23,6 @@ func setupClaimedWorktreeReturn(t *testing.T) (worktreePath, tracePath string) {
 	worktreePath = filepath.Join(t.TempDir(), "claimed-worktree")
 	if err := os.Mkdir(worktreePath, 0o755); err != nil {
 		t.Fatalf("creating worktree: %v", err)
-	}
-	if err := home.WriteMeta(homeDir, "claimed-task", map[string]string{"worktree": worktreePath}); err != nil {
-		t.Fatalf("writing claimed task meta: %v", err)
 	}
 	auth := testAuthorityFor(t, homeDir)
 	taskID := mustTaskIDFor(t, "claimed-task")

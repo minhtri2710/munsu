@@ -2,14 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 func TestConfigDispatchSetDefaultAndAdd(t *testing.T) {
@@ -147,40 +145,5 @@ func TestConfigDispatchClear(t *testing.T) {
 	}
 	if loaded.Config.SoldierHarness != "" || len(loaded.Config.DispatchProfiles) != 0 {
 		t.Fatalf("expected cleared config, got %+v", loaded.Config)
-	}
-}
-
-func TestDispatchConfig_JSONRoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "soldier-dispatch.json")
-	cfg := &harness.DispatchConfig{
-		DefaultHarness: "pi",
-		DefaultModel:   "flash",
-		DefaultEffort:  "low",
-		Profiles: []harness.DispatchProfile{
-			{Name: "hard", Match: []string{"deep architectural redesign"}, Harness: "pi", Model: "glm", Effort: "high"},
-		},
-	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
-		t.Fatal(err)
-	}
-	var persisted harness.DispatchConfig
-	readData, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(readData, &persisted); err != nil {
-		t.Fatal(err)
-	}
-	if persisted.DefaultHarness != "pi" || persisted.DefaultModel != "flash" || persisted.DefaultEffort != "low" {
-		t.Fatalf("persisted config = %+v", persisted)
-	}
-	sel, err := harness.ResolveDispatchSelection(&persisted, "please do deep architectural redesign")
-	if err != nil || sel.Model != "glm" || sel.Effort != "high" {
-		t.Fatalf("selection = %+v, %v", sel, err)
 	}
 }

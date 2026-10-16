@@ -8,13 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Daemon is the Go-native AFK sub-supervisor daemon.
-// It manages the consent flag, identity lock, and wake triage
-// Phase 2.2+: runLoop integrates the digester, the watcher beat check, and stale clearing.
+// It manages the consent flag, identity lock, and wake triage;
+// runLoop integrates the digester and the watcher beat check.
 //
 // The daemon diagnoses and accumulates; it never repairs. Reaching the general
 // while they are away has one owner: `munsu afk return`.
@@ -22,6 +21,8 @@ type Daemon struct {
 	homeDir  string
 	lock     *home.AFKLock
 	digester *Digester
+	// unacked holds the triage claims fed to the digester and not yet acked.
+	unacked []*Digest
 
 	// startedAt and beatAlarmed drive the dead-watcher alarm: one digest entry
 	// per incident, latched until the beat is fresh again.
@@ -41,8 +42,8 @@ type Daemon struct {
 //  2. Acquire the identity lock (idempotent — no-op if already running).
 //  3. Set the consent flag (state/.afk).
 //  4. Clear stale artifacts from any prior session.
-//  5. Start the runLoop goroutine (triage → feed digester → check watcher beat → clear stale → flush).
-//  6. Block until SIGTERM/SIGINT.
+//  5. Start the runLoop goroutine (triage → feed digester → check watcher beat → flush → ack).
+//  6. Block until SIGTERM/SIGINT, then until the runLoop returns.
 //  7. Flush any remaining digest entries.
 //  8. Clear the consent flag.
 //  9. Release the identity lock.
@@ -103,19 +104,22 @@ func (d *Daemon) Start(homeDir string) error {
 	d.digester = NewDigester(homeDir)
 	d.startedAt = time.Now()
 
-	// Load optional AFK config (digest window).
-	loadAfkConfig(homeDir, d.digester)
 	// 5. Start the runLoop goroutine.
 	stopCh := make(chan struct{})
-	go d.runLoop(stopCh)
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		d.runLoop(stopCh)
+	}()
 
-	// 6. Wait for signal.
+	// 6. Wait for signal, then for the cycle in progress to finish.
 	<-sigCh
 	close(stopCh)
+	<-loopDone
 	fmt.Fprintf(os.Stderr, "afk: signal received, shutting down\n")
 
 	// 7. Flush any remaining digest entries.
-	if err := d.digester.Flush(time.Now()); err != nil {
+	if err := d.flushAndAck(time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "afk: final digest flush error (non-fatal): %v\n", err)
 	}
 
@@ -128,21 +132,9 @@ func (d *Daemon) Start(homeDir string) error {
 	return nil
 }
 
-// loadAfkConfig reads optional AFK config files and applies them to the
-// digester. Missing or invalid config values are silently ignored — defaults
-// apply.
-func loadAfkConfig(homeDir string, dig *Digester) {
-	if val, err := config.Get(homeDir, "afk-digest-window"); err == nil {
-		if d, err := time.ParseDuration(val); err == nil {
-			dig.SetWindow(d)
-			fmt.Fprintf(os.Stderr, "afk: digest window set to %s from config\n", d)
-		}
-	}
-}
-
 // runLoop is the main supervision loop:
 //
-//	triage → feed digester → check watcher beat → clear stale → flush if window expired.
+//	triage → feed digester → check watcher beat → flush → ack.
 //
 // Runs until stopCh is closed.
 func (d *Daemon) runLoop(stopCh chan struct{}) {
@@ -161,9 +153,12 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 
 // triageCycle performs one iteration:
 //
-//	triage → feed digester → check watcher beat → clear stale → flush.
+//	triage → feed digester → check watcher beat → flush → ack.
+//
+// The claimed wakes are acked only after the digest holding them is durable:
+// a crash in between yields a duplicate digest entry, never a lost wake.
 func (d *Daemon) triageCycle(now time.Time) {
-	// 1. Run triage (drain wake queue and classify).
+	// 1. Run triage (claim queued wakes and classify).
 	digest, err := OneCycle(d.homeDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "afk: triage error (non-fatal): %v\n", err)
@@ -182,19 +177,28 @@ func (d *Daemon) triageCycle(now time.Time) {
 	// 4. Check the watcher beat.
 	d.checkBeat(now)
 
-	// 5. Clear stale check markers (session-scoped per-cycle artifacts).
-	if err := ClearStaleCheckedMarkers(d.homeDir); err != nil {
-		fmt.Fprintf(os.Stderr, "afk: stale check marker clear error (non-fatal): %v\n", err)
+	// 5. Flush the digester, then ack what it now holds durably.
+	if digest != nil {
+		d.unacked = append(d.unacked, digest)
 	}
+	if err := d.flushAndAck(now); err != nil {
+		fmt.Fprintf(os.Stderr, "afk: digest flush error (non-fatal): %v\n", err)
+	}
+}
 
-	// 6. Flush digester if the window has expired.
-	if d.digester.ShouldFlush(now) {
-		if err := d.digester.Flush(now); err != nil {
-			fmt.Fprintf(os.Stderr, "afk: digest flush error (non-fatal): %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "afk: digest flushed\n")
+// flushAndAck writes the digester's entries to the digest file and, once that
+// write succeeded, acks the claimed wakes they came from.
+func (d *Daemon) flushAndAck(now time.Time) error {
+	if err := d.digester.Flush(now); err != nil {
+		return err
+	}
+	for _, digest := range d.unacked {
+		if err := home.AckWakes(d.homeDir, digest.LeaseID, digest.EventIDs); err != nil {
+			fmt.Fprintf(os.Stderr, "afk: ack digested wakes (non-fatal): %v\n", err)
 		}
 	}
+	d.unacked = nil
+	return nil
 }
 
 // checkBeat feeds the digester one wedge entry per incident of a stale or

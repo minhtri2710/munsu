@@ -77,7 +77,7 @@ func testOperation(t *testing.T, id string, intent domain.Intent) domain.Operati
 }
 
 // The probed endpoints are the canonical live, bound tasks with their bound
-// identity; a queued task and a .meta window bind nothing.
+// identity; a queued task binds nothing.
 func TestLiveBoundEndpoints(t *testing.T) {
 	homeDir := t.TempDir()
 	if got, err := LiveBoundEndpoints(homeDir); err != nil || got != nil {
@@ -85,9 +85,6 @@ func TestLiveBoundEndpoints(t *testing.T) {
 	}
 	seedBoundSoldier(t, homeDir, "bound", taskauthority.EndpointBinding{Backend: "herdr", Handle: "s:p1", SessionOwner: "s", WorkspaceID: "w1", TabID: "t1"})
 	seedTask(t, homeDir, "queued")
-	if err := mhome.WriteMeta(homeDir, "queued", map[string]string{"backend": "tmux", "window": "@9"}); err != nil {
-		t.Fatal(err)
-	}
 
 	got, err := LiveBoundEndpoints(homeDir)
 	if err != nil {

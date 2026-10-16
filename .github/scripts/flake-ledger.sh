@@ -22,9 +22,8 @@
 # paperwork. The deadline is what turns "this test is flaky" into work with a
 # date on it -- when it passes, this lane goes red on every open PR, including
 # PRs that have nothing to do with the flake, and the person who needs to merge
-# has to triage it. That is deliberate. The owner of a flake is not a name in a
-# column, it is whoever needs main to be green next, and that person always
-# exists.
+# has to triage it. That is deliberate: whoever needs main to be green next
+# deals with the flake, and that person always exists.
 #
 # What this does NOT catch, stated here rather than discovered later:
 #
@@ -48,9 +47,9 @@ FIXTURES="$ROOT/.github/testdata/flake-ledger"
 
 # The header row the table must have, in this order. Checked rather than
 # assumed: a reordered column would otherwise be parsed as a different field
-# entirely -- a deadline read out of the owner_issue column would compare as a
+# entirely -- a deadline read out of the last_seen column would compare as a
 # string that is never past due, so the whole lane would quietly stop failing.
-readonly COLUMNS='test|lane|first_seen|last_seen|deadline|owner_issue|state'
+readonly COLUMNS='test|lane|first_seen|last_seen|deadline|state'
 
 # Lane keys, not job display names. The sweep maps `Race detector` to `race`;
 # the display name can be reworded in ci.yml without rewriting every historical
@@ -103,20 +102,20 @@ entries() {
 		/^<!-- flake-ledger:end -->$/   { inside = 0; next }
 		!inside { next }
 		# A markdown table row is `| a | b |`, so splitting on | yields an
-		# empty field on each end: seven columns is NF == 9, in $2..$8. A row of
+		# empty field on each end: six columns is NF == 8, in $2..$7. A row of
 		# any other width is not emitted at all -- it is malformed, and saying
 		# so is format_errors() job, not this one. This function is only ever
 		# read after that has passed.
-		/^[[:space:]]*\|/ && NF == 9 {
+		/^[[:space:]]*\|/ && NF == 8 {
 			sep = 1
-			for (i = 2; i <= 8; i++) {
+			for (i = 2; i <= 7; i++) {
 				f[i] = trim($i)
 				if (f[i] !~ /^-+$/) sep = 0
 			}
 			# The header and the ---|--- rule under it are table syntax.
 			if (sep) next
 			if (f[2] == "test" && f[3] == "lane") next
-			printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f[2], f[3], f[4], f[5], f[6], f[7], f[8]
+			printf "%s\t%s\t%s\t%s\t%s\t%s\n", f[2], f[3], f[4], f[5], f[6], f[7]
 		}
 	' "$LEDGER"
 }
@@ -139,21 +138,21 @@ format_errors() {
 			gsub(/[ \t]/, "", line)
 			if (line ~ /^\|-+(\|-+)*\|$/) { next }
 
-			if (line !~ /^\|.*\|$/ || NF != 9) {
-				bad("expected a 7-column row `| " cols " |`, got " (NF > 2 ? NF - 2 : 0) " columns")
+			if (line !~ /^\|.*\|$/ || NF != 8) {
+				bad("expected a 6-column row `| " cols " |`, got " (NF > 2 ? NF - 2 : 0) " columns")
 				next
 			}
 			test = trim($2); lane = trim($3); seen = trim($4); last = trim($5)
-			deadline = trim($6); owner = trim($7); state = trim($8)
+			deadline = trim($6); state = trim($7)
 
 			# The header is checked rather than skipped by position: a
 			# reordered column would otherwise be parsed as a different field
-			# entirely, and a deadline read out of the owner_issue column
+			# entirely, and a deadline read out of the last_seen column
 			# compares as a string that is never past due -- the lane would
 			# stop failing and look healthy doing it.
 			if (!seenheader) {
 				seenheader = 1
-				if (test "|" lane "|" seen "|" last "|" deadline "|" owner "|" state != cols)
+				if (test "|" lane "|" seen "|" last "|" deadline "|" state != cols)
 					bad("first table row must be the header `| " cols " |`")
 				next
 			}
@@ -166,16 +165,7 @@ format_errors() {
 			if (seen !~ /^[0-9a-f]{8,40}@[0-9]+\/[0-9]+$/) bad(test ": first_seen must be <sha>@<run_id>/<attempt>, got \"" seen "\"")
 			if (last !~ /^[0-9a-f]{8,40}@[0-9]+\/[0-9]+$/) bad(test ": last_seen must be <sha>@<run_id>/<attempt>, got \"" last "\"")
 			if (deadline !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) bad(test ": deadline must be YYYY-MM-DD, got \"" deadline "\"")
-			# The bot cannot know which issue owns a flake, so it writes TBD and
-			# this rule refuses to let TBD reach main. That is the point at
-			# which the alarm becomes work: whoever applies the diff the sweep
-			# reports cannot merge it until they file the issue that will do
-			# the fixing.
-			#
-			# No apostrophe in this comment, and that is not a style choice:
-			# it sits inside the single-quoted awk program that starts above,
-			# so one would close the quote and break this script.
-			if (owner == "" || owner == "TBD") bad(test ": entry needs an owning issue in owner_issue, not \"" owner "\"")
+			# Words: Human, typed, 2026-10-16: "nếu nó không thuộc munsu thì bỏ nó đi" (removes the flake ledger owner_issue requirement)
 			# `fixed:` is the one state no deadline is compared against, so it
 			# is the one state that has to be checkable. It used to accept any
 			# ref with no whitespace in it: `fixed:i-never-fixed-it` read as
@@ -209,16 +199,16 @@ check() {
 	# incompatibilities between BSD and GNU that the sweep has to deal with.
 	today="$(date -u +%F)"
 
-	overdue="$(entries | awk -F '\t' -v today="$today" '$7 == "open" && $5 < today')"
+	overdue="$(entries | awk -F '\t' -v today="$today" '$6 == "open" && $5 < today')"
 	if [ -n "$overdue" ]; then
 		echo "::error::flake ledger entries are past their deadline:" >&2
-		printf '%s\n' "$overdue" | while IFS=$'\t' read -r test lane _seen _last deadline owner _state; do
-			printf '  %s (%s): due %s, owned by %s\n' "$test" "$lane" "$deadline" "$owner" >&2
+		printf '%s\n' "$overdue" | while IFS=$'\t' read -r test lane _seen _last deadline _state; do
+			printf '  %s (%s): due %s\n' "$test" "$lane" "$deadline" >&2
 		done
 		echo "  A flake with an expired deadline is a skipped test with paperwork. Fix the test and set" >&2
-		echo "  its state to fixed:<sha>, or argue in the owning issue why the date moves and move it" >&2
-		echo "  in a diff someone reads. This lane is red on every open PR until then -- that is the" >&2
-		echo "  mechanism, not a bug: the owner of a flake is whoever needs main green next." >&2
+		echo "  its state to fixed:<sha>, or move the date in a diff someone reads and say why there." >&2
+		echo "  This lane is red on every open PR until then -- that is the mechanism, not a bug:" >&2
+		echo "  whoever needs main green next deals with the flake." >&2
 		failed=1
 	fi
 
@@ -227,7 +217,7 @@ check() {
 	# Printed on every run for the same reason deadcode.sh prints its count:
 	# a ledger that never shrinks is a mechanism being routed around, and that
 	# is only visible if the number is in the log.
-	open_count="$(entries | awk -F '\t' '$7 == "open"' | grep -c . || true)"
+	open_count="$(entries | awk -F '\t' '$6 == "open"' | grep -c . || true)"
 	echo "flake ledger: $(entries | grep -c . || true) entries, $open_count open, 0 overdue"
 }
 
@@ -252,13 +242,12 @@ check() {
 #   bad-first-seen         delete the `seen !~ /^[0-9a-f]{8,40}@.../` rule
 #   bad-last-seen          delete the `last !~ /^[0-9a-f]{8,40}@.../` rule
 #   bad-deadline           delete the `deadline !~ /^[0-9]{4}-.../` rule
-#   owner-tbd              delete the `owner == "" || owner == "TBD"` rule
 #   bad-state              delete the `state !~ /^(open|fixed:...)$/` rule
 #   fixed-not-a-sha        loosen that same rule back to `fixed:[^ \t]+`
 #   duplicate-row          delete the `key in first` rule
-#   wrong-column-count     delete the `NF != 9` rule
+#   wrong-column-count     delete the `NF != 8` rule
 #   header-reordered       delete the `!seenheader` comparison against cols
-#   overdue-deadline       delete the `$7 == "open" && $5 < today` comparison
+#   overdue-deadline       delete the `$6 == "open" && $5 < today` comparison
 #   missing-markers        delete the `[ -n "$begin" ] && [ -n "$end" ]` check
 #   duplicate-markers      delete the `*$'\n'*` case in markers()
 #   markers-out-of-order   delete the `[ "$begin" -lt "$end" ]` check

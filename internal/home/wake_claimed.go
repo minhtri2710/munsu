@@ -124,16 +124,11 @@ func ListClaimedLeases(homeDir string) ([]ClaimedLease, error) {
 // lister skips.
 func parseClaimedLease(homeDir, leaseID, content string, modTime time.Time) (ClaimedLease, bool) {
 	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
-	parts := strings.SplitN(lines[0], "\t", 4)
-	if len(parts) != 4 {
+	header, ok := parseLeaseHeader(lines[0])
+	if !ok {
 		return ClaimedLease{}, false
 	}
-	expiresAt, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
-	if err != nil {
-		return ClaimedLease{}, false
-	}
-	claimedAt, _ := strconv.ParseInt(strings.TrimSpace(parts[3]), 10, 64)
-	lease := ClaimedLease{LeaseID: leaseID, Consumer: parts[1], ExpiresAt: expiresAt, ClaimedAt: claimedAt, ModTime: modTime}
+	lease := ClaimedLease{LeaseID: leaseID, Consumer: header.consumer, ExpiresAt: header.expiresAt, ClaimedAt: header.claimedAt, ModTime: modTime}
 	for _, line := range lines[1:] {
 		record, ok := decodeWakeRecordLine(line)
 		if !ok {

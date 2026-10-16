@@ -13,15 +13,6 @@ import (
 
 // --- Digester tests ---
 
-func TestDigesterFeedNilDigest(t *testing.T) {
-	tmp := t.TempDir()
-	d := NewDigester(tmp)
-	d.Feed(nil) // should not panic
-	if d.ShouldFlush(time.Now()) {
-		t.Error("ShouldFlush = true after nil feed, want false")
-	}
-}
-
 func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 	tmp := t.TempDir()
 	d := NewDigester(tmp)
@@ -37,19 +28,7 @@ func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 	}
 	d.Feed(digest)
 
-	// Should not flush immediately (window not elapsed).
-	now := time.Now()
-	if d.ShouldFlush(now) {
-		t.Error("ShouldFlush = true immediately after feed, want false")
-	}
-
-	// Force flush by advancing the clock past the window.
-	future := now.Add(defaultWindow + time.Second)
-	if !d.ShouldFlush(future) {
-		t.Error("ShouldFlush = false after window elapsed, want true")
-	}
-
-	if err := d.Flush(future); err != nil {
+	if err := d.Flush(time.Now()); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
 
@@ -96,6 +75,7 @@ func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 func TestDigesterFlushEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	d := NewDigester(tmp)
+	d.Feed(nil)
 	if err := d.Flush(time.Now()); err != nil {
 		t.Fatalf("Flush on empty digester: %v", err)
 	}
@@ -117,7 +97,7 @@ func TestDigesterMultipleDigests(t *testing.T) {
 		Routines: []WakeDigest{{Kind: "check", Key: "t2", Payload: "ok"}},
 	})
 
-	now := time.Now().Add(defaultWindow + time.Second)
+	now := time.Now()
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -158,7 +138,7 @@ func TestDigesterConcurrentSafe(t *testing.T) {
 	<-done1
 	<-done2
 
-	now := time.Now().Add(defaultWindow + time.Second)
+	now := time.Now()
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush after concurrent feeds: %v", err)
 	}
@@ -209,123 +189,47 @@ func TestClearStaleArtifacts_NoStateDir(t *testing.T) {
 	}
 }
 
-func TestClearStaleArtifacts_RemovesSeenMarkers(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create some seen markers.
-	os.WriteFile(filepath.Join(stateDir, ".seen-task-1"), []byte("line"), 0644)
-	os.WriteFile(filepath.Join(stateDir, ".seen-task-2"), []byte("line"), 0644)
-
-	// Create a normal file that should NOT be removed.
-	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working\n"), 0644)
-
-	if err := ClearStaleArtifacts(tmp); err != nil {
-		t.Fatalf("ClearStaleArtifacts: %v", err)
-	}
-
-	// Seen markers should be gone.
-	if _, err := os.Stat(filepath.Join(stateDir, ".seen-task-1")); !os.IsNotExist(err) {
-		t.Error(".seen-task-1 still exists")
-	}
-	if _, err := os.Stat(filepath.Join(stateDir, ".seen-task-2")); !os.IsNotExist(err) {
-		t.Error(".seen-task-2 still exists")
-	}
-
-	// Normal status file should remain.
-	if _, err := os.Stat(filepath.Join(stateDir, "task-1.status")); os.IsNotExist(err) {
-		t.Error("task-1.status was removed, should remain")
-	}
-}
-
-func TestClearStaleArtifacts_RemovesSubsuperMarkers(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	os.WriteFile(filepath.Join(stateDir, ".subsuper-escalations"), []byte("data"), 0644)
-	os.WriteFile(filepath.Join(stateDir, ".subsuper-escalations.since"), []byte("data"), 0644)
-	os.WriteFile(filepath.Join(stateDir, ".subsuper-inject-wedged"), []byte("data"), 0644)
-
-	if err := ClearStaleArtifacts(tmp); err != nil {
-		t.Fatalf("ClearStaleArtifacts: %v", err)
-	}
-
-	// All subsuper markers should be gone.
-	for _, name := range []string{".subsuper-escalations", ".subsuper-escalations.since", ".subsuper-inject-wedged"} {
-		if _, err := os.Stat(filepath.Join(stateDir, name)); !os.IsNotExist(err) {
-			t.Errorf("%s still exists", name)
-		}
-	}
-}
-
-func TestClearStaleArtifacts_RemovesDigest(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), []byte("{}"), 0644)
-
-	if err := ClearStaleArtifacts(tmp); err != nil {
-		t.Fatalf("ClearStaleArtifacts: %v", err)
-	}
-
-	for _, name := range []string{".afk-digest"} {
-		if _, err := os.Stat(filepath.Join(stateDir, name)); !os.IsNotExist(err) {
-			t.Errorf("%s still exists", name)
-		}
+// A prior session's digest is removed unless it holds report refs: those
+// entries are the only copy of their report wakes.
+func TestClearStaleArtifacts_Digest(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		digest   string
+		wantKept bool
+	}{
+		{name: "holds report refs", digest: `{"entries":[{"kind":"report","key":"t1","ref":"t1:1"}]}`, wantKept: true},
+		{name: "no report refs", digest: `{"entries":[{"kind":"signal","key":"t1"}]}`, wantKept: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			path := filepath.Join(tmp, digestFile)
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.digest), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := ClearStaleArtifacts(tmp); err != nil {
+				t.Fatalf("ClearStaleArtifacts: %v", err)
+			}
+			if _, err := os.Stat(path); (err == nil) != tc.wantKept {
+				t.Fatalf("digest kept = %v, want %v", err == nil, tc.wantKept)
+			}
+		})
 	}
 }
 
 func TestClearStaleArtifacts_DoesNotTouchOtherHomes(t *testing.T) {
 	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	os.WriteFile(filepath.Join(stateDir, ".seen-task-1"), []byte("line"), 0644)
-	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working\n"), 0644)
-
-	// Create a "sibling home" directory that should be untouched.
 	siblingDir := filepath.Join(tmp, "..", "other-home", "state")
 	os.MkdirAll(siblingDir, 0755)
-	os.WriteFile(filepath.Join(siblingDir, ".seen-other"), []byte("line"), 0644)
+	os.WriteFile(filepath.Join(siblingDir, ".afk-digest"), []byte("{}"), 0644)
 
 	if err := ClearStaleArtifacts(tmp); err != nil {
 		t.Fatalf("ClearStaleArtifacts: %v", err)
 	}
 
-	// Sibling's seen markers should remain.
-	if _, err := os.Stat(filepath.Join(siblingDir, ".seen-other")); os.IsNotExist(err) {
-		t.Error("sibling home .seen-other was removed, should not be touched")
-	}
-}
-
-func TestClearStaleCheckedMarkers(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create subsuper check markers.
-	os.WriteFile(filepath.Join(stateDir, ".subsuper-stale-health"), []byte("data"), 0644)
-	os.WriteFile(filepath.Join(stateDir, ".subsuper-seen-status-task-1"), []byte("data"), 0644)
-	// Create a seen marker that should NOT be removed by this function.
-	os.WriteFile(filepath.Join(stateDir, ".seen-task-1"), []byte("line"), 0644)
-
-	if err := ClearStaleCheckedMarkers(tmp); err != nil {
-		t.Fatalf("ClearStaleCheckedMarkers: %v", err)
-	}
-
-	// Check markers should be removed.
-	if _, err := os.Stat(filepath.Join(stateDir, ".subsuper-stale-health")); !os.IsNotExist(err) {
-		t.Error(".subsuper-stale-health still exists after ClearStaleCheckedMarkers")
-	}
-	if _, err := os.Stat(filepath.Join(stateDir, ".subsuper-seen-status-task-1")); !os.IsNotExist(err) {
-		t.Error(".subsuper-seen-status-task-1 still exists after ClearStaleCheckedMarkers")
-	}
-
-	// Regular seen markers should remain.
-	if _, err := os.Stat(filepath.Join(stateDir, ".seen-task-1")); os.IsNotExist(err) {
-		t.Error(".seen-task-1 was removed, should remain")
+	if _, err := os.Stat(filepath.Join(siblingDir, ".afk-digest")); os.IsNotExist(err) {
+		t.Error("sibling home .afk-digest was removed, should not be touched")
 	}
 }

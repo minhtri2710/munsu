@@ -127,18 +127,6 @@ func TestDeriveReportWakes(t *testing.T) {
 			}
 			return append(got, reportWakePayloads(t, h)...)
 		}, []string{"t1: failed: red [key=default]"}},
-		{"AFK drain with no watcher", func(t *testing.T, h string) []string {
-			appendReport(t, h, "t1", "failed", "red")
-			records, err := DrainWakesExcludingKind(h, "process-event")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got []string
-			for _, r := range records {
-				got = append(got, r.Payload)
-			}
-			return append(got, reportWakePayloads(t, h)...)
-		}, []string{"t1: failed: red [key=default]"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.steps(t, t.TempDir()); !slices.Equal(got, tc.want) {

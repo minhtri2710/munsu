@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // TestFleetSnapshotEmitsSingleContract verifies the collapsed command emits
@@ -73,9 +75,10 @@ func TestFleetSnapshotSurfacesRawCurrentStateError(t *testing.T) {
 	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
-	// A meta-only task (no canonical Task Authority record) forces
-	// fleet.Snapshot to fail while reading authoritative current state.
-	if err := os.WriteFile(filepath.Join(home, "state", "alpha.meta"), []byte("kind=ship\n"), 0644); err != nil {
+	// A corrupt canonical task document forces fleet.Snapshot to fail while
+	// reading authoritative current state.
+	mustBindCLIEndpoint(t, home, "alpha", taskauthority.EndpointBinding{Backend: "tmux", Handle: "@1"})
+	if err := os.WriteFile(filepath.Join(home, "state", "task-authority", "tasks", "alpha", "current.json"), []byte("{not-json"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,7 +87,7 @@ func TestFleetSnapshotSurfacesRawCurrentStateError(t *testing.T) {
 		t.Fatalf("expected a current-state error, got clean output:\n%s", out)
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "no canonical Task Authority record") {
+	if !strings.Contains(msg, "reading canonical task authority state for "+home) {
 		t.Errorf("raw current-state error not surfaced; got: %v", err)
 	}
 	if strings.Contains(msg, "Unable to read fleet state") {
@@ -92,8 +95,5 @@ func TestFleetSnapshotSurfacesRawCurrentStateError(t *testing.T) {
 	}
 	if strings.Contains(msg, `home "`) {
 		t.Errorf("home path must not be pre-quoted: %v", err)
-	}
-	if !strings.Contains(msg, "in home "+home) {
-		t.Errorf("home path missing from surfaced error: %v", err)
 	}
 }

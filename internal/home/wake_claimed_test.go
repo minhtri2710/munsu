@@ -92,6 +92,33 @@ func TestListClaimedLeasesSkipsShapesItCannotRead(t *testing.T) {
 	}
 }
 
+// The lease lister and reclaim read a header the same way: an expired lease the
+// lister reports holding a wake is exactly one reclaim requeues.
+func TestLeaseListerAndReclaimAgreeOnHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name, header string
+		held         bool
+	}{
+		{"four fields", "lease-a\tgeneral\t2000\t1500", true},
+		{"three fields", "lease-a\tgeneral\t2000", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeLeaseFixture(t, home, "lease-a", tc.header+"\n"+claimedWakeLine)
+			if got := hasExpiredLeaseWake(home, time.Now()); got != tc.held {
+				t.Fatalf("hasExpiredLeaseWake = %v, want %v", got, tc.held)
+			}
+			result, err := ClaimWakes(home, "munsu:afk", 60, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := result.Reclaimed == 1; got != tc.held {
+				t.Fatalf("reclaimed %d, want lister and reclaim to agree on held=%v", result.Reclaimed, tc.held)
+			}
+		})
+	}
+}
+
 // TestListClaimedLeasesToleratesAVanishingLease proves a lease removed between
 // the directory read and the file read is skipped, not an error: reclaim and
 // ack remove leases while a reader walks the directory.

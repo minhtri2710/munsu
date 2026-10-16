@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -85,7 +86,7 @@ type landedView struct {
 	ID, Title string
 }
 
-// EndpointBrief is one task meta endpoint under the home.
+// EndpointBrief is one task endpoint under the home.
 type EndpointBrief struct {
 	ID     string
 	State  string
@@ -180,50 +181,34 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	}
 	sum.Counts.Landed = len(landedAll)
 
-	entries, err := home.ListMeta(homeDir)
-	if err != nil {
-		sum.Valid = false
-		sum.Reason = "task meta unreadable: " + err.Error()
-		sum.State = "unknown"
-		return sum
-	}
-	sum.Counts.Endpoints = len(entries)
-	metaByID := map[string]home.MetaEntry{}
-	for _, e := range entries {
-		metaByID[e.ID] = e
-	}
-
+	// A child is a task whose current generation holds an endpoint.
 	type childState struct {
 		id, verb, statusVerb, status, kind, detail string
 	}
 	var children []childState
-	var unknownChildren []string
-	for _, e := range entries {
-		status := strings.TrimSpace(e.LastStatus)
+	childIDs := map[string]bool{}
+	for id, agg := range canonical {
+		if endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint) == nil {
+			continue
+		}
+		childIDs[id] = true
+		status := lastStatusMessage(homeDir, id)
 		statusVerb, detail := splitStatus(status)
-		verb := statusVerb
-		kind := e.Kind
-		if agg, ok := canonical[e.ID]; ok {
-			// The authoritative phase is state truth; the status line is
-			// display detail and can never override a newer authoritative
-			// lifecycle transition (criterion 3).
-			verb = string(agg.Phase)
-			kind = agg.Definition.Kind
-			if detail == "" {
-				detail = agg.PhaseDetail
-			}
-			if status == "" {
-				status = string(agg.Phase)
-			}
+		// The authoritative phase is state truth; the status line is display
+		// detail and can never override a newer authoritative lifecycle
+		// transition (criterion 3).
+		if detail == "" {
+			detail = agg.PhaseDetail
 		}
 		if status == "" {
-			unknownChildren = append(unknownChildren, e.ID)
-			verb = "unknown"
+			status = string(agg.Phase)
 		}
 		children = append(children, childState{
-			id: e.ID, verb: verb, statusVerb: statusVerb, status: status, kind: kind, detail: detail,
+			id: id, verb: string(agg.Phase), statusVerb: statusVerb, status: status, kind: agg.Definition.Kind, detail: detail,
 		})
 	}
+	sort.Slice(children, func(i, j int) bool { return children[i].id < children[j].id })
+	sum.Counts.Endpoints = len(children)
 
 	var activeAll []ChildBrief
 	for _, c := range children {
@@ -370,8 +355,8 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	if len(holdsAll) > maxHolds {
 		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "holds", Count: len(holdsAll) - maxHolds})
 	}
-	if len(entries) > maxEndpoints {
-		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "endpoints", Count: len(entries) - maxEndpoints})
+	if len(children) > maxEndpoints {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "endpoints", Count: len(children) - maxEndpoints})
 	}
 	if len(landedAll) > maxLanded {
 		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "landed", Count: len(landedAll) - maxLanded})
@@ -379,7 +364,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	var orphanInFlight []string
 	for id := range inFlightByID {
-		if _, ok := metaByID[id]; !ok {
+		if !childIDs[id] {
 			orphanInFlight = append(orphanInFlight, id)
 		}
 	}
@@ -394,12 +379,9 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	}
 
 	switch {
-	case len(unknownChildren) > 0:
-		sum.Valid = false
-		sum.Reason = "child current state unavailable"
 	case len(orphanInFlight) > 0:
 		sum.Valid = false
-		sum.Reason = "in-flight task has no child metadata"
+		sum.Reason = "in-flight task holds no endpoint"
 	case len(unownedCurrent) > 0 && sum.Counts.InFlight > 0:
 		sum.Valid = false
 		sum.Reason = "live child state has no in-flight task: " + strings.Join(unownedCurrent, ", ")
@@ -473,4 +455,14 @@ func capSlice[T any](all []T, n int) []T {
 		return all
 	}
 	return all[:n]
+}
+
+// lastStatusMessage is the message of the task's last status line, or "".
+func lastStatusMessage(homeDir, id string) string {
+	lines, err := home.ReadStatus(homeDir, id)
+	if err != nil || len(lines) == 0 {
+		return ""
+	}
+	msg, _ := domain.SplitStatusKey(lines[len(lines)-1])
+	return strings.TrimSpace(msg)
 }

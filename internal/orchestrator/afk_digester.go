@@ -13,11 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-// Durable digest constants.
-const (
-	digestFile    = "state/.afk-digest"
-	defaultWindow = 60 * time.Second // default batch window before flushing routine wakes
-)
+const digestFile = "state/.afk-digest"
 
 // EscalationType classifies a batched wake entry for escalation routing.
 type EscalationType int
@@ -58,8 +54,8 @@ type BatchedEntry struct {
 }
 
 // BatchedEscalation is the durable output of the digester, written to
-// state/.afk-digest on flush. It accumulates all triage results over a window
-// and flags each entry by escalation type.
+// state/.afk-digest on flush. It accumulates every flushed triage result and
+// flags each entry by escalation type.
 type BatchedEscalation struct {
 	Entries        []BatchedEntry `json:"entries"`
 	RoutineCount   int            `json:"routine_count"`
@@ -68,34 +64,20 @@ type BatchedEscalation struct {
 	LastAt         time.Time      `json:"last_at"`
 }
 
-// Digester accumulates triage Digests over a time window and flushes
-// a BatchedEscalation to durable state when the window expires.
-// Safe for concurrent use.
+// Digester accumulates triage Digests until Flush appends them to the
+// durable BatchedEscalation. Safe for concurrent use.
 type Digester struct {
 	mu             sync.Mutex
 	entries        []BatchedEntry
 	routineCount   int
 	escalatedCount int
 	firstAt        time.Time
-	lastFlush      time.Time
 	homeDir        string
-	window         time.Duration // batch window, defaults to defaultWindow
 }
 
 // NewDigester creates a Digester scoped to the given home directory.
 func NewDigester(homeDir string) *Digester {
-	return &Digester{
-		homeDir: homeDir,
-		window:  defaultWindow,
-	}
-}
-
-// SetWindow overrides the default batch window duration.
-// Must be called before Start if a non-default window is desired.
-func (d *Digester) SetWindow(window time.Duration) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.window = window
+	return &Digester{homeDir: homeDir}
 }
 
 // Feed adds triage results to the accumulator. A nil digest is a no-op.
@@ -152,23 +134,6 @@ func (d *Digester) FeedWedge(reason string, at time.Time) {
 	d.escalatedCount++
 }
 
-// ShouldFlush reports whether the digest window has elapsed since the last flush
-// and there are entries to flush. The window is measured from either the
-// last flush time or the first entry time, whichever is more recent.
-func (d *Digester) ShouldFlush(now time.Time) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if len(d.entries) == 0 {
-		return false
-	}
-	// Use first entry time as reference if never flushed; otherwise use last flush.
-	reference := d.lastFlush
-	if reference.IsZero() {
-		reference = d.firstAt
-	}
-	return now.Sub(reference) >= d.window
-}
-
 // Flush writes the BatchedEscalation to state/.afk-digest and resets the
 // accumulator only after the durable write succeeds. Returns nil if the
 // accumulator is empty.
@@ -212,7 +177,6 @@ func (d *Digester) Flush(now time.Time) error {
 	d.routineCount = 0
 	d.escalatedCount = 0
 	d.firstAt = time.Time{}
-	d.lastFlush = now
 	return nil
 }
 

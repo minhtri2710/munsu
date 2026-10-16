@@ -113,7 +113,7 @@ func renderFleetView(w io.Writer, snap *fleet.FleetSnapshot) {
 			src = "primary"
 		}
 		fmt.Fprintf(w, "- **%s** (repo: %s) [%s]\n", ts.ID, ts.Project, src)
-		fmt.Fprintf(w, "  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
+		fmt.Fprintf(w, "  kind: %s | mode: %s\n", ts.Kind, ts.Mode)
 		var modelEffortParts []string
 		if ts.Harness != "" {
 			modelEffortParts = append(modelEffortParts, fmt.Sprintf("harness: %s", ts.Harness))

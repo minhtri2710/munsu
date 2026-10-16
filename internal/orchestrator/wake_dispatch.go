@@ -8,6 +8,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // wakeDispatchLeaseSeconds is how long a dispatched Wake stays leased to
@@ -253,6 +254,15 @@ func dispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 		return DeferredResult("backend-error", result.Err.Error()), nil
 	}
 	if !result.Acknowledged {
+		// These statuses prove the prompt never reached the composer, so the
+		// Wake goes back to the queue head now. Any other status may have left
+		// the text in the composer: the lease stays until it expires.
+		switch backend.PromptStatus(result.Status) {
+		case backend.PromptEndpointDead, backend.PromptUnsupported, backend.PromptUnsafeComposer:
+			if err := home.ReleaseWakeLease(req.HomeDir, claim.LeaseID); err != nil {
+				return DispatchWakeResult{}, fmt.Errorf("releasing undelivered wake lease %s: %w", claim.LeaseID, err)
+			}
+		}
 		return DeferredResult(result.Status, result.Detail), nil
 	}
 

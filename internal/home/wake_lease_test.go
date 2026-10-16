@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -410,6 +411,39 @@ func TestLeaseExpiryReclaim(t *testing.T) {
 				t.Fatalf("second claim = reclaimed %d, wakes %+v, want payload1 reclaimed", result2.Reclaimed, result2.Wakes)
 			}
 		})
+	}
+}
+
+// Expired leases go back ahead of records queued after their claim, oldest
+// claim first, and count as queued until a claim reclaims them.
+func TestExpiredLeaseReclaimsAheadOfNewerRecords(t *testing.T) {
+	home := t.TempDir()
+	writeQueueLines(t, home, []string{
+		"1700000000\t1\tsignal\ta1\tp",
+		"1700000000\t2\tsignal\ta2\tp",
+	})
+	for i := range 2 {
+		at := time.Unix(1700000000+int64(i), 0)
+		if _, err := claimWakesAt(home, "consumer", 10, 1, func() time.Time { return at }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !HasQueuedWakes(home) {
+		t.Fatal("HasQueuedWakes = false with only expired leases holding wakes")
+	}
+	if err := EnqueueWake(home, "signal", "b", "p"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := claimWakesAt(home, "consumer", 10, 3, func() time.Time { return time.Unix(1700000100, 0) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, w := range result.Wakes {
+		keys = append(keys, w.Key)
+	}
+	if strings.Join(keys, ",") != "a1,a2,b" {
+		t.Fatalf("claim order = %v, want [a1 a2 b]", keys)
 	}
 }
 
