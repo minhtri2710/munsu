@@ -394,22 +394,45 @@ func TestAuthorizeSpawnRejectsRegularSoldier(t *testing.T) {
 	}
 }
 
+// A pane a soldier's current generation holds cannot spawn whatever
+// MUNSU_ROLE says; a pane whose binding was released by retirement is no
+// soldier's, and an unreadable task document refuses.
 func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing.T) {
-	homeDir := t.TempDir()
-	if err := home.WriteMeta(homeDir, "soldier-1", map[string]string{
-		"kind":    "ship",
-		"backend": "herdr",
-		"window":  "default:w1:p9",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HERDR_PANE_ID", "w1:p9")
-	t.Setenv("TMUX_PANE", "")
-	t.Setenv("MUNSU_ROLE", "")
-	r := &Runner{homeDir: homeDir}
-	err := r.checkSpawnAuthority()
-	if err == nil || !strings.Contains(err.Error(), "managed soldier endpoints cannot spawn") {
-		t.Fatalf("checkSpawnAuthority() error = %v, want managed-endpoint refusal", err)
+	const managed = "managed soldier endpoints cannot spawn"
+	const unreadable = "spawn authority: resolving current endpoint"
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, homeDir string)
+		refusal string
+	}{
+		{"blocks a live soldier binding on this pane", func(t *testing.T, homeDir string) {
+			seedBoundSoldierTask(t, homeDir, "soldier-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "default:w1:p9"})
+		}, managed},
+		{"allows a retired soldier binding on this pane", func(t *testing.T, homeDir string) {
+			retireSoldier(t, seedBoundSoldierTask(t, homeDir, "soldier-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "default:w1:p9"}), "soldier-1")
+		}, ""},
+		{"fails closed on an unreadable task document", func(t *testing.T, homeDir string) {
+			seedBoundSoldierTask(t, homeDir, "soldier-1", taskauthority.EndpointBinding{Backend: "herdr", Handle: "default:w1:p9"})
+			corruptCanonicalTask(t, homeDir, "soldier-1")
+		}, unreadable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			tc.seed(t, homeDir)
+			t.Setenv("HERDR_PANE_ID", "w1:p9")
+			t.Setenv("TMUX_PANE", "")
+			t.Setenv("MUNSU_ROLE", "")
+			err := (&Runner{homeDir: homeDir}).checkSpawnAuthority()
+			if tc.refusal == "" {
+				if err != nil && (strings.Contains(err.Error(), managed) || strings.Contains(err.Error(), unreadable)) {
+					t.Fatalf("checkSpawnAuthority() = %v, want no managed-endpoint refusal", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+				t.Fatalf("checkSpawnAuthority() = %v, want %q", err, tc.refusal)
+			}
+		})
 	}
 }
 
@@ -432,12 +455,7 @@ func TestCurrentEndpointKindFindsCaptainHerdrPane(t *testing.T) {
 
 func TestCurrentEndpointKindFindsTmuxWindowForPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := home.WriteMeta(homeDir, "soldier-2", map[string]string{
-		"kind":   "ship",
-		"window": "munsu:@7",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	seedBoundSoldierTask(t, homeDir, "soldier-2", taskauthority.EndpointBinding{Backend: "tmux", Handle: "munsu:@7"})
 	original := tmuxWindowForPane
 	t.Cleanup(func() { tmuxWindowForPane = original })
 	tmuxWindowForPane = func(pane string) (string, error) {

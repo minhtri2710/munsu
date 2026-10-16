@@ -9,6 +9,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -123,5 +124,99 @@ func TestWorktreeOwnershipGuards(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.refused)
 			}
 		})
+	}
+}
+
+// activeWorktreeClaims claims the worktree a task's current generation binds
+// and releases it once retirement cleanup has completed; a worktree only a
+// .meta names is no claim, and an unreadable task document fails closed.
+func TestActiveWorktreeClaimsReadCanonicalBindings(t *testing.T) {
+	const worktree = "/pool/wt-claimed"
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, auth *taskauthority.Canonical, homeDir string)
+		claimed bool
+		wantErr string
+	}{
+		{"blocks a worktree a live binding holds", func(t *testing.T, auth *taskauthority.Canonical, _ string) {
+			bindClaimWorktree(t, auth, "live", worktree, false)
+		}, true, ""},
+		{"allows a worktree whose retirement cleanup completed", func(t *testing.T, auth *taskauthority.Canonical, _ string) {
+			bindClaimWorktree(t, auth, "released", worktree, true)
+		}, false, ""},
+		{"allows a worktree only a .meta names", func(t *testing.T, _ *taskauthority.Canonical, homeDir string) {
+			if err := home.WriteMeta(homeDir, "meta-only", map[string]string{"worktree": worktree}); err != nil {
+				t.Fatal(err)
+			}
+		}, false, ""},
+		{"fails closed on an unreadable task document", func(t *testing.T, auth *taskauthority.Canonical, homeDir string) {
+			bindClaimWorktree(t, auth, "live", worktree, false)
+			if err := os.WriteFile(filepath.Join(homeDir, "state", "task-authority", "tasks", "live", "current.json"), []byte("{corrupt"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, false, "listing task authority in"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", homeDir)
+			initCLITestHome(t, homeDir)
+			tc.seed(t, testAuthorityFor(t, homeDir), homeDir)
+			active, _, err := activeWorktreeClaims(homeDir, []backend.WorktreeEntry{{Path: worktree}})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("activeWorktreeClaims = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || active[worktreeClaimKey(worktree)] != tc.claimed {
+				t.Fatalf("activeWorktreeClaims = %v, %v, want claimed=%v", active, err, tc.claimed)
+			}
+		})
+	}
+}
+
+// bindClaimWorktree binds id's worktree at path. With release set the binding
+// is a launch's reservation, retired with its retirement cleanup completed.
+func bindClaimWorktree(t *testing.T, auth *taskauthority.Canonical, id, path string, release bool) {
+	t.Helper()
+	taskID := mustTaskIDFor(t, id)
+	create := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: taskID, Owner: "general", Description: "claim", Kind: "ship", Reason: "claim test"}
+	if _, err := auth.Create(mustCanonicalOp(t, "claim-create-"+id, create), create); err != nil {
+		t.Fatal(err)
+	}
+	precondition := func() domain.Precondition {
+		agg, err := auth.Get(taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+	}
+	launch := taskauthority.CanonicalBeginSpawnRequest{HomeID: auth.HomeID(), TaskID: taskID, SnapshotDigest: strings.Repeat("d", 64), Backend: "tmux", Harness: "pi", Model: "model", Effort: "high", Mode: "direct-PR", Kind: "ship", LaunchID: "launch-" + id, WindowLabel: "window-" + id, WorktreeReservationID: "wt-" + id, WorktreeFenceToken: "fence-" + id, EndpointReservationID: "ep-" + id, EndpointFenceToken: "ep-fence-" + id, SeatPathDirs: []string{"/usr/bin"}, EndpointIncarnation: "ep-inc-" + id, Reason: "claim test"}
+	launch.SeatEnv = taskauthority.SeatEnv{TempDir: "/tmp", UserHome: "/home/tester"}
+	if release {
+		launch.Precondition = precondition()
+		if _, err := auth.BeginSpawn(mustCanonicalOp(t, "claim-launch-"+id, launch), launch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bind := taskauthority.CanonicalBindWorktreeRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: precondition(), Reason: "claim test", Binding: taskauthority.WorktreeBinding{
+		RepositoryIdentity: "repo", Path: path, GitDir: path + "/.git", CommonDir: "/repo/.git", BaseHead: strings.Repeat("a", 40), LeaseID: launch.WorktreeReservationID, FenceToken: launch.WorktreeFenceToken, BoundAtUnix: 1,
+	}}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "claim-bind-"+id, bind), bind); err != nil {
+		t.Fatal(err)
+	}
+	if !release {
+		return
+	}
+	retire := taskauthority.CanonicalRetireRequest{HomeID: auth.HomeID(), TaskID: taskID, Precondition: precondition(), Reason: "claim test"}
+	if _, err := auth.Retire(mustCanonicalOp(t, "claim-retire-"+id, retire), retire); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.ReconcileRetirementCleanup(taskID, agg.Generation, taskauthority.CleanupCompleted, func() error { return nil }); err != nil {
+		t.Fatal(err)
 	}
 }

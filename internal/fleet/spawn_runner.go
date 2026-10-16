@@ -498,6 +498,10 @@ var tmuxWindowForPane = func(pane string) (string, error) {
 	return window, nil
 }
 
+// currentEndpointKind is the kind of the task or captain whose pane this
+// process runs in: a soldier's from its canonical binding, a captain's from
+// its .meta.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
 func currentEndpointKind(homeDir string) (string, bool, error) {
 	herdrPane := strings.TrimSpace(os.Getenv("HERDR_PANE_ID"))
 	tmuxPane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
@@ -512,33 +516,35 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 			return "", false, err
 		}
 	}
-	entries, err := os.ReadDir(home.StateDir(homeDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", false, nil
+	runsIn := func(backendName, handle string) bool {
+		if herdrPane != "" && backendName == "herdr" && strings.HasSuffix(handle, ":"+herdrPane) {
+			return true
 		}
+		return tmuxWindow != "" && (handle == tmuxWindow || strings.HasSuffix(handle, ":"+tmuxWindow))
+	}
+	held, err := heldEndpoints(homeDir, home.OpenCommitted)
+	if err != nil {
 		return "", false, err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
+	for _, h := range held {
+		if runsIn(h.Endpoint.Backend, h.Endpoint.Handle) {
+			return h.Kind, true, nil
 		}
-		id, err := home.ReverseDurableKey(strings.TrimSuffix(entry.Name(), ".meta"))
-		if err != nil {
+	}
+	ids, err := home.ListMetaIDs(homeDir)
+	if err != nil {
+		return "", false, err
+	}
+	for _, id := range ids {
+		if !strings.HasPrefix(id, "captain:") {
 			continue
 		}
 		meta, err := home.ReadMeta(homeDir, id)
 		if err != nil {
 			continue
 		}
-		if herdrPane != "" && meta["backend"] == "herdr" && strings.HasSuffix(meta["window"], ":"+herdrPane) {
+		if runsIn(meta["backend"], meta["window"]) {
 			return meta["kind"], true, nil
-		}
-		if tmuxWindow != "" {
-			window := meta["window"]
-			if window == tmuxWindow || strings.HasSuffix(window, ":"+tmuxWindow) {
-				return meta["kind"], true, nil
-			}
 		}
 	}
 	return "", false, nil

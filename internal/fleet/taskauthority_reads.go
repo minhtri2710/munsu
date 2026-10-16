@@ -3,7 +3,10 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
@@ -121,4 +124,96 @@ func (canonicalCurrentStateQ) Read(homeDir, taskID string) (*CurrentStateInfo, e
 		info.OpenActivities = home.OpenActivities(statusPath)
 	}
 	return info, nil
+}
+
+// heldEndpoint is the endpoint a task's current generation holds.
+type heldEndpoint struct {
+	TaskID   string
+	Kind     string
+	Endpoint tauth.EndpointBinding
+}
+
+// heldEndpoints lists the endpoint each task's current generation in homeDir
+// holds, bound or acquired before its bind; a retired generation holds none.
+// open is home.Open, or home.OpenCommitted for a fenced seat's reads. A home
+// with no canonical store holds none; an unreadable task document fails
+// closed.
+func heldEndpoints(homeDir string, open func(string) (*home.Home, error)) ([]heldEndpoint, error) {
+	h, err := open(homeDir)
+	if errors.Is(err, home.ErrNotInitialized) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c, err := tauth.NewCanonical(h)
+	if err != nil {
+		return nil, err
+	}
+	aggs, err := c.List()
+	if err != nil {
+		return nil, err
+	}
+	var held []heldEndpoint
+	for _, agg := range aggs {
+		if ep := endpointOrAcquired(agg.Endpoint, agg.AcquiredEndpoint); ep != nil {
+			held = append(held, heldEndpoint{TaskID: agg.TaskID, Kind: agg.Definition.Kind, Endpoint: *ep})
+		}
+	}
+	return held, nil
+}
+
+// captainWorkspaces is the herdr workspace each captain .meta in homeDir
+// records, keyed by its captain:<id> task ID. A .meta that vanishes after
+// enumeration records nothing; any other read error fails closed.
+func captainWorkspaces(homeDir string) (map[string]string, error) {
+	ids, err := home.ListMetaIDs(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string)
+	for _, id := range ids {
+		if !strings.HasPrefix(id, "captain:") {
+			continue
+		}
+		path, err := home.MetaFilePath(homeDir, id)
+		if err != nil {
+			return nil, err
+		}
+		meta, err := home.ReadMetaFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if ws := meta[backend.MetaWorkspaceID]; ws != "" {
+			out[id] = ws
+		}
+	}
+	return out, nil
+}
+
+// LiveWorkspaceIDs is the set of herdr workspaces homeDir's tasks and
+// captains hold, which herdr prune never closes.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: re-home onto canonical bindings, fail closed)
+func LiveWorkspaceIDs(homeDir string) (map[string]bool, error) {
+	held, err := heldEndpoints(homeDir, home.Open)
+	if err != nil {
+		return nil, fmt.Errorf("reading task endpoint bindings: %w", err)
+	}
+	captains, err := captainWorkspaces(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading captain meta: %w", err)
+	}
+	ids := make(map[string]bool)
+	for _, h := range held {
+		if h.Endpoint.WorkspaceID != "" {
+			ids[h.Endpoint.WorkspaceID] = true
+		}
+	}
+	for _, ws := range captains {
+		ids[ws] = true
+	}
+	return ids, nil
 }
