@@ -26,7 +26,7 @@ func newWatchEnsureCmd() *cobra.Command {
 			}
 
 			result := ensureWatcher(ctx.Home, restart)
-			return writeContract(cmd, result)
+			return writeContractResult(cmd, result)
 		}),
 	}
 	configureContractCommand(cmd)
@@ -93,6 +93,7 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 				State:   "failed",
 				Noop:    false,
 			},
+			Help: []string{err.Error()},
 		}
 	}
 
@@ -288,7 +289,7 @@ func newWatchStopCmd() *cobra.Command {
 			}
 
 			result := stopWatcher(ctx.Home)
-			return writeContract(cmd, result)
+			return writeContractResult(cmd, result)
 		}),
 	}
 	configureContractCommand(cmd)

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Role identifies which role the obligation set targets.
@@ -222,5 +224,5 @@ func writeObligationsFile(p string, obligations []Obligation) error {
 		b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%d\n",
 			o.Kind, o.State, o.Key, o.Detail, o.CreatedAt, o.ClosedAt))
 	}
-	return os.WriteFile(p, []byte(b.String()), 0644)
+	return home.AtomicWrite(p, []byte(b.String()), 0644)
 }

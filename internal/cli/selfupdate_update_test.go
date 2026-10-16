@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -645,6 +646,38 @@ func TestUpdateWithHandshakeEx_UpdateFailureNoConvergence(t *testing.T) {
 	}
 	if snap.Active {
 		t.Error("expected Active=false when no watcher was set up")
+	}
+}
+
+func TestUpdateWithHandshakeExPersistsInstallRootOnlyAfterSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		updateErr error
+	}{
+		{name: "failed update persists nothing", updateErr: fmt.Errorf("build failed")},
+		{name: "successful update persists root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, "main")
+			savedUpdateIn := doUpdateIn
+			doUpdateIn = func(string) error { return tc.updateErr }
+			defer func() { doUpdateIn = savedUpdateIn }()
+
+			_, err := UpdateWithHandshakeEx(home, repo)
+			persisted, getErr := config.Get(home, "install-root")
+			if tc.updateErr != nil {
+				if err == nil || getErr == nil {
+					t.Fatalf("err=%v persisted=%q, want update error and no install-root", err, persisted)
+				}
+				return
+			}
+			canonical, _ := gitToplevel(repo)
+			if err != nil || persisted != canonical {
+				t.Fatalf("err=%v persisted=%q getErr=%v, want %q", err, persisted, getErr, canonical)
+			}
+		})
 	}
 }
 
