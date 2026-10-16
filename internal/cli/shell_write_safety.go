@@ -3145,6 +3145,8 @@ func verbWriteTargets(args []shellToken) []shellToken {
 func targetDirectoryFlag(args []shellToken) (shellToken, bool) {
 	for i, arg := range args {
 		switch {
+		case arg.text == "--":
+			return shellToken{}, false
 		case arg.text == "-t" || arg.text == "--target-directory":
 			if i+1 < len(args) {
 				return args[i+1], true
@@ -3160,9 +3162,15 @@ func targetDirectoryFlag(args []shellToken) (shellToken, bool) {
 	return shellToken{}, false
 }
 
+// nonFlagArgs drops option words up to `--`, which ends option parsing: every
+// word after it is an operand, even one that starts with `-`.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: `--` ends flag parsing in nonFlagArgs and targetDirectoryFlag)
 func nonFlagArgs(args []shellToken) []shellToken {
 	var out []shellToken
-	for _, arg := range args {
+	for i, arg := range args {
+		if arg.text == "--" {
+			return append(out, args[i+1:]...)
+		}
 		if strings.HasPrefix(arg.text, "-") {
 			continue
 		}

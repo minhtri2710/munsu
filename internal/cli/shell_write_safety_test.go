@@ -480,6 +480,12 @@ func TestShellWriteTargetExtraction(t *testing.T) {
 		{"rsync -t /etc/hosts " + abs, []string{abs}},
 		{"rsync -tv /etc/hosts " + abs, []string{abs}},
 
+		// `--` ends option parsing: the words after it are operands.
+		{"rm -- -x/../../../etc/x", []string{filepath.Join(base, "-x/../../../etc/x")}},
+		{"rm -- -f", []string{filepath.Join(base, "-f")}},
+		{"mv a -- -b", []string{filepath.Join(base, "-b")}},
+		{"mv a -- -tdir", []string{filepath.Join(base, "-tdir")}},
+
 		// A heredoc body is content, not a command line.
 		{"cat <<'EOF' > notes.md\nrm -rf " + abs + "\nEOF", []string{filepath.Join(base, "notes.md")}},
 		{"cat <<EOF > notes.md\ncd /elsewhere\nEOF\necho ok > out.txt",
