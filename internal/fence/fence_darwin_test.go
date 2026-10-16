@@ -231,12 +231,19 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		return
 	}
 
-	// The task's own branch ref and the dirs git creates for its slashed name
-	// are writable in the common dir; its reflog under logs/ is append-only.
-	if o, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "refs", "heads", "mu")); err != nil {
-		t.Fatalf("creating the branch namespace dir: %v %s", err, o)
-	}
+	// The task's own branch ref is writable in the common dir; its reflog under
+	// logs/ is append-only. munsu pre-creates the dir of its slashed name at
+	// spawn (ensureBranchReflog): the seat can neither create it nor rename it
+	// away, write another task's ref in the moved copy, and move it back.
 	refDir := filepath.Join(l.common, "refs", "heads", "mu")
+	mustRefuseMkdir(t, f, refDir)
+	mkdirs(t, refDir)
+	if o, err := fenced(t, f, "/bin/mv", refDir, filepath.Join(l.common, "refs", "remotes", "stolen")); err == nil || !strings.Contains(o, "Operation not permitted") {
+		t.Errorf("renaming the branch namespace dir away was not refused by the fence: %v %s", err, o)
+	}
+	if fi, err := os.Lstat(refDir); err != nil || !fi.IsDir() {
+		t.Fatalf("the branch namespace dir is gone after a rename the fence must refuse: %v", err)
+	}
 	mustWrite(t, f, filepath.Join(refDir, "T-1"), filepath.Join(refDir, "T-1.lock"))
 	mustRefuse(t, f, filepath.Join(refDir, "other"), filepath.Join(refDir, "T-2"), filepath.Join(refDir, "T-1x"))
 	if _, err := fenced(t, f, "/bin/mkdir", filepath.Join(l.common, "refs", "heads", "rogue")); err == nil {
@@ -285,7 +292,10 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	// the target of), and its .git file, whose gitdir: line picks the git dir
 	// the next launch grants and unfenced git reads, cannot be rewritten or
 	// swapped. The temp-root layout's worktree sits where the temp-root allow
-	// covers its parent. Nearest allow: a rename inside the worktree.
+	// covers its parent. Neither a soldier nor a reviewer renames away the temp
+	// dir above the primary checkout, which is no ancestor of l's worktree.
+	// Nearest allow: a rename inside the worktree, and a reviewer's rename
+	// inside that temp dir.
 	gitFile := filepath.Join(l.worktree, ".git")
 	if err := os.WriteFile(gitFile, []byte("gitdir: "+l.gitDir+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -297,10 +307,11 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dest) })
 	tl := newLayout(t)
 	tf := mustNew(t, tl.soldier())
+	rf := mustNew(t, l.reviewer())
 	for _, mv := range []struct {
 		f   *Fence
 		dir string
-	}{{f, l.worktree}, {tf, tl.worktree}, {tf, tl.root}} {
+	}{{f, l.worktree}, {tf, tl.worktree}, {tf, tl.root}, {f, l.root}, {rf, l.root}} {
 		if o, err := fenced(t, mv.f, "/bin/mv", mv.dir, filepath.Join(dest, "wt-swap")); err == nil || !strings.Contains(o, "Operation not permitted") {
 			t.Errorf("renaming %s away was not refused by the fence: %v %s", mv.dir, err, o)
 		}
@@ -317,6 +328,12 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	}
 	if o, err := fenced(t, f, "/bin/mv", filepath.Join(l.worktree, "a"), filepath.Join(l.worktree, "b")); err != nil {
 		t.Errorf("a rename inside the worktree was refused: %v %s", err, o)
+	}
+	if err := os.WriteFile(filepath.Join(l.root, "a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := fenced(t, rf, "/bin/mv", filepath.Join(l.root, "a"), filepath.Join(l.root, "b")); err != nil {
+		t.Errorf("a reviewer's rename inside the temp dir above the primary was refused: %v %s", err, o)
 	}
 }
 
@@ -350,11 +367,11 @@ func TestFencedSoldierCommitsOnItsBranch(t *testing.T) {
 	// Production creates the worktree detached, so mu/T-1 and its reflog do not
 	// exist yet; the seat makes the branch itself with a fenced `checkout -b`.
 	git("-C", primary, "worktree", "add", "--detach", "-q", wt, "main")
-	// munsu's unfenced pre-create, replicated: an empty regular reflog file and
-	// its parent dirs in the common dir. This is exactly what ensureBranchReflog
-	// does.
+	// munsu's unfenced pre-create, replicated: the branch's namespace dir under
+	// refs/heads, and an empty regular reflog file and its parent dirs in the
+	// common dir. This is exactly what ensureBranchReflog does.
 	commonReflog := filepath.Join(common, "logs", "refs", "heads", "mu", "T-1")
-	mkdirs(t, filepath.Dir(commonReflog))
+	mkdirs(t, filepath.Dir(commonReflog), filepath.Join(common, "refs", "heads", "mu"))
 	if err := os.WriteFile(commonReflog, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1001,6 +1018,40 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	if err := os.Symlink(realBin, linkBin); err != nil {
 		t.Fatal(err)
 	}
+	// A PATH entry that is a dangling relative link: a write through it creates
+	// the target, which the sandbox sees by its own name.
+	danglingTarget := filepath.Join(l.root, "danglingtarget")
+	if err := os.Symlink("danglingtarget", filepath.Join(l.root, "danglingbin")); err != nil {
+		t.Fatal(err)
+	}
+	// Every link on the way to a PATH dir is one the seat must not replace: an
+	// existing chain and a dangling chain under a temp root, a link outside every
+	// root through a link in the worktree, and a link into a symlinked dir.
+	symlinks := func(pairs ...string) {
+		for i := 0; i < len(pairs); i += 2 {
+			if err := os.Symlink(pairs[i+1], pairs[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	chain1, chain2 := filepath.Join(l.root, "chain1"), filepath.Join(l.root, "chain2")
+	dchain1, dchain2 := filepath.Join(l.root, "dchain1"), filepath.Join(l.root, "dchain2")
+	olink1, olink2 := filepath.Join(out, "olink1"), filepath.Join(l.worktree, "olink2")
+	subLink, linkDir := filepath.Join(out, "sublink"), filepath.Join(l.root, "linkdir")
+	mkdirs(t, filepath.Join(l.root, "chainreal"), filepath.Join(out, "otarget"), filepath.Join(l.root, "realdir", "bin"))
+	symlinks(chain2, "chainreal", chain1, "chain2",
+		dchain2, "dchaintarget", dchain1, "dchain2",
+		olink2, filepath.Join(out, "otarget"), olink1, olink2,
+		linkDir, filepath.Join(l.root, "realdir"), subLink, filepath.Join(linkDir, "bin"))
+	replace := func(link, entry string) []string {
+		return []string{"/bin/sh", "-c", `rm "$1" && mkdir -p "$1/bin" && touch "$2/git"`, "sh", link, entry}
+	}
+	// A PATH dir and a link to one still run what they hold.
+	for _, d := range []string{tmpBin, realBin} {
+		if err := os.WriteFile(filepath.Join(d, "hello"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// A PATH dir deeper under a harness root: its middle directory is strictly
 	// inside the root, the root itself is not.
 	deepBin := filepath.Join(claudeCache, "deep", "mid", "bin")
@@ -1023,7 +1074,8 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 	})
 	piAgentBin := filepath.Join(uhome, ".pi", "agent", "bin")
 	mkdirs(t, filepath.Join(l.stateDir(), "bin"), piAgentBin)
-	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, "/usr/bin"}
+	pathDirs := []string{shim, claudeBin, deepBin, wtBin, tmpBin, linkBin, filepath.Join(l.root, "danglingbin"),
+		chain1, dchain1, olink1, subLink, "/usr/bin"}
 	sl, rl := l.soldier(), l.reviewer()
 	sl.Files = []string{filepath.Join(state, "T-1.status")}
 	sl.PathDirs, rl.PathDirs = pathDirs, pathDirs
@@ -1062,6 +1114,14 @@ func TestSeatCannotWriteReplaceOrRenameAPathDir(t *testing.T) {
 		{"soldier creates a file in a symlinked PATH dir's real directory", soldier, []string{touchBin, filepath.Join(realBin, "go")}, true, filepath.Join(realBin, "go"), ""},
 		{"soldier creates a file through a symlinked PATH dir", soldier, []string{touchBin, filepath.Join(linkBin, "go")}, true, filepath.Join(realBin, "go"), ""},
 		{"soldier writes beside a symlinked PATH dir's real directory", soldier, []string{touchBin, filepath.Join(l.root, "realbin-sibling", "f")}, false, "", ""},
+		{"soldier creates a dangling PATH link's target", soldier, []string{"/bin/mkdir", danglingTarget}, true, danglingTarget, ""},
+		{"soldier writes an unrelated temp path beside a dangling PATH link", soldier, []string{touchBin, filepath.Join(l.root, "dangling-sibling")}, false, "", ""},
+		{"soldier replaces the middle link of a PATH link chain", soldier, replace(chain2, chain1), true, filepath.Join(chain2, "git"), chain2},
+		{"soldier replaces the middle link of a dangling PATH link chain", soldier, replace(dchain2, dchain1), true, filepath.Join(dchain2, "git"), dchain2},
+		{"soldier replaces a worktree link an outside PATH link points through", soldier, replace(olink2, olink1), true, filepath.Join(olink2, "git"), olink2},
+		{"soldier replaces a symlinked dir a PATH link points into", soldier, replace(linkDir, subLink), true, filepath.Join(linkDir, "bin", "git"), linkDir},
+		{"soldier runs a program in a PATH dir", soldier, []string{filepath.Join(tmpBin, "hello")}, false, "", ""},
+		{"soldier runs a program through a symlinked PATH dir", soldier, []string{filepath.Join(linkBin, "hello")}, false, "", ""},
 		{"soldier writes its worktree", soldier, []string{touchBin, filepath.Join(l.worktree, "f")}, false, "", ""},
 		{"soldier writes its task status", soldier, []string{touchBin, filepath.Join(state, "T-1.status")}, false, "", ""},
 		{"soldier writes beside a harness PATH dir", soldier, []string{touchBin, filepath.Join(claudeCache, "f")}, false, "", ""},

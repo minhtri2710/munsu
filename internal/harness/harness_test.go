@@ -193,6 +193,9 @@ func TestMatchProcessName(t *testing.T) {
 		{"bash", ""},
 		{"zsh", ""},
 		{"", ""},
+		{"/opt/homebrew/bin/codex", Codex},
+		{"/Applications/Claude Code.app/Contents/MacOS/Claude Code", Claude},
+		{"/Users/me/codex-work/bin/bash", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,6 +203,26 @@ func TestMatchProcessName(t *testing.T) {
 				t.Errorf("matchProcessName(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParsePSLine(t *testing.T) {
+	tests := []struct {
+		out      string
+		wantComm string
+		wantPPID int
+		wantOK   bool
+	}{
+		{"  412 /Applications/Claude Code.app/Contents/MacOS/Claude Code\n", "/Applications/Claude Code.app/Contents/MacOS/Claude Code", 412, true},
+		{"1 /opt/homebrew/Cellar/node/24.1.0/bin/some-very-long-binary-name\n", "/opt/homebrew/Cellar/node/24.1.0/bin/some-very-long-binary-name", 1, true},
+		{"  412\n", "", 0, false},
+		{"claude 412\n", "", 0, false},
+	}
+	for _, tt := range tests {
+		comm, ppid, ok := parsePSLine(tt.out)
+		if comm != tt.wantComm || ppid != tt.wantPPID || ok != tt.wantOK {
+			t.Errorf("parsePSLine(%q) = (%q, %d, %v), want (%q, %d, %v)", tt.out, comm, ppid, ok, tt.wantComm, tt.wantPPID, tt.wantOK)
+		}
 	}
 }
 

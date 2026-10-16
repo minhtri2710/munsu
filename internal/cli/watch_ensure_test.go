@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -443,5 +445,43 @@ func TestEnsureWatcherFailsWhenTheStartedWatcherNeverProvesOwnership(t *testing.
 	}
 	if resp.Data.Lease != nil || resp.Data.WatchID != "" {
 		t.Fatalf("a failed ensure must not report a lease or watch id: %+v", resp.Data)
+	}
+}
+
+func TestWatchCommandsExitNonzeroOnErrorStatus(t *testing.T) {
+	savedStarter := startWatcherProcess
+	startWatcherProcess = func(string) (int, error) { return 0, fmt.Errorf("spawn refused") }
+	t.Cleanup(func() { startWatcherProcess = savedStarter })
+
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		wantKind   string
+		wantStatus string
+		wantExit   int
+	}{
+		{name: "failed ensure exits nonzero with its response", args: []string{"watch", "ensure"}, wantKind: "watch.ensure", wantStatus: "error", wantExit: exitOperation},
+		{name: "no-op stop exits zero", args: []string{"watch", "stop"}, wantKind: "watch.stop", wantStatus: "success"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			args := append(tc.args, "--home", homeDir, "--output", "json")
+			out, err := runRoot(t, args...)
+			exit := 0
+			if err != nil {
+				exit = WriteContractError(io.Discard, err, args)
+			}
+			var doc struct {
+				Kind   string `json:"kind"`
+				Status string `json:"status"`
+			}
+			if jErr := json.Unmarshal([]byte(out), &doc); jErr != nil {
+				t.Fatalf("decode %q: %v", out, jErr)
+			}
+			if exit != tc.wantExit || doc.Kind != tc.wantKind || doc.Status != tc.wantStatus {
+				t.Fatalf("exit=%d kind=%q status=%q (err %v), want %d %q %q", exit, doc.Kind, doc.Status, err, tc.wantExit, tc.wantKind, tc.wantStatus)
+			}
+		})
 	}
 }

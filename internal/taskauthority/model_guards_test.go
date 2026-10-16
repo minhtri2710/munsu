@@ -69,7 +69,7 @@ func TestValidateScoutContractRefusesScoutFieldsOnShipTask(t *testing.T) {
 func TestValidateAggregateRefusesMissingRevision(t *testing.T) {
 	runGuardCases(t,
 		func() Aggregate {
-			agg, err := NewAggregate("t1", "owner", "work", "ship", "", "")
+			agg, err := NewAggregate("t1", TaskDefinition{Owner: "owner", Description: "work", Kind: "ship"})
 			if err != nil {
 				t.Fatalf("NewAggregate: %v", err)
 			}
@@ -84,7 +84,7 @@ func TestValidateAggregateRefusesMissingRevision(t *testing.T) {
 func TestValidateAggregateRefusesUnsafeIdentityAndPhase(t *testing.T) {
 	runGuardCases(t,
 		func() Aggregate {
-			agg, err := NewAggregate("t1", "owner", "work", "ship", "", "")
+			agg, err := NewAggregate("t1", TaskDefinition{Owner: "owner", Description: "work", Kind: "ship"})
 			if err != nil {
 				t.Fatalf("NewAggregate: %v", err)
 			}

@@ -129,19 +129,27 @@ func processInfo(pid int) (name string, ppid int, err error) {
 	}
 
 	// Fallback to `ps` (macOS/BSD)
-	cmd := exec.Command("ps", "-o", "comm=,ppid=", "-p", strconv.Itoa(pid))
+	cmd := exec.Command("ps", "-ww", "-o", "ppid=,comm=", "-p", strconv.Itoa(pid))
 	out, e := cmd.Output()
 	if e != nil {
 		return "", 0, fmt.Errorf("ps -p %d: %w", pid, e)
 	}
-	parts := strings.Fields(string(out))
-	if len(parts) >= 2 {
-		comm := parts[0]
-		if p, parseErr := strconv.Atoi(parts[1]); parseErr == nil {
-			return comm, p, nil
-		}
+	if comm, p, ok := parsePSLine(string(out)); ok {
+		return comm, p, nil
 	}
 	return "", 0, fmt.Errorf("unexpected ps output for pid %d: %q", pid, string(out))
+}
+
+// parsePSLine parses one `ps -o ppid=,comm=` line. comm is last because it
+// may be a full path containing spaces.
+func parsePSLine(out string) (comm string, ppid int, ok bool) {
+	ppidStr, comm, found := strings.Cut(strings.TrimSpace(out), " ")
+	comm = strings.TrimSpace(comm)
+	p, err := strconv.Atoi(ppidStr)
+	if !found || err != nil || comm == "" {
+		return "", 0, false
+	}
+	return comm, p, true
 }
 
 // matchProcessName checks if a process name corresponds to a known harness.

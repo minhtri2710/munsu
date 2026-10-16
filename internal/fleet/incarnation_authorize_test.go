@@ -268,7 +268,7 @@ func TestSpawnNeverDisposesAmbiguousObservation(t *testing.T) {
 			auth := mustCanonical(t)
 			canonicalCreateTask(t, auth, "amb", "ship", "proj")
 			caps := &trackingEndpointCapabilities{obs: endpointStatusFromState(state)}
-			r := &Runner{homeDir: t.TempDir(), args: Args{ID: "amb", ProjectName: "proj", Authority: auth, IncarnationMint: func() (string, error) { return "inc-1", nil }}, endpoints: caps, incarnation: "inc-1", harness: "pi", effectiveMode: "local-only", projectConfigLoaded: true, projectConfig: SpawnProjectConfig{SnapshotDigest: strings.Repeat("a", 64)}}
+			r := &Runner{homeDir: t.TempDir(), args: Args{ID: "amb", ProjectName: "proj", Authority: auth, IncarnationMint: func() (string, error) { return "inc-1", nil }}, endpoints: caps, launch: &taskauthority.LaunchIntent{}, incarnation: "inc-1", harness: "pi", effectiveMode: "local-only", projectConfigLoaded: true, projectConfig: SpawnProjectConfig{SnapshotDigest: strings.Repeat("a", 64)}}
 			r.taskID = mustTaskID(t, "amb")
 
 			// Post-create: an ambiguous observation returns readiness pending and

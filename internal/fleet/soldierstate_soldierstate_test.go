@@ -17,8 +17,7 @@ import (
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
 func setHomeEnv(t *testing.T, path string) {
 	t.Helper()
-	os.Setenv("MUNSU_HOME", path)
-	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
+	t.Setenv("MUNSU_HOME", path)
 }
 
 // seedCanonicalPhase creates one canonical task at the given phase through

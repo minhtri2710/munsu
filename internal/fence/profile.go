@@ -181,6 +181,10 @@ func New(l Launch) (*Fence, error) {
 		denyUnlink(&b, append(ancestors(p.worktree), p.worktree)...)
 		deny(&b, "literal", filepath.Join(p.worktree, ".git"))
 	}
+	// No seat renames a directory above a protected path or the home away and
+	// plants a tree of its own at its name, as a captain cannot (newCaptain).
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: denyUnlink ancestors of primary/commonDir/home for soldier+reviewer)
+	denyUnlink(&b, ancestors(append(protected, p.home)...)...)
 	if p.home != "" {
 		// After every allow, so they hold wherever the home lives, a temp root
 		// included. The unfenced munsu builds what a claude or pi process loads
@@ -237,24 +241,31 @@ func New(l Launch) (*Fence, error) {
 }
 
 // pathDirDenies returns the PATH directories (and the shim dir) as given and
-// symlink-resolved, and the names of all their ancestors split into locked and
-// removable. Every ancestor of the shim dir is locked. For any other PATH dir
-// an ancestor that is itself a writable root is removable (outside every root
-// the profile already refuses it too), and every other ancestor is locked. A
-// relative or empty entry names the seat's working directory, which the fence
-// cannot refuse, so it is an error: the caller keeps such entries off the
-// seat's PATH.
+// symlink-resolved, with every symlink resolving them follows, and the names
+// of all their ancestors split into locked and removable. Every ancestor of
+// the shim dir is locked. For any other PATH dir an ancestor that is itself a
+// writable root is removable (outside every root the profile already refuses
+// it too), and every other ancestor is locked. A relative or empty entry names
+// the seat's working directory, which the fence cannot refuse, so it is an
+// error: the caller keeps such entries off the seat's PATH. An entry with a .
+// or .. name, or that does not resolve, is an error too, so the launch refuses
+// rather than leave the directory a write lands in, or a link on the way to
+// it, undenied.
 func pathDirDenies(pathDirs []string, shim string, roots []string) (dirs, locked, removable []string, err error) {
 	expand := func(in []string) (out []string, err error) {
 		for _, d := range in {
 			if !filepath.IsAbs(d) {
 				return nil, fmt.Errorf("fence: PATH directory %q is not absolute", d)
 			}
-			d = filepath.Clean(d)
-			out = append(out, d)
-			if r, err := resolvePath(d, false); err == nil {
-				out = append(out, r)
+			d = strings.TrimRight(d, "/")
+			if err := lexicalPath(d); err != nil {
+				return nil, fmt.Errorf("fence: PATH directory: %w", err)
 			}
+			r, links, _, err := walkPath(d)
+			if err != nil {
+				return nil, fmt.Errorf("fence: PATH directory %s: %w", d, err)
+			}
+			out = append(append(out, d, r), links...)
 		}
 		return dedupe(out), nil
 	}
@@ -491,19 +502,16 @@ func soldierBranch(b string) (string, error) {
 }
 
 // gitBranchRefFiles are the exact common-dir ref paths a commit on branch
-// writes: the loose ref and its lock, and the intermediate directories git
-// creates for a slashed name. The branch's reflog under logs/ is append-only
-// (allowData at the call site), not here. The primary's main, HEAD,
-// packed-refs, config and hooks stay refused.
+// writes: the loose ref and its lock. The directories of a slashed name are
+// pre-created by munsu at spawn (ensureBranchReflog) and stay refused, so the
+// seat cannot rename one away, write another task's ref in the moved copy, and
+// move it back. The branch's reflog under logs/ is append-only (allowData at
+// the call site), not here. The primary's main, HEAD, packed-refs, config and
+// hooks stay refused.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: pre-create refs/heads/mu at spawn; seat cannot create/rename it)
 func gitBranchRefFiles(commonDir, branch string) []string {
-	var out []string
-	tree := filepath.Join(commonDir, "refs", "heads")
-	parts := strings.Split(branch, "/")
-	for i := 1; i < len(parts); i++ {
-		out = append(out, filepath.Join(tree, filepath.Join(parts[:i]...)))
-	}
-	ref := filepath.Join(tree, filepath.FromSlash(branch))
-	return append(out, ref, ref+".lock")
+	ref := filepath.Join(commonDir, "refs", "heads", filepath.FromSlash(branch))
+	return []string{ref, ref + ".lock"}
 }
 
 // harnessState returns the writable directories of a harness kind beyond the
@@ -618,7 +626,8 @@ func ancestors(paths ...string) []string {
 }
 
 // resolvePath returns the symlink-resolved absolute path. A path that does not
-// exist is resolved through its nearest existing ancestor unless mustExist.
+// exist is resolved through its nearest existing ancestor unless mustExist, and
+// a dangling symlink on the way to its target, where a write through it lands.
 func resolvePath(p string, mustExist bool) (string, error) {
 	if err := lexicalPath(p); err != nil {
 		return "", err
@@ -630,11 +639,83 @@ func resolvePath(p string, mustExist bool) (string, error) {
 	if mustExist || !os.IsNotExist(err) {
 		return "", err
 	}
-	parent, err := resolvePath(filepath.Dir(p), false)
+	r, _, missing, err := walkPath(p)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(parent, filepath.Base(p)), nil
+	if filepath.Dir(missing) == "/" {
+		return "", fmt.Errorf("path %q resolves through the filesystem root", p)
+	}
+	return r, nil
+}
+
+// maxLinkHops bounds the symlinks walkPath follows, as the kernel bounds a
+// lookup (MAXSYMLINKS).
+const maxLinkHops = 32
+
+// walkPath resolves the lexically valid p one name at a time as the kernel
+// does, following every symlink, existing or dangling, on one hop budget. It
+// returns the resolved path, every link it followed (each by its resolved
+// name), and the first name found missing ("" when the whole path exists). A
+// write through p lands at the resolved path, and replacing any of those links
+// moves it, so a caller denying p denies them all. A link target may climb from
+// the link's directory, whose ancestors the caller denies with the link, but a
+// ".." after a name in the target is refused: the directory it climbs out of is
+// neither a link nor an ancestor of the result, so a seat could replace it. A
+// target with a control character, or a path resolving to "/", is refused.
+// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council 3/3: follow dangling PATH links, deny target, propagate resolve errors)
+func walkPath(p string) (resolved string, links []string, missing string, err error) {
+	cur, todo, hops := "/", strings.Split(p, "/"), 0
+	for len(todo) > 0 {
+		name := todo[0]
+		todo = todo[1:]
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, name)
+		fi, err := os.Lstat(next)
+		if os.IsNotExist(err) {
+			return filepath.Join(append([]string{next}, todo...)...), links, next, nil
+		}
+		if err != nil {
+			return "", nil, "", err
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if hops++; hops > maxLinkHops {
+			return "", nil, "", fmt.Errorf("path %q: too many links", p)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", nil, "", err
+		}
+		if hasControl(target) {
+			return "", nil, "", fmt.Errorf("path %q: link %s target %q holds a control character", p, next, target)
+		}
+		names := strings.Split(target, "/")
+		lead := 0
+		for lead < len(names) && (names[lead] == "" || names[lead] == "." || names[lead] == "..") {
+			lead++
+		}
+		if slices.Contains(names[lead:], "..") {
+			return "", nil, "", fmt.Errorf("path %q: link %s target %q has a .. past its first name", p, next, target)
+		}
+		links = append(links, next)
+		if filepath.IsAbs(target) {
+			cur = "/"
+		}
+		todo = append(names, todo...)
+	}
+	if cur == "/" {
+		return "", nil, "", fmt.Errorf("path %q resolves to the filesystem root", p)
+	}
+	return cur, links, "", nil
 }
 
 // within reports whether child is root or lies under it.

@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -100,37 +99,6 @@ func canonicalAtHome(t *testing.T, homeDir string) *taskauthority.Canonical {
 	return c
 }
 
-// bindWorktreeForSpawnFixture binds a generation-scoped worktree through the
-// canonical Authority so ConfirmSpawn can evaluate its worktree-binding
-// precondition. The task is created at generation 1 revision 1, so the bind
-// carries the exact precondition (1,1).
-func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Canonical, taskID string) {
-	t.Helper()
-	req := taskauthority.CanonicalBindWorktreeRequest{
-		HomeID:       auth.HomeID(),
-		TaskID:       mustTaskID(t, taskID),
-		Precondition: domain.Of(1, 1),
-		Binding: taskauthority.WorktreeBinding{
-			RepositoryIdentity: "repo-identity",
-			Path:               "/tmp/wt",
-			GitDir:             "/repo/.git/worktrees/wt",
-			CommonDir:          "/repo/.git",
-			BaseHead:           strings.Repeat("a", 40),
-			LeaseID:            "wt-lease-" + taskID,
-			FenceToken:         "wt-fence-" + taskID,
-			BoundAtUnix:        time.Now().Unix(),
-		},
-		Reason: "spawn",
-	}
-	op, err := domain.NewOperation(mustOpID(t, "op-bind-wt-"+taskID), req)
-	if err != nil {
-		t.Fatalf("NewOperation(%s): %v", taskID, err)
-	}
-	if _, err := auth.BindWorktree(op, req); err != nil {
-		t.Fatalf("BindWorktree(%s): %v", taskID, err)
-	}
-}
-
 // seedLaunchIntent commits a deterministic BeginSpawn launch intent for the
 // task through the canonical surface and adopts it onto the Runner, mirroring
 // the production beginLaunchIntent derivation (same snapshot digest, explicit
@@ -183,47 +151,24 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 }
 
 func TestConfirmSpawnBindsTheEndpointAndWorkingTogether(t *testing.T) {
-	homeDir := t.TempDir()
-	auth := mustCanonical(t)
-	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
-	bindWorktreeForSpawnFixture(t, auth, "bind-task")
-	r := &Runner{
-		homeDir:       homeDir,
-		args:          Args{ID: "bind-task", ProjectName: "test-proj", Authority: auth},
-		windowID:      "session:pane-1",
-		wtPath:        filepath.Join(homeDir, "worktree"),
-		projPath:      filepath.Join(homeDir, "project"),
-		harness:       "pi",
-		effectiveMode: "local-only",
-		endpoint: CreatedEndpoint{
-			Backend:      "herdr",
-			Handle:       "session:pane-1",
-			SessionOwner: "session",
-			WorkspaceID:  "workspace-1",
-			TabID:        "tab-1",
-			Incarnation:  "bind-task-incarnation",
-		},
+	f := newLaunchFixture(t, "bind-task")
+	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("runLaunchPhases: %v", err)
+	}
+	if before := f.aggregate(); before.Phase == taskauthority.PhaseWorking || before.Endpoint != nil {
+		t.Fatalf("aggregate before confirm=%+v", before)
 	}
 	// ConfirmSpawn commits the endpoint binding and the working transition
 	// together in one canonical operation.
-	if _, err := r.confirmSpawn(); err != nil {
+	if _, err := f.runner.confirmSpawn(); err != nil {
 		t.Fatalf("confirmSpawn: %v", err)
 	}
-	bound, err := auth.Get(mustTaskID(t, "bind-task"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bound.Endpoint == nil || bound.Endpoint.Backend != "herdr" || bound.Endpoint.Handle != "session:pane-1" || bound.Endpoint.LeaseID == "" || bound.Endpoint.FenceToken == "" {
-		t.Fatalf("endpoint binding=%+v", bound.Endpoint)
-	}
-	if bound.Endpoint.SessionOwner != "session" || bound.Endpoint.WorkspaceID != "workspace-1" || bound.Endpoint.TabID != "tab-1" || bound.Endpoint.BoundAtUnix <= 0 {
+	r, bound := f.runner, f.aggregate()
+	if bound.Endpoint == nil || bound.Endpoint.Backend != r.endpoint.Backend || bound.Endpoint.Handle != r.endpoint.Handle || bound.Endpoint.LeaseID != r.launch.EndpointReservationID || bound.Endpoint.FenceToken != r.launch.EndpointFenceToken || bound.Endpoint.BoundAtUnix <= 0 {
 		t.Fatalf("endpoint binding=%+v", bound.Endpoint)
 	}
 	if bound.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("phase=%q want working after confirm spawn", bound.Phase)
-	}
-	if bound.Revision != 3 {
-		t.Fatalf("revision=%d want 3 (create, bind worktree, confirm spawn)", bound.Revision)
 	}
 }
 
@@ -296,19 +241,15 @@ func runGitForSpawnBinding(t *testing.T, dir string, args ...string) {
 }
 
 func TestEndpointBindingFailureLeavesTaskNonWorking(t *testing.T) {
-	homeDir := t.TempDir()
-	auth := mustCanonical(t)
-	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
-	bindWorktreeForSpawnFixture(t, auth, "bind-task")
-	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux"}}
-	if _, err := r.confirmSpawn(); err == nil {
-		t.Fatal("expected binding failure for incomplete endpoint")
+	f := newLaunchFixture(t, "bind-task")
+	if err := runLaunchPhases(f, "verify"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("runLaunchPhases: %v", err)
 	}
-	agg, err := auth.Get(mustTaskID(t, "bind-task"))
-	if err != nil {
-		t.Fatal(err)
+	f.runner.endpoint.Handle = "foreign:pane-9"
+	if _, err := f.runner.confirmSpawn(); err == nil || !strings.Contains(err.Error(), "does not match the recorded acquired endpoint") {
+		t.Fatalf("confirmSpawn error = %v, want the acquired-endpoint mismatch refusal", err)
 	}
-	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
+	if agg := f.aggregate(); agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
 		t.Fatalf("aggregate after failed confirm=%+v", agg)
 	}
 }
@@ -340,7 +281,7 @@ func TestCreateSessionAcceptsStartingObservation(t *testing.T) {
 		created: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
 		probes:  []SpawnEndpointObservation{endpointStatusFromState(EndpointStarting)},
 	}
-	r := &Runner{homeDir: t.TempDir(), endpoints: caps}
+	r := &Runner{homeDir: t.TempDir(), endpoints: caps, launch: &taskauthority.LaunchIntent{}}
 	if err := r.createSession(); err != nil {
 		t.Fatalf("createSession should accept starting endpoint: %v", err)
 	}
@@ -351,7 +292,7 @@ func TestFinalEndpointVerificationRejectsStartingObservation(t *testing.T) {
 		created: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
 		probes:  []SpawnEndpointObservation{endpointStatusFromState(EndpointStarting)},
 	}
-	r := &Runner{homeDir: t.TempDir(), endpoints: caps, endpoint: caps.created, windowID: caps.created.Handle}
+	r := &Runner{homeDir: t.TempDir(), endpoints: caps, launch: &taskauthority.LaunchIntent{}, endpoint: caps.created, windowID: caps.created.Handle}
 	if err := r.verifyEndpointReadyBeforePersist(); err == nil {
 		t.Fatal("final verification should reject starting observation")
 	}

@@ -8,6 +8,7 @@ import (
 
 func TestResolveDefault(t *testing.T) {
 	// Ensure no env override
+	t.Setenv("MUNSU_HOME", "")
 	os.Unsetenv("MUNSU_HOME")
 	path, err := Resolve("")
 	if err != nil {
@@ -22,8 +23,7 @@ func TestResolveDefault(t *testing.T) {
 
 func TestResolveEnvOverride(t *testing.T) {
 	envHome := absTestPath(t, "tmp", "munsu-test-env")
-	os.Setenv("MUNSU_HOME", envHome)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", envHome)
 	path, err := Resolve("")
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +35,7 @@ func TestResolveEnvOverride(t *testing.T) {
 
 func TestResolveFlagOverride(t *testing.T) {
 	flagHome := absTestPath(t, "tmp", "munsu-test-flag")
+	t.Setenv("MUNSU_HOME", "")
 	os.Unsetenv("MUNSU_HOME")
 	path, err := Resolve(flagHome)
 	if err != nil {
@@ -48,8 +49,7 @@ func TestResolveFlagOverride(t *testing.T) {
 func TestResolveFlagOverridesEnv(t *testing.T) {
 	envHome := absTestPath(t, "tmp", "munsu-test-env")
 	flagHome := absTestPath(t, "tmp", "munsu-test-flag")
-	os.Setenv("MUNSU_HOME", envHome)
-	defer os.Unsetenv("MUNSU_HOME")
+	t.Setenv("MUNSU_HOME", envHome)
 	path, err := Resolve(flagHome)
 	if err != nil {
 		t.Fatal(err)
