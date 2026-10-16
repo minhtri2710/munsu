@@ -15,6 +15,9 @@ const (
 type contractError struct {
 	status int
 	value  ErrorResponse
+	// response, when set, is written instead of value: a command result
+	// whose own Status is "error".
+	response any
 }
 
 func (err *contractError) Error() string {
@@ -87,6 +90,22 @@ func contractOutput(cmd *cobra.Command) (string, error) {
 		return "", usageError("unsupported_input", fmt.Sprintf("Run `%s --output toon` or `%s --output json`", commandPath(cmd), commandPath(cmd)), fmt.Sprintf("Unsupported output format %q", output))
 	}
 	return output, nil
+}
+
+// writeContractResult writes resp, or returns it as an operation error when
+// its Status is "error" so the command exits nonzero.
+func writeContractResult[T any](cmd *cobra.Command, resp Response[T]) error {
+	if resp.Status != "error" {
+		return writeContract(cmd, resp)
+	}
+	if _, err := contractOutput(cmd); err != nil {
+		return err
+	}
+	return &contractError{
+		status:   exitOperation,
+		response: resp,
+		value:    ErrorResponse{Error: ErrorEnvelope{Message: strings.TrimSpace(fmt.Sprintf("%s failed: %s", resp.Kind, strings.Join(resp.Help, "; ")))}},
+	}
 }
 
 func writeContract(cmd *cobra.Command, value any) error {

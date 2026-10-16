@@ -29,25 +29,6 @@ func WriteContractError(writer io.Writer, err error, args []string) int {
 		return writeContractError(writer, contractErr, args)
 	}
 
-	var correction *CommandCorrectionError
-	if errors.As(err, &correction) {
-		contractErr := &contractError{
-			status: exitUsage,
-			value: ErrorResponse{
-				SchemaVersion: SchemaVersion,
-				Kind:          "error",
-				Status:        "error",
-				Error: ErrorEnvelope{
-					ErrorCode: correction.Code,
-					Retryable: false,
-					Action:    correctionAction(correction.Command),
-					Message:   correction.Message,
-				},
-			},
-		}
-		return writeContractError(writer, contractErr, args)
-	}
-
 	var contractErr *contractError
 	if !errors.As(err, &contractErr) {
 		// Wrap non-contract errors as generic operation errors
@@ -78,7 +59,11 @@ func writeContractError(writer io.Writer, contractErr *contractError, args []str
 			output = OutputJSON
 		}
 	}
-	encoded, encodeErr := Encode(contractErr.value, output)
+	var value any = contractErr.value
+	if contractErr.response != nil {
+		value = contractErr.response
+	}
+	encoded, encodeErr := Encode(value, output)
 	if encodeErr != nil {
 		return 1
 	}

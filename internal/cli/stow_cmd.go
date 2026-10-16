@@ -175,7 +175,7 @@ Install root resolution (in order):
 				return nil
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Fast-forwarding captains and nudging...")
-			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, captainConvergeCapabilities())
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %-50s %s\n", step.Name+":", step.Status)
@@ -185,11 +185,7 @@ Install root resolution (in order):
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  Overall: %s\n", result.OverallStatus())
 			}
-			if convergeErr != nil {
-				// Self-update already succeeded; converge errors are reported, not fatal.
-				fmt.Fprintf(cmd.OutOrStdout(), "%v\n", convergeErr)
-			}
-			return nil
+			return convergeErr
 		}),
 	}
 	cmd.Flags().BoolVar(&captains, "captains", false,

@@ -61,8 +61,23 @@ func newCaptainRecoverTransaction() *fleet.RecoverTransaction {
 	}}
 }
 
+func captainConvergeCapabilities() fleet.ConvergeCapabilities {
+	return fleet.ConvergeCapabilities{
+		Messaging:   captainMessagingAdapter{},
+		Watcher:     captainWatcherAdapter{},
+		Mailbox:     newSessionMailboxSender(),
+		Integration: captainIntegrationAdapter{},
+		Launch:      newSessionLaunchEndpoint(),
+		Probe:       newSessionProbeEndpoint(),
+		Nudge:       newSessionNudgeEndpoint(),
+	}
+}
+
 func recoverCaptainEndpoint(parentHome string, sm fleet.Info) error {
-	result := newCaptainRecoverTransaction().Recover(parentHome, sm)
+	return captainRecoveryErr(newCaptainRecoverTransaction().Recover(parentHome, sm))
+}
+
+func captainRecoveryErr(result *fleet.RecoverResult) error {
 	for _, step := range result.Steps {
 		if step.State == fleet.StepFailed {
 			return fmt.Errorf("captain recovery failed: %s", result.StepsString())

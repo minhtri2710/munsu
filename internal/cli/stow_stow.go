@@ -21,7 +21,6 @@ const (
 type SweepResult struct {
 	DataLearnings string // path written, or empty
 	DataCaptain   string // path written, or empty
-	BacklogNote   string // note written, or empty
 }
 
 // RunKinded stows items of the given kind (learning or general).
