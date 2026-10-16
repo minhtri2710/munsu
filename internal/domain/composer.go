@@ -28,10 +28,12 @@ const glyphClaude = "❯" // ❯
 const composerRuleMinRunes = 10
 
 // composerBox is a capture split at its lowest rule line and the rule line
-// above it.
+// above it. spacedAbove is true when a blank row sits directly above the upper
+// rule.
 type composerBox struct {
 	upper, lower    string
 	between, footer []string
+	spacedAbove     bool
 }
 
 // sameWidth reports whether both rules span the same width, as the two
@@ -66,7 +68,13 @@ func findComposerBox(capture string, footerRows int) (box composerBox, ok bool) 
 	if upper < 0 || upper+1 == lower {
 		return composerBox{}, false
 	}
-	return composerBox{upper: rows[upper], lower: rows[lower], between: rows[upper+1 : lower], footer: rows[lower+1:]}, true
+	return composerBox{
+		upper:       rows[upper],
+		lower:       rows[lower],
+		between:     rows[upper+1 : lower],
+		footer:      rows[lower+1:],
+		spacedAbove: upper > 0 && trimComposerSpace(rows[upper-1]) == "",
+	}, true
 }
 
 // trimComposerSpace trims U+0020 and U+00A0 only: the words approved for the
