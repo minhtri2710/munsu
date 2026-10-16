@@ -534,6 +534,93 @@ func TestWorktreeToolResolution(t *testing.T) {
 	}
 }
 
+// TestQuotaToolDispatch pins the quota port at spawn: use candidates are taken
+// in order unless the project configures quota-axi, a configured quota-axi that
+// is not Ready refuses, and a Ready one that fails at dispatch refuses too.
+func TestQuotaToolDispatch(t *testing.T) {
+	report := `{"providers":[{"provider":"codex","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"general","percentRemaining":10}]},` +
+		`{"provider":"pi","state":{"status":"fresh"},"windows":[{"id":"five_hour","kind":"general","percentRemaining":90}]}]}`
+	reports := "#!/bin/sh\ncat <<'EOF'\n" + report + "\nEOF\n"
+	for _, tc := range []struct {
+		name      string
+		configure bool
+		script    string
+		policy    DispatchPolicy
+		want      string
+		wantErr   string
+	}{
+		{name: "configured quota-axi not Ready is refused", configure: true, policy: DispatchPolicyGeneralDirect, wantErr: "resolved quota adapter quota-axi probe missing"},
+		{name: "configured Ready quota-axi is allowed", configure: true, script: reports, policy: DispatchPolicyGeneralDirect, want: "pi"},
+		{name: "published quota-axi no longer Ready is refused", configure: true, policy: DispatchPolicyCaptainMediated, wantErr: "configured quota tool is not Ready"},
+		{name: "published Ready quota-axi is allowed", configure: true, script: reports, policy: DispatchPolicyCaptainMediated, want: "pi"},
+		{name: "Ready quota-axi failing at dispatch is refused", configure: true, script: "#!/bin/sh\nexit 1\n", policy: DispatchPolicyGeneralDirect, wantErr: "quota-balanced dispatch refused"},
+		{name: "unconfigured takes the first candidate with quota-axi on PATH", policy: DispatchPolicyGeneralDirect, want: "codex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if _, err := homepkg.Init(home); err != nil {
+				t.Fatal(err)
+			}
+			if err := fleetconfig.StoreFleetBase(home, fleetconfig.FleetBaseDocument{
+				SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+				Config: fleetconfig.FleetBaseConfig{Backend: "tmux", DispatchProfiles: []fleetconfig.DispatchProfile{{
+					Name: "balanced", Match: []string{"*"},
+					Use: []fleetconfig.DispatchCandidate{{Harness: "codex"}, {Harness: "pi"}},
+				}}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := Add(home, "alpha", filepath.Join(home, "projects", "alpha"), true); err != nil {
+				t.Fatal(err)
+			}
+			pathTrace := filepath.Join(t.TempDir(), "path-quota-axi")
+			testutil.FakeOnPath(t, "quota-axi", "#!/bin/sh\n: > "+pathTrace+"\n")
+			tool := filepath.Join(t.TempDir(), "quota-axi")
+			var overlay fleetconfig.ProjectOverlay
+			if tc.configure {
+				overlay.Quota = &fleetconfig.ToolEntry{Adapter: "quota-axi", Path: tool}
+			}
+			if err := fleetconfig.StoreProjectOverlay(home, "alpha", overlay); err != nil {
+				t.Fatal(err)
+			}
+			if tc.script != "" || tc.policy == DispatchPolicyCaptainMediated {
+				testutil.WriteFakeExecutable(t, tool, tc.script)
+			}
+			if tc.policy == DispatchPolicyCaptainMediated {
+				snap, err := ResolveProjectSnapshot(home, "alpha")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := fleetconfig.StorePublishedSnapshot(home, snap.Config()); err != nil {
+					t.Fatal(err)
+				}
+				if tc.script == "" {
+					if err := os.Remove(tool); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			got, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, tc.policy, nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Soldier.Harness != tc.want {
+				t.Fatalf("harness = %q, want %q", got.Soldier.Harness, tc.want)
+			}
+			if _, err := os.Stat(pathTrace); !os.IsNotExist(err) {
+				t.Fatalf("quota-axi on PATH was invoked (stat %v)", err)
+			}
+		})
+	}
+}
+
 func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 	t.Helper()
 	base := fleetconfig.FleetBaseDocument{

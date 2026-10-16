@@ -99,7 +99,11 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 			fmt.Errorf("published snapshot project %q does not match requested project %q", resolved.Project, args.ProjectName),
 		)
 	}
-	if err := requireReadyWorktree(resolved.WorktreeStep); err != nil {
+	if err := requireReadyStep("worktree", resolved.WorktreeStep); err != nil {
+		return SpawnProjectConfig{}, err
+	}
+	// Words: Human, typed, 2026-10-16: "các task cần lời của tôi thì hỏi concil rồi quyết" (council: quota-balanced needs a Ready quota-axi)
+	if err := requireReadyStep("quota", resolved.QuotaStep); err != nil {
 		return SpawnProjectConfig{}, err
 	}
 	if err := validateResolvedDispatchProfiles(resolved.DispatchProfiles); err != nil {
@@ -111,7 +115,10 @@ func resolveSpawnProjectConfig(homeDir string, args Args, policy DispatchPolicy,
 	// The delivery mode is derived from the captured forge step; no separate
 	// mode decision exists to compose.
 	mode := taskauthority.DeliveryModeForForge(deliveryStep(resolved.ForgeStep))
-	selection := resolveSnapshotDispatchSelection(resolved, taskDesc)
+	selection, err := resolveSnapshotDispatchSelection(resolved, taskDesc)
+	if err != nil {
+		return SpawnProjectConfig{}, fmt.Errorf("quota-balanced dispatch refused: %w; fix quota-axi or clear the project's quota entry with `munsu project config set %s quota ''`", err, resolved.Project)
+	}
 	selection.Harness = firstNonEmpty(args.HarnessFlag, selection.Harness, resolved.SoldierHarness)
 	selection.Model = firstNonEmpty(args.ModelFlag, selection.Model, resolved.Model)
 	selection.Effort = firstNonEmpty(args.EffortFlag, selection.Effort)
@@ -236,11 +243,12 @@ func validateResolvedDispatchProfiles(profiles []fleetconfig.DispatchProfile) er
 	return nil
 }
 
-func resolveSnapshotDispatchSelection(resolved fleetconfig.ResolvedProjectConfig, taskDesc string) harness.DispatchSelection {
+func resolveSnapshotDispatchSelection(resolved fleetconfig.ResolvedProjectConfig, taskDesc string) (harness.DispatchSelection, error) {
 	cfg := &harness.DispatchConfig{
 		DefaultHarness: resolved.SoldierHarness,
 		DefaultModel:   resolved.Model,
 		Profiles:       resolved.DispatchProfiles,
+		QuotaTool:      resolved.QuotaStep.Path,
 	}
 	return harness.ResolveDispatchSelection(cfg, taskDesc)
 }
