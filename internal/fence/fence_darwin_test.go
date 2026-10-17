@@ -197,7 +197,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 	f := mustNew(t, launch)
 	mustWrite(t, f,
 		filepath.Join(l.worktree, "f"),
-		filepath.Join(l.gitDir, "index.lock"),
+		filepath.Join(l.gitDir, "index.lock"), filepath.Join(l.gitDir, "index"),
 		filepath.Join(l.common, "objects", "f"),
 		filepath.Join(l.common, "refs", "remotes", "f"),
 		filepath.Join(launch.HarnessStateDir, "f"), filepath.Join(uhome, "Library", "Caches", "claude-cli-nodejs", "f"),
@@ -211,6 +211,7 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 		filepath.Join(l.common, "hooks", "f"), filepath.Join(l.common, "refs", "heads", "main"),
 		filepath.Join(l.common, "logs", "HEAD"),
 		filepath.Join(l.gitDir, "config.worktree"),
+		filepath.Join(l.gitDir, "commondir"), filepath.Join(l.gitDir, "gitdir"),
 		filepath.Join(l.home, "f"), filepath.Join(harness.SeatBuildDir(l.home), "f"),
 		filepath.Join(uhome, "other", "f"), filepath.Join(uhome, "Library", "Caches", "f"),
 		filepath.Join(uhome, ".claude", "f"), filepath.Join(uhome, ".claude.json"), filepath.Join(uhome, ".claude.json.tmp.123.abc1"),
