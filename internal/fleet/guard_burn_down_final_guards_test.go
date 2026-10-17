@@ -4,12 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -293,29 +291,5 @@ func TestWriteEnvelope_NilEnvelope(t *testing.T) {
 	err := WriteEnvelope(t.TempDir(), nil)
 	if err == nil || !strings.Contains(err.Error(), "launch envelope is nil") {
 		t.Fatalf("WriteEnvelope err = %v, want launch envelope is nil", err)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Group K: taskauthority_reads.go (1 guard)
-// ----------------------------------------------------------------------------
-
-func TestCanonicalCurrentStateQ_Read_MissingCanonical(t *testing.T) {
-	tmpDir := t.TempDir()
-	h, err := home.Init(tmpDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = taskauthority.NewCanonical(h)
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := NewCanonicalCurrentState()
-	_, err = q.Read(h.Root(), "t-nonexistent")
-	if err == nil || !strings.Contains(err.Error(), "has no canonical Task Authority record") {
-		t.Fatalf("Read err = %v, want has no canonical Task Authority record", err)
-	}
-	if strings.Contains(err.Error(), strconv.Quote(h.Root())) {
-		t.Fatalf("Read error pre-quotes home path: %v", err)
 	}
 }

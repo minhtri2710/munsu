@@ -97,12 +97,11 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 }
 
 // snapshotDeps builds the explicit read dependencies for fleet snapshot/guard
-// callers: the canonical current-state query is always present, and the
-// endpoint probe (diagnostic only) is the CLI adapter over the session backend.
+// callers: the endpoint probe (diagnostic only) is the CLI adapter over the
+// session backend.
 func snapshotDeps() fleet.SnapshotDependencies {
 	return fleet.SnapshotDependencies{
-		CurrentState: fleet.NewCanonicalCurrentState(),
-		Endpoint:     cliEndpointProbe{resolve: backend.BackendForTask},
+		Endpoint: cliEndpointProbe{resolve: backend.BackendForTask},
 	}
 }
 
@@ -127,10 +126,9 @@ func runFleetSnapshot(cmd *cobra.Command, ctx Ctx) error {
 		if entry.Kind == "captain" {
 			continue
 		}
-		// The contract row reports the resolved current-state projection, not
-		// the append-only .status tail: the canonical Task Authority phase (or
-		// the current-state resolver output) wins and a stale status verb can
-		// never override a newer authoritative lifecycle transition.
+		// The contract row reports the canonical Task Authority phase, not the
+		// append-only .status tail: a stale status verb can never override a
+		// newer authoritative lifecycle transition.
 		status := fleet.PhaseFromProjection(entry)
 		if status == "" {
 			status = fleet.PhaseFromMeta(entry.Window, entry.PaneAlive)

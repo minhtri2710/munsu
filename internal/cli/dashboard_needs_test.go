@@ -191,16 +191,13 @@ func TestDashboardNeedsYou(t *testing.T) {
 	rest := attentionModel(t, h, 120, 40)
 	rest.wakes = func(time.Time) (int, error) { return 0, nil }
 	read := rest.readFleet
-	rest.readFleet = func() (*fleet.DisplaySnapshot, error) {
-		snap, err := read()
-		if err != nil {
-			return nil, err
-		}
+	rest.readFleet = func() *fleet.DisplaySnapshot {
+		snap := read()
 		snap.Tasks = slices.DeleteFunc(snap.Tasks, func(ts fleet.TaskSnapshot) bool {
 			return ts.ID == "foxtrot" || ts.ID == "juliet" || ts.ID == "alpha"
 		})
 		snap.Failures = nil
-		return snap, nil
+		return snap
 	}
 	rest = send(rest, rest.read())
 	want = []string{

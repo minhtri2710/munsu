@@ -48,11 +48,10 @@ const (
 )
 
 // dashRead is one completed read: the fleet display read and the event feed
-// read, each with its own error.
+// read; the fleet read reports failed sources inside its snapshot.
 type dashRead struct {
 	at       time.Time
 	snap     *fleet.DisplaySnapshot
-	snapErr  error
 	holds    map[dashHoldKey][]dashHold
 	holdsErr error
 	latest   bool // events came from LatestEvents (replace) rather than EventsAfter (append)
@@ -108,7 +107,7 @@ type dashboardModel struct {
 	now           func() time.Time
 	width, height int
 
-	readFleet func() (*fleet.DisplaySnapshot, error)
+	readFleet func() *fleet.DisplaySnapshot
 	readHolds func(primary string, snap *fleet.DisplaySnapshot) (map[dashHoldKey][]dashHold, error)
 	latest    func(n int) ([]orchestrator.Record, int, error)
 	after     func(cursor uint64, n int) ([]orchestrator.Record, int, error)
@@ -125,7 +124,6 @@ type dashboardModel struct {
 	reading    bool
 	readDone   bool
 	lastGood   time.Time
-	readErr    error
 	rows       []fleet.TaskSnapshot
 	failures   []fleet.SourceFailure
 	holds      map[dashHoldKey][]dashHold
@@ -214,7 +212,7 @@ func newDashboardModel(home, exe string) dashboardModel {
 		argv:    argv,
 		reading: true,
 		dark:    true,
-		readFleet: func() (*fleet.DisplaySnapshot, error) {
+		readFleet: func() *fleet.DisplaySnapshot {
 			return fleet.SnapshotDisplay(home, snapshotDeps())
 		},
 		readHolds: dashHolds,
@@ -264,10 +262,8 @@ func dashboardExec(exe string, args []string) tea.Cmd {
 // command while the model keeps updating.
 func (m dashboardModel) read() dashRead {
 	r := dashRead{at: m.now(), latest: !m.backfilled}
-	r.snap, r.snapErr = m.readFleet()
-	if r.snapErr == nil {
-		r.holds, r.holdsErr = m.readHolds(m.home, r.snap)
-	}
+	r.snap = m.readFleet()
+	r.holds, r.holdsErr = m.readHolds(m.home, r.snap)
 	r.beat = m.watcher(r.at)
 	r.unacked, r.unackedErr = m.wakes(r.at)
 	r.registry, r.captainIDs = m.readCaptains(r.snap)
@@ -275,14 +271,10 @@ func (m dashboardModel) read() dashRead {
 		r.events, r.skipped, r.eventErr = m.after(m.cursor, dashboardFeedCap)
 		return r
 	}
-	var snap *fleet.DisplaySnapshot
-	if r.snapErr == nil {
-		snap = r.snap
-	}
-	r.complete = snap != nil && len(snap.Failures) == 0
+	r.complete = len(r.snap.Failures) == 0
 	for n := dashboardFeedMax; ; n = min(2*n, dashboardFeedCap) {
 		r.events, r.skipped, r.eventErr = m.latest(n)
-		if shown, _ := dashShown(r.events, snap); r.eventErr != nil || len(r.events) < n || n == dashboardFeedCap || len(shown) >= dashboardFeedMax {
+		if shown, _ := dashShown(r.events, r.snap); r.eventErr != nil || len(r.events) < n || n == dashboardFeedCap || len(shown) >= dashboardFeedMax {
 			return r
 		}
 	}
@@ -300,16 +292,14 @@ func (m dashboardModel) readCaptains(snap *fleet.DisplaySnapshot) ([]fleet.Info,
 	for _, c := range infos {
 		homes[c.Home] = true
 	}
-	if snap != nil {
-		for _, ts := range snap.Tasks {
-			if strings.HasPrefix(ts.Source, "captain:") {
-				homes[ts.Home] = true
-			}
+	for _, ts := range snap.Tasks {
+		if strings.HasPrefix(ts.Source, "captain:") {
+			homes[ts.Home] = true
 		}
-		for _, f := range snap.Failures {
-			if strings.HasPrefix(f.Source, "captain:") {
-				homes[f.Home] = true
-			}
+	}
+	for _, f := range snap.Failures {
+		if strings.HasPrefix(f.Source, "captain:") {
+			homes[f.Home] = true
 		}
 	}
 	ids := map[string]string{}
@@ -389,16 +379,11 @@ func (m *dashboardModel) applyRead(r dashRead) {
 	m.readDone = true
 	m.beat, m.unacked, m.unackedErr = r.beat, r.unacked, r.unackedErr
 	m.registry, m.captainIDs = r.registry, r.captainIDs
-	if r.snapErr != nil {
-		m.readErr = r.snapErr
-	} else {
-		m.readErr = nil
-		m.lastGood = r.at
-		m.rows = r.snap.Tasks
-		m.failures = r.snap.Failures
-		m.holds, m.holdsErr = r.holds, r.holdsErr
-		m.reselect()
-	}
+	m.lastGood = r.at
+	m.rows = r.snap.Tasks
+	m.failures = r.snap.Failures
+	m.holds, m.holdsErr = r.holds, r.holdsErr
+	m.reselect()
 	if r.eventErr != nil {
 		m.eventErr = r.eventErr
 		return
@@ -700,7 +685,6 @@ type dashState int
 
 const (
 	stateLoading dashState = iota
-	stateFailed
 	stateStale
 	stateEmpty
 	statePartial // fresh, but a source or the event log could not be read
@@ -711,9 +695,7 @@ func (m dashboardModel) state() dashState {
 	switch {
 	case !m.readDone:
 		return stateLoading
-	case m.lastGood.IsZero():
-		return stateFailed
-	case m.readErr != nil || m.now().Sub(m.lastGood) > dashboardStaleAfter:
+	case m.now().Sub(m.lastGood) > dashboardStaleAfter:
 		return stateStale
 	case len(m.rows) == 0 && len(m.failures) == 0:
 		return stateEmpty

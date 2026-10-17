@@ -3,37 +3,24 @@
 package fleet
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
 func testSnapshotDeps(t *testing.T, probes ...EndpointProbe) SnapshotDependencies {
 	t.Helper()
-	deps := SnapshotDependencies{CurrentState: NewCanonicalCurrentState()}
+	deps := SnapshotDependencies{}
 	if len(probes) > 0 {
 		deps.Endpoint = probes[0]
 	}
 	return deps
-}
-
-// failingCurrentState fails every read, simulating an unreadable canonical
-// Task Authority.
-type failingCurrentState struct {
-	err error
-}
-
-func (f failingCurrentState) Read(homeDir, taskID string) (*CurrentStateInfo, error) {
-	return nil, f.err
 }
 
 // mustCreateFleetTask seeds a queued canonical task of the given kind into a
@@ -198,23 +185,6 @@ func TestCaptainStatusProbeErrorIsUnknownNotDead(t *testing.T) {
 	}
 }
 
-// TestSnapshot_NilCurrentStateFailsClosed proves Snapshot rejects a nil
-// current-state dependency instead of silently falling back to a projection.
-func TestSnapshot_NilCurrentStateFailsClosed(t *testing.T) {
-	tmp := t.TempDir()
-	if _, err := home.Init(tmp); err != nil {
-		t.Fatal(err)
-	}
-	mustCreateFleetTask(t, tmp, "t1", "ship")
-	if err := home.AppendStatus(tmp, "t1", "working: stale tail"); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Snapshot(tmp, SnapshotDependencies{})
-	if err == nil {
-		t.Fatalf("Snapshot(nil CurrentState) = nil error, want fail-closed error")
-	}
-}
-
 // TestSnapshot_CaptainMetadataIsListed proves captain metadata (kind=captain)
 // is listed: it is non-task authority metadata by design.
 func TestSnapshot_CaptainMetadataIsListed(t *testing.T) {
@@ -278,34 +248,13 @@ func TestSnapshot_CanonicalPhaseWinsOverStaleStatus(t *testing.T) {
 			if tc.phase == "done" && (ts.Kind != "ship" || ts.Project != "proj-x") {
 				t.Errorf("kind=%q project=%q, want canonical ship/proj-x", ts.Kind, ts.Project)
 			}
+			if got, want := len(ts.OpenActivities), map[string]int{"working": 0, "done": 1}[tc.phase]; got != want {
+				t.Errorf("OpenActivities = %v, want %d folded from the status log", ts.OpenActivities, want)
+			}
+			if tc.phase == "working" && ts.CurrentDescription != "work" {
+				t.Errorf("CurrentDescription = %q, want the definition's %q when the phase has no detail", ts.CurrentDescription, "work")
+			}
 		})
-	}
-}
-
-// TestSnapshot_ResolverErrorFailsClientCurrentStateError proves a failing
-// current-state query makes Snapshot fail with task+home context even when a
-// valid stale .status tail exists.
-func TestSnapshot_ResolverErrorFailsClosedOverStaleStatus(t *testing.T) {
-	tmp := t.TempDir()
-	if _, err := home.Init(tmp); err != nil {
-		t.Fatal(err)
-	}
-	mustCreateFleetTask(t, tmp, "t1", "ship")
-	// A valid, stale .status tail must NOT be silently projected when the
-	// canonical query fails (fail-closed posture).
-	if err := home.AppendStatus(tmp, "t1", "working: stale tail claim"); err != nil {
-		t.Fatal(err)
-	}
-	deps := SnapshotDependencies{CurrentState: failingCurrentState{err: errors.New("canonical read failed: recovery required")}}
-	_, err := Snapshot(tmp, deps)
-	if err == nil {
-		t.Fatal("Snapshot = nil error, want fail-closed error")
-	}
-	if !strings.Contains(err.Error(), "t1") || !testutil.PathInMessage(err.Error(), tmp) {
-		t.Errorf("resolver error must carry task and home context, got: %v", err)
-	}
-	if strings.Contains(err.Error(), strconv.Quote(tmp)) {
-		t.Errorf("resolver error pre-quotes home path, got: %v", err)
 	}
 }
 
@@ -486,10 +435,7 @@ func TestSnapshotDisplay_FailedCaptainHomeIsNamedFailure(t *testing.T) {
 			badHome := filepath.Join(parent, "captains", "bad")
 			tc.bad(t, badHome)
 
-			d, err := SnapshotDisplay(parent, testSnapshotDeps(t))
-			if err != nil {
-				t.Fatalf("SnapshotDisplay: %v", err)
-			}
+			d := SnapshotDisplay(parent, testSnapshotDeps(t))
 			if len(d.Failures) != 1 {
 				t.Fatalf("Failures = %v, want exactly one", d.Failures)
 			}
@@ -508,7 +454,7 @@ func TestSnapshotDisplay_FailedCaptainHomeIsNamedFailure(t *testing.T) {
 				t.Fatalf("rows = %v, want primary-task,good-task", ids)
 			}
 
-			_, err = Snapshot(parent, testSnapshotDeps(t))
+			_, err := Snapshot(parent, testSnapshotDeps(t))
 			if want := "scanning captain home " + badHome + ": " + f.Err.Error(); err == nil || err.Error() != want {
 				t.Fatalf("Snapshot = %v, want %q", err, want)
 			}
@@ -527,10 +473,7 @@ func TestSnapshotDisplay_FailedPrimaryKeepsCaptainRows(t *testing.T) {
 	}
 	mustCreateFleetTask(t, goodHome, "good-task", "ship")
 
-	d, err := SnapshotDisplay(parent, testSnapshotDeps(t))
-	if err != nil {
-		t.Fatalf("SnapshotDisplay: %v", err)
-	}
+	d := SnapshotDisplay(parent, testSnapshotDeps(t))
 	if len(d.Failures) != 1 || d.Failures[0].Source != "primary" || d.Failures[0].Home != parent {
 		t.Fatalf("Failures = %v, want one primary failure for %s", d.Failures, parent)
 	}
@@ -538,7 +481,7 @@ func TestSnapshotDisplay_FailedPrimaryKeepsCaptainRows(t *testing.T) {
 		t.Fatalf("rows = %+v, want only good-task", d.Tasks)
 	}
 
-	_, err = Snapshot(parent, testSnapshotDeps(t))
+	_, err := Snapshot(parent, testSnapshotDeps(t))
 	if err == nil || err.Error() != d.Failures[0].Err.Error() {
 		t.Fatalf("Snapshot = %v, want the primary read error %v", err, d.Failures[0].Err)
 	}
@@ -558,10 +501,7 @@ func TestSnapshotDisplay_UnlistableCaptainsDirIsNamedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, err := SnapshotDisplay(parent, testSnapshotDeps(t))
-	if err != nil {
-		t.Fatalf("SnapshotDisplay: %v", err)
-	}
+	d := SnapshotDisplay(parent, testSnapshotDeps(t))
 	if len(d.Failures) != 1 {
 		t.Fatalf("Failures = %v, want exactly one", d.Failures)
 	}
@@ -575,14 +515,6 @@ func TestSnapshotDisplay_UnlistableCaptainsDirIsNamedFailure(t *testing.T) {
 	snap, err := Snapshot(parent, testSnapshotDeps(t))
 	if snap != nil || err == nil || !strings.HasPrefix(err.Error(), "listing captain homes: ") {
 		t.Fatalf("Snapshot = %+v, %v; want no snapshot and a %q error", snap, err, "listing captain homes: ")
-	}
-}
-
-// TestSnapshotDisplay_NilCurrentStateRefused proves the display read has no
-// per-source answer without a current-state query.
-func TestSnapshotDisplay_NilCurrentStateRefused(t *testing.T) {
-	if _, err := SnapshotDisplay(t.TempDir(), SnapshotDependencies{}); err == nil {
-		t.Fatal("SnapshotDisplay(nil CurrentState) = nil error")
 	}
 }
 
@@ -634,10 +566,52 @@ func TestHumanNeeded_CanonicalBlockedRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if len(snap.Tasks) != 1 || snap.Tasks[0].LastStatus != "" {
-		t.Fatalf("rows = %+v, want one blocked row without a status line", snap.Tasks)
+	if len(snap.Tasks) != 1 || snap.Tasks[0].LastStatus != "" || snap.Tasks[0].CurrentDescription != "waiting on Human" {
+		t.Fatalf("rows = %+v, want one blocked row with its phase detail and no status line", snap.Tasks)
 	}
 	if !HumanNeeded(snap.Tasks[0]) {
 		t.Fatalf("HumanNeeded(%q row) = false, want true", snap.Tasks[0].CurrentState)
+	}
+}
+
+// BenchmarkSnapshot1000Tasks measures one fleet snapshot over a home with 1000
+// canonical tasks.
+func BenchmarkSnapshot1000Tasks(b *testing.B) {
+	tmp := b.TempDir()
+	h, err := home.Init(tmp)
+	if err != nil {
+		b.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		b.Fatal(err)
+	}
+	project, err := domain.NewProjectID("munsu")
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := range 1000 {
+		tid, err := domain.NewTaskID(fmt.Sprintf("t%04d", i))
+		if err != nil {
+			b.Fatal(err)
+		}
+		req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Description: "work", Kind: "ship", Project: project, Reason: "bench"}
+		opID, err := domain.NewOperationID(fmt.Sprintf("op-create-%04d", i))
+		if err != nil {
+			b.Fatal(err)
+		}
+		op, err := domain.NewOperation(opID, req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err := auth.Create(op, req); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for b.Loop() {
+		snap, err := Snapshot(tmp, SnapshotDependencies{})
+		if err != nil || len(snap.Tasks) != 1000 {
+			b.Fatalf("Snapshot = %v, %v", snap, err)
+		}
 	}
 }

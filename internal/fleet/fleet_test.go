@@ -15,7 +15,7 @@ func TestFleetSnapshotEmpty(t *testing.T) {
 		t.Fatalf("home.Init: %v", err)
 	}
 
-	snap, err := fleet.Snapshot(homeDir, fleet.SnapshotDependencies{CurrentState: fleet.NewCanonicalCurrentState()})
+	snap, err := fleet.Snapshot(homeDir, fleet.SnapshotDependencies{})
 	if err != nil {
 		t.Fatalf("Snapshot failed: %v", err)
 	}

@@ -176,7 +176,8 @@ func TestDashboardEventFilter(t *testing.T) {
 	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
 	complete := send(testDashModel(), goodRead(dashNow, rows, nil, nil))
 	partial := send(testDashModel(), goodRead(dashNow, rows, []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, nil))
-	stale := send(complete, dashRead{at: dashNow, snapErr: errors.New("hung")})
+	stale := complete
+	stale.now = func() time.Time { return dashNow.Add(dashboardStaleAfter + time.Second) }
 	removed := ev(1, "task.status", "greet-go", "k", "working: a")
 	for _, tc := range []struct {
 		name  string
@@ -250,12 +251,12 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 	}
 	failed := []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}
 	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
-	complete := func() (*fleet.DisplaySnapshot, error) { return &fleet.DisplaySnapshot{Tasks: rows}, nil }
+	complete := func() *fleet.DisplaySnapshot { return &fleet.DisplaySnapshot{Tasks: rows} }
 	for _, tc := range []struct {
 		name string
 		log  []orchestrator.Record
 		// snaps are the fleet reads in order, one per dashboard read.
-		snaps         []func() (*fleet.DisplaySnapshot, error)
+		snaps         []func() *fleet.DisplaySnapshot
 		reads         []int
 		shown, hidden int
 		newestShownID uint64
@@ -264,17 +265,14 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 		{"live events first", logOf(300, 0), nil, []int{200}, 200, 0, 300},
 		{"a short log", logOf(10, 300), nil, []int{200, 400}, 10, 300, 10},
 		{"orphans to the cap", logOf(0, 3000), nil, []int{200, 400, 800, 1600, 2000}, 0, 2000, 0},
-		{"a failed source", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
-			func() (*fleet.DisplaySnapshot, error) {
-				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+		{"a failed source", logOf(250, 300), []func() *fleet.DisplaySnapshot{
+			func() *fleet.DisplaySnapshot {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}
 			},
 		}, []int{200}, 200, 0, 550},
-		{"a failed first read, then a complete one", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
-			func() (*fleet.DisplaySnapshot, error) { return nil, errors.New("hung") }, complete, complete,
-		}, []int{200, 200, 400, 800}, 200, 300, 250},
-		{"a failed source first, then a complete read", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
-			func() (*fleet.DisplaySnapshot, error) {
-				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+		{"a failed source first, then a complete read", logOf(250, 300), []func() *fleet.DisplaySnapshot{
+			func() *fleet.DisplaySnapshot {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}
 			}, complete, complete,
 		}, []int{200, 200, 400, 800}, 200, 300, 250},
 	} {
@@ -290,7 +288,7 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 			m.after = func(uint64, int) ([]orchestrator.Record, int, error) { return nil, 0, nil }
 			snaps := tc.snaps
 			if snaps == nil {
-				snaps = []func() (*fleet.DisplaySnapshot, error){complete}
+				snaps = []func() *fleet.DisplaySnapshot{complete}
 			}
 			for _, s := range snaps {
 				m.readFleet = s
@@ -423,7 +421,6 @@ func TestDashboardGoldenStale(t *testing.T) {
 		row("t-work", "working", "implementing", "primary", ""),
 		row("t-q", "queued", "waiting", "primary", ""),
 	}, nil, nil))
-	m = send(m, dashRead{at: dashNow, snapErr: errors.New("reading authoritative current state: no current-state query provided")})
 	assertGolden(t, "stale", m.frame())
 }
 
@@ -475,7 +472,7 @@ func TestDashboardRowsEqualSnapshot(t *testing.T) {
 func TestDashboardFeedAppendsAfterCursor(t *testing.T) {
 	m := testDashModel()
 	var calls []string
-	m.readFleet = func() (*fleet.DisplaySnapshot, error) { return &fleet.DisplaySnapshot{}, nil }
+	m.readFleet = func() *fleet.DisplaySnapshot { return &fleet.DisplaySnapshot{} }
 	m.latest = func(int) ([]orchestrator.Record, int, error) {
 		calls = append(calls, "latest")
 		return []orchestrator.Record{ev(1, "t", "p", "k", "one"), ev(2, "t", "p", "k", "two")}, 0, nil
@@ -732,18 +729,7 @@ func TestDashboardStaleRowIsNeverColored(t *testing.T) {
 	}
 }
 
-// A failed read is stale even while the last good read is recent.
-func TestDashboardFailedReadInsideWindowIsStale(t *testing.T) {
-	m := testDashModel()
-	m = send(m, goodRead(dashNow.Add(-2*time.Second), []fleet.TaskSnapshot{row("t-work", "working", "a", "primary", "")}, nil, nil))
-	m = send(m, dashRead{at: dashNow, snapErr: errors.New("boom")})
-	f := ansiSeq.ReplaceAllString(m.frame(), "")
-	if m.state() != stateStale || !strings.Contains(f, "STALE") || strings.Contains(f, "REFRESHED") {
-		t.Fatalf("state = %v; want a stale frame:\n%s", m.state(), f)
-	}
-}
-
-// A read older than the stale window is stale even without an error.
+// A read older than the stale window is stale.
 func TestDashboardAgedReadIsStale(t *testing.T) {
 	m := testDashModel()
 	m = send(m, goodRead(dashNow.Add(-(dashboardStaleAfter+time.Second)), []fleet.TaskSnapshot{row("t-work", "working", "a", "primary", "")}, nil, nil))
@@ -1169,19 +1155,6 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		assertNoRaw(t, "last status", f)
 		assertShown(t, "last status", f, `ls\x00`)
 	})
-	t.Run("stale read error", func(t *testing.T) {
-		m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}, nil, nil))
-		m = send(m, dashRead{at: dashNow, snapErr: errors.New("re\x00\u202e\x1b[8m")})
-		f := m.frame()
-		assertNoRaw(t, "stale read error", f)
-		assertShown(t, "stale read error", f, `re\x00\u202e\x1b[8m`)
-	})
-	t.Run("failed first read", func(t *testing.T) {
-		m := send(testDashModel(), dashRead{at: dashNow, snapErr: errors.New("fr\x00\u202e\x1b[8m")})
-		f := m.frame()
-		assertNoRaw(t, "failed first read", f)
-		assertShown(t, "failed first read", f, `FAILED   fr\x00\u202e\x1b[8m`, `Fleet read failed: fr\x00\u202e\x1b[8m`)
-	})
 	t.Run("form value and confirm argv", func(t *testing.T) {
 		// textinput drops control runes (ESC, NUL) from a paste and keeps a
 		// format rune such as the bidi override, which the field draws escaped.
@@ -1462,13 +1435,13 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 		calls = append(calls, execCall{exe, args})
 		return nil
 	}
-	m.readFleet = func() (*fleet.DisplaySnapshot, error) {
+	m.readFleet = func() *fleet.DisplaySnapshot {
 		return &fleet.DisplaySnapshot{Tasks: []fleet.TaskSnapshot{
 			{ID: "captain:registry-id", Kind: "captain", Home: parent, Source: "primary"},
 			{ID: "captain:ghost", Kind: "captain", Home: parent, Source: "primary"},
 			row("c-1", "working", "in captain home", "captain:dir-name", captainHome),
 			row("s-1", "working", "in stray home", "captain:stray", strayHome),
-		}, Failures: []fleet.SourceFailure{{Source: "captain:failed", Home: failedHome, Err: errors.New("unreadable")}}}, nil
+		}, Failures: []fleet.SourceFailure{{Source: "captain:failed", Home: failedHome, Err: errors.New("unreadable")}}}
 	}
 	m = send(m, m.read())
 	canonHome, err := home.CanonicalCaptainHome(captainHome)

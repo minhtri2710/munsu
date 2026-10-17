@@ -185,7 +185,7 @@ func TestSnapshotCarriesLaunchAndPhaseChangeTimes(t *testing.T) {
 	if agg.Phase != taskauthority.PhaseWorking || agg.LaunchEvidence == nil || agg.PhaseChangedAt == 0 {
 		t.Fatalf("launched aggregate = phase %q, launch evidence %v, phase changed at %d", agg.Phase, agg.LaunchEvidence, agg.PhaseChangedAt)
 	}
-	snap, err := Snapshot(f.homeDir, SnapshotDependencies{CurrentState: NewCanonicalCurrentState()})
+	snap, err := Snapshot(f.homeDir, SnapshotDependencies{})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestSnapshotCarriesSeatContextUsage(t *testing.T) {
 			if tc.drop != nil {
 				tamperTaskAggregate(t, f.homeDir, f.taskID, tc.drop)
 			}
-			snap, err := Snapshot(f.homeDir, SnapshotDependencies{CurrentState: NewCanonicalCurrentState(), Endpoint: snapshotProbe{status: endpointStatusFromState(tc.state)}})
+			snap, err := Snapshot(f.homeDir, SnapshotDependencies{Endpoint: snapshotProbe{status: endpointStatusFromState(tc.state)}})
 			if err != nil {
 				t.Fatalf("Snapshot: %v", err)
 			}

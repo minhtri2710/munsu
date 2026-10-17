@@ -27,7 +27,7 @@ func TestSoldierWritableFilesReadOnlyAsRegularFiles(t *testing.T) {
 		refused string // "" when the reader reports an error to match instead
 	}{
 		{"snapshot last status", func(h string) string { return filepath.Join(h, "state", "t1.status") }, func(h string) string {
-			snap, err := Snapshot(h, SnapshotDependencies{CurrentState: NewCanonicalCurrentState()})
+			snap, err := Snapshot(h, SnapshotDependencies{})
 			if err != nil || len(snap.Tasks) != 1 {
 				return fmt.Sprintf("snapshot: %v %d", err, len(snap.Tasks))
 			}

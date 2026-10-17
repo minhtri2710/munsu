@@ -54,8 +54,7 @@ func canonicalAggregates(homeDir string) (map[string]tauth.Aggregate, error) {
 // currentCanonical reads one task's current authoritative aggregate. A
 // missing record is ErrNotFound (the caller reports a canonical-missing
 // clean-break error); a non-canonical home and corrupt/recovery-required
-// homes fail closed. `currentCanonical` is used by canonical observation and
-// the current-state query; it is never a projection fallback gate.
+// homes fail closed. It is never a projection fallback gate.
 func currentCanonical(homeDir, id string) (tauth.Aggregate, error) {
 	taskID, err := domain.NewTaskID(id)
 	if err != nil {
@@ -70,60 +69,6 @@ func currentCanonical(homeDir, id string) (tauth.Aggregate, error) {
 		return tauth.Aggregate{}, err
 	}
 	return c.Get(taskID)
-}
-
-// currentCanonicalAggregate reads one task's current authoritative aggregate,
-// reporting whether a canonical record exists. A missing record is not itself
-// an error, but every canonical-only caller must treat a missing record as a
-// clean-break operation error; non-canonical homes and corrupt state fail
-// closed.
-func currentCanonicalAggregate(homeDir, id string) (tauth.Aggregate, bool, error) {
-	agg, err := currentCanonical(homeDir, id)
-	if err != nil {
-		if errors.Is(err, tauth.ErrNotFound) {
-			return tauth.Aggregate{}, false, nil
-		}
-		return tauth.Aggregate{}, false, err
-	}
-	return agg, true, nil
-}
-
-// canonicalCurrentStateQ is the canonical current-state query. It is the
-// explicit dependency passed to snapshot/guard callers; it is stateless and
-// safe to construct at each composition call site.
-type canonicalCurrentStateQ struct{}
-
-// NewCanonicalCurrentState returns the canonical current-state query used as
-// the explicit CurrentState dependency for snapshot and guard readers.
-func NewCanonicalCurrentState() CurrentStateQuery {
-	return canonicalCurrentStateQ{}
-}
-
-// Read returns the authoritative current state for one task. The lifecycle
-// phase/description come from the canonical Task Authority record; open
-// activities are evidence derived from the status event log. A missing or
-// malformed canonical record fails closed (operation error) — there is no
-// legacy projection fallback.
-func (canonicalCurrentStateQ) Read(homeDir, taskID string) (*CurrentStateInfo, error) {
-	agg, canonical, err := currentCanonicalAggregate(homeDir, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if !canonical {
-		return nil, fmt.Errorf("task %q in home %s has no canonical Task Authority record", taskID, homeDir)
-	}
-	info := &CurrentStateInfo{
-		State:               string(agg.Phase),
-		Description:         agg.PhaseDetail,
-		StatusLogSuperseded: true,
-	}
-	if info.Description == "" {
-		info.Description = agg.Definition.Description
-	}
-	if statusPath, err := home.StatusFilePath(homeDir, taskID); err == nil {
-		info.OpenActivities = home.OpenActivities(statusPath)
-	}
-	return info, nil
 }
 
 // heldEndpoint is the endpoint a task's current generation holds.
