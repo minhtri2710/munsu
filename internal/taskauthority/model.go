@@ -81,6 +81,12 @@ func (p Phase) Blockable() bool { return p == PhaseQueued || p == PhaseWorking }
 // Unblockable reports whether Unblock accepts the phase.
 func (p Phase) Unblockable() bool { return p == PhaseBlocked }
 
+// Deliverable reports whether a delivery authorization accepts the phase.
+func (p Phase) Deliverable() bool { return p == PhaseWorking }
+
+// DeliversKind reports whether delivery accepts a task of the kind.
+func DeliversKind(kind string) bool { return kind == KindShip }
+
 // Promotable reports whether Promote accepts a task of the kind in the phase.
 func Promotable(kind string, p Phase) bool {
 	return kind == KindScout && (p == PhaseDone || p == PhaseResolved)

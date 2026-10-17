@@ -18,4 +18,4 @@
 │ 12:00:01 task.status t-work k1 working: started                                                  │
 │ 12:00:02 task.status t-human k2 blocked: needs a decision                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-j/k move • u unblock • d done • x teardown • s send • h hold • e resolve • ? help • q quit
+j/k move • u unblock • d done • x teardown • h hold • c complete • C converge • ? help • q quit

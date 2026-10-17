@@ -55,11 +55,11 @@ type dashAction struct {
 	// bindable.
 	needsCaptainID bool
 	fields         []dashField
-	// applies, when set, is whether the selected task row's state admits the
-	// action, by the predicate its Task Authority operation refuses by. The
-	// footer offers only actions that apply; begin does not consult it, so
-	// the command's own refusal stays the only one.
-	applies func(fleet.TaskSnapshot) bool
+	// applies, when set, is whether the selected task row admits the action,
+	// by the predicate the command refuses by; held is whether the row has an
+	// open decision hold. The footer offers only actions that apply; begin
+	// does not consult it, so the command's own refusal stays the only one.
+	applies func(ts fleet.TaskSnapshot, held bool) bool
 	// args builds the argv after "--home <home>" from the captured target and
 	// the field values (keyed by field name).
 	args func(t dashTarget, v map[string]string) []string
@@ -80,8 +80,8 @@ var optionalWordsFields = []dashField{
 }
 
 // inPhase applies an action to a row whose canonical phase admits it.
-func inPhase(admits func(taskauthority.Phase) bool) func(fleet.TaskSnapshot) bool {
-	return func(ts fleet.TaskSnapshot) bool { return admits(taskauthority.Phase(ts.CurrentState)) }
+func inPhase(admits func(taskauthority.Phase) bool) func(fleet.TaskSnapshot, bool) bool {
+	return func(ts fleet.TaskSnapshot, _ bool) bool { return admits(taskauthority.Phase(ts.CurrentState)) }
 }
 
 func taskArgs(path ...string) func(dashTarget, map[string]string) []string {
@@ -119,10 +119,11 @@ var dashActions = withBindings([]dashAction{
 	{key: "t", name: "task retry", binding: bindTask, applies: inPhase(taskauthority.Phase.Terminal), args: taskArgs("task", "retry")},
 	{key: "o", name: "task reopen", binding: bindTask, applies: inPhase(taskauthority.Phase.Terminal), args: taskArgs("task", "reopen")},
 	{key: "x", name: "teardown", binding: bindTask, args: taskArgs("teardown")},
-	{key: "p", name: "promote", binding: bindTask, applies: func(ts fleet.TaskSnapshot) bool {
+	{key: "p", name: "promote", binding: bindTask, applies: func(ts fleet.TaskSnapshot, _ bool) bool {
 		return taskauthority.Promotable(ts.Kind, taskauthority.Phase(ts.CurrentState))
 	}, args: taskArgs("promote")},
-	{key: "s", name: "send", binding: bindTask,
+	// The snapshot's window is the handle of the bound endpoint send needs.
+	{key: "s", name: "send", binding: bindTask, applies: func(ts fleet.TaskSnapshot, _ bool) bool { return ts.Window != "" },
 		fields: []dashField{{"line", "line", false}},
 		args: func(t dashTarget, v map[string]string) []string {
 			return []string{"send", t.ID, v["line"]}
@@ -133,7 +134,7 @@ var dashActions = withBindings([]dashAction{
 		args: func(t dashTarget, v map[string]string) []string {
 			return []string{"decision-hold", "hold", v["key"], "--reason", v["reason"], "--from", t.ID}
 		}},
-	{key: "e", name: "decision-hold resolve", binding: bindTask,
+	{key: "e", name: "decision-hold resolve", binding: bindTask, applies: func(_ fleet.TaskSnapshot, held bool) bool { return held },
 		fields: append([]dashField{{"key", "decision key", false}, {"answer", "answer", false}, {"unblock", "unblock (space-separated, optional)", false}}, wordsFields...),
 		args: func(t dashTarget, v map[string]string) []string {
 			a := []string{"decision-hold", "resolve", v["key"], "--answer", v["answer"], "--from", t.ID}
@@ -168,7 +169,9 @@ var dashActions = withBindings([]dashAction{
 		args: func(_ dashTarget, v map[string]string) []string {
 			return []string{"delivery", "record-verdict", "--reviewer-task", v["reviewer"]}
 		}},
-	{key: "m", name: "delivery pr-merge", binding: bindTask,
+	{key: "m", name: "delivery pr-merge", binding: bindTask, applies: func(ts fleet.TaskSnapshot, _ bool) bool {
+		return taskauthority.DeliversKind(ts.Kind) && taskauthority.Phase(ts.CurrentState).Deliverable()
+	},
 		fields: append([]dashField{{"pr", "PR URL", false}}, wordsFields...),
 		args: func(t dashTarget, v map[string]string) []string {
 			return append([]string{"delivery", "pr-merge", t.ID, v["pr"]}, wordsArgs(v)...)

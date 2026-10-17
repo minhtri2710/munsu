@@ -77,7 +77,7 @@ func RequireShipTask(homeDir, id string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving kind of task %s: %w", id, err)
 	}
-	if agg.Definition.Kind != taskauthority.KindShip {
+	if !taskauthority.DeliversKind(agg.Definition.Kind) {
 		return "", fmt.Errorf("task %s has kind=%q, delivery requires kind=ship (promote scout tasks first)", id, agg.Definition.Kind)
 	}
 	return taskHome, nil

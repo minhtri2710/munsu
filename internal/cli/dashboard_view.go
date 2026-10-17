@@ -247,7 +247,7 @@ func (m dashboardModel) columnRows() int {
 // ellipsis, since the viewport would cut it silently.
 func (m dashboardModel) eventLines() []string {
 	th := m.theme()
-	events := m.shownEvents()
+	events, _ := m.shownEvents()
 	lines := make([]string, len(events))
 	for i := max(0, len(events)-m.feedMax()); i < len(events); i++ {
 		lines[i] = eventLine(events[i], m.now(), th)
@@ -255,24 +255,43 @@ func (m dashboardModel) eventLines() []string {
 	return lines
 }
 
-// shownEvents are the events read that belong to the fleet of the last good
-// read. The log is never pruned, so it keeps events of tasks since removed. A
-// record names no task, only its producer: munsu's own producers are
-// "munsu:"-prefixed and every other producer munsu writes is a task ID. So an
-// event whose producer is not empty, not "munsu:"-prefixed and not a task ID
-// in the snapshot is left out.
-func (m dashboardModel) shownEvents() []orchestrator.Record {
-	tasks := make(map[string]bool, len(m.rows))
-	for _, ts := range m.rows {
+// shownEvents are the newest events the feed shows, at most dashboardFeedMax,
+// and how many events read it hides; it hides only while the last read is
+// complete and fresh.
+func (m dashboardModel) shownEvents() ([]orchestrator.Record, int) {
+	var snap *fleet.DisplaySnapshot
+	if s := m.state(); s == stateRefreshed || s == stateEmpty {
+		snap = &fleet.DisplaySnapshot{Tasks: m.rows}
+	}
+	shown, hidden := dashShown(m.events, snap)
+	return shown[max(0, len(shown)-dashboardFeedMax):], hidden
+}
+
+// dashShown is events less those of tasks the snapshot no longer has, and how
+// many it left out. The log is never pruned, so it keeps events of removed
+// tasks, and a record names no task, only its producer. An event is left out
+// only when munsu appends its type with a task ID as the producer
+// (orchestrator.ProducedByTask), its producer is not a captain ("captain:"),
+// and no task of the snapshot has that ID. Producers of other types, such as
+// munsu's own "munsu:" producers or any given to munsu event append, are never
+// matched. A nil snapshot or one with a failed source is not known to hold
+// every task, so nothing is left out.
+func dashShown(events []orchestrator.Record, snap *fleet.DisplaySnapshot) ([]orchestrator.Record, int) {
+	if snap == nil || len(snap.Failures) > 0 {
+		return events, 0
+	}
+	tasks := make(map[string]bool, len(snap.Tasks))
+	for _, ts := range snap.Tasks {
 		tasks[ts.ID] = true
 	}
 	var out []orchestrator.Record
-	for _, e := range m.events {
-		if e.Producer == "" || strings.HasPrefix(e.Producer, "munsu:") || tasks[e.Producer] {
-			out = append(out, e)
+	for _, e := range events {
+		if orchestrator.ProducedByTask(e.Type) && !strings.HasPrefix(e.Producer, "captain:") && !tasks[e.Producer] {
+			continue
 		}
+		out = append(out, e)
 	}
-	return out
+	return out, len(events) - len(out)
 }
 
 // dashKeep is a protected part: a state or a count the Human must read whole.
@@ -360,13 +379,16 @@ func keepListTitle(failures bool, drawn, total, page, pages int) dashKeep {
 	return dashKeep{dashBold.Render(title)}
 }
 
-// keepFeedTitle is "Events", the count of what the viewport draws when it
-// draws fewer lines than it holds, the malformed lines note, and " - unreadable:"
-// when the last event read failed.
-func keepFeedTitle(shown, read, skipped int, unreadable bool) dashKeep {
+// keepFeedTitle is "Events", the lines the viewport draws of those it holds
+// when it draws fewer, the hidden note, the malformed lines note, and
+// " - unreadable:" when the last event read failed.
+func keepFeedTitle(drawn, held, hidden, skipped int, unreadable bool) dashKeep {
 	t := "Events"
-	if shown < read {
-		t += fmt.Sprintf(" - Showing %d of the last %d read", shown, read)
+	if drawn < held {
+		t += fmt.Sprintf(" - Showing %d of %d", drawn, held)
+	}
+	if hidden > 0 {
+		t += fmt.Sprintf(" (%d of removed tasks hidden)", hidden)
 	}
 	if skipped > 0 {
 		t += fmt.Sprintf(" (%d malformed lines skipped)", skipped)
@@ -543,23 +565,19 @@ func (m dashboardModel) frame() string {
 	return lipgloss.JoinVertical(lipgloss.Left, out...)
 }
 
-// header is the header bar: brand, read state and NEEDS YOU count first, or a
-// dim "nothing needs you" once a good read found nothing, then the fleet chips
-// and the home path at its right end.
+// header is the header bar: brand, read state and NEEDS YOU count first, then
+// the fleet chips and the home path at its right end.
 func (m dashboardModel) header() []dashLine {
 	th := m.theme()
-	left, calm, needs := "", "", 0
+	left, needs := "", 0
 	if m.state() == stateFailed {
 		left = th.bar.Inherit(styleFail).Render(dashText(fmt.Sprint(m.readErr)))
 	}
 	if !m.lastGood.IsZero() {
 		left, needs = m.chips(th), len(m.needs())
-		if needs == 0 {
-			calm = th.bar.Inherit(th.subtle).Render(" · nothing needs you")
-		}
 	}
 	keep := keepState(m.state(), m.now().Sub(m.lastGood), m.reading && m.state() != stateLoading, needs, th)
-	return []dashLine{{keep: keep, rest: calm + m.barRest(lipgloss.Width(keep.text+calm), left, th)}}
+	return []dashLine{{keep: keep, rest: m.barRest(lipgloss.Width(keep.text), left, th)}}
 }
 
 // barRest fills the header bar after its protected part: left, then the home
@@ -745,23 +763,40 @@ var dashColMin = [2]int{5, 8}
 // dashCols is a frame's width of each seat column, 0 for a column not drawn.
 type dashCols [len(dashColW)]int
 
-// cols lays the seat columns out for the list width and its rows. The width
-// gates the AGE and SINCE, CTX, and HARNESS and MODEL columns, so no read moves
-// them. GROUP and NAME are as wide as their longest cell over every row, not
-// only the page, within dashColMin and dashColW; GROUP is not drawn while
-// every task row has the same group.
+// cols lays the seat columns out for the list width and its rows. GROUP and
+// NAME are as wide as their longest cell over every row, not only the page,
+// within dashColMin and dashColW; GROUP is not drawn while every task row has
+// the same group. The cells the list has beside the row lead (4), GROUP, NAME,
+// STATE and ROLE then gate the other columns: AGE and SINCE are drawn when
+// STATUS keeps 15 cells with them, CTX when it keeps 15 with CTX added too,
+// and HARNESS and MODEL when it keeps 25 with every column. A read moves them
+// only by changing GROUP or NAME.
 func (m dashboardModel) cols() dashCols {
-	c := dashCols(dashColW)
+	c := m.contentCols()
+	used := 4
+	for _, i := range []int{0, 1, 2, 6} {
+		if c[i] > 0 {
+			used += c[i] + 1
+		}
+	}
+	age, ctx, seat := c[3]+c[4]+2, c[5]+1, c[7]+c[8]+2
 	w := m.listW()
-	if w < dashAgeMin {
+	if used+age+15 > w {
 		c[3], c[4] = 0, 0
 	}
-	if w < dashCtxMin {
+	if used+age+ctx+15 > w {
 		c[5] = 0
 	}
-	if w < dashSeatMin {
+	if used+age+ctx+seat+25 > w {
 		c[7], c[8] = 0, 0
 	}
+	return c
+}
+
+// contentCols is every seat column at its width, GROUP and NAME sized to
+// their content as cols describes.
+func (m dashboardModel) contentCols() dashCols {
+	c := dashCols(dashColW)
 	groups := map[string]bool{}
 	group, name := dashColMin[0], dashColMin[1]
 	for _, it := range m.list.Items() {
@@ -777,19 +812,6 @@ func (m dashboardModel) cols() dashCols {
 	}
 	return c
 }
-
-// dashSeatMin is the list width from which the HARNESS and MODEL columns are
-// drawn: the lead and every column, with 25 cells left for STATUS. Detail
-// shows both either way.
-const dashSeatMin = 4 + 12 + 20 + 18 + 5 + 5 + 4 + 6 + 7 + 14 + 9 + 25
-
-// dashAgeMin is the list width from which the AGE and SINCE columns are drawn:
-// the lead and the columns before CTX and ROLE, with 15 cells left for STATUS.
-const dashAgeMin = 4 + 12 + 20 + 18 + 5 + 5 + 6 + 6 + 15
-
-// dashCtxMin is the list width from which the CTX column is drawn: the AGE
-// and SINCE rule with CTX added, so STATUS keeps its 15 cells.
-const dashCtxMin = dashAgeMin + 4 + 1
 
 // dashSeatLine lays a seat row out: each drawn cell padded to its column and
 // painted, then the status.
@@ -964,12 +986,13 @@ func dashOr(s string) string {
 
 // feedPlaceholder is the line shown in place of events while there are none.
 func (m dashboardModel) feedPlaceholder() string {
+	shown, _ := m.shownEvents()
 	switch {
 	case m.eventErr != nil:
 		return ""
 	case !m.feedLoaded:
 		return styleMuted.Render("Loading events...")
-	case len(m.shownEvents()) == 0:
+	case len(shown) == 0:
 		return styleMuted.Render("No events yet.")
 	}
 	return ""
@@ -982,7 +1005,8 @@ func (m dashboardModel) feedSection() []dashLine {
 	if m.feedH < 1 {
 		return nil
 	}
-	title := dashLine{keep: keepFeedTitle(m.feed.VisibleLineCount(), m.feed.TotalLineCount(), m.skipped, m.eventErr != nil)}
+	_, hidden := m.shownEvents()
+	title := dashLine{keep: keepFeedTitle(m.feed.VisibleLineCount(), m.feed.TotalLineCount(), hidden, m.skipped, m.eventErr != nil)}
 	if m.eventErr != nil {
 		title.rest = styleFail.Render(" " + dashText(m.eventErr.Error()))
 	}
@@ -1041,29 +1065,24 @@ func eventStyle(typ string) lipgloss.Style {
 	return lipgloss.NewStyle()
 }
 
-// helpLines are the key footer: the movement entry, the actions of the table,
-// decide, help and quit, in that order. An action applies when bind, the test
-// begin makes, accepts the selection and its applies, if any, accepts the
-// selected row. By default the footer draws only the entries that apply, on
-// one line, dropping the last of them while help and quit do not fit; with
-// help on it draws every entry, dimming those that do not apply. A key not
-// drawn or dimmed still reaches begin and gets its notice.
+// helpLines are the key footer: the movement entry, decide, the actions of the
+// table, help and quit, in that order. By default the footer draws only the
+// entries that apply (offered), on one line, dropping the last of them while
+// help and quit do not fit; with help on it draws every entry, dimming those
+// that do not apply. A key not drawn or dimmed still reaches begin and gets
+// its notice.
 func (m dashboardModel) helpLines() []string {
 	it, _ := m.list.SelectedItem().(dashItem)
-	hasTarget := len(m.list.Items()) > 0
 	move := dashMove
 	move.SetEnabled(len(m.list.Items()) >= 2)
-	entries := []key.Binding{move}
-	for i := range dashActions {
-		a := &dashActions[i]
-		b := a.keys
-		_, problem := a.bind(m.sel, hasTarget, m.home)
-		b.SetEnabled(problem == "" && (a.applies == nil || it.row != nil && a.applies(*it.row)))
-		entries = append(entries, b)
-	}
 	decide := dashDecide
 	decide.SetEnabled(it.row != nil && len(m.holdsOf(*it.row)) > 0)
-	entries = append(entries, decide)
+	entries := []key.Binding{move, decide}
+	for i := range dashActions {
+		b := dashActions[i].keys
+		b.SetEnabled(m.offered(&dashActions[i], it))
+		entries = append(entries, b)
+	}
 	help := dashHelp
 	if m.help {
 		help.SetHelp("?", "less")
@@ -1080,6 +1099,31 @@ func (m dashboardModel) helpLines() []string {
 		on = on[:len(on)-1]
 	}
 	return m.keyLines(append(on, tail...)...)
+}
+
+// offered is whether the footer offers the action for the selected item: the
+// target begin captures binds, a captain ID resolves from the last read's
+// registry where begin needs one, and for a task action the row has a
+// canonical phase (a captain metadata row has none) that, with its holds, the
+// action's applies admits.
+func (m dashboardModel) offered(a *dashAction, it dashItem) bool {
+	t := m.sel
+	if a.binding == bindCaptain {
+		t = captainTarget(t, m.registry)
+	}
+	if _, problem := a.bind(t, len(m.list.Items()) > 0, m.home); problem != "" {
+		return false
+	}
+	if _, ok := m.captainIDs[t.Home]; a.needsCaptainID && !ok {
+		return false
+	}
+	if a.binding != bindTask {
+		return true
+	}
+	if !taskauthority.Phase(it.row.CurrentState).Valid() {
+		return false
+	}
+	return a.applies == nil || a.applies(*it.row, len(m.holdsOf(*it.row)) > 0)
 }
 
 // keyLines draws key entries in the help style, each its key and label, a

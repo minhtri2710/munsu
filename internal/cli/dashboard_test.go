@@ -171,41 +171,118 @@ func TestDashboardGoldenQueued(t *testing.T) {
 	assertGolden(t, "queued_80x24", queued(80, 24).frame())
 }
 
-// The feed shows an event of a task in the snapshot or of munsu itself and
-// leaves out one of a task the snapshot does not hold; an event of another day
-// is dated; a key equal to its producer is printed once.
-func TestDashboardEventRows(t *testing.T) {
-	m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}, nil, nil))
-	th := m.theme()
+// The feed leaves out an event only when munsu writes its type with a task ID
+// as the producer, the producer is no captain, and a complete, fresh snapshot
+// holds no task of that ID. Every other event shows.
+func TestDashboardEventFilter(t *testing.T) {
+	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
+	complete := send(testDashModel(), goodRead(dashNow, rows, nil, nil))
+	partial := send(testDashModel(), goodRead(dashNow, rows, []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, nil))
+	stale := send(complete, dashRead{at: dashNow, snapErr: errors.New("hung")})
+	removed := ev(1, "task.status", "greet-go", "k", "working: a")
 	for _, tc := range []struct {
 		name  string
+		m     dashboardModel
 		e     orchestrator.Record
 		shown bool
-		line  string
 	}{
-		{"task in the snapshot", ev(1, "task.status", "t-1", "k", "working: a"), true, "12:00:01 task.status t-1 k working: a"},
-		{"task the snapshot does not hold", ev(1, "task.status", "greet-go", "k", "working: a"), false, ""},
-		{"munsu producer", ev(1, "watcher.cycle.failed", "munsu:watcher", "", "probe"), true, "12:00:01 watcher.cycle.failed munsu:watcher probe"},
-		{"munsu-like task id", ev(1, "task.status", "munsu-x", "", "probe"), false, ""},
-		{"no producer", ev(1, "note", "", "", "hello"), true, "12:00:01 note hello"},
-		{"today", orchestrator.Record{Timestamp: dashNow.Truncate(24 * time.Hour).UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: "p"}, true, "00:00:00 t t-1 k p"},
-		{"the day before", orchestrator.Record{Timestamp: dashNow.Truncate(24 * time.Hour).Add(-time.Second).UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: "p"}, true, "Sep 30 23:59:59 t t-1 k p"},
-		{"key equal to producer", ev(1, "task.status", "t-1", "t-1", "working: a"), true, "12:00:01 task.status t-1 working: a"},
+		{"task.status of a task in the snapshot", complete, ev(1, "task.status", "t-1", "k", "working: a"), true},
+		{"task.status of a removed task", complete, removed, false},
+		{"popup.sent of a removed task", complete, ev(1, "popup.sent", "greet-go", "needs-decision", ""), false},
+		{"popup.failed of a removed task", complete, ev(1, "popup.failed", "greet-go", "needs-decision", ""), false},
+		{"a captain producer the snapshot does not hold", complete, ev(1, "popup.sent", "captain:alpha", "needs-decision", ""), true},
+		{"a munsu producer", complete, ev(1, "watcher.cycle.failed", "munsu:watcher", "", "probe"), true},
+		{"an operator producer of another type", complete, ev(1, "note", "general", "", "hello"), true},
+		{"no producer", complete, ev(1, "note", "", "", "hello"), true},
+		{"a removed task with a failed source", partial, removed, true},
+		{"a removed task while the read is stale", stale, removed, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := m
+			m := tc.m
 			m.events = []orchestrator.Record{tc.e}
-			if got := len(m.shownEvents()) == 1; got != tc.shown {
-				t.Fatalf("shown = %v, want %v", got, tc.shown)
-			}
-			if got := ansi.Strip(eventLine(tc.e, dashNow, th)); tc.shown && got != tc.line {
-				t.Fatalf("line = %q, want %q", got, tc.line)
+			shown, hidden := m.shownEvents()
+			if got := len(shown) == 1; got != tc.shown || hidden != len(m.events)-len(shown) {
+				t.Fatalf("shown = %v hidden %d, want shown %v", got, hidden, tc.shown)
 			}
 		})
 	}
-	m.events = []orchestrator.Record{ev(1, "task.status", "greet-go", "k", "working: a")}
-	if f := ansi.Strip(resized(m, 100, 24).frame()); !strings.Contains(f, "No events yet.") {
-		t.Fatalf("a feed whose events are all left out does not read as empty:\n%s", f)
+	m := complete
+	m.events = []orchestrator.Record{removed}
+	if f := ansi.Strip(resized(m, 100, 24).frame()); !strings.Contains(f, "No events yet.") || !strings.Contains(f, "Events (1 of removed tasks hidden)") {
+		t.Fatalf("a feed whose events are all left out does not read as empty with one hidden:\n%s", f)
+	}
+}
+
+// An event of another day is dated; a key equal to its producer is printed once.
+func TestDashboardEventRows(t *testing.T) {
+	th := testDashModel().theme()
+	for _, tc := range []struct {
+		name string
+		e    orchestrator.Record
+		line string
+	}{
+		{"today", orchestrator.Record{Timestamp: dashNow.Truncate(24 * time.Hour).UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: "p"}, "00:00:00 t t-1 k p"},
+		{"the day before", orchestrator.Record{Timestamp: dashNow.Truncate(24 * time.Hour).Add(-time.Second).UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: "p"}, "Sep 30 23:59:59 t t-1 k p"},
+		{"key equal to producer", ev(1, "task.status", "t-1", "t-1", "working: a"), "12:00:01 task.status t-1 working: a"},
+		{"no producer", ev(1, "note", "", "", "hello"), "12:00:01 note hello"},
+	} {
+		if got := ansi.Strip(eventLine(tc.e, dashNow, th)); got != tc.line {
+			t.Errorf("%s: line = %q, want %q", tc.name, got, tc.line)
+		}
+	}
+}
+
+// The first read reads the log back, doubling, until the feed has
+// dashboardFeedMax events to show, the log ends, or dashboardFeedCap is read,
+// so events of removed tasks never push out live ones. A snapshot that may not
+// hold every task hides nothing, so one read is enough.
+func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
+	logOf := func(live, orphans int) []orchestrator.Record {
+		var log []orchestrator.Record
+		for i := range live + orphans {
+			p := "t-1"
+			if i >= live {
+				p = "gone"
+			}
+			log = append(log, ev(uint64(i+1), "task.status", p, "k", "working: a"))
+		}
+		return log
+	}
+	for _, tc := range []struct {
+		name          string
+		log           []orchestrator.Record
+		failures      []fleet.SourceFailure
+		reads         []int
+		shown, hidden int
+		newestShownID uint64
+	}{
+		{"live events behind orphans", logOf(250, 300), nil, []int{200, 400, 800}, 200, 300, 250},
+		{"live events first", logOf(300, 0), nil, []int{200}, 200, 0, 300},
+		{"a short log", logOf(10, 300), nil, []int{200, 400}, 10, 300, 10},
+		{"orphans to the cap", logOf(0, 3000), nil, []int{200, 400, 800, 1600, 2000}, 0, 2000, 0},
+		{"a failed source", logOf(250, 300), []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, []int{200}, 200, 0, 550},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := testDashModel()
+			m.readFleet = func() (*fleet.DisplaySnapshot, error) {
+				return &fleet.DisplaySnapshot{Tasks: []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}, Failures: tc.failures}, nil
+			}
+			m.readHolds = func(string, *fleet.DisplaySnapshot) (map[dashHoldKey][]dashHold, error) { return nil, nil }
+			m.captains = func() ([]fleet.Info, error) { return nil, nil }
+			var reads []int
+			m.latest = func(n int) ([]orchestrator.Record, int, error) {
+				reads = append(reads, n)
+				return tc.log[max(0, len(tc.log)-n):], 0, nil
+			}
+			m = send(m, m.read())
+			shown, hidden := m.shownEvents()
+			if !slices.Equal(reads, tc.reads) || len(shown) != tc.shown || hidden != tc.hidden {
+				t.Fatalf("reads %v shown %d hidden %d, want reads %v shown %d hidden %d", reads, len(shown), hidden, tc.reads, tc.shown, tc.hidden)
+			}
+			if len(shown) > 0 && shown[len(shown)-1].ID != tc.newestShownID {
+				t.Fatalf("newest shown event %d, want %d", shown[len(shown)-1].ID, tc.newestShownID)
+			}
+		})
 	}
 }
 
@@ -1171,14 +1248,44 @@ func TestDashboardCtx(t *testing.T) {
 			t.Errorf("dashCtx(%d, %d) = %q, want %q", tc.used, tc.window, got, tc.want)
 		}
 	}
-	// The column is drawn from list width 96, the terminal width less the panel borders.
+}
+
+// The AGE and SINCE, CTX, and HARNESS and MODEL columns are drawn from the
+// list width the drawn GROUP, NAME, STATE and ROLE leave room for, so a hidden
+// GROUP or short names draw them on a narrower terminal. Each gate is pinned
+// at its first width and the width before, for three GROUP and NAME widths.
+func TestDashboardColumnGates(t *testing.T) {
+	rowsOf := func(group, name string) []fleet.TaskSnapshot {
+		rows := []fleet.TaskSnapshot{row(name, "working", "x", "primary", "")}
+		if group != "" {
+			rows = append(rows, row("t-2", "working", "x", "captain:"+group, "/h/c/g"))
+		}
+		return rows
+	}
+	short, long := "t-1", strings.Repeat("n", 20)
 	for _, tc := range []struct {
-		width int
-		shown bool
-	}{{99, false}, {100, true}} {
-		m := healthyModel(tc.width, 32)
-		if got := strings.Contains(ansiSeq.ReplaceAllString(m.frame(), ""), " CTX "); m.listW() != tc.width-4 || got != tc.shown {
-			t.Errorf("width %d (list %d): CTX shown %v, want %v", tc.width, m.listW(), got, tc.shown)
+		name           string
+		rows           []fleet.TaskSnapshot
+		age, ctx, seat int // the least list width that draws each
+	}{
+		{"one group, short names", rowsOf("", short), 66, 71, 104},
+		{"general and alpha, short names", rowsOf("alpha", short), 74, 79, 112},
+		{"a long group, short names", rowsOf(strings.Repeat("g", 12), short), 79, 84, 117},
+		{"a long group, long names", rowsOf(strings.Repeat("g", 12), long), 91, 96, 129},
+	} {
+		for _, g := range []struct {
+			col   int
+			least int
+		}{{3, tc.age}, {4, tc.age}, {5, tc.ctx}, {7, tc.seat}, {8, tc.seat}} {
+			for _, w := range []int{g.least - 1, g.least} {
+				m := send(resized(testDashModel(), w+4, 40), goodRead(dashNow, tc.rows, nil, nil))
+				if m.listW() != w {
+					t.Fatalf("%s: terminal %d gives list width %d, want %d", tc.name, w+4, m.listW(), w)
+				}
+				if got := m.cols()[g.col] > 0; got != (w >= g.least) {
+					t.Errorf("%s: list width %d draws column %d %v, want %v", tc.name, w, g.col, got, w >= g.least)
+				}
+			}
 		}
 	}
 }
@@ -1301,7 +1408,9 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 }
 
 // captain recover takes the registry ID, which need not equal the directory
-// name; a home no registered captain owns is not bindable.
+// name; a home no registered captain owns is not bindable. A primary-home
+// captain row takes its registered captain's home and ID. The footer offers
+// exactly what begin binds, from the same registry.
 func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
@@ -1318,6 +1427,13 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 	if err := os.MkdirAll(strayHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	failedHome := filepath.Join(parent, "captains", "failed")
+	if err := os.MkdirAll(failedHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.Register(parent, "failed-id", failedHome, "", ""); err != nil {
+		t.Fatal(err)
+	}
 
 	var calls []execCall
 	m := newDashboardModel(parent, "/bin/munsu")
@@ -1325,21 +1441,50 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 		calls = append(calls, execCall{exe, args})
 		return nil
 	}
-	m = send(m, goodRead(dashNow, []fleet.TaskSnapshot{
-		row("c-1", "working", "in captain home", "captain:dir-name", captainHome),
-		row("s-1", "working", "in stray home", "captain:stray", strayHome),
-	}, nil, nil))
-
-	m = press(m, "V", "y")
-	want := []string{"--home", parent, "captain", "recover", "registry-id"}
-	if len(calls) != 1 || !reflect.DeepEqual(calls[0].args, want) {
-		t.Fatalf("exec = %+v, want %q", calls, want)
+	m.readFleet = func() (*fleet.DisplaySnapshot, error) {
+		return &fleet.DisplaySnapshot{Tasks: []fleet.TaskSnapshot{
+			{ID: "captain:registry-id", Kind: "captain", Home: parent, Source: "primary"},
+			{ID: "captain:ghost", Kind: "captain", Home: parent, Source: "primary"},
+			row("c-1", "working", "in captain home", "captain:dir-name", captainHome),
+			row("s-1", "working", "in stray home", "captain:stray", strayHome),
+		}, Failures: []fleet.SourceFailure{{Source: "captain:failed", Home: failedHome, Err: errors.New("unreadable")}}}, nil
+	}
+	m = send(m, m.read())
+	canonHome, err := home.CanonicalCaptainHome(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offers := func(m dashboardModel, k string) bool {
+		lit, _ := litKeys(resized(m, 1000, 24).helpLines())
+		return slices.ContainsFunc(lit, func(e string) bool { return strings.HasPrefix(e, k+" ") })
 	}
 
-	m = send(m, dashExecDone{})
-	m = press(m, "j", "V")
-	if m.mode != modeBrowse || len(calls) != 1 || !strings.Contains(m.notice, "not bindable") {
-		t.Fatalf("stray home: mode=%v calls=%d notice=%q; want not bindable and no exec", m.mode, len(calls), m.notice)
+	for _, tc := range []struct {
+		id      string
+		keys    []string
+		want    []string
+		notice  string
+		offered bool
+	}{
+		{"captain:registry-id", []string{"V", "y"}, []string{"--home", parent, "captain", "recover", "registry-id"}, "", true},
+		{"captain:registry-id", []string{"R", "y"}, []string{"--home", parent, "captain", "retire", canonHome}, "", true},
+		{"captain:ghost", []string{"R"}, nil, "captain retire: select a row from a captain home", false},
+		{"c-1", []string{"V", "y"}, []string{"--home", parent, "captain", "recover", "registry-id"}, "", true},
+		{"", []string{"V", "y"}, []string{"--home", parent, "captain", "recover", "failed-id"}, "", true},
+		{"s-1", []string{"V"}, nil, "not bindable", false},
+	} {
+		calls = nil
+		sel := selectTask(t, m, tc.id)
+		if got := offers(sel, tc.keys[0]); got != tc.offered {
+			t.Errorf("%s %s: footer offers %v, want %v", tc.id, tc.keys[0], got, tc.offered)
+		}
+		got := press(sel, tc.keys...)
+		if tc.want != nil && (len(calls) != 1 || !reflect.DeepEqual(calls[0].args, tc.want)) {
+			t.Errorf("%s %s: exec = %+v, want %q", tc.id, tc.keys[0], calls, tc.want)
+		}
+		if tc.want == nil && (got.mode != modeBrowse || len(calls) != 0 || !strings.Contains(got.notice, tc.notice)) {
+			t.Errorf("%s %s: mode=%v calls=%d notice=%q; want %q and no exec", tc.id, tc.keys[0], got.mode, len(calls), got.notice, tc.notice)
+		}
 	}
 }
 
@@ -1396,38 +1541,38 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	states := []state{
 		{"fresh", 30, 3, 3, false, false, "", false, 0, false, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 12 of 33 (page 1 of 3)", "Events"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 3", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 3", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"},
 		}},
 		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu  refreshed 0s ago", "Tasks - Showing 19 of 30 (page 1 of 2)", "Events - Showing 5 of the last 40 read"},
-			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 2 of the last 40 read"},
-			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 1 of the last 40 read"},
+			30: {" munsu  refreshed 0s ago", "Tasks - Showing 19 of 30 (page 1 of 2)", "Events - Showing 5 of 40"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 2 of 40"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 1 of 40"},
 			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)"},
 		}},
 		{"stale", 30, 3, 3, true, false, "", false, 0, false, nil, map[int][]string{
 			30: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 11 of 33 (page 1 of 3)", "Events"},
-			12: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 2", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
+			12: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 2", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			6:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
 			4:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 0"},
 		}},
 		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 14 of 32 (page 1 of 3)", "Events - Showing 5 of the last 40 read"},
-			12: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"},
-			6:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"},
+			30: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 14 of 32 (page 1 of 3)", "Events - Showing 5 of 40"},
+			12: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
+			6:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
 			4:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2 - showing 0"},
 		}},
 		{"zero tasks", 5, 0, 3, false, false, "", false, 0, false, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks", "Events"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 3", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 0", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 3", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 0", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)"},
 		}},
 		{"zero failures", 0, 6, 3, false, false, "", false, 0, false, nil, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
-			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events - Showing 2 of the last 3 read"},
-			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 1 of the last 3 read"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 1 of 3"},
 			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)"},
 		}},
 		{"zero events", 3, 6, 0, false, false, "", false, 0, false, nil, map[int][]string{
@@ -1437,27 +1582,27 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)"},
 		}},
 		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read - unreadable:"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of the last 40 read - unreadable:"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 - unreadable:"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 - unreadable:"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 - unreadable:"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of the last 40 read"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"command result", 2, 6, 40, false, false, "", true, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read", "exit 12:"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40", "exit 12:"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40", "exit 12:"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40", "exit 12:"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "exit 12:"},
 		}},
 		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of the last 40 read (3 malformed lines skipped) - unreadable:"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 (3 malformed lines skipped) - unreadable:"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 (3 malformed lines skipped) - unreadable:"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped) - unreadable:"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"first read failed", 0, 0, 0, false, false, "", false, 0, true, nil, map[int][]string{
@@ -1481,9 +1626,9 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			4:  {" munsu   LOADING ", "Loading fleet...", "Events"},
 		}},
 		{"lines skipped, feed readable", 2, 6, 40, false, false, "", false, 3, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"},
-			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of the last 40 read (3 malformed lines skipped)"},
-			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 (3 malformed lines skipped)"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 (3 malformed lines skipped)"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped)"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"read in progress", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
@@ -1491,15 +1636,15 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			return m
 		}, map[int][]string{
 			30: {" munsu  refreshed 0s ago (reading)", "Tasks", "Events"},
-			12: {" munsu  refreshed 0s ago (reading)", "Tasks", "Events - Showing 2 of the last 3 read"},
-			6:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"},
+			12: {" munsu  refreshed 0s ago (reading)", "Tasks", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"},
 			4:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 		}},
 		{"form mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			return press(selectTask(t, m, "t-00"), "m")
 		}, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
-			12: {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"},
 			6:  {" munsu  refreshed 0s ago"},
 			4:  {" munsu  refreshed 0s ago"},
 		}},
@@ -1508,7 +1653,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			return press(send(m, tea.PasteMsg{Content: longText("send this line to the task")}), "enter")
 		}, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
-			12: {" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of the last 3 read"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of 3"},
 			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 			4:  {" munsu  refreshed 0s ago"},
 		}},
@@ -1517,8 +1662,8 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			return m
 		}, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
-			12: {" munsu  refreshed 0s ago", "Tasks", "Events - Showing 2 of the last 3 read"},
-			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"},
+			12: {" munsu  refreshed 0s ago", "Tasks", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"},
 			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 		}},
 		{"browse result with output, an error and a notice", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
@@ -1531,7 +1676,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			return m
 		}, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events", "exit -1:"},
-			12: {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read", "exit -1:"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3", "exit -1:"},
 			6:  {" munsu  refreshed 0s ago", "exit -1:"},
 			4:  {" munsu  refreshed 0s ago", "exit -1:"},
 		}},
@@ -1539,7 +1684,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	// Longer than the widest terminal the sweep uses, so a clip cuts it.
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
 	titleRe := regexp.MustCompile(`^(Tasks|Failed sources and tasks)( - Showing (\d+) of (\d+) \(page \d+ of \d+\))?$`)
-	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
+	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of (\d+))?`)
 	itemRe := regexp.MustCompile(`^[▌ ] (✗ captain:c\d\d|[! ] [^ ]* *t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
 	// A narrower terminal wraps the key footer onto more lines (and a confirm's
@@ -1557,11 +1702,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 				{61, 120, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 8 of 33 (page 1 of 5)", "Events"}},
 			},
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{15, 61, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 1 of the last 3 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
+				{15, 61, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 1 of 3"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
 			},
 			4: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 0"}},
@@ -1569,14 +1714,14 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"fresh many tasks": {
 			30: {
-				{15, 42, []string{" munsu  refreshed 0s ago", "Tasks - Showing 20 of 30 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
-				{43, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 16 of 30 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
+				{15, 42, []string{" munsu  refreshed 0s ago", "Tasks - Showing 20 of 30 (page 1 of 2)", "Events - Showing 5 of 40"}},
+				{43, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 16 of 30 (page 1 of 2)", "Events - Showing 5 of 40"}},
 			},
 			12: {
-				{15, 42, []string{" munsu  refreshed 0s ago", "Tasks - Showing 5 of 30 (page 1 of 6)", "Events - Showing 2 of the last 40 read"}},
+				{15, 41, []string{" munsu  refreshed 0s ago", "Tasks - Showing 5 of 30 (page 1 of 6)", "Events - Showing 2 of 40"}},
 			},
 			6: {
-				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of the last 40 read"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of 40"}},
 			},
 			4: {
 				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 30 (page 1 of 30)"}},
@@ -1588,8 +1733,8 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 				{61, 120, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 7 of 33 (page 1 of 5)", "Events"}},
 			},
 			12: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 4", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 4", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
 			},
 			6: {
 				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"}},
@@ -1600,12 +1745,12 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"stale many tasks": {
 			30: {
-				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 15 of 32 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
-				{62, 120, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 10 of 32 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 15 of 32 (page 1 of 3)", "Events - Showing 5 of 40"}},
+				{62, 120, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 10 of 32 (page 1 of 4)", "Events - Showing 5 of 40"}},
 			},
 			12: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 1 of the last 40 read"}},
-				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 2 of the last 40 read"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 1 of 40"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 2 of 40"}},
 			},
 			6: {
 				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)"}},
@@ -1616,11 +1761,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"zero tasks": {
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
-				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 1 of the last 3 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 1 of 3"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"}},
 			},
 			4: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 0"}},
@@ -1628,10 +1773,10 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"zero failures": {
 			12: {
-				{15, 41, []string{" munsu  refreshed 0s ago", "Tasks - Showing 5 of 6 (page 1 of 2)", "Events - Showing 2 of the last 3 read"}},
+				{15, 40, []string{" munsu  refreshed 0s ago", "Tasks - Showing 5 of 6 (page 1 of 2)", "Events - Showing 2 of 3"}},
 			},
 			6: {
-				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of 3"}},
 			},
 			4: {
 				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 6 (page 1 of 6)"}},
@@ -1650,11 +1795,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"feed unreadable after a read": {
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read - unreadable:"}},
-				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read - unreadable:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40 - unreadable:"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40 - unreadable:"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 - unreadable:"}},
 			},
 			4: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
@@ -1662,11 +1807,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"long home": {
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read"}},
-				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40"}},
 			},
 			4: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
@@ -1674,8 +1819,8 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"command result": {
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 1 of the last 40 read", "exit 12:"}},
-				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read", "exit 12:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 1 of 40", "exit 12:"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40", "exit 12:"}},
 			},
 			6: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "exit 12:"}},
@@ -1686,11 +1831,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"feed unreadable after a read, lines skipped": {
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{15, 85, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40 (3 malformed lines skipped) - unreadable:"}},
+				{15, 71, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40 (3 malformed lines skipped) - unreadable:"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped) - unreadable:"}},
 			},
 			4: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
@@ -1713,11 +1858,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"lines skipped, feed readable": {
 			12: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped)"}},
-				{15, 70, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40 (3 malformed lines skipped)"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40 (3 malformed lines skipped)"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped)"}},
 			},
 			4: {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
@@ -1725,7 +1870,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"read in progress": {
 			6: {
-				{1, 14, []string{" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"}},
 			},
 			4: {
 				{1, 14, []string{" munsu  refreshed 0s ago (reading)", "Tasks - Showing 0 of 3 (page 1 of 3)"}},
@@ -1733,26 +1878,26 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"form mode": {
 			12: {
-				{1, 29, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{30, 41, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"}},
+				{1, 29, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{30, 40, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of 3"}},
 			},
 		},
 		"confirm mode": {
 			30: {
 				{1, 9, []string{" munsu  refreshed 0s ago"}},
 				{10, 10, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
-				{11, 11, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{12, 13, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of the last 3 read"}},
+				{11, 11, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{12, 13, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of 3"}},
 			},
 			12: {
 				{1, 29, []string{" munsu  refreshed 0s ago"}},
 				{30, 33, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 3 (page 1 of 3)"}},
 				{34, 39, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
-				{40, 46, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{47, 58, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{59, 78, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{79, 117, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{118, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"}},
+				{40, 46, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"}},
+				{47, 58, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{59, 78, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"}},
+				{79, 117, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{118, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of 3"}},
 			},
 			6: {
 				{1, 117, []string{" munsu  refreshed 0s ago"}},
@@ -1761,8 +1906,8 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"browse result with output, an error and a notice": {
 			12: {
-				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read", "exit -1:"}},
-				{15, 41, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read", "exit -1:"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3", "exit -1:"}},
+				{15, 40, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of 3", "exit -1:"}},
 			},
 		},
 	}
@@ -1777,7 +1922,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		}
 		var events []orchestrator.Record
 		for i := 1; i <= st.ne; i++ {
-			events = append(events, ev(uint64(i), "task.status", "munsu:watcher", "k", longText(fmt.Sprintf("step %d", i))))
+			events = append(events, ev(uint64(i), "watcher.cycle.failed", "munsu:watcher", "k", longText(fmt.Sprintf("step %d", i))))
 		}
 		base := testDashModel()
 		if st.home != "" {
@@ -1890,7 +2035,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					}
 					if feedTitle && st.ne > 0 {
 						if feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne {
-							t.Fatalf("%s: %d events drawn, title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, strings.Join(lines, "\n"))
+							t.Fatalf("%s: %d events drawn, title says %d of %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, strings.Join(lines, "\n"))
 						}
 					}
 				}
@@ -2002,7 +2147,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					t.Fatalf("%s: %d items drawn, list title says %d of %d, total %d:\n%s", where, items, listN, listM, total, f)
 				}
 				if feedTitle && (feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne) {
-					t.Fatalf("%s: %d events drawn, feed title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, f)
+					t.Fatalf("%s: %d events drawn, feed title says %d of %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, f)
 				}
 			}
 		}
@@ -2055,19 +2200,19 @@ func litKeys(lines []string) (lit, dim []string) {
 	return lit, dim
 }
 
-// The key footer offers, on one line, the movement entry, the actions that
-// apply to the selected row (bind accepts the selection and the action's
-// applies, if any, accepts the row's canonical phase), decide on a held row,
-// then help and quit. ? lists every entry, dimming those that do not apply. A
-// key the footer does not offer still reaches begin. q quits by its declaration.
+// The key footer offers, on one line, the movement entry, decide on a held
+// row, the actions offered for the selected row, then help and quit. ? lists
+// every entry, dimming those that do not apply. A key the footer does not
+// offer still reaches begin. q quits by its declaration.
 func TestDashboardKeyFooter(t *testing.T) {
 	const (
-		all     = "j/k move • b block • u unblock • d done • t retry • o reopen • x teardown • p promote • s send • h hold • e resolve • c complete • R retire • V recover • C converge • v record-verdict • m pr-merge • enter decide • ? less • q quit"
+		all     = "j/k move • enter decide • b block • u unblock • d done • t retry • o reopen • x teardown • p promote • s send • h hold • e resolve • c complete • R retire • V recover • C converge • v record-verdict • m pr-merge • ? less • q quit"
 		tail    = "  ? help  q quit"
 		anyKeys = "C converge  v record-verdict"
-		holds   = "s send  h hold  e resolve  c complete  "
-		live    = "b block  d done  x teardown  " + holds
-		ended   = "t retry  o reopen  x teardown  " + holds
+		notes   = "h hold  c complete  "
+		live    = "b block  d done  x teardown  " + notes
+		ended   = "t retry  o reopen  x teardown  " + notes
+		merge   = "  m pr-merge"
 	)
 	var calls []execCall
 	fixture := actionFixture(&calls)
@@ -2076,28 +2221,49 @@ func TestDashboardKeyFooter(t *testing.T) {
 		r.Kind = kind
 		return send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{r}, nil, nil))
 	}
+	windowed := row("p-1", "working", "primary task", "primary", "")
+	windowed.Window = "mu-p-1"
 	captains := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("p-1", "working", "primary task", "primary", ""),
 	}, []fleet.SourceFailure{{Source: "captains", Home: "/h", Err: errors.New("unlistable")}}, nil))
 	held := goodRead(dashNow, []fleet.TaskSnapshot{row("p-1", "working", "primary task", "primary", "")}, nil, nil)
 	held.holds = map[dashHoldKey][]dashHold{{"/h", "p-1"}: {{"approach", "pick one"}}}
-	heldRow := send(testDashModel(), held)
+	registered := func(r dashRead) dashRead {
+		r.registry = []fleet.Info{{ID: "alpha", Home: "/h/captains/alpha"}, {ID: "beta", Home: "/h/captains/beta"}}
+		r.captainIDs = map[string]string{"/h/captains/alpha": "alpha", "/h/captains/beta": "beta"}
+		return r
+	}
+	failedHome := registered(goodRead(dashNow, []fleet.TaskSnapshot{
+		row("p-1", "working", "primary task", "primary", ""),
+	}, []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, nil))
+	meta := func(id string) []fleet.TaskSnapshot {
+		return []fleet.TaskSnapshot{{ID: id, Kind: "captain", Home: "/h", Source: "primary", Window: "mu-captain"}}
+	}
 	tests := []struct {
 		name string
 		m    dashboardModel
 		want string
 	}{
 		{"empty fleet", testDashModel(), anyKeys + tail},
-		{"queued task", inState("queued", "ship"), live + anyKeys + "  m pr-merge" + tail},
-		{"working task", inState("working", "ship"), live + anyKeys + "  m pr-merge" + tail},
-		{"blocked task", inState("blocked", "ship"), "u unblock  d done  x teardown  " + holds + anyKeys + "  m pr-merge" + tail},
-		{"done ship task", inState("done", "ship"), ended + anyKeys + "  m pr-merge" + tail},
-		{"done scout task", inState("done", "scout"), "t retry  o reopen  x teardown  p promote  " + holds + anyKeys + "  m pr-merge" + tail},
-		{"working scout task", inState("working", "scout"), live + anyKeys + "  m pr-merge" + tail},
-		{"held decision row", heldRow, live + anyKeys + "  m pr-merge  enter decide" + tail},
-		{"failed captain-home row", fixture, "j/k move  R retire  V recover  " + anyKeys + tail},
+		{"queued task", inState("queued", "ship"), live + anyKeys + tail},
+		{"working task", inState("working", "ship"), live + anyKeys + merge + tail},
+		{"working task with a window", send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{windowed}, nil, nil)), "b block  d done  x teardown  s send  " + notes + anyKeys + merge + tail},
+		{"blocked task", inState("blocked", "ship"), "u unblock  d done  x teardown  " + notes + anyKeys + tail},
+		{"done ship task", inState("done", "ship"), ended + anyKeys + tail},
+		{"resolved ship task", inState("resolved", "ship"), ended + anyKeys + tail},
+		{"retired ship task", inState("retired", "ship"), ended + anyKeys + tail},
+		{"done scout task", inState("done", "scout"), "t retry  o reopen  x teardown  p promote  " + notes + anyKeys + tail},
+		{"resolved scout task", inState("resolved", "scout"), "t retry  o reopen  x teardown  p promote  " + notes + anyKeys + tail},
+		{"working scout task", inState("working", "scout"), live + anyKeys + tail},
+		{"task with no phase", inState("", "ship"), anyKeys + tail},
+		{"held decision row", send(testDashModel(), held), "enter decide  b block  d done  x teardown  h hold  e resolve  c complete  " + anyKeys + merge + tail},
+		{"failed captain-home row, unregistered", fixture, "j/k move  R retire  " + anyKeys + tail},
+		{"failed captain-home row, registered", send(testDashModel(), failedHome), "j/k move  R retire  V recover  " + anyKeys + tail},
 		{"captains failure row", captains, "j/k move  " + anyKeys + tail},
-		{"captain task row", selectTask(t, fixture, "c-1"), "j/k move  " + live + "R retire  V recover  " + anyKeys + "  m pr-merge" + tail},
+		{"captain task row", selectTask(t, fixture, "c-1"), "j/k move  " + live + "R retire  " + anyKeys + merge + tail},
+		{"primary captain row, registered", send(testDashModel(), registered(goodRead(dashNow, meta("captain:alpha"), nil, nil))), "R retire  V recover  " + anyKeys + tail},
+		{"primary captain row, unregistered", send(testDashModel(), registered(goodRead(dashNow, meta("captain:ghost"), nil, nil))), anyKeys + tail},
+		{"task named like a captain", send(testDashModel(), registered(goodRead(dashNow, []fleet.TaskSnapshot{row("alpha", "working", "x", "primary", "")}, nil, nil))), live + anyKeys + merge + tail},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

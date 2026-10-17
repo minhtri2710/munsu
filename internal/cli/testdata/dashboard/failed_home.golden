@@ -14,4 +14,4 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Events - unreadable: open /h/state/events.log: permission denied ───────────────────────────────╮
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-j/k move • R retire • V recover • C converge • v record-verdict • ? help • q quit
+j/k move • R retire • C converge • v record-verdict • ? help • q quit

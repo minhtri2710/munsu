@@ -933,7 +933,7 @@ func sha256Hex(data []byte) string {
 // deliveryStateBlocker refuses a task that is not working with its worktree and
 // endpoint bound: the task-state conditions of a delivery authorization.
 func deliveryStateBlocker(cur Aggregate) error {
-	if cur.Phase != PhaseWorking {
+	if !cur.Phase.Deliverable() {
 		return preconditionError("delivery authorization requires a working task; task %s is %s", cur.TaskID, cur.Phase)
 	}
 	if cur.Worktree == nil || cur.Endpoint == nil {

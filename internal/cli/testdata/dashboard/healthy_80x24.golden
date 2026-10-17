@@ -3,13 +3,13 @@
 │ stuck    t-human              needs a decision                               │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭─ Tasks ──────────────────────────────────────────────────────────────────────╮
-│     GROUP   NAME     STATE              ROLE   STATUS                        │
+│     GROUP   NAME     STATE              AGE   SINCE ROLE   STATUS            │
 │ ──────────────────────────────────────────────────────────────────────────── │
-│ ▌ ! general t-human  ! blocked          ship   needs a decision              │
-│             t-work   ● working          ship   implementing                  │
-│             t-done   ✓ done             ship   merged                        │
-│     alpha   t-cap    ● working          ship   in captain home               │
-│     └─      t-cap2   ○ queued           ship   waiting for a slot            │
+│ ▌ ! general t-human  ! blocked          -     -     ship   needs a decision  │
+│             t-work   ● working          3h    12m   ship   implementing      │
+│             t-done   ✓ done             -     -     ship   merged            │
+│     alpha   t-cap    ● working          -     -     ship   in captain home   │
+│     └─      t-cap2   ○ queued           -     -     ship   waiting for a sl… │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭─ Detail ─────────────────────────────────────────────────────────────────────╮
 │ t-human  blocked  kind ship  project munsu  group general                    │
@@ -18,4 +18,4 @@
 │ 12:00:01 task.status t-work k1 working: started                              │
 │ 12:00:02 task.status t-human k2 blocked: needs a decision                    │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-j/k move • u unblock • d done • x teardown • s send • h hold • ? help • q quit
+j/k move • u unblock • d done • x teardown • h hold • ? help • q quit

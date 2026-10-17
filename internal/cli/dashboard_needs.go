@@ -28,14 +28,6 @@ var dashNeedStyle = map[string]lipgloss.Style{
 	"verdict":  styleAccent,
 }
 
-func dashFinished(ts fleet.TaskSnapshot) bool {
-	switch taskauthority.Phase(ts.CurrentState) {
-	case taskauthority.PhaseDone, taskauthority.PhaseResolved, taskauthority.PhaseRetired:
-		return true
-	}
-	return false
-}
-
 // needKind names what a Human-needed row waits on: the first Human-needed
 // verb in its status line, else stuck (a canonical blocked row).
 func needKind(ts fleet.TaskSnapshot) string {
@@ -64,7 +56,7 @@ func (m dashboardModel) needs() []dashNeed {
 	}
 	for _, it := range m.items() {
 		ts := it.(dashItem).row
-		if ts == nil || dashFinished(*ts) {
+		if ts == nil || taskauthority.Phase(ts.CurrentState).Terminal() {
 			continue
 		}
 		holds := m.holdsOf(*ts)

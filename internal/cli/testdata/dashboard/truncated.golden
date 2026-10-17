@@ -1,4 +1,4 @@
- munsu  refreshed 0s ago · nothing needs you  watcher absent · captains 0 · working 30 · unacked 0 …
+ munsu  refreshed 0s ago  watcher absent · captains 0 · working 30 · unacked 0                   /h
 ╭─ Tasks - Showing 10 of 30 (page 1 of 3) ─────────────────────────────────────────────────────────╮
 │ ▌   t-00     ● working          -     -     -    ship   implementing                             │
 │     t-01     ● working          -     -     -    ship   implementing                             │
@@ -14,11 +14,11 @@
 ╭─ Detail ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ t-00  working  kind ship  project munsu  group general                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ Events - Showing 5 of the last 40 read ─────────────────────────────────────────────────────────╮
+╭─ Events - Showing 5 of 40 ───────────────────────────────────────────────────────────────────────╮
 │ 12:00:36 task.status t-00 k working: step 36                                                     │
 │ 12:00:37 task.status t-00 k working: step 37                                                     │
 │ 12:00:38 task.status t-00 k working: step 38                                                     │
 │ 12:00:39 task.status t-00 k working: step 39                                                     │
 │ 12:00:40 task.status t-00 k working: step 40                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-j/k move • b block • d done • x teardown • s send • h hold • e resolve • ? help • q quit
+j/k move • b block • d done • x teardown • h hold • c complete • C converge • ? help • q quit
