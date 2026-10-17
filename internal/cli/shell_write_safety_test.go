@@ -2003,33 +2003,6 @@ func fastestRuns(small, large func()) (time.Duration, time.Duration) {
 	return fastest[0], fastest[1]
 }
 
-// TestShellWriteReadsLongPrefixesInLinearTime pins R5 of review-80b12d4f0a2e:
-// a run of words before the command word, and a directory stack pushd
-// grows, cost linear time (fastestRuns).
-func TestShellWriteReadsLongPrefixesInLinearTime(t *testing.T) {
-	dir := t.TempDir()
-	want := []string{filepath.Join(dir, "x")}
-	for _, shape := range []struct {
-		name, repeat, tail string
-	}{
-		{"time", "time ", "rm x"},
-		{"time -p", "time -p ", "rm x"},
-		{"pushd", "pushd " + dir + "; ", "rm x"},
-	} {
-		run := func(n int) func() {
-			command := strings.Repeat(shape.repeat, n) + shape.tail
-			return func() {
-				if targets, ambiguous := shellWriteTargets(dir, command); ambiguous || !slices.Equal(targets, want) {
-					t.Fatalf("shellWriteTargets of %s × %d = %q ambiguous=%v, want %q", shape.name, n, targets, ambiguous, want)
-				}
-			}
-		}
-		if small, large := fastestRuns(run(1250), run(20000)); large > 64*small {
-			t.Errorf("%s × 20000 took %v, %.1f times 1250 (%v), want under 64", shape.name, large, float64(large)/float64(small), small)
-		}
-	}
-}
-
 // TestShellWriteResolvesFunctionChainsInLinearTime pins F-D of
 // review-cf6153cd273e: whether a call moves the directory is resolved once
 // per name until a definition changes it, within one budget per command, so

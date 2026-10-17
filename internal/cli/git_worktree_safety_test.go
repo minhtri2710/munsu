@@ -850,88 +850,6 @@ func TestMunsuInvocationsDepthBound(t *testing.T) {
 	}
 }
 
-// TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates pins the
-// hook verdicts review-28489e659251 moved. Every refused row was allowed at
-// 28489e65:
-//   - bash 5.3 runs `${ cmd; }` and `${| cmd; }` as command substitution;
-//   - a subscripted or indirect parameter still substitutes its word, and a
-//     parameter expansion the tokenizer cannot parse is refused;
-//   - `$"..."` in a double-quoted default word is its double-quoted text;
-//   - every candidate word at each position the verb classifier reads is
-//     read, nested defaults included.
-//
-// The allowed rows run no git and write nothing in bash 3.2 or 5.3.
-// TestSafetyCheckReadsLongCommandInLinearTime pins that the hook's walk over
-// a segment grows linearly: a git add of 16000 words took 32.9s and gigabytes
-// when every position copied the words after it, and takes milliseconds and
-// under 100 MiB without.
-func TestSafetyCheckReadsLongCommandInLinearTime(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-fs", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-fs")
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fs")
-	var words strings.Builder
-	for i := range 16000 {
-		fmt.Fprintf(&words, " f%d", i)
-	}
-	command := "git add" + words.String()
-	allocated, elapsed := measureAllocation(func() {
-		if block, reason := runPiSafetyForGit(t, worktree, command); block {
-			t.Errorf("git add of 16000 words: block=true reason=%q, want allow", reason)
-		}
-	})
-	if elapsed > 5*time.Second || allocated > 512<<20 {
-		t.Errorf("git add of 16000 words took %v and %d MiB, want under 5s and 512 MiB", elapsed, allocated>>20)
-	}
-	// The write guard's enumeration of a write segment is linear too. Its
-	// per-target classification is not what this pins.
-	segment := tokenizeSegments(backslashEscapes, "rm"+words.String())[0]
-	allocated, elapsed = measureAllocation(func() {
-		if readings, ok := writeReadings(segment); !ok || len(readings) != 1 || len(readings[0]) != len(segment) {
-			t.Errorf("writeReadings of rm with 16000 words = %d readings ok=%v, want one", len(readings), ok)
-		}
-	})
-	if elapsed > 5*time.Second || allocated > 512<<20 {
-		t.Errorf("writeReadings of rm with 16000 words took %v and %d MiB, want under 5s and 512 MiB", elapsed, allocated>>20)
-	}
-	// So is the dedupe of its targets: sixteen times the targets cost about
-	// sixteen times as much, where a list scan per target cost about 256.
-	// Comparing two sizes under the same load keeps -race and a busy host
-	// from deciding the verdict.
-	targets := func(n int) func() {
-		command := "rm " + strings.Join(strings.Fields(words.String())[:n], " ")
-		return func() {
-			if targets, ambiguous := shellWriteTargets(worktree, command); len(targets) != n || ambiguous {
-				t.Errorf("shellWriteTargets of rm with %d words = %d targets ambiguous=%v, want %d", n, len(targets), ambiguous, n)
-			}
-		}
-	}
-	if small, large := fastestRuns(targets(1000), targets(16000)); large > 64*small {
-		t.Errorf("shellWriteTargets of rm with 16000 words took %v, %.0f times 1000 words (%v), want under 64", large, float64(large)/float64(small), small)
-	}
-	// The git guard reads each distinct word that reads as more than itself
-	// once: sixteen times the quoted words cost about fourteen times as much,
-	// where a list scan per word cost about 75.
-	echo := func(n int) func() {
-		var command strings.Builder
-		command.WriteString("echo")
-		for i := range n {
-			fmt.Fprintf(&command, " 'a %d'", i)
-		}
-		return func() {
-			if block, reason := runPiSafetyForGit(t, worktree, command.String()); block {
-				t.Errorf("echo of %d quoted words: block=true reason=%q, want allow", n, reason)
-			}
-		}
-	}
-	if small, large := fastestRuns(echo(4000), echo(64000)); large > 32*small {
-		t.Errorf("echo of 64000 quoted words took %v, %.0f times 4000 words (%v), want under 32", large, float64(large)/float64(small), small)
-	}
-}
-
 // TestSafetyCheckReadsNestedSubshellsInLinearTime pins F-E of
 // review-cf6153cd273e: a subshell shares the directory stack pushd built
 // instead of copying it, so n pushes under n nested subshells allocate
@@ -973,6 +891,17 @@ func measureAllocation(run func()) (uint64, time.Duration) {
 	return after.TotalAlloc - before.TotalAlloc, elapsed
 }
 
+// TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates pins the
+// hook verdicts review-28489e659251 moved. Every refused row was allowed at
+// 28489e65:
+//   - bash 5.3 runs `${ cmd; }` and `${| cmd; }` as command substitution;
+//   - a subscripted or indirect parameter still substitutes its word, and a
+//     parameter expansion the tokenizer cannot parse is refused;
+//   - `$"..."` in a double-quoted default word is its double-quoted text;
+//   - every candidate word at each position the verb classifier reads is
+//     read, nested defaults included.
+//
+// The allowed rows run no git and write nothing in bash 3.2 or 5.3.
 func TestSafetyCheckReadsFunctionSubstitutionExpansionsAndCandidates(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")

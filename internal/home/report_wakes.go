@@ -158,9 +158,11 @@ func logReportSkip(h, id string, err error) {
 
 // deriveReportWakesLocked queues the wakes before it advances the cursors: a
 // crash between the two derives those reports again (at least once, never
-// lost). A task whose status or cursor cannot be read is skipped and logged,
-// so one bad file never blocks every other report; its teardown still holds,
-// because UnsettledReports fails on the same read.
+// lost). A torn last status line is left past the cursor until its newline
+// lands, so a report still being written is never consumed. A task whose
+// status or cursor cannot be read is skipped and logged, so one bad file never
+// blocks every other report; its teardown still holds, because
+// UnsettledReports fails on the same read.
 func deriveReportWakesLocked(h string, now time.Time) error {
 	ids, err := statusTaskIDs(h)
 	if err != nil {
@@ -169,10 +171,13 @@ func deriveReportWakesLocked(h string, now time.Time) error {
 	var records []WakeRecord
 	advanced := map[string]reportCursor{}
 	for _, id := range ids {
-		lines, err := ReadStatus(h, id)
+		lines, torn, err := readStatus(h, id)
 		if err != nil {
 			logReportSkip(h, id, err)
 			continue
+		}
+		if torn {
+			lines = lines[:len(lines)-1]
 		}
 		cur, err := readReportCursor(h, id)
 		if err != nil {

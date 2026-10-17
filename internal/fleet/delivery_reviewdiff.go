@@ -74,7 +74,7 @@ func gitBranch(repoPath string) (string, error) {
 // checkDefaultBranchStale warns if the local default branch is behind origin.
 func checkDefaultBranchStale(repoPath, branch string) (string, error) {
 	// Fetch to update refs (lightweight, no merge)
-	fetchCmd := exec.Command("git", "fetch", "origin", branch, "--quiet")
+	fetchCmd := exec.Command("git", "fetch", "--no-write-fetch-head", "origin", branch, "--quiet")
 	fetchCmd.Dir = repoPath
 	_ = fetchCmd.Run()
 

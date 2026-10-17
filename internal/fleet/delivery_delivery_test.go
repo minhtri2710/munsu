@@ -26,16 +26,59 @@ func TestGitBranch(t *testing.T) {
 	}
 }
 
-func TestCheckDefaultBranchStale_NoRemote(t *testing.T) {
-	tmp := t.TempDir()
-	initGitRepo(t, tmp, "")
-
-	warn, err := checkDefaultBranchStale(tmp, "main")
-	if err != nil {
-		t.Fatalf("checkDefaultBranchStale: %v", err)
+// TestCheckDefaultBranchStale also plants FETCH_HEAD as a link to a sentinel:
+// the unfenced fetch runs in a soldier's worktree, whose git dir the seat writes.
+func TestCheckDefaultBranchStale(t *testing.T) {
+	tests := []struct {
+		name     string
+		arrange  func(t *testing.T, tmp string) string // returns the worktree to check
+		wantWarn string
+	}{
+		{"no remote", func(t *testing.T, tmp string) string {
+			initGitRepo(t, tmp, "")
+			return tmp
+		}, ""},
+		{"linked worktree behind origin", func(t *testing.T, tmp string) string {
+			primary, remote, other := filepath.Join(tmp, "primary"), filepath.Join(tmp, "remote.git"), filepath.Join(tmp, "other")
+			if err := os.MkdirAll(primary, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			setupGitRepo(t, primary, remote)
+			gitTestRun(t, tmp, "clone", "-q", "-b", "main", remote, other)
+			gitTestRun(t, other, "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "ahead")
+			gitTestRun(t, other, "push", "-q", "origin", "main")
+			wt := filepath.Join(tmp, "wt")
+			gitTestRun(t, primary, "worktree", "add", "-q", "-b", "feature/x", wt)
+			return wt
+		}, `default branch "main" is 1 commits behind origin/main`},
 	}
-	if warn != "" {
-		t.Errorf("expected no warning without remote, got: %s", warn)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			wt := tt.arrange(t, tmp)
+			sentinel := filepath.Join(tmp, "sentinel")
+			if err := os.WriteFile(sentinel, []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fetchHead := filepath.Join(gitTestRun(t, wt, "rev-parse", "--absolute-git-dir"), "FETCH_HEAD")
+			if err := os.Symlink(sentinel, fetchHead); err != nil {
+				t.Fatal(err)
+			}
+
+			warn, err := checkDefaultBranchStale(wt, "main")
+			if err != nil {
+				t.Fatalf("checkDefaultBranchStale: %v", err)
+			}
+			if !strings.Contains(warn, tt.wantWarn) || (tt.wantWarn == "") != (warn == "") {
+				t.Errorf("warning = %q, want %q", warn, tt.wantWarn)
+			}
+			if b, err := os.ReadFile(sentinel); err != nil || string(b) != "keep" {
+				t.Errorf("sentinel = %q, %v; the fetch wrote through FETCH_HEAD", b, err)
+			}
+			if target, err := os.Readlink(fetchHead); err != nil || target != sentinel {
+				t.Errorf("FETCH_HEAD = %q, %v; want the planted link untouched", target, err)
+			}
+		})
 	}
 }
 
