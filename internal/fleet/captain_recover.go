@@ -472,7 +472,7 @@ func relaunchDeadCaptain(parentHome string, sm Info, launch LaunchEndpoint, inte
 	if refused {
 		return fmt.Errorf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))
 	}
-	if err := Launch(sm.Home, parentHome, launch, integration); err != nil {
+	if err := launchLocked(sm.Home, parentHome, launch, integration); err != nil {
 		return fmt.Errorf("relaunch failed: %w", err)
 	}
 	proven, err := proveRelaunch(parentHome, sm, probe, sleep, now)

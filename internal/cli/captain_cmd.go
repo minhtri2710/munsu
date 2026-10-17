@@ -83,7 +83,7 @@ Flags for worktree provisioning:
 		Short: "Launch a captain in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.Launch(args[0], ctx.Home, newSessionLaunchEndpoint(), captainIntegrationAdapter{})
+			return fleet.Launch(args[0], ctx.Home, newSessionLaunchEndpoint(), newSessionProbeEndpoint(), captainIntegrationAdapter{})
 		}),
 	})
 

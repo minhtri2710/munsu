@@ -889,7 +889,27 @@ func refuseNestedCaptainLaunch(parentHome string) error {
 // It validates provenance, resolves the harness, creates a new window via
 // the session backend, sends a shell-safe launch script, then writes task
 // meta with kind=captain and endpoint metadata only after launch succeeds.
-func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, integration IntegrationPort) error {
+// It holds the converge lock so it never launches beside a relaunch.
+func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, probe ProbeEndpoint, integration IntegrationPort) error {
+	release, err := convergeLockAcquire(parentHome)
+	if err != nil {
+		return fmt.Errorf("acquiring converge lock: %w", err)
+	}
+	defer release()
+	id, err := home.ValidateCaptainProvenance(captainHome)
+	if err != nil {
+		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
+	}
+	// Words: Human, typed, 2026-10-17: "ok làm đi" (council 3/3: captain launch refuses alive or unproven captain, unreadable meta or armed relaunch guard; dead or seeded relaunches)
+	if err := refuseLiveCaptainLaunch(parentHome, id, probe); err != nil {
+		return err
+	}
+	return launchLocked(captainHome, parentHome, endpoint, integration)
+}
+
+// launchLocked launches for a caller that holds the converge lock and has
+// proven the captain seeded or dead.
+func launchLocked(captainHome, parentHome string, endpoint LaunchEndpoint, integration IntegrationPort) error {
 	if err := refuseNestedCaptainLaunch(parentHome); err != nil {
 		return err
 	}
@@ -2138,17 +2158,56 @@ func checkAliveWithProbeBinding(parentHome string, sm Info, probe ProbeEndpoint)
 		return CaptainUnproven, captainBinding{}, fmt.Errorf("captain probe endpoint capability is required")
 	}
 	binding := captainBinding{kind: meta["kind"], smID: meta["sm_id"], home: meta["home"], window: meta["window"], backend: meta["backend"]}
+	state, err := probeCaptainMeta(parentHome, sm.ID, meta, probe)
+	return state, binding, err
+}
+
+func probeCaptainMeta(parentHome, id string, meta map[string]string, probe ProbeEndpoint) (CaptainEndpointState, error) {
 	result, err := probe.Probe(parentHome, meta)
 	if err != nil {
-		return CaptainUnproven, binding, err
+		return CaptainUnproven, err
 	}
 	if result.Absent {
-		return CaptainDead, binding, nil
+		return CaptainDead, nil
 	}
 	if result.PaneAlive && result.AgentAlive && captainAgentStatusConfirmedLive(result.AgentStatus) {
-		return CaptainAlive, binding, nil
+		return CaptainAlive, nil
 	}
-	return CaptainUnproven, binding, fmt.Errorf("captain %s endpoint evidence is not authoritatively absent (pane=%t agent=%t status=%q): strict-dead-only refuses relaunch", sm.ID, result.PaneAlive, result.AgentAlive, result.AgentStatus)
+	return CaptainUnproven, fmt.Errorf("captain %s endpoint evidence is not authoritatively absent (pane=%t agent=%t status=%q): strict-dead-only refuses relaunch", id, result.PaneAlive, result.AgentAlive, result.AgentStatus)
+}
+
+// refuseLiveCaptainLaunch probes the window any captain meta for id names,
+// whatever home it records, so a relaunch never orphans a live pane.
+func refuseLiveCaptainLaunch(parentHome, id string, probe ProbeEndpoint) error {
+	taskID := taskIDForCaptain(id)
+	meta, err := home.ReadMeta(parentHome, taskID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("captain %s launch refused: %w", id, err)
+	}
+	if meta["kind"] != "captain" || meta["sm_id"] != id || meta["window"] == "" {
+		return nil
+	}
+	if probe == nil {
+		return fmt.Errorf("captain %s launch refused: window %s liveness is unproven: captain probe endpoint capability is required", id, meta["window"])
+	}
+	state, err := probeCaptainMeta(parentHome, id, meta, probe)
+	switch state {
+	case CaptainDead:
+		refused, remaining, err := consultRelaunchGuard(parentHome, taskID, time.Now())
+		if err != nil {
+			return fmt.Errorf("captain %s launch refused: %w", id, err)
+		}
+		if refused {
+			return fmt.Errorf("captain %s: prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", id, remaining.Round(time.Second))
+		}
+		return nil
+	case CaptainAlive:
+		return fmt.Errorf("captain %s is alive in window %s; launch refused, use `munsu captain recover` or `munsu captain retire`", id, meta["window"])
+	}
+	return fmt.Errorf("captain %s launch refused: window %s liveness is unproven: %w", id, meta["window"], err)
 }
 
 func validateCaptainBinding(meta map[string]string, sm Info, expected captainBinding) error {
