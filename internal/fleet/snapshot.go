@@ -58,30 +58,10 @@ type TaskSnapshot struct {
 	ContextWindow int `json:"-"`
 }
 
-// CurrentStateInfo carries the authoritative current state for a task. The
-// State/Description derive from the canonical Task Authority phase; all other
-// fields are evidence/diagnostic only.
-type CurrentStateInfo struct {
-	State               string            `json:"state"`
-	Description         string            `json:"description"`
-	StatusLogSuperseded bool              `json:"status_log_superseded"`
-	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
-}
-
-// CurrentStateQuery reads the authoritative current state for one task. It is
-// the single current-state read used by snapshot, guard, and observation so
-// agents and the CLI receive the same Task truth. A missing or malformed
-// canonical record is an operation error, never a projection fallback.
-type CurrentStateQuery interface {
-	Read(homeDir, taskID string) (*CurrentStateInfo, error)
-}
-
 // SnapshotDependencies carries the explicit read dependencies for a fleet
-// snapshot. CurrentState is required; Endpoint is an optional diagnostic-only
-// probe. There is no implicit/package-global wiring.
+// snapshot. Endpoint is an optional diagnostic-only probe. There is no
+// implicit/package-global wiring.
 type SnapshotDependencies struct {
-	// CurrentState is the required canonical current-state query.
-	CurrentState CurrentStateQuery
 	// Endpoint is an optional probe used only to populate PaneAlive/
 	// PaneAliveUnknown diagnostics; it never changes lifecycle state.
 	Endpoint EndpointProbe
@@ -160,15 +140,12 @@ type SourceFailure struct {
 
 // SnapshotDisplay reads the primary home and each captain home under
 // <home>/captains/<id>/ and reports a failed home as a SourceFailure instead of
-// failing the whole read. The only error is a missing current-state query.
+// failing the whole read.
 // Discovery skips dot-dirs and non-dirs under captains/; any other captain
 // directory that cannot be read as a canonical home is a SourceFailure. A
 // captains directory that exists but cannot be listed is one "captains"
 // failure; a missing one means no captains.
-func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapshot, error) {
-	if deps.CurrentState == nil {
-		return nil, fmt.Errorf("reading authoritative current state: no current-state query provided (home %s)", homeDir)
-	}
+func SnapshotDisplay(homeDir string, deps SnapshotDependencies) *DisplaySnapshot {
 	snap := &DisplaySnapshot{
 		Time: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -206,7 +183,7 @@ func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapsho
 		snap.Tasks = append(snap.Tasks, tasks...)
 	}
 
-	return snap, nil
+	return snap
 }
 
 // Snapshot builds a fleet snapshot from canonical Task Authority records in
@@ -217,10 +194,7 @@ func SnapshotDisplay(homeDir string, deps SnapshotDependencies) (*DisplaySnapsho
 // fail-closed policy over SnapshotDisplay: the first failed source refuses the
 // whole snapshot.
 func Snapshot(homeDir string, deps SnapshotDependencies) (*FleetSnapshot, error) {
-	d, err := SnapshotDisplay(homeDir, deps)
-	if err != nil {
-		return nil, err
-	}
+	d := SnapshotDisplay(homeDir, deps)
 	if len(d.Failures) > 0 {
 		f := d.Failures[0]
 		switch f.Source {
@@ -265,12 +239,6 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 	for _, id := range canonicalIDs {
 		agg := canonical[id]
 
-		// Authoritative current state comes from the single canonical query.
-		info, err := deps.CurrentState.Read(taskHome, id)
-		if err != nil {
-			return nil, fmt.Errorf("reading authoritative current state for task %q in home %s: %w", id, taskHome, err)
-		}
-
 		ts := TaskSnapshot{
 			ID:                  id,
 			Project:             agg.Definition.Project,
@@ -278,10 +246,9 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 			Harness:             launchHarness(agg),
 			Home:                homeLabel,
 			Source:              source,
-			CurrentState:        info.State,
-			CurrentDescription:  info.Description,
+			CurrentState:        string(agg.Phase),
+			CurrentDescription:  agg.PhaseDetail,
 			StatusLogSuperseded: true,
-			OpenActivities:      info.OpenActivities,
 			PhaseChangedAt:      agg.PhaseChangedAt,
 		}
 		if agg.LaunchEvidence != nil {
@@ -321,6 +288,7 @@ func homeTasks(taskHome, source, homeLabel string, deps SnapshotDependencies) ([
 
 		// LastStatus is a diagnostic display line (never state truth).
 		if statusPath, err := mhome.StatusFilePath(taskHome, id); err == nil {
+			ts.OpenActivities = mhome.OpenActivities(statusPath)
 			if data, err := mhome.ReadRegularFile(statusPath); err == nil {
 				lines := strings.TrimSpace(string(data))
 				if lines != "" {

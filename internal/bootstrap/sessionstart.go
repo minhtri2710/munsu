@@ -15,16 +15,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// snapshotDeps builds the explicit read dependencies for fleet snapshot callers
-// in this package: the canonical current-state query is always present; no
-// endpoint diagnostic probe is wired here because probe output is diagnostic
-// only and never affects canonical lifecycle state.
-func snapshotDeps() fleet.SnapshotDependencies {
-	return fleet.SnapshotDependencies{
-		CurrentState: fleet.NewCanonicalCurrentState(),
-	}
-}
-
 type SessionStartResult struct {
 	LockAcquired    bool
 	RuntimeIdentity *RuntimeIdentity
@@ -90,7 +80,7 @@ func printDataFile(w io.Writer, home, name string) {
 }
 
 func printFleetState(w io.Writer, home string) {
-	snap, err := fleet.Snapshot(home, snapshotDeps())
+	snap, err := fleet.Snapshot(home, fleet.SnapshotDependencies{})
 	if err != nil {
 		fmt.Fprintf(w, "  error scanning fleet state: %v\n", err)
 		return
@@ -133,7 +123,7 @@ func ensureWatcherForSession(home string, acquired bool, ensure WatchEnsureFunc)
 	if !acquired {
 		return WatchEnsureResult{State: "read-only"}
 	}
-	snap, err := fleet.Snapshot(home, snapshotDeps())
+	snap, err := fleet.Snapshot(home, fleet.SnapshotDependencies{})
 	if err != nil {
 		return WatchEnsureResult{State: "failed", Error: err.Error()}
 	}

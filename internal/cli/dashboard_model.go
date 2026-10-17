@@ -215,7 +215,7 @@ func newDashboardModel(home, exe string) dashboardModel {
 		reading: true,
 		dark:    true,
 		readFleet: func() (*fleet.DisplaySnapshot, error) {
-			return fleet.SnapshotDisplay(home, snapshotDeps())
+			return fleet.SnapshotDisplay(home, snapshotDeps()), nil
 		},
 		readHolds: dashHolds,
 		latest:    func(n int) ([]orchestrator.Record, int, error) { return orchestrator.LatestEvents(home, n) },

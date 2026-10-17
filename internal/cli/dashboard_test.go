@@ -425,7 +425,7 @@ func TestDashboardGoldenStale(t *testing.T) {
 		row("t-work", "working", "implementing", "primary", ""),
 		row("t-q", "queued", "waiting", "primary", ""),
 	}, nil, nil))
-	m = send(m, dashRead{at: dashNow, snapErr: errors.New("reading authoritative current state: no current-state query provided")})
+	m = send(m, dashRead{at: dashNow, snapErr: errors.New("reading canonical task authority state: recovery required")})
 	assertGolden(t, "stale", m.frame())
 }
 

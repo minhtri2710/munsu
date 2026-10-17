@@ -1,5 +1,5 @@
  munsu   STALE last good read 45s ago   watcher absent · captains 0 · working 1 · unacked 0      /h
-Last read failed: reading authoritative current state: no current-state query provided
+Last read failed: reading canonical task authority state: recovery required
 ╭─ Tasks ──────────────────────────────────────────────────────────────────────────────────────────╮
 │     NAME     STATE              AGE   SINCE CTX  ROLE   STATUS                                   │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────── │
