@@ -6,6 +6,7 @@ package home
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -318,7 +319,7 @@ func AppendStatus(homeDir string, id, line string) error {
 	// files; it can never write another task's documents, any review verdict,
 	// delivery authorization or gate record, or the fleet registries
 	// (projects.json, captains.json)."
-	f, err := OpenRegular(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := OpenRegular(p, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return fmt.Errorf("opening status file: %w", err)
 	}
@@ -326,7 +327,23 @@ func AppendStatus(homeDir string, id, line string) error {
 	if err := secureOpened(f); err != nil {
 		return fmt.Errorf("securing status file: %w", err)
 	}
-	if _, err := f.WriteString(EscapeLine(line) + "\n"); err != nil {
+	// A torn last line (a write cut off before its newline) is ended first, so
+	// the new line is never glued onto it.
+	record := EscapeLine(line) + "\n"
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("reading status file: %w", err)
+	}
+	if fi.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, fi.Size()-1); err != nil {
+			return fmt.Errorf("reading status file: %w", err)
+		}
+		if last[0] != '\n' {
+			record = "\n" + record
+		}
+	}
+	if _, err := f.WriteString(record); err != nil {
 		return fmt.Errorf("writing status line: %w", err)
 	}
 	if err := f.Sync(); err != nil {
@@ -339,25 +356,30 @@ func AppendStatus(homeDir string, id, line string) error {
 // decoded as AppendStatus was given them. Only a regular file is read, as
 // ReadRegularFile reads (Human words G1086, quoted there).
 func ReadStatus(homeDir string, id string) ([]string, error) {
+	lines, _, err := readStatus(homeDir, id)
+	return lines, err
+}
+
+// readStatus is ReadStatus that also reports whether the last line is torn:
+// not yet ended by its newline, so its writer may still be writing it.
+func readStatus(homeDir string, id string) ([]string, bool, error) {
 	p, err := StatusFilePath(homeDir, id)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := validateStatePath(homeDir, p, false); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	f, err := OpenRegular(p, os.O_RDONLY, 0)
+	data, err := ReadRegularFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // no status yet
+			return nil, false, nil // no status yet
 		}
-		return nil, fmt.Errorf("reading status %s: %w", id, err)
+		return nil, false, fmt.Errorf("reading status %s: %w", id, err)
 	}
-	defer f.Close()
-
 	var lines []string
-	err = EachLine(f, func(line string) { lines = append(lines, UnescapeLine(line)) })
-	return lines, err
+	err = EachLine(bytes.NewReader(data), func(line string) { lines = append(lines, UnescapeLine(line)) })
+	return lines, len(data) > 0 && data[len(data)-1] != '\n', err
 }
 
 // ReadRegularFile reads a file a fenced soldier can write (its status, ack log

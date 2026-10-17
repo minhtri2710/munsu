@@ -1351,6 +1351,7 @@ func TestDispatchWake_GatesRefuseBeforeClaim(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(home, "state", ".afk"), nil, 0o644); err != nil {
 					t.Fatal(err)
 				}
+				holdAFKLockFor(t, home, os.Getpid())
 			}
 			if tc.afkCleared {
 				if err := Disable(home); err != nil {

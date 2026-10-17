@@ -449,21 +449,25 @@ func newTaskUnblockCmd() *cobra.Command {
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return runTaskLifecycleTransition(ctx, "unblock", "queued", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
-				req := taskauthority.CanonicalUnblockRequest{
-					HomeID:       auth.HomeID(),
-					TaskID:       tid,
-					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
-					Reason:       "task: unblock",
-				}
-				op, err := newCanonicalOperation("task-unblock", req)
-				if err != nil {
-					return err
-				}
-				_, err = auth.Unblock(op, req)
-				return err
+				return unblockTask(auth, tid, agg, "task: unblock")
 			})
 		}),
 	}
+}
+
+func unblockTask(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate, reason string) error {
+	req := taskauthority.CanonicalUnblockRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       tid,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       reason,
+	}
+	op, err := newCanonicalOperation("task-unblock", req)
+	if err != nil {
+		return err
+	}
+	_, err = auth.Unblock(op, req)
+	return err
 }
 
 func newTaskReopenCmd() *cobra.Command {
