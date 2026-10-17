@@ -17,7 +17,7 @@ import (
 // the fence; elsewhere it launches as before and records why it is unfenced.
 func TestLaunchRunsTheCaptainUnderItsSeat(t *testing.T) {
 	parent, captainHome := launchableCaptain(t)
-	if err := Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{}); err != nil {
+	if err := Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{}); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	body, err := os.ReadFile(filepath.Join(captainHome, ".captain-launch.sh"))

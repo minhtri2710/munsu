@@ -41,7 +41,7 @@ func TestLaunch_WorktreeCaptainWithInstalledIntegrationLaunches(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h, filepath.FromSlash(piIntegrationPath))); err != nil {
 		t.Fatalf("integration not installed: %v", err)
 	}
-	if err := Launch(h, parent, testLaunchEndpoint{}, fakeIntegrationPort{}); err != nil {
+	if err := Launch(h, parent, testLaunchEndpoint{}, nil, fakeIntegrationPort{}); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 }
@@ -64,7 +64,7 @@ func TestLaunch_TrackedIntegrationPathIsRefusedByName(t *testing.T) {
 	gitTestRun(t, repo, "fetch", "origin")
 
 	parent, h := seedPiWorktreeCaptain(t, repo)
-	err := Launch(h, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
+	err := Launch(h, parent, testLaunchEndpoint{}, nil, fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "uncommitted changes: ") || !strings.Contains(err.Error(), piIntegrationPath) {
 		t.Fatalf("Launch error = %v, want tracked-change refusal naming %s", err, piIntegrationPath)
 	}

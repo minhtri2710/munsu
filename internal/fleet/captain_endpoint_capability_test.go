@@ -132,7 +132,7 @@ func TestLaunchEndpointFailureWritesNoMetadata(t *testing.T) {
 	home := seedCaptainForTest(t, parent, "failed-launch")
 	writeCanonicalPiIntegration(t, home)
 	endpoint := failingLaunchEndpoint{err: errors.New("launch failed")}
-	err := Launch(home, parent, endpoint, fakeIntegrationPort{})
+	err := Launch(home, parent, endpoint, nil, fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "launch failed") {
 		t.Fatalf("error=%v", err)
 	}
