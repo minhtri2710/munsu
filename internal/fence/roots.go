@@ -127,8 +127,12 @@ func homePaths(userHome string, rels []string) []string {
 	return out
 }
 
-// withResolved returns each absolute path cleaned and, when it exists and
-// differs, symlink-resolved too; relative paths are dropped.
+// withResolved returns each absolute path cleaned and, when it differs,
+// symlink-resolved too; relative paths are dropped. A path that does not exist
+// yet resolves through its deepest existing ancestor and any dangling link on
+// the way (resolvePath), so one created later under a symlinked parent, or at
+// a dangling link's target, is still covered. A path resolvePath refuses keeps
+// only its given form.
 func withResolved(paths []string) []string {
 	var out []string
 	for _, p := range paths {
@@ -137,7 +141,7 @@ func withResolved(paths []string) []string {
 		}
 		p = filepath.Clean(p)
 		out = append(out, p)
-		if r, err := filepath.EvalSymlinks(p); err == nil && r != p {
+		if r, err := resolvePath(p, false); err == nil && r != p {
 			out = append(out, r)
 		}
 	}
