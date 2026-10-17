@@ -251,6 +251,9 @@ func TestSnapshot_CanonicalPhaseWinsOverStaleStatus(t *testing.T) {
 			if got, want := len(ts.OpenActivities), map[string]int{"working": 0, "done": 1}[tc.phase]; got != want {
 				t.Errorf("OpenActivities = %v, want %d folded from the status log", ts.OpenActivities, want)
 			}
+			if tc.phase == "working" && ts.CurrentDescription != "work" {
+				t.Errorf("CurrentDescription = %q, want the definition's %q when the phase has no detail", ts.CurrentDescription, "work")
+			}
 		})
 	}
 }

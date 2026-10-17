@@ -126,10 +126,9 @@ func runFleetSnapshot(cmd *cobra.Command, ctx Ctx) error {
 		if entry.Kind == "captain" {
 			continue
 		}
-		// The contract row reports the resolved current-state projection, not
-		// the append-only .status tail: the canonical Task Authority phase (or
-		// the current-state resolver output) wins and a stale status verb can
-		// never override a newer authoritative lifecycle transition.
+		// The contract row reports the canonical Task Authority phase, not the
+		// append-only .status tail: a stale status verb can never override a
+		// newer authoritative lifecycle transition.
 		status := fleet.PhaseFromProjection(entry)
 		if status == "" {
 			status = fleet.PhaseFromMeta(entry.Window, entry.PaneAlive)

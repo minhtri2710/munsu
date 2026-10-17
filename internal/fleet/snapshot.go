@@ -42,7 +42,7 @@ type TaskSnapshot struct {
 	// Source labels where the task was discovered: "primary" or "captain:<id>".
 	Source string `json:"source,omitempty"`
 
-	// Resolved current-state projection (populated when a resolver is wired).
+	// Current state from the canonical Task Authority record.
 	CurrentState        string            `json:"current_state,omitempty"`
 	CurrentDescription  string            `json:"current_description,omitempty"`
 	StatusLogSuperseded bool              `json:"status_log_superseded"`
