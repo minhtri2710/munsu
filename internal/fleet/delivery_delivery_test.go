@@ -44,7 +44,7 @@ func TestCheckDefaultBranchStale(t *testing.T) {
 				t.Fatal(err)
 			}
 			setupGitRepo(t, primary, remote)
-			gitTestRun(t, tmp, "clone", "-q", remote, other)
+			gitTestRun(t, tmp, "clone", "-q", "-b", "main", remote, other)
 			gitTestRun(t, other, "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "ahead")
 			gitTestRun(t, other, "push", "-q", "origin", "main")
 			wt := filepath.Join(tmp, "wt")
