@@ -77,30 +77,25 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 			// Run bootstrap diagnostics and print
 			fmt.Println()
 			fmt.Println("--- Diagnostics ---")
-			result, err := bootstrap.Run(ctx.Home, false, nil)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "bootstrap diagnostics: %v\n", err)
-			} else {
-				for _, d := range result.Tools {
-					fmt.Println(d.String())
-				}
-				if result.Auth != nil {
-					fmt.Println(result.Auth.String())
-				}
-				for _, c := range result.Configs {
-					fmt.Println(c.String())
-				}
-				if result.BaseConfigErr != nil {
-					fmt.Printf("BASE_CONFIG_INVALID: %v\n", result.BaseConfigErr)
-					return fmt.Errorf("fleet base document: %w", result.BaseConfigErr)
-				}
-				if result.GC != nil {
-					fmt.Println(result.GC.String())
-				}
+			result := bootstrap.Run(ctx.Home, false, nil)
+			for _, d := range result.Tools {
+				fmt.Println(d.String())
+			}
+			if result.Auth != nil {
+				fmt.Println(result.Auth.String())
+			}
+			for _, c := range result.Configs {
+				fmt.Println(c.String())
+			}
+			if result.BaseConfigErr != nil {
+				fmt.Printf("BASE_CONFIG_INVALID: %v\n", result.BaseConfigErr)
+				return fmt.Errorf("fleet base document: %w", result.BaseConfigErr)
+			}
+			if result.GC != nil {
+				fmt.Println(result.GC.String())
 			}
 
-			// Print next steps
-			printNextSteps(ctx.Home)
+			printNextSteps(os.Stdout, ctx.Home, result)
 
 			return nil
 		}),

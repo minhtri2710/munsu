@@ -70,10 +70,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) 
 	t.Setenv("TMUX", "/tmp/tmux-xxx/default")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, false, nil)
 
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
@@ -84,10 +81,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, false, nil)
 
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
@@ -103,10 +97,7 @@ func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) 
 	testutil.WriteFakeExecutable(t, filepath.Join(fakeBin, "tmux"), "#!/bin/sh\nexit 0")
 	testutil.PrependPath(t, fakeBin)
 
-	result, err := Run(home, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, false, nil)
 
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
@@ -122,10 +113,7 @@ func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	// Env must not shadow the persisted typed Backend.
 	t.Setenv("HERDR_ENV", "1")
 
-	result, err := Run(home, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, false, nil)
 
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: fleet base document)")
 }
@@ -149,10 +137,7 @@ func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(home, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, false, nil)
 
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: published snapshot)")
 }
@@ -197,10 +182,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
 	t.Setenv("HERDR_ENV", "")
 
-	result, err := Run(home, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, false, nil)
 
 	// Should not have any backend-unrelated Configs in a bare home
 	// (SOLDIER_HARNESS and SOLDIER_DISPATCH require specific files).
@@ -214,10 +196,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 
 func TestRun_BaseConfigErr(t *testing.T) {
 	missing := t.TempDir()
-	result, err := Run(missing, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(missing, false, nil)
 	if result.BaseConfigErr != nil {
 		t.Fatalf("missing base document: BaseConfigErr = %v, want nil", result.BaseConfigErr)
 	}
@@ -234,10 +213,7 @@ func TestRun_BaseConfigErr(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(home, config.BaseDocumentPath), []byte(body), 0644); err != nil {
 				t.Fatal(err)
 			}
-			result, err := Run(home, false, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			result := Run(home, false, nil)
 			if result.BaseConfigErr == nil {
 				t.Fatal("corrupt base document: BaseConfigErr = nil, want the load error")
 			}
@@ -676,10 +652,7 @@ func TestRunSkipsGCWithoutATaskOwnershipSource(t *testing.T) {
 	}
 	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
 
-	result, err := Run(home, true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := Run(home, true, nil)
 	if result.GC == nil || result.GC.SkippedReason != "no task ownership source" {
 		t.Fatalf("GC = %+v, want the sweep skipped for want of an ownership source", result.GC)
 	}

@@ -6,22 +6,12 @@ type ToolSpec struct {
 	Required bool
 }
 
-// checkedTools is the single source of truth for bootstrap tool classification.
+// checkedTools are the tools every home needs. The session backend's binary
+// is checked beside them only once a backend is resolved; its name is the
+// backend identity (herdr or tmux).
 var checkedTools = []ToolSpec{
 	{"git", true},
-	{"tmux", true},
 	{"gh-axi", false},
 	{"gh", false},
 	{"fuser", false},
-}
-
-// IsHardRequired returns true if tool is classified as a hard-required dependency.
-// Used by munsu doctor to decide exit code. Unknown tools return false.
-func IsHardRequired(tool string) bool {
-	for _, t := range checkedTools {
-		if t.Name == tool {
-			return t.Required
-		}
-	}
-	return false
 }

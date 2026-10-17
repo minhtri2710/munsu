@@ -25,7 +25,7 @@ func TestWatcherLockAcquireRelease(t *testing.T) {
 	if held, err := IsSessionLockHeld(h); err != nil || !held {
 		t.Fatalf("held = %v, %v; want held", held, err)
 	}
-	if err := releaseWatcherLock(SessionLockPath(h)); err != nil {
+	if err := ReleaseSessionLock(h); err != nil {
 		t.Fatal(err)
 	}
 	if held, err := IsSessionLockHeld(h); err != nil || held {

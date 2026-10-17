@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -402,68 +401,6 @@ func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
 	}
 }
 
-func TestRunSessionStartBootstrapFailureReleasesSessionLock(t *testing.T) {
-	home := t.TempDir()
-	if _, err := mhome.Init(home); err != nil {
-		t.Fatal(err)
-	}
-	bootstrapErr := errors.New("bootstrap failed")
-	savedBootstrap := sessionStartBootstrap
-	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
-		return nil, bootstrapErr
-	}
-	defer func() { sessionStartBootstrap = savedBootstrap }()
-
-	var buf bytes.Buffer
-	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
-		t.Fatal("watcher ensure must not run after bootstrap failure")
-		return WatchEnsureResult{}
-	}, nil, nil)
-	if err == nil || !errors.Is(err, bootstrapErr) {
-		t.Fatalf("error = %v, want bootstrap failure", err)
-	}
-	if res.LockAcquired {
-		t.Fatal("aborted session must not report lock ownership")
-	}
-	acquired, err := orchestrator.AcquireSession(home)
-	if err != nil {
-		t.Fatalf("reacquire session lock: %v", err)
-	}
-	if !acquired {
-		t.Fatal("expected session lock to be released")
-	}
-	t.Cleanup(func() { _ = orchestrator.ReleaseSession(home) })
-}
-
-func TestRunSessionStartBootstrapFailureSurfacesReleaseError(t *testing.T) {
-	home := t.TempDir()
-	if _, err := mhome.Init(home); err != nil {
-		t.Fatal(err)
-	}
-	bootstrapErr := errors.New("bootstrap failed")
-	releaseErr := errors.New("release failed")
-	savedBootstrap := sessionStartBootstrap
-	savedRelease := sessionStartRelease
-	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
-		return nil, bootstrapErr
-	}
-	sessionStartRelease = func(string) error { return releaseErr }
-	defer func() {
-		sessionStartBootstrap = savedBootstrap
-		sessionStartRelease = savedRelease
-		_ = orchestrator.ReleaseSession(home)
-	}()
-
-	var buf bytes.Buffer
-	res, err := RunSessionStartWithWatcher(&buf, home, nil, nil, nil)
-	if err == nil || !errors.Is(err, bootstrapErr) || !errors.Is(err, releaseErr) {
-		t.Fatalf("error = %v, want bootstrap and release errors", err)
-	}
-	if !res.LockAcquired {
-		t.Fatal("lock ownership must remain true when release fails")
-	}
-}
-
 func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) {
 	home := t.TempDir()
 	// #407 integrated Fleet-backed reads (scope + registry) require a canonical
@@ -632,8 +569,8 @@ func generalSession(t *testing.T, herdrPane string) string {
 		t.Setenv("HERDR_SESSION", "lab")
 	}
 	savedBootstrap := sessionStartBootstrap
-	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) (*Result, error) {
-		return &Result{}, nil
+	sessionStartBootstrap = func(string, bool, *RuntimeIdentity, ReclaimTaskDataDir) *Result {
+		return &Result{}
 	}
 	t.Cleanup(func() {
 		sessionStartBootstrap = savedBootstrap

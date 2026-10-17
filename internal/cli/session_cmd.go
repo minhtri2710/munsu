@@ -188,10 +188,7 @@ func newBootstrapCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("session lock probe: %w", err)
 			}
-			result, err := bootstrap.Run(ctx.Home, !locked, taskDataDirReclaimer(ctx.Home))
-			if err != nil {
-				return err
-			}
+			result := bootstrap.Run(ctx.Home, !locked, taskDataDirReclaimer(ctx.Home))
 
 			var b strings.Builder
 			for _, d := range result.Tools {

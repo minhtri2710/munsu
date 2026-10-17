@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,9 +37,10 @@ const (
 
 // ToolDiagnostic describes the result of checking a single tool.
 type ToolDiagnostic struct {
-	Tool   string
-	Status ToolStatus
-	Path   string
+	Tool     string
+	Status   ToolStatus
+	Path     string
+	Required bool
 }
 
 // AuthDiagnostic describes the result of checking GitHub auth.
@@ -68,8 +70,10 @@ type Result struct {
 	Tools           []ToolDiagnostic
 	Auth            *AuthDiagnostic
 	Configs         []ConfigDiagnostic
-	GC              *GCDiagnostic
-	MissingTools    []string
+	// Backend is the resolved session backend identity; empty when none is set.
+	Backend      string
+	GC           *GCDiagnostic
+	MissingTools []string
 	// WriteFence is set only on a host with no write fence: seat launches refuse
 	// there unless a project allows an unfenced seat.
 	WriteFence *ConfigDiagnostic
@@ -80,7 +84,7 @@ type Result struct {
 
 // Run executes bootstrap diagnostics for the given munsu home.
 // If lockHeld is true, mutating sweeps (fleet-sync) may run.
-func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) (*Result, error) {
+func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) *Result {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = home
@@ -89,20 +93,44 @@ func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) (*Result, error
 	return runWithRuntimeIdentity(home, lockHeld, &runtimeIdentity, reclaim)
 }
 
-func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) (*Result, error) {
+func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) *Result {
 	res := &Result{
 		LockAcquired:    lockHeld,
 		RuntimeIdentity: runtimeIdentity,
 	}
 
-	// 1. Check required tools (uses shared ToolSpec registry)
-	for _, spec := range checkedTools {
+	// The persisted typed snapshot Backend (the published config snapshot or
+	// the fleet base document's typed Backend), never an env/PATH probe.
+	if backendIdentity, err := fleet.ResolveGeneralHomeBackend(home); err == nil {
+		res.Backend = backendIdentity
+	}
+
+	// 1. Check tools: the fixed set, plus every backend binary a spawn can use,
+	// the home's and each registered project's (base merged with its overlay).
+	// A project that fails to resolve adds nothing; doctor --role general
+	// reports it. Opening the registry creates a home for a missing or empty
+	// directory, so it is read only once the home exists: doctor is read-only.
+	backends := []string{res.Backend}
+	if homeInitialized(home) {
+		projects, _ := fleet.List(home)
+		for _, p := range projects {
+			b, _ := fleet.ResolveProjectBackend(home, p.Name)
+			backends = append(backends, b)
+		}
+	}
+	tools := slices.Clone(checkedTools)
+	for _, b := range backends {
+		if b != "" && !slices.ContainsFunc(tools, func(s ToolSpec) bool { return s.Name == b }) {
+			tools = append(tools, ToolSpec{b, true})
+		}
+	}
+	for _, spec := range tools {
 		path, err := exec.LookPath(spec.Name)
 		if err != nil {
-			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolMissing})
+			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolMissing, Required: spec.Required})
 			res.MissingTools = append(res.MissingTools, spec.Name)
 		} else {
-			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolFound, Path: path})
+			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolFound, Path: path, Required: spec.Required})
 		}
 	}
 
@@ -131,17 +159,14 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}
 
-	// BACKEND_RESOLVED: reports the persisted typed snapshot Backend (the
-	// published config snapshot or the fleet base document's typed Backend) —
-	// never an env/PATH probe. An absent identity is reported as typed
-	// missing-input, never auto-selected.
-	backendIdentity, err := fleet.ResolveGeneralHomeBackend(home)
-	if err == nil && backendIdentity != "" {
+	// BACKEND_RESOLVED: an absent identity is reported as typed missing-input,
+	// never auto-selected.
+	if res.Backend != "" {
 		backendSource := "fleet base document"
 		if config.PublishedSnapshotAvailable(home) {
 			backendSource = "published snapshot"
 		}
-		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: backendIdentity, Source: backendSource})
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: res.Backend, Source: backendSource})
 	} else {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none", Source: "no persisted backend identity (set backend in the fleet base config)"})
 	}
@@ -173,7 +198,12 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 		}
 	}
 
-	return res, nil
+	return res
+}
+
+func homeInitialized(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, home.IdentityFileName))
+	return err == nil
 }
 
 // writeFenceDiagnostic is nil where the host has a write fence.

@@ -18,12 +18,15 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Read-only diagnostics with fix commands",
 		Long: `Run bootstrap diagnostics and print fix commands for each issue.
 
-Hard-required tools (doctor exits non-zero if missing):
-  git, session backend (herdr or tmux), and at least
-  one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
+Doctor exits non-zero when any of these holds:
+  git is not on PATH;
+  a session backend binary (herdr or tmux) set in the fleet base config or a
+    registered project's overlay is not on PATH;
+  the home resolves no session backend (fleet base config, or a captain
+    home's published snapshot);
+  config/base.json is unreadable or invalid.
 
-Optional tools get warnings but do not fail the exit code:
-  gh-axi, gh, and GitHub auth.
+Everything else (gh-axi, gh, fuser, GitHub auth) warns without failing.
 
 Use --role for role-specific integration matrix:
   --role general   Harness adapter, session backend, gh auth, go toolchain, per-project launch readiness
@@ -65,10 +68,7 @@ Use --role for role-specific integration matrix:
 				return nil
 			}
 
-			result, err := bootstrap.Run(ctx.Home, false, nil)
-			if err != nil {
-				return fmt.Errorf("bootstrap: %w", err)
-			}
+			result := bootstrap.Run(ctx.Home, false, nil)
 
 			exitCode := 0
 			m := outputMarks(os.Stdout)
@@ -95,6 +95,10 @@ Use --role for role-specific integration matrix:
 			}
 			for _, c := range result.Configs {
 				fmt.Println(c.String())
+			}
+			if result.Backend == "" {
+				fmt.Println("    Fix: munsu config set backend herdr|tmux")
+				exitCode = 1
 			}
 			if result.WriteFence != nil {
 				fmt.Println(result.WriteFence.String())
@@ -144,22 +148,12 @@ Use --role for role-specific integration matrix:
 				fmt.Println("  " + capResult.ScopeResult.String())
 			}
 
-			// The session backend is one hard requirement satisfied by either tmux
-			// or an active herdr environment. Resolve that alternative before the
-			// generic hard-required scan so a missing tmux does not short-circuit it.
-			missingRequired := isMissing(result.MissingTools, "tmux") && os.Getenv("HERDR_ENV") == ""
-			if !missingRequired {
-				for _, tool := range result.MissingTools {
-					if tool == "tmux" {
-						continue
-					}
-					if bootstrap.IsHardRequired(tool) {
-						missingRequired = true
-						break
-					}
+			missingRequired := false
+			for _, d := range result.Tools {
+				if d.Status == bootstrap.ToolMissing && d.Required {
+					missingRequired = true
 				}
 			}
-
 			if missingRequired {
 				fmt.Fprintf(os.Stderr, "\nSome required tools are missing.\n")
 				exitCode = 1
@@ -175,16 +169,6 @@ Use --role for role-specific integration matrix:
 	cmd.Flags().Bool("orphans", false, "Report processes whose owning run has ended (never terminates anything; exit 1 leftovers found — the report may also list unresolved ones, 2 nothing conclusive but a member should look)")
 	cmd.Flags().StringVar(&role, "role", "", "Role-specific scan: general, captain, or soldier")
 	return cmd
-}
-
-// isMissing returns true if the slice contains the given string.
-func isMissing(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
 }
 
 // runCheckInstructions reads AGENTS.md / manual.md and verifies that every

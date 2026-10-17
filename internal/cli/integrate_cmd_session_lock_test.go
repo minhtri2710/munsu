@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -15,7 +16,7 @@ func TestLockPIDInAncestryFindsSessionHolder(t *testing.T) {
 	if err != nil || !acquired {
 		t.Fatalf("AcquireSession = %v, %v; want held", acquired, err)
 	}
-	t.Cleanup(func() { _ = orchestrator.ReleaseSession(homeDir) })
+	t.Cleanup(func() { _ = home.ReleaseSessionLock(homeDir) })
 
 	if !lockPIDInAncestry(homeDir) {
 		t.Fatal("lockPIDInAncestry = false while this process holds the session lock")
