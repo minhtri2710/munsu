@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -39,16 +40,35 @@ func (m dashboardModel) detail() (lines []dashLine, held bool) {
 	} else {
 		phase = mark.style.Render(phase)
 	}
-	pane := "unknown"
-	switch {
-	case ts.Window == "":
-		pane = "-"
-	case ts.PaneAlive:
-		pane = "alive"
+	pane := ""
+	if ts.Window != "" {
+		pane = "unknown"
+		if ts.PaneAlive {
+			pane = "alive"
+		}
 	}
-	return dashFree(
-		dashBold.Render(dashText(ts.ID))+"  "+dashText(dashOr(ts.Kind))+"  project "+dashText(dashOr(ts.Project))+"  "+phase+"  "+dashText(dashGroup(it)),
-		"seat "+dashText(dashOr(ts.Harness))+" "+dashText(dashOr(ts.Model))+"  mode "+dashText(dashOr(ts.Mode))+"  window "+dashText(dashOr(ts.Window))+"  pane "+pane+"  worktree "+dashText(dashOr(ts.Worktree)),
-		"last "+dashText(dashOr(ts.LastStatus)),
-	), false
+	th := m.theme()
+	text := []string{strings.TrimRight(dashBold.Render(dashText(ts.ID))+"  "+phase+"  "+
+		dashFields(th, "kind", ts.Kind, "project", ts.Project, "group", dashGroup(it)), " ")}
+	for _, l := range []string{
+		dashFields(th, "harness", ts.Harness, "model", ts.Model, "mode", ts.Mode, "window", ts.Window, "pane", pane, "worktree", ts.Worktree),
+		dashFields(th, "last", ts.LastStatus),
+	} {
+		if l != "" {
+			text = append(text, l)
+		}
+	}
+	return dashFree(text...), false
+}
+
+// dashFields draws label and value pairs, each a dim label and its escaped
+// value, two spaces apart; a pair with no value is left out.
+func dashFields(th dashTheme, pairs ...string) string {
+	var out []string
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i+1] != "" {
+			out = append(out, th.subtle.Render(pairs[i])+" "+dashText(pairs[i+1]))
+		}
+	}
+	return strings.Join(out, "  ")
 }

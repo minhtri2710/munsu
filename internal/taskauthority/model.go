@@ -69,9 +69,21 @@ const (
 	PhaseRetired  Phase = "retired"
 )
 
-// terminal reports whether the phase is an end state of the lifecycle.
-func (p Phase) terminal() bool {
+// Terminal reports whether the phase is an end state of the lifecycle:
+// Complete refuses it and Reopen requires it.
+func (p Phase) Terminal() bool {
 	return p == PhaseDone || p == PhaseResolved || p == PhaseRetired
+}
+
+// Blockable reports whether Block accepts the phase.
+func (p Phase) Blockable() bool { return p == PhaseQueued || p == PhaseWorking }
+
+// Unblockable reports whether Unblock accepts the phase.
+func (p Phase) Unblockable() bool { return p == PhaseBlocked }
+
+// Promotable reports whether Promote accepts a task of the kind in the phase.
+func Promotable(kind string, p Phase) bool {
+	return kind == KindScout && (p == PhaseDone || p == PhaseResolved)
 }
 
 // ValidFrom reports whether the phase is a valid authoritative lifecycle

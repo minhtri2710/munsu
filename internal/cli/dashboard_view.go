@@ -190,7 +190,7 @@ func (m *dashboardModel) size(look dashLook, fixed int, needs []dashLine, events
 	if listMin > 0 && avail >= listMin+1+b {
 		feedMin = 1 + b
 	}
-	boxNeeds := b == 1 && len(needs) > 0 && needs[0].keep != keepStem(stemNothingNeedsYou)
+	boxNeeds := b == 1 && len(needs) > 0
 	n := len(needs)
 	if boxNeeds {
 		n++
@@ -241,17 +241,38 @@ func (m dashboardModel) columnRows() int {
 	return min(2, max(0, m.listH-1-m.border()-len(m.list.Items())))
 }
 
-// eventLines is one line per event; the viewport owns which of them show.
-// It always shows its newest lines, at most feedMax, so only those are drawn
-// here. size cuts a line longer than the feed's width with a visible
+// eventLines is one line per shown event; the viewport owns which of them
+// show. It always shows its newest lines, at most feedMax, so only those are
+// drawn here. size cuts a line longer than the feed's width with a visible
 // ellipsis, since the viewport would cut it silently.
 func (m dashboardModel) eventLines() []string {
 	th := m.theme()
-	lines := make([]string, len(m.events))
-	for i := max(0, len(m.events)-m.feedMax()); i < len(m.events); i++ {
-		lines[i] = eventLine(m.events[i], th)
+	events := m.shownEvents()
+	lines := make([]string, len(events))
+	for i := max(0, len(events)-m.feedMax()); i < len(events); i++ {
+		lines[i] = eventLine(events[i], m.now(), th)
 	}
 	return lines
+}
+
+// shownEvents are the events read that belong to the fleet of the last good
+// read. The log is never pruned, so it keeps events of tasks since removed. A
+// record names no task, only its producer: munsu's own producers are
+// "munsu:"-prefixed and every other producer munsu writes is a task ID. So an
+// event whose producer is not empty, not "munsu:"-prefixed and not a task ID
+// in the snapshot is left out.
+func (m dashboardModel) shownEvents() []orchestrator.Record {
+	tasks := make(map[string]bool, len(m.rows))
+	for _, ts := range m.rows {
+		tasks[ts.ID] = true
+	}
+	var out []orchestrator.Record
+	for _, e := range m.events {
+		if e.Producer == "" || strings.HasPrefix(e.Producer, "munsu:") || tasks[e.Producer] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // dashKeep is a protected part: a state or a count the Human must read whole.
@@ -260,41 +281,37 @@ func (m dashboardModel) eventLines() []string {
 // protected part.
 type dashKeep struct{ text string }
 
-// keepState is the brand and the state badge with the time since the last
-// good read, on the header bar; reading adds the faint " (reading)".
-func keepState(s dashState, since time.Duration, reading bool, th dashTheme) dashKeep {
+// keepState is the brand, the read state and the NEEDS YOU count on the header
+// bar. A fresh read is a dim "refreshed Ns ago" and any other state a badge;
+// reading adds the faint " (reading)". A NEEDS YOU count above zero follows
+// as "needs you N".
+func keepState(s dashState, since time.Duration, reading bool, needs int, th dashTheme) dashKeep {
 	age := fmt.Sprintf("%ds", int(since/time.Second))
-	phrase, color := "REFRESHED "+age+" ago", styleOK
+	dim := th.bar.Inherit(th.subtle)
+	phrase, color := "", styleFail
 	switch s {
 	case stateLoading:
 		phrase, color = "LOADING", styleWarn
 	case stateFailed:
-		phrase, color = "FAILED", styleFail
+		phrase = "FAILED"
 	case stateStale:
-		phrase, color = "STALE last good read "+age+" ago", styleFail
-	case stateEmpty:
-		phrase = "EMPTY refreshed " + age + " ago"
+		phrase = "STALE last good read " + age + " ago"
 	case statePartial:
 		phrase, color = "PARTIAL refreshed "+age+" ago", styleWarn
 	}
-	text := dashBrand.Render(" munsu ") + th.bar.Render(" ") + pillStyle(color).Render(" "+phrase+" ")
+	text := dashBrand.Render(" munsu ") + th.bar.Render(" ")
+	if phrase == "" {
+		text += dim.Render("refreshed " + age + " ago")
+	} else {
+		text += pillStyle(color).Render(" " + phrase + " ")
+	}
 	if reading {
 		text += th.bar.Faint(true).Render(" (reading)")
 	}
-	return dashKeep{text}
-}
-
-// keepCounts is the counters line: a count above zero stands out, Human-needed
-// in bold red; a zero count is muted. It is no wider than the plain counts, so
-// the styling never makes a terminal too small.
-func keepCounts(unresolved, humanNeeded, failed int) dashKeep {
-	count := func(label string, n int, hot lipgloss.Style) string {
-		if n == 0 {
-			hot = styleMuted
-		}
-		return hot.Render(fmt.Sprintf("%s %d", label, n))
+	if needs > 0 {
+		text += dim.Render(" · ") + th.bar.Inherit(styleFail.Bold(true)).Render(fmt.Sprintf("needs you %d", needs))
 	}
-	return dashKeep{count("unresolved", unresolved, dashBold) + "  " + count("Human-needed", humanNeeded, styleFail.Bold(true)) + "  " + count("failed sources", failed, styleFail)}
+	return dashKeep{text}
 }
 
 // dashStem is a fixed stem or line, the closed set of constant protected texts.
@@ -305,7 +322,6 @@ const (
 	stemFleetReadFailed
 	stemLoadingFleet
 	stemNoTasks
-	stemNothingNeedsYou
 )
 
 func keepStem(s dashStem) dashKeep {
@@ -318,8 +334,6 @@ func keepStem(s dashStem) dashKeep {
 		return dashKeep{styleMuted.Render("Loading fleet...")}
 	case stemNoTasks:
 		return dashKeep{styleMuted.Render("No tasks and no failed sources.")}
-	case stemNothingNeedsYou:
-		return dashKeep{styleMuted.Render("Nothing needs you.")}
 	}
 	return dashKeep{}
 }
@@ -529,24 +543,23 @@ func (m dashboardModel) frame() string {
 	return lipgloss.JoinVertical(lipgloss.Left, out...)
 }
 
-// header is the header bar, brand and state badge first, then the fleet chips
-// and the home path at its right end, and the counters line.
+// header is the header bar: brand, read state and NEEDS YOU count first, or a
+// dim "nothing needs you" once a good read found nothing, then the fleet chips
+// and the home path at its right end.
 func (m dashboardModel) header() []dashLine {
 	th := m.theme()
-	left := ""
+	left, calm, needs := "", "", 0
 	if m.state() == stateFailed {
 		left = th.bar.Inherit(styleFail).Render(dashText(fmt.Sprint(m.readErr)))
 	}
-	var counts dashKeep
 	if !m.lastGood.IsZero() {
-		counts = keepCounts(m.unresolved(), m.humanNeeded(), len(m.failures))
-		left = m.chips(th)
+		left, needs = m.chips(th), len(m.needs())
+		if needs == 0 {
+			calm = th.bar.Inherit(th.subtle).Render(" · nothing needs you")
+		}
 	}
-	keep := keepState(m.state(), m.now().Sub(m.lastGood), m.reading && m.state() != stateLoading, th)
-	return []dashLine{
-		{keep: keep, rest: m.barRest(lipgloss.Width(keep.text), left, th)},
-		{keep: counts},
-	}
+	keep := keepState(m.state(), m.now().Sub(m.lastGood), m.reading && m.state() != stateLoading, needs, th)
+	return []dashLine{{keep: keep, rest: calm + m.barRest(lipgloss.Width(keep.text+calm), left, th)}}
 }
 
 // barRest fills the header bar after its protected part: left, then the home
@@ -554,7 +567,7 @@ func (m dashboardModel) header() []dashLine {
 // short. With no room for the path the bar is left to the frame's cut.
 func (m dashboardModel) barRest(keepW int, left string, th dashTheme) string {
 	if left != "" {
-		left = th.bar.Render(" ") + left
+		left = th.bar.Render("  ") + left
 	}
 	home := dashText(m.home)
 	path := th.bar.Inherit(th.subtle)
@@ -633,8 +646,8 @@ func (m dashboardModel) body() []dashLine {
 	}
 	th := m.theme()
 	l := m.list
-	age, ctx, seat := m.listW() >= dashAgeMin, m.listW() >= dashCtxMin, m.listW() >= dashSeatMin
-	l.SetDelegate(dashRows{stale: m.state() == stateStale, age: age, ctx: ctx, seat: seat, now: m.now(), th: th})
+	cols := m.cols()
+	l.SetDelegate(dashRows{stale: m.state() == stateStale, cols: cols, now: m.now(), th: th})
 	drawn := 0
 	var rows []string
 	if m.listH > 1+m.border() {
@@ -645,7 +658,7 @@ func (m dashboardModel) body() []dashLine {
 	title := dashLine{keep: keepListTitle(len(m.failures) > 0, drawn, total, l.Paginator.Page+1, l.Paginator.TotalPages)}
 	var head []string
 	if c := m.columnRows(); c > 0 {
-		head = append(head, th.subtle.Bold(true).Render("    "+dashSeatLine(age, ctx, seat, func(_ int, s string) string { return s },
+		head = append(head, th.subtle.Bold(true).Render("    "+dashSeatLine(cols, func(_ int, s string) string { return s },
 			"GROUP", "NAME", "STATE", "AGE", "SINCE", "CTX", "ROLE", "HARNESS", "MODEL", "STATUS")))
 		if c > 1 {
 			head = append(head, th.border.Render(strings.Repeat("─", max(0, m.listW()))))
@@ -722,8 +735,48 @@ func (m dashboardModel) detailSection(w, n int) []dashLine {
 	return panel(dashLine{rest: dashBold.Render(title)}, lines, w, n, border)
 }
 
-// dashColW are the seat columns' widths, STATUS last and open.
+// dashColW are the seat columns' widths, STATUS last and open. GROUP and NAME
+// are these at most: cols sizes them to their longest cell.
 var dashColW = [...]int{12, 20, 18, 5, 5, 4, 6, 7, 14}
+
+// dashColMin are the GROUP and NAME columns' least widths.
+var dashColMin = [2]int{5, 8}
+
+// dashCols is a frame's width of each seat column, 0 for a column not drawn.
+type dashCols [len(dashColW)]int
+
+// cols lays the seat columns out for the list width and its rows. The width
+// gates the AGE and SINCE, CTX, and HARNESS and MODEL columns, so no read moves
+// them. GROUP and NAME are as wide as their longest cell over every row, not
+// only the page, within dashColMin and dashColW; GROUP is not drawn while
+// every task row has the same group.
+func (m dashboardModel) cols() dashCols {
+	c := dashCols(dashColW)
+	w := m.listW()
+	if w < dashAgeMin {
+		c[3], c[4] = 0, 0
+	}
+	if w < dashCtxMin {
+		c[5] = 0
+	}
+	if w < dashSeatMin {
+		c[7], c[8] = 0, 0
+	}
+	groups := map[string]bool{}
+	group, name := dashColMin[0], dashColMin[1]
+	for _, it := range m.list.Items() {
+		if it := it.(dashItem); it.row != nil {
+			groups[dashGroup(it)] = true
+			group = max(group, ansi.StringWidth(dashText(dashGroup(it))))
+			name = max(name, ansi.StringWidth(dashText(it.row.ID)))
+		}
+	}
+	c[0], c[1] = min(c[0], group), min(c[1], name)
+	if len(groups) < 2 {
+		c[0] = 0
+	}
+	return c
+}
 
 // dashSeatMin is the list width from which the HARNESS and MODEL columns are
 // drawn: the lead and every column, with 25 cells left for STATUS. Detail
@@ -738,13 +791,12 @@ const dashAgeMin = 4 + 12 + 20 + 18 + 5 + 5 + 6 + 6 + 15
 // and SINCE rule with CTX added, so STATUS keeps its 15 cells.
 const dashCtxMin = dashAgeMin + 4 + 1
 
-// dashSeatLine lays a seat row out: each cell padded to its column and
-// painted, AGE and SINCE only with age, CTX only with ctx, HARNESS and MODEL
-// only with seat, then the status.
-func dashSeatLine(age, ctx, seat bool, paint func(col int, s string) string, cells ...string) string {
+// dashSeatLine lays a seat row out: each drawn cell padded to its column and
+// painted, then the status.
+func dashSeatLine(cols dashCols, paint func(col int, s string) string, cells ...string) string {
 	var b strings.Builder
-	for i, w := range dashColW {
-		if !age && (i == 3 || i == 4) || !ctx && i == 5 || !seat && (i == 7 || i == 8) {
+	for i, w := range cols {
+		if w == 0 {
 			continue
 		}
 		b.WriteString(paint(i, pad(cells[i], w)+" "))
@@ -759,9 +811,7 @@ func dashSeatLine(age, ctx, seat bool, paint func(col int, s string) string, cel
 // has no state colour.
 type dashRows struct {
 	stale bool
-	age   bool // draw the AGE and SINCE columns
-	ctx   bool // draw the CTX column
-	seat  bool // draw the HARNESS and MODEL columns
+	cols  dashCols
 	now   time.Time
 	th    dashTheme
 }
@@ -835,7 +885,7 @@ func (d dashRows) task(m list.Model, index int, it dashItem, paint func(*lipglos
 	}
 	sub := &d.th.subtle
 	styles := [...]*lipgloss.Style{groupStyle, nil, state, sub, sub, sub, sub, sub, sub, nil}
-	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.age, d.ctx, d.seat, func(col int, s string) string { return paint(styles[col], s) },
+	return paint(hnPaint, hn) + paint(nil, " ") + dashSeatLine(d.cols, func(col int, s string) string { return paint(styles[col], s) },
 		group, dashText(ts.ID), mark.icon+" "+phase, dashAge(d.now, ts.LaunchedAt), dashAge(d.now, ts.PhaseChangedAt),
 		dashCtx(ts.ContextUsed, ts.ContextWindow), dashText(ts.Kind), dashText(dashOr(ts.Harness)), dashText(dashOr(ts.Model)), status)
 }
@@ -919,7 +969,7 @@ func (m dashboardModel) feedPlaceholder() string {
 		return ""
 	case !m.feedLoaded:
 		return styleMuted.Render("Loading events...")
-	case len(m.events) == 0:
+	case len(m.shownEvents()) == 0:
 		return styleMuted.Render("No events yet.")
 	}
 	return ""
@@ -949,18 +999,31 @@ func (m dashboardModel) feedSection() []dashLine {
 	return panel(title, body, m.width, 0, m.theme().border)
 }
 
-// eventLine is one event: the time muted, the type in its family's colour,
-// producer and key subtle, the payload plain.
-func eventLine(e orchestrator.Record, th dashTheme) string {
+// eventLine is one event: the time muted, dated when its day is not now's,
+// the type in its family's colour, producer and key subtle, the key only when
+// it is not the producer, the payload plain.
+func eventLine(e orchestrator.Record, now time.Time, th dashTheme) string {
 	paint := func(s lipgloss.Style, text string) string {
 		if text == "" {
 			return ""
 		}
 		return s.Render(dashText(text))
 	}
-	at := time.Unix(0, e.Timestamp).UTC().Format("15:04:05")
-	return strings.TrimRight(strings.Join([]string{styleMuted.Render(at), paint(eventStyle(e.Type), e.Type),
-		paint(th.subtle, e.Producer), paint(th.subtle, e.Key), dashText(e.Payload)}, " "), " ")
+	t, layout := time.Unix(0, e.Timestamp).UTC(), "15:04:05"
+	if t.Format(time.DateOnly) != now.UTC().Format(time.DateOnly) {
+		layout = "Jan 02 15:04:05"
+	}
+	key := e.Key
+	if key == e.Producer {
+		key = ""
+	}
+	var parts []string
+	for _, p := range []string{styleMuted.Render(t.Format(layout)), paint(eventStyle(e.Type), e.Type), paint(th.subtle, e.Producer), paint(th.subtle, key), dashText(e.Payload)} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // eventStyle colours an event type by its family: errors and refusals red,
@@ -978,28 +1041,45 @@ func eventStyle(typ string) lipgloss.Style {
 	return lipgloss.NewStyle()
 }
 
-// helpLines are the key footer: the movement entry, every action of the table,
-// decide and quit, in that order. An entry the selection cannot carry (bind
-// finds a problem, the test begin applies) is dimmed; its key still reaches
-// begin and gets its notice.
+// helpLines are the key footer: the movement entry, the actions of the table,
+// decide, help and quit, in that order. An action applies when bind, the test
+// begin makes, accepts the selection and its applies, if any, accepts the
+// selected row. By default the footer draws only the entries that apply, on
+// one line, dropping the last of them while help and quit do not fit; with
+// help on it draws every entry, dimming those that do not apply. A key not
+// drawn or dimmed still reaches begin and gets its notice.
 func (m dashboardModel) helpLines() []string {
+	it, _ := m.list.SelectedItem().(dashItem)
 	hasTarget := len(m.list.Items()) > 0
 	move := dashMove
 	move.SetEnabled(len(m.list.Items()) >= 2)
 	entries := []key.Binding{move}
 	for i := range dashActions {
-		b := dashActions[i].keys
-		_, problem := dashActions[i].bind(m.sel, hasTarget, m.home)
-		b.SetEnabled(problem == "")
+		a := &dashActions[i]
+		b := a.keys
+		_, problem := a.bind(m.sel, hasTarget, m.home)
+		b.SetEnabled(problem == "" && (a.applies == nil || it.row != nil && a.applies(*it.row)))
 		entries = append(entries, b)
 	}
 	decide := dashDecide
-	held := false
-	if it, ok := m.list.SelectedItem().(dashItem); ok && it.row != nil {
-		held = len(m.holdsOf(*it.row)) > 0
+	decide.SetEnabled(it.row != nil && len(m.holdsOf(*it.row)) > 0)
+	entries = append(entries, decide)
+	help := dashHelp
+	if m.help {
+		help.SetHelp("?", "less")
+		return m.keyLines(append(entries, help, dashQuit)...)
 	}
-	decide.SetEnabled(held)
-	return m.keyLines(append(entries, decide, dashQuit)...)
+	var on []key.Binding
+	for _, e := range entries {
+		if e.Enabled() {
+			on = append(on, e)
+		}
+	}
+	tail := []key.Binding{help, dashQuit}
+	for len(on) > 0 && len(m.keyLines(append(on, tail...)...)) > 1 {
+		on = on[:len(on)-1]
+	}
+	return m.keyLines(append(on, tail...)...)
 }
 
 // keyLines draws key entries in the help style, each its key and label, a

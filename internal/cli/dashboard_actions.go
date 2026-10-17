@@ -6,6 +6,8 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // dashTarget is the row identity captured when an action starts. Rows reorder
@@ -53,6 +55,11 @@ type dashAction struct {
 	// bindable.
 	needsCaptainID bool
 	fields         []dashField
+	// applies, when set, is whether the selected task row's state admits the
+	// action, by the predicate its Task Authority operation refuses by. The
+	// footer offers only actions that apply; begin does not consult it, so
+	// the command's own refusal stays the only one.
+	applies func(fleet.TaskSnapshot) bool
 	// args builds the argv after "--home <home>" from the captured target and
 	// the field values (keyed by field name).
 	args func(t dashTarget, v map[string]string) []string
@@ -70,6 +77,11 @@ var optionalWordsFields = []dashField{
 	{"grantor", "grantor (optional)", false},
 	{"channel", "channel (optional)", false},
 	{"quote", "quote (optional, verbatim)", false},
+}
+
+// inPhase applies an action to a row whose canonical phase admits it.
+func inPhase(admits func(taskauthority.Phase) bool) func(fleet.TaskSnapshot) bool {
+	return func(ts fleet.TaskSnapshot) bool { return admits(taskauthority.Phase(ts.CurrentState)) }
 }
 
 func taskArgs(path ...string) func(dashTarget, map[string]string) []string {
@@ -93,7 +105,7 @@ func wordsArgs(v map[string]string) []string {
 // are absent: no existing read exposes a claimed wake's lease and event IDs.
 // Offered nowhere: --force, --generation.
 var dashActions = withBindings([]dashAction{
-	{key: "b", name: "task block", binding: bindTask,
+	{key: "b", name: "task block", binding: bindTask, applies: inPhase(taskauthority.Phase.Blockable),
 		fields: []dashField{{"by", "blocked by (empty for none)", false}},
 		args: func(t dashTarget, v map[string]string) []string {
 			a := []string{"task", "block", t.ID}
@@ -102,12 +114,14 @@ var dashActions = withBindings([]dashAction{
 			}
 			return a
 		}},
-	{key: "u", name: "task unblock", binding: bindTask, args: taskArgs("task", "unblock")},
-	{key: "d", name: "task done", binding: bindTask, args: taskArgs("task", "done")},
-	{key: "t", name: "task retry", binding: bindTask, args: taskArgs("task", "retry")},
-	{key: "o", name: "task reopen", binding: bindTask, args: taskArgs("task", "reopen")},
+	{key: "u", name: "task unblock", binding: bindTask, applies: inPhase(taskauthority.Phase.Unblockable), args: taskArgs("task", "unblock")},
+	{key: "d", name: "task done", binding: bindTask, applies: inPhase(func(p taskauthority.Phase) bool { return !p.Terminal() }), args: taskArgs("task", "done")},
+	{key: "t", name: "task retry", binding: bindTask, applies: inPhase(taskauthority.Phase.Terminal), args: taskArgs("task", "retry")},
+	{key: "o", name: "task reopen", binding: bindTask, applies: inPhase(taskauthority.Phase.Terminal), args: taskArgs("task", "reopen")},
 	{key: "x", name: "teardown", binding: bindTask, args: taskArgs("teardown")},
-	{key: "p", name: "promote", binding: bindTask, args: taskArgs("promote")},
+	{key: "p", name: "promote", binding: bindTask, applies: func(ts fleet.TaskSnapshot) bool {
+		return taskauthority.Promotable(ts.Kind, taskauthority.Phase(ts.CurrentState))
+	}, args: taskArgs("promote")},
 	{key: "s", name: "send", binding: bindTask,
 		fields: []dashField{{"line", "line", false}},
 		args: func(t dashTarget, v map[string]string) []string {
@@ -167,6 +181,7 @@ var (
 	dashQuit       = key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit"))
 	dashMove       = key.NewBinding(key.WithKeys("up", "k", "down", "j"), key.WithHelp("j/k", "move"))
 	dashDecide     = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "decide"))
+	dashHelp       = key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help"))
 	dashFormNext   = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "next/submit"))
 	dashFormCancel = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"))
 	dashRun        = key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "run"))

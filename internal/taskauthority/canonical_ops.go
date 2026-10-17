@@ -549,7 +549,7 @@ func (c *Canonical) Block(op domain.Operation, req CanonicalBlockRequest) (Outco
 		return Outcome{}, err
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Phase != PhaseQueued && cur.Phase != PhaseWorking {
+		if !cur.Phase.Blockable() {
 			return Aggregate{}, preconditionError("block requires queued or working task")
 		}
 		return phaseChanged(cur, PhaseBlocked, req.Detail, req.Reason), nil
@@ -580,7 +580,7 @@ func (c *Canonical) Unblock(op domain.Operation, req CanonicalUnblockRequest) (O
 		return Outcome{}, err
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Phase != PhaseBlocked {
+		if !cur.Phase.Unblockable() {
 			return Aggregate{}, preconditionError("unblock requires blocked task")
 		}
 		return phaseChanged(cur, PhaseQueued, "", req.Reason), nil
@@ -617,7 +617,7 @@ func (c *Canonical) Complete(op domain.Operation, req CanonicalCompleteRequest) 
 		return Outcome{}, err
 	}
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
-		if cur.Phase.terminal() {
+		if cur.Phase.Terminal() {
 			return Aggregate{}, preconditionError("complete requires a non-terminal task")
 		}
 		return phaseChanged(cur, req.To, "", req.Reason), nil
@@ -685,7 +685,7 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	if err := c.checkCleanupFence(cur, nil); err != nil {
 		return Outcome{}, err
 	}
-	if !cur.Phase.terminal() {
+	if !cur.Phase.Terminal() {
 		return Outcome{}, preconditionError("reopen requires terminal task")
 	}
 	next, err := cur.Generation.Next()

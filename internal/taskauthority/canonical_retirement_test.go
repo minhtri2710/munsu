@@ -37,7 +37,7 @@ func TestCanonicalRetireReachesRetiredPhase(t *testing.T) {
 	if agg.Phase != PhaseRetired || agg.Revision != 2 {
 		t.Fatalf("retired aggregate = %+v", agg)
 	}
-	if !agg.Phase.terminal() {
+	if !agg.Phase.Terminal() {
 		t.Fatalf("retired phase %q is not terminal", agg.Phase)
 	}
 }

@@ -1,0 +1,16 @@
+ munsu  refreshed 0s ago · nothing needs you  watcher absent · captains 0 · wor…
+╭─ Tasks ──────────────────────────────────────────────────────────────────────╮
+│     NAME     STATE              ROLE   STATUS                                │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ ▌   t1       ○ queued           ship   smoke                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Detail ─────────────────────────────────────────────────────────────────────╮
+│ t1  queued  kind ship  project munsu  group general                          │
+│ last queued: cli task add                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Events ─────────────────────────────────────────────────────────────────────╮
+│ Sep 30 23:00:00 task.status t1 queued: cli task add                          │
+│ 11:59:00 watcher.cycle.failed munsu:watcher probe timed out                  │
+│ 11:59:59 task.status t1 smoke queued: waiting for a slot                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+b block • d done • x teardown • s send • h hold • e resolve • ? help • q quit

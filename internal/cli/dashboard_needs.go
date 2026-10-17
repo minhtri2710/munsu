@@ -106,15 +106,15 @@ func (m dashboardModel) needs() []dashNeed {
 }
 
 // needsLines is the NEEDS YOU section in at most n lines: the title and the
-// items that fit, or one muted line when nothing waits. Nothing is drawn
-// before the first good read.
+// items that fit. Nothing is drawn before the first good read or while nothing
+// waits; the header bar says which.
 func (m dashboardModel) needsLines(n int) []dashLine {
 	if m.lastGood.IsZero() || n < 1 {
 		return nil
 	}
 	needs := m.needs()
 	if len(needs) == 0 {
-		return []dashLine{{keep: keepStem(stemNothingNeedsYou)}}
+		return nil
 	}
 	shown := needs[:min(len(needs), dashNeedsMax, n-1)]
 	out := []dashLine{{keep: keepNeedsTitle(len(shown), len(needs))}}
@@ -130,15 +130,12 @@ func (m dashboardModel) needsLines(n int) []dashLine {
 }
 
 // needsSection is NEEDS YOU in the lines resize gave it: a red panel, or a
-// title with its items indented below it. "Nothing needs you." is one line.
+// title with its items indented below it.
 func (m dashboardModel) needsSection() []dashLine {
 	if m.needsH < 1 {
 		return nil
 	}
 	lines := m.needsLines(m.needsH)
-	if lines[0].keep == keepStem(stemNothingNeedsYou) {
-		return lines
-	}
 	if m.look == lookFlat {
 		for i := range lines[1:] {
 			lines[i+1].rest = "  " + lines[i+1].rest

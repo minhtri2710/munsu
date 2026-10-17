@@ -152,6 +152,7 @@ type dashboardModel struct {
 	deciding *dashDecision
 	notice   string // one-line message for the footer
 	result   *dashExecDone
+	help     bool // the footer lists every key, not only those that apply
 }
 
 // dashListKeys is the list's whole key map. Every other binding is absent, so
@@ -451,6 +452,10 @@ func (m dashboardModel) onKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	if key.Matches(k, dashQuit) {
 		return m, tea.Quit
 	}
+	if key.Matches(k, dashHelp) {
+		m.help = !m.help
+		return m, nil
+	}
 	if a := actionFor(k); a != nil {
 		return m.begin(a), nil
 	}
@@ -612,29 +617,6 @@ func (d dashExecDone) outputTail() []string {
 		}
 	}
 	return lines[max(0, len(lines)-dashboardOutputLines):]
-}
-
-// unresolved counts the rows that are not finished, plus one per failed
-// source whose rows are unknown. done, resolved and retired rows are finished;
-// every other row, including one with no canonical phase, is not.
-func (m dashboardModel) unresolved() int {
-	n := len(m.failures)
-	for _, ts := range m.rows {
-		if !dashFinished(ts) {
-			n++
-		}
-	}
-	return n
-}
-
-func (m dashboardModel) humanNeeded() int {
-	n := 0
-	for _, ts := range m.rows {
-		if fleet.HumanNeeded(ts) {
-			n++
-		}
-	}
-	return n
 }
 
 type dashState int
