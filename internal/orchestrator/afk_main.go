@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 const (
@@ -12,10 +14,15 @@ const (
 	pollInterval = 30 * time.Second
 )
 
-// IsActive checks if the afk daemon is running (flag file exists).
+// IsActive reports whether the consent flag is set and a daemon holds the AFK
+// lock. A flag left by a daemon that died without cleanup is ignored; an
+// unanswerable lock probe counts as active, keeping wakes queued.
 func IsActive(homeDir string) bool {
-	_, err := os.Stat(filepath.Join(homeDir, afkFlagFile))
-	return err == nil
+	if _, err := os.Stat(filepath.Join(homeDir, afkFlagFile)); err != nil {
+		return false
+	}
+	pid, err := home.ReadAFKLockPID(homeDir)
+	return err != nil || pid > 0
 }
 
 // Disable idempotently removes the AFK flag file. Returns nil if the flag
