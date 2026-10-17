@@ -1283,6 +1283,8 @@ func TestProbeFailureOutcomes(t *testing.T) {
 		{"a profile that refuses the control write fails the control", &Fence{profile: "(version 1)\n(allow default)\n(deny file-write*)\n", digest: "d", refuse: []string{dir}}, OutcomeControlFailed, 1},
 		{"a refusal that is not the sandbox's is an error", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "file", "sub")}}, OutcomeError, 2},
 		{"a missing refused dir the profile lets the seat create is open", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "missing")}}, OutcomeWritten, 2},
+		{"a profile that lets the seat read a credential path is open", &Fence{profile: open, digest: "d", readRefuse: []string{dir}}, OutcomeRead, 2},
+		{"a read refusal that is not the sandbox's is an error", &Fence{profile: open, digest: "d", readRefuse: []string{filepath.Join(dir, "missing")}}, OutcomeError, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1542,5 +1544,180 @@ func TestCaptainProbeProvesItsHomeAndTheGeneralHomeRefused(t *testing.T) {
 		if !slices.Contains(f.refuse, want) {
 			t.Errorf("probe refuses %q, want %s among them", f.refuse, want)
 		}
+	}
+}
+
+// The credential paths no fenced seat reads, written out from the spec rather
+// than taken from credentialDirs and credentialFiles, so dropping one from
+// either list fails a row.
+var (
+	specCredentialDirs  = []string{".ssh", ".gnupg", ".aws", ".kube", ".azure", ".docker", ".password-store", ".config/gcloud"}
+	specCredentialFiles = []string{".netrc", ".git-credentials", ".npmrc", ".pypirc"}
+)
+
+// writeFiles writes each file, making its parent dirs.
+func writeFiles(t *testing.T, files map[string]string) {
+	t.Helper()
+	for p, s := range files {
+		mkdirs(t, filepath.Dir(p))
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// credentialHome is a user home apart from HOME holding every spec credential
+// path, each dir with a file f in it and .gnupg a symlink to real-gnupg beside
+// the home, and the readable neighbours .sshcache and .config/gh.
+func credentialHome(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, gnupg := filepath.Join(root, "cred"), filepath.Join(root, "real-gnupg")
+	files := map[string]string{filepath.Join(gnupg, "f"): "f", filepath.Join(home, ".sshcache", "f"): "f", filepath.Join(home, ".config", "gh", "hosts.yml"): "hosts"}
+	for _, d := range specCredentialDirs {
+		if d != ".gnupg" {
+			files[filepath.Join(home, d, "f")] = "f"
+		}
+	}
+	for _, f := range specCredentialFiles {
+		files[filepath.Join(home, f)] = f
+	}
+	writeFiles(t, files)
+	if err := os.Symlink(gnupg, filepath.Join(home, ".gnupg")); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// lateCredentialHome is a user home whose .config links to real-config, where
+// gcloud does not exist yet, and whose .kube dangles to real-kube; both sit
+// beside the home with the readable neighbours gh, gcloudx and real-kubex.
+func lateCredentialHome(t *testing.T) (home, root string) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home = filepath.Join(root, "late")
+	mkdirs(t, home)
+	writeFiles(t, map[string]string{
+		filepath.Join(root, "real-config", "gh", "hosts.yml"): "hosts", filepath.Join(root, "real-config", "gcloudx", "f"): "f",
+		filepath.Join(root, "real-kubex", "f"): "f",
+	})
+	for link, target := range map[string]string{".config": "real-config", ".kube": "real-kube"} {
+		if err := os.Symlink(filepath.Join(root, target), filepath.Join(home, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home, root
+}
+
+func mustNotRead(t *testing.T, f *Fence, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		if out, err := fenced(t, f, "/bin/cat", p); err == nil || !strings.Contains(out, "Operation not permitted") {
+			t.Errorf("read %s was not refused by the fence: %v %s", p, err, out)
+		}
+	}
+}
+
+func mustRead(t *testing.T, f *Fence, files map[string]string) {
+	t.Helper()
+	for p, want := range files {
+		if out, err := fenced(t, f, "/bin/cat", p); err != nil || out != want {
+			t.Errorf("read %s = %q, %v; want %q", p, out, err, want)
+		}
+	}
+}
+
+// Every fenced seat is refused reading the credential paths under the launch's
+// user home, a symlinked one at its target too, and still reads their
+// neighbours; its probe proves each existing one refused, and fails with
+// OutcomeRead on a profile without the deny. A credential path that appears
+// after the launch under a symlinked parent, or at a dangling link's target,
+// is refused too.
+func TestSeatCannotReadCredentials(t *testing.T) {
+	seatEnv(t, t.TempDir())
+	for _, role := range []struct {
+		name  string
+		fence func(t *testing.T, home string) *Fence
+	}{
+		{"soldier", func(t *testing.T, home string) *Fence {
+			x := newLayout(t).soldier()
+			x.UserHome = home
+			return mustNew(t, x)
+		}},
+		{"reviewer", func(t *testing.T, home string) *Fence {
+			x := newLayout(t).reviewer()
+			x.UserHome = home
+			return mustNew(t, x)
+		}},
+		{"captain", func(t *testing.T, home string) *Fence {
+			_, x := captainFence(t, newLayout(t))
+			x.UserHome = home
+			return mustNew(t, x)
+		}},
+	} {
+		t.Run(role.name, func(t *testing.T) {
+			home := credentialHome(t)
+			gnupg := filepath.Join(filepath.Dir(home), "real-gnupg")
+			f := role.fence(t, home)
+			blocked, want := []string{filepath.Join(gnupg, "f")}, []string{gnupg}
+			for _, d := range specCredentialDirs {
+				blocked = append(blocked, filepath.Join(home, d, "f"))
+				want = append(want, filepath.Join(home, d))
+			}
+			for _, name := range specCredentialFiles {
+				blocked = append(blocked, filepath.Join(home, name))
+				want = append(want, filepath.Join(home, name))
+			}
+			mustNotRead(t, f, blocked...)
+			mustRead(t, f, map[string]string{filepath.Join(home, ".sshcache", "f"): "f", filepath.Join(home, ".config", "gh", "hosts.yml"): "hosts"})
+
+			ev, err := f.Probe(context.Background())
+			if err != nil {
+				t.Fatalf("Probe: %v", err)
+			}
+			var read []string
+			for _, s := range ev.Steps {
+				if s.Command[3] == statBin {
+					if s.Outcome != OutcomeRefused {
+						t.Errorf("read step %+v, want refused", s)
+					}
+					read = append(read, s.Command[len(s.Command)-1])
+				}
+			}
+			slices.Sort(read)
+			slices.Sort(want)
+			if !slices.Equal(read, want) {
+				t.Errorf("probed reads %q, want %q", read, want)
+			}
+
+			late, root := lateCredentialHome(t)
+			lf := role.fence(t, late)
+			writeFiles(t, map[string]string{filepath.Join(root, "real-config", "gcloud", "f"): "f", filepath.Join(root, "real-kube", "f"): "f"})
+			mustNotRead(t, lf, filepath.Join(late, ".config", "gcloud", "f"), filepath.Join(root, "real-config", "gcloud", "f"),
+				filepath.Join(late, ".kube", "f"), filepath.Join(root, "real-kube", "f"))
+			mustRead(t, lf, map[string]string{
+				filepath.Join(late, ".config", "gh", "hosts.yml"): "hosts", filepath.Join(root, "real-config", "gcloudx", "f"): "f",
+				filepath.Join(root, "real-kubex", "f"): "f",
+			})
+
+			open := *f
+			var kept []string
+			for _, line := range strings.Split(f.profile, "\n") {
+				if !strings.HasPrefix(line, "(deny file-read*") {
+					kept = append(kept, line)
+				}
+			}
+			open.profile = strings.Join(kept, "\n")
+			ev, err = open.Probe(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "fence probe: "+string(OutcomeRead)) || ev.Steps[len(ev.Steps)-1].Outcome != OutcomeRead {
+				t.Fatalf("Probe without the deny = %+v, %v; want a %s failure", ev.Steps, err, OutcomeRead)
+			}
+		})
 	}
 }
