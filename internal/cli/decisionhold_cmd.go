@@ -467,18 +467,24 @@ Examples:
 			if err := home.AppendStatus(ctx.Home, from, fmt.Sprintf("resolved: %s [key=%s]", answer, key)); err != nil {
 				return fmt.Errorf("appending resolved status: %w", err)
 			}
+			var unblocked, failed []string
 			for _, depID := range unblock {
 				if depID == "" {
 					continue
 				}
-				if err := home.AppendStatus(ctx.Home, depID, fmt.Sprintf("unblocked: decision resolved [key=%s]", key)); err != nil {
-					return fmt.Errorf("unblocking %s: %w", depID, err)
+				if err := unblockDependent(ctx, auth, depID, key); err != nil {
+					failed = append(failed, fmt.Sprintf("%s (%v)", depID, err))
+					continue
 				}
+				unblocked = append(unblocked, depID)
 			}
 
 			msg := fmt.Sprintf("Hold %s resolved: %s", key, answer)
-			if len(unblock) > 0 {
-				msg += "\nUnblocked: " + strings.Join(unblock, ", ")
+			if len(unblocked) > 0 {
+				msg += "\nUnblocked: " + strings.Join(unblocked, ", ")
+			}
+			if len(failed) > 0 {
+				return fmt.Errorf("%s\nNot unblocked: %s", msg, strings.Join(failed, "; "))
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
@@ -495,6 +501,24 @@ Examples:
 	cmd.Flags().StringArrayVar(&unblock, "unblock", nil, "Dependent task to unblock (repeatable)")
 	words.bind(cmd)
 	return cmd
+}
+
+func unblockDependent(ctx Ctx, auth *taskauthority.Canonical, depID, key string) error {
+	tid, err := domain.NewTaskID(depID)
+	if err != nil {
+		return err
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return err
+	}
+	if err := unblockTask(auth, tid, agg, "decision-hold: resolved "+key); err != nil {
+		return err
+	}
+	if err := home.AppendStatus(ctx.Home, depID, fmt.Sprintf("unblocked: decision resolved [key=%s]", key)); err != nil {
+		return &LifecyclePartialError{TaskID: depID, State: string(taskauthority.PhaseQueued), Cause: err}
+	}
+	return nil
 }
 
 func newDecisionHoldListCmd() *cobra.Command {

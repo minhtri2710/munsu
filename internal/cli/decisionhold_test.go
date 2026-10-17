@@ -140,9 +140,8 @@ func TestDecisionHoldHoldIsIdempotent(t *testing.T) {
 }
 
 // TestDecisionHoldResolveRoutesThroughAuthority proves `decision-hold
-// resolve` releases the Authority hold, records the answer in the status
-// projection, and unblocks dependents — without touching the legacy hold
-// path.
+// resolve` releases the Authority hold and records the answer in the status
+// projection.
 func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -155,7 +154,7 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	out, err := runRoot(t, "decision-hold", "resolve", "approach",
 		"--answer", "Choose React", "--from", "scout-r2",
 		"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
-		"--unblock", "dep-task-1", "--home", homeDir, "--output", "json")
+		"--home", homeDir, "--output", "json")
 	if err != nil {
 		t.Fatalf("resolve: %v\n%s", err, out)
 	}
@@ -182,13 +181,6 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	if !strings.Contains(string(statuses), "resolved: Choose React [key=approach]") {
 		t.Fatalf("origin status = %q", statuses)
 	}
-	depStatuses, err := os.ReadFile(filepath.Join(homeDir, "state", "dep-task-1.status"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]") {
-		t.Fatalf("dependent status = %q", depStatuses)
-	}
 
 	// List now reports no unresolved holds.
 	out, err = runRoot(t, "decision-hold", "list", "scout-r2", "--home", homeDir, "--output", "json")
@@ -205,6 +197,69 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	}
 	if envelope.Data.Count != 0 {
 		t.Fatalf("unresolved count = %d, want 0", envelope.Data.Count)
+	}
+}
+
+// TestDecisionHoldResolveUnblocksThroughAuthority proves --unblock moves a
+// blocked dependent to queued in the Authority, and reports a dependent the
+// Authority refuses to unblock instead of claiming it was unblocked.
+func TestDecisionHoldResolveUnblocksThroughAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		blocked bool
+	}{
+		{name: "blocked dependent is unblocked", blocked: true},
+		{name: "queued dependent is reported", blocked: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			auth := testAuthorityFor(t, homeDir)
+			seedAuthorityTask(t, auth, "dep-task-1")
+			if tc.blocked {
+				agg, err := auth.Get(mustTaskIDFor(t, "dep-task-1"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := taskauthority.CanonicalBlockRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       mustTaskIDFor(t, "dep-task-1"),
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Detail:       "decision",
+					Reason:       "seed",
+				}
+				if _, err := auth.Block(mustCanonicalOp(t, "seed-block", req), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if out, err := runRoot(t, "decision-hold", "hold", "approach",
+				"--reason", "Pick the UI framework", "--from", "scout-r2",
+				"--home", homeDir, "--output", "json"); err != nil {
+				t.Fatalf("hold: %v\n%s", err, out)
+			}
+
+			out, err := runRoot(t, "decision-hold", "resolve", "approach",
+				"--answer", "Choose React", "--from", "scout-r2",
+				"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
+				"--unblock", "dep-task-1", "--home", homeDir, "--output", "json")
+
+			agg, gerr := auth.Get(mustTaskIDFor(t, "dep-task-1"))
+			if gerr != nil || agg.Phase != taskauthority.PhaseQueued {
+				t.Fatalf("dependent aggregate = %+v err=%v, want queued", agg, gerr)
+			}
+			depStatuses, _ := os.ReadFile(filepath.Join(homeDir, "state", "dep-task-1.status"))
+			hasUnblockedLine := strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]")
+			if tc.blocked {
+				if err != nil || !strings.Contains(out, "Unblocked: dep-task-1") || !hasUnblockedLine {
+					t.Fatalf("resolve err=%v status=%q\n%s", err, depStatuses, out)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(out, "Not unblocked: dep-task-1") ||
+				!strings.Contains(out, "unblock requires blocked task") ||
+				strings.Contains(out, "Unblocked:") || hasUnblockedLine {
+				t.Fatalf("resolve err=%v status=%q\n%s", err, depStatuses, out)
+			}
+		})
 	}
 }
 
