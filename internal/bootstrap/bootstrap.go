@@ -108,12 +108,15 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 	// 1. Check tools: the fixed set, plus every backend binary a spawn can use,
 	// the home's and each registered project's (base merged with its overlay).
 	// A project that fails to resolve adds nothing; doctor --role general
-	// reports it.
+	// reports it. Opening the registry creates a home for a missing or empty
+	// directory, so it is read only once the home exists: doctor is read-only.
 	backends := []string{res.Backend}
-	projects, _ := fleet.List(home)
-	for _, p := range projects {
-		b, _ := fleet.ResolveProjectBackend(home, p.Name)
-		backends = append(backends, b)
+	if homeInitialized(home) {
+		projects, _ := fleet.List(home)
+		for _, p := range projects {
+			b, _ := fleet.ResolveProjectBackend(home, p.Name)
+			backends = append(backends, b)
+		}
 	}
 	tools := slices.Clone(checkedTools)
 	for _, b := range backends {
@@ -196,6 +199,11 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 	}
 
 	return res
+}
+
+func homeInitialized(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, home.IdentityFileName))
+	return err == nil
 }
 
 // writeFenceDiagnostic is nil where the host has a write fence.

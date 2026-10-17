@@ -196,9 +196,19 @@ func ResolveProjectWithToolProbe(base FleetBaseDocument, facts ProjectFacts, pro
 
 // ResolveProjectBackend is the session backend a project resolves to (base
 // merged with its overlay), without probing tools; empty when neither sets one.
+// It refuses the documents ResolveProjectWithSteps refuses before probing.
 func ResolveProjectBackend(base FleetBaseDocument, facts ProjectFacts) (string, error) {
+	if err := base.Validate(); err != nil {
+		return "", err
+	}
 	effective, err := finalResolvedOverlay(base, facts)
-	return effective.Backend, err
+	if err != nil {
+		return "", err
+	}
+	if err := ValidateProjectTools(effective); err != nil {
+		return "", err
+	}
+	return effective.Backend, nil
 }
 
 func baselineStep() ResolvedStep {

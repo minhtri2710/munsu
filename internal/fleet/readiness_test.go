@@ -51,6 +51,7 @@ func TestProbeProjectReadinessChecksTheProjectBackend(t *testing.T) {
 		{"overlay herdr absent", "tmux", "herdr", []string{"pi", "tmux"}, "", "herdr: not found on PATH"},
 		{"overlay herdr present", "tmux", "herdr", []string{"pi", "herdr"}, "", ""},
 		{"no backend anywhere", "", "", []string{"pi", "tmux", "herdr"}, "resolved no session backend identity", ""},
+		{"unknown overlay backend", "tmux", "screen", []string{"pi", "tmux", "screen"}, "", "unknown session backend"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()

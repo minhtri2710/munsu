@@ -3,14 +3,62 @@ package bootstrap
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
+
+// TestRunReadsProjectBackendsOnlyFromAnInitializedHome: Run creates nothing
+// in a missing or empty directory, and reads project backends once the home
+// exists.
+func TestRunReadsProjectBackendsOnlyFromAnInitializedHome(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T) string
+	}{
+		{"missing dir", func(t *testing.T) string { return filepath.Join(t.TempDir(), "not-a-home") }},
+		{"empty dir", func(t *testing.T) string { return t.TempDir() }},
+		{"initialized home", func(t *testing.T) string {
+			dir := t.TempDir()
+			if err := fleet.Add(dir, "p1", t.TempDir(), true); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.StoreProjectOverlay(dir, "p1", config.ProjectOverlay{Backend: "herdr"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.StoreFleetBase(dir, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
+				t.Fatal(err)
+			}
+			return dir
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := tc.setup(t)
+			before, _ := os.ReadDir(dir)
+			initialized := len(before) > 0
+
+			res := Run(dir, false, nil)
+
+			after, _ := os.ReadDir(dir)
+			if len(after) != len(before) {
+				t.Fatalf("Run changed %s from %d to %d entries; doctor must stay read-only", dir, len(before), len(after))
+			}
+			if _, err := os.Stat(dir); tc.name == "missing dir" && !os.IsNotExist(err) {
+				t.Fatalf("Run created the missing home directory")
+			}
+			checked := slices.ContainsFunc(res.Tools, func(d ToolDiagnostic) bool { return d.Tool == "herdr" })
+			if checked != initialized {
+				t.Fatalf("herdr checked = %v, want %v (tools %+v)", checked, initialized, res.Tools)
+			}
+		})
+	}
+}
 
 func TestCheckCaptainRegistry_NoInitializedHome(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "not-a-home")

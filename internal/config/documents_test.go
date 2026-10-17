@@ -144,6 +144,35 @@ func TestResolveProjectBackendPrecedence(t *testing.T) {
 	}
 }
 
+// ResolveProjectBackend refuses exactly the documents the snapshot resolver
+// refuses before probing, and otherwise returns the backend it resolves.
+func TestResolveProjectBackendAgreesWithTheSnapshotResolver(t *testing.T) {
+	future := validBase()
+	future.SchemaVersion = "future"
+	for _, tc := range []struct {
+		name          string
+		base          FleetBaseDocument
+		overlay       ProjectOverlay
+		want, wantErr string
+	}{
+		{"overlay herdr", validBase(), ProjectOverlay{Backend: "herdr"}, "herdr", ""},
+		{"invalid base schema version", future, ProjectOverlay{Backend: "herdr"}, "", "schemaVersion"},
+		{"invalid overlay tool", validBase(), ProjectOverlay{Worktree: &ToolEntry{Adapter: "nope", Path: "/x"}}, "", "worktree tool has unknown adapter"},
+		{"unknown overlay backend resolves; backend.Resolve refuses it", validBase(), ProjectOverlay{Backend: "screen"}, "screen", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := validFacts("alpha", "/alpha", tc.overlay)
+			got, err := ResolveProjectBackend(tc.base, facts)
+			if got != tc.want || (tc.wantErr == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ResolveProjectBackend = %q, %v; want %q, %q", got, err, tc.want, tc.wantErr)
+			}
+			if _, snapErr := resolveBaseline(tc.base, facts); (snapErr == nil) != (err == nil) {
+				t.Fatalf("snapshot resolver err = %v, ResolveProjectBackend err = %v; want them to agree", snapErr, err)
+			}
+		})
+	}
+}
+
 func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	base := validBase()
 	facts := validFacts("alpha", "/alpha", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude", Match: []string{"alpha"}, Use: []DispatchCandidate{{Harness: "claude"}}}}})
