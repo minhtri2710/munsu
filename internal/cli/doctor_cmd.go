@@ -19,7 +19,7 @@ func newDoctorCmd() *cobra.Command {
 		Long: `Run bootstrap diagnostics and print fix commands for each issue.
 
 Hard-required tools (doctor exits non-zero if missing):
-  git, session backend (herdr or tmux), and at least
+  git, the configured session backend's binary (herdr or tmux), and at least
   one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
@@ -144,22 +144,12 @@ Use --role for role-specific integration matrix:
 				fmt.Println("  " + capResult.ScopeResult.String())
 			}
 
-			// The session backend is one hard requirement satisfied by either tmux
-			// or an active herdr environment. Resolve that alternative before the
-			// generic hard-required scan so a missing tmux does not short-circuit it.
-			missingRequired := isMissing(result.MissingTools, "tmux") && os.Getenv("HERDR_ENV") == ""
-			if !missingRequired {
-				for _, tool := range result.MissingTools {
-					if tool == "tmux" {
-						continue
-					}
-					if bootstrap.IsHardRequired(tool) {
-						missingRequired = true
-						break
-					}
+			missingRequired := false
+			for _, d := range result.Tools {
+				if d.Status == bootstrap.ToolMissing && d.Required {
+					missingRequired = true
 				}
 			}
-
 			if missingRequired {
 				fmt.Fprintf(os.Stderr, "\nSome required tools are missing.\n")
 				exitCode = 1
@@ -175,16 +165,6 @@ Use --role for role-specific integration matrix:
 	cmd.Flags().Bool("orphans", false, "Report processes whose owning run has ended (never terminates anything; exit 1 leftovers found — the report may also list unresolved ones, 2 nothing conclusive but a member should look)")
 	cmd.Flags().StringVar(&role, "role", "", "Role-specific scan: general, captain, or soldier")
 	return cmd
-}
-
-// isMissing returns true if the slice contains the given string.
-func isMissing(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
 }
 
 // runCheckInstructions reads AGENTS.md / manual.md and verifies that every

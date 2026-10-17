@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -49,15 +50,13 @@ func captureProcessStderr(t *testing.T, f func()) string {
 
 // TestDoctorReturnsWhenHardRequiredToolMissing proves `munsu doctor` reports
 // exit code 1 through the seam and RETURNS, instead of terminating the
-// process from inside RunE. An empty PATH makes every hard-required tool --
-// tmux included -- missing, and HERDR_ENV is cleared so no alternative
-// session backend rescues the check.
+// process from inside RunE. An empty PATH makes git, which is hard-required,
+// missing.
 func TestDoctorReturnsWhenHardRequiredToolMissing(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("PATH", t.TempDir())
-	t.Setenv("HERDR_ENV", "")
 
 	var out string
 	codes := captureExit(t, func() {
@@ -83,7 +82,6 @@ func TestDoctorReturnsZeroExitWhenNothingHardRequiredIsMissing(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("HERDR_ENV", "1")
 
 	codes := captureExit(t, func() {
 		captureProcessStderr(t, func() {
@@ -100,49 +98,52 @@ func TestDoctorReturnsZeroExitWhenNothingHardRequiredIsMissing(t *testing.T) {
 	}
 }
 
-func TestDoctorSessionBackendUsesHerdrWhenTmuxIsMissing(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	t.Setenv("MUNSU_HOME", homeDir)
+// TestDoctorRequiresOnlyTheResolvedBackendBinary: the session backend's binary
+// is hard-required only once a backend is resolved, and only that binary.
+func TestDoctorRequiresOnlyTheResolvedBackendBinary(t *testing.T) {
+	for _, tc := range []struct {
+		name, backend string
+		wantExit      bool
+	}{
+		{"herdr resolved, herdr present, tmux absent", "herdr", false},
+		{"tmux resolved, tmux absent", "tmux", true},
+		{"no backend resolved", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+			t.Setenv("MUNSU_HOME", homeDir)
+			if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
+				SchemaVersion: config.FleetBaseSchemaVersion,
+				Config:        config.FleetBaseConfig{Backend: tc.backend},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			binDir := t.TempDir()
+			testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nexit 0\n")
+			testutil.WriteFakeExecutable(t, filepath.Join(binDir, "herdr"), "#!/bin/sh\nexit 0\n")
+			testutil.SetPath(t, binDir)
+			if _, err := exec.LookPath("tmux"); err == nil {
+				t.Fatal("test PATH unexpectedly contains tmux")
+			}
 
-	binDir := t.TempDir()
-	testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nexit 0\n")
-	testutil.SetPath(t, binDir)
-	if _, err := exec.LookPath("tmux"); err == nil {
-		t.Fatal("test PATH unexpectedly contains tmux")
+			var stderr string
+			codes := captureExit(t, func() {
+				stderr = captureProcessStderr(t, func() {
+					if got, err := runRoot(t, "doctor"); err != nil {
+						t.Errorf("doctor returned an error: %v\n%s", err, got)
+					}
+				})
+			})
+			if tc.wantExit {
+				if len(codes) != 1 || codes[0] != 1 || !strings.Contains(stderr, "Some required tools are missing.") {
+					t.Fatalf("doctor exit codes = %v, stderr = %q, want [1] and the missing-tools report", codes, stderr)
+				}
+			} else if len(codes) != 0 {
+				t.Fatalf("doctor asked for exit codes %v, want none; stderr = %q", codes, stderr)
+			}
+		})
 	}
-
-	t.Run("herdr satisfies session backend", func(t *testing.T) {
-		t.Setenv("HERDR_ENV", "1")
-		codes := captureExit(t, func() {
-			captureProcessStderr(t, func() {
-				if got, err := runRoot(t, "doctor"); err != nil {
-					t.Errorf("doctor returned an error: %v\n%s", err, got)
-				}
-			})
-		})
-		if len(codes) != 0 {
-			t.Fatalf("doctor with herdr and no tmux asked for exit codes %v, want none", codes)
-		}
-	})
-
-	t.Run("no session backend remains required", func(t *testing.T) {
-		t.Setenv("HERDR_ENV", "")
-		var stderr string
-		codes := captureExit(t, func() {
-			stderr = captureProcessStderr(t, func() {
-				if got, err := runRoot(t, "doctor"); err != nil {
-					t.Errorf("doctor returned an error: %v\n%s", err, got)
-				}
-			})
-		})
-		if len(codes) != 1 || codes[0] != 1 {
-			t.Fatalf("doctor without tmux or herdr exit codes = %v, want [1]", codes)
-		}
-		if !strings.Contains(stderr, "Some required tools are missing.") {
-			t.Fatalf("doctor without tmux or herdr stderr = %q, want missing-tools report", stderr)
-		}
-	})
 }
 
 // TestDoctorCheckInstructionsReturnsOnMismatch proves the doc-code mismatch

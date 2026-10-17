@@ -36,9 +36,10 @@ const (
 
 // ToolDiagnostic describes the result of checking a single tool.
 type ToolDiagnostic struct {
-	Tool   string
-	Status ToolStatus
-	Path   string
+	Tool     string
+	Status   ToolStatus
+	Path     string
+	Required bool
 }
 
 // AuthDiagnostic describes the result of checking GitHub auth.
@@ -68,8 +69,10 @@ type Result struct {
 	Tools           []ToolDiagnostic
 	Auth            *AuthDiagnostic
 	Configs         []ConfigDiagnostic
-	GC              *GCDiagnostic
-	MissingTools    []string
+	// Backend is the resolved session backend identity; empty when none is set.
+	Backend      string
+	GC           *GCDiagnostic
+	MissingTools []string
 	// WriteFence is set only on a host with no write fence: seat launches refuse
 	// there unless a project allows an unfenced seat.
 	WriteFence *ConfigDiagnostic
@@ -95,14 +98,24 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 		RuntimeIdentity: runtimeIdentity,
 	}
 
-	// 1. Check required tools (uses shared ToolSpec registry)
-	for _, spec := range checkedTools {
+	// The persisted typed snapshot Backend (the published config snapshot or
+	// the fleet base document's typed Backend), never an env/PATH probe.
+	if backendIdentity, err := fleet.ResolveGeneralHomeBackend(home); err == nil {
+		res.Backend = backendIdentity
+	}
+
+	// 1. Check tools: the fixed set, plus the resolved backend's binary.
+	tools := checkedTools
+	if res.Backend != "" {
+		tools = append(tools[:len(tools):len(tools)], ToolSpec{res.Backend, true})
+	}
+	for _, spec := range tools {
 		path, err := exec.LookPath(spec.Name)
 		if err != nil {
-			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolMissing})
+			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolMissing, Required: spec.Required})
 			res.MissingTools = append(res.MissingTools, spec.Name)
 		} else {
-			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolFound, Path: path})
+			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolFound, Path: path, Required: spec.Required})
 		}
 	}
 
@@ -131,17 +144,14 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}
 
-	// BACKEND_RESOLVED: reports the persisted typed snapshot Backend (the
-	// published config snapshot or the fleet base document's typed Backend) —
-	// never an env/PATH probe. An absent identity is reported as typed
-	// missing-input, never auto-selected.
-	backendIdentity, err := fleet.ResolveGeneralHomeBackend(home)
-	if err == nil && backendIdentity != "" {
+	// BACKEND_RESOLVED: an absent identity is reported as typed missing-input,
+	// never auto-selected.
+	if res.Backend != "" {
 		backendSource := "fleet base document"
 		if config.PublishedSnapshotAvailable(home) {
 			backendSource = "published snapshot"
 		}
-		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: backendIdentity, Source: backendSource})
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: res.Backend, Source: backendSource})
 	} else {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none", Source: "no persisted backend identity (set backend in the fleet base config)"})
 	}

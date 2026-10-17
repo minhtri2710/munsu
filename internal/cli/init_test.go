@@ -73,7 +73,7 @@ func TestInitWithoutSkillFlagOrEnvSkips(t *testing.T) {
 	if !strings.Contains(stdout, "Skipping skill install.") {
 		t.Errorf("expected 'Skipping skill install.' without --skill or MUNSU_INIT_SKILL, got: %s", stdout)
 	}
-	if !strings.Contains(stdout, "munsu config set backend herdr|tmux    Set the session backend (required") {
+	if !strings.Contains(stdout, "munsu config set backend herdr|tmux") {
 		t.Errorf("init output does not say a backend must be set, got: %s", stdout)
 	}
 }

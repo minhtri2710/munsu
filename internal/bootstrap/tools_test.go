@@ -4,28 +4,6 @@ import (
 	"testing"
 )
 
-func TestIsHardRequired(t *testing.T) {
-	tests := []struct {
-		tool     string
-		required bool
-	}{
-		{"git", true},
-		{"tmux", true},
-		{"gh-axi", false},
-		{"gh", false},
-		{"herdr", false},
-		{"unknown-tool", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		got := IsHardRequired(tt.tool)
-		if got != tt.required {
-			t.Errorf("IsHardRequired(%q) = %v, want %v", tt.tool, got, tt.required)
-		}
-	}
-}
-
 func TestCheckedToolsRegistry(t *testing.T) {
 	// Verify the registry contains all expected tools and has no duplicates.
 	seen := make(map[string]bool)
@@ -36,7 +14,7 @@ func TestCheckedToolsRegistry(t *testing.T) {
 		seen[spec.Name] = true
 	}
 
-	expectedTools := []string{"git", "tmux", "gh-axi", "gh", "fuser"}
+	expectedTools := []string{"git", "gh-axi", "gh", "fuser"}
 	for _, name := range expectedTools {
 		if !seen[name] {
 			t.Errorf("expected tool %q not found in checkedTools", name)
