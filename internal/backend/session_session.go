@@ -111,20 +111,34 @@ const setBackendHint = "set one with: munsu config set backend herdr|tmux"
 // Distinguishable failures: unknown identity ("unknown session backend: …")
 // and missing binary ("<name>: not found on PATH").
 func constructBackend(name string) (Backend, error) {
+	bk, err := newBackend(name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := lookBackendBin(name); err != nil {
+		return nil, err
+	}
+	return bk, nil
+}
+
+// newBackend is the supported set: it builds the base adapter for a known
+// identity without checking PATH.
+func newBackend(name string) (Backend, error) {
 	switch name {
 	case "herdr":
-		if _, err := lookBackendBin("herdr"); err != nil {
-			return nil, err
-		}
 		return NewHerdrBackend(""), nil
 	case "tmux":
-		if _, err := lookBackendBin("tmux"); err != nil {
-			return nil, err
-		}
 		return &TmuxBackend{}, nil
 	default:
 		return nil, fmt.Errorf("unknown session backend: %q (supported: %s); %s", name, supportedBackends, setBackendHint)
 	}
+}
+
+// ValidateBackend refuses an identity outside the supported set, without
+// requiring its binary on PATH; config setters call it before storing.
+func ValidateBackend(name string) error {
+	_, err := newBackend(name)
+	return err
 }
 
 // requireIdentity is the one refusal of a missing backend identity, shared by

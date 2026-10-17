@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -85,7 +86,17 @@ var projectOverlayKeys = map[string]projectOverlayKey{
 	},
 	"backend": {
 		get: func(o config.ProjectOverlay) (string, bool) { return o.Backend, o.Backend != "" },
-		set: func(o *config.ProjectOverlay, value string) error { o.Backend = strings.TrimSpace(value); return nil },
+		set: func(o *config.ProjectOverlay, value string) error {
+			value = strings.TrimSpace(value)
+			// Words: Human, typed, 2026-10-17: "làm cả 2" (refuse unsupported backend at config set)
+			if value != "" {
+				if err := backend.ValidateBackend(value); err != nil {
+					return usageError("invalid_value", "Pass a supported backend name", err.Error())
+				}
+			}
+			o.Backend = value
+			return nil
+		},
 	},
 	"tamper-check": {
 		get: func(o config.ProjectOverlay) (string, bool) { return o.TamperCheck, o.TamperCheck != "" },
