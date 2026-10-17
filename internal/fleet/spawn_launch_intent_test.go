@@ -338,6 +338,36 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 	return f.aggregate(), prepared
 }
 
+// A fenced captain can replace a brief with a link after preflight; the prompt
+// pastes nothing read through it. Every launch test builds the regular brief.
+func TestBuildSoldierPromptRefusesALinkedBrief(t *testing.T) {
+	f := newLaunchFixture(t, "linked-brief")
+	r := f.runner
+	for _, step := range []func() error{r.beginLaunchIntent, r.recordDeliveryContract, r.acquireWorktree} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bound, err := r.bindWorktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	brief := Path(f.homeDir, f.taskID)
+	if err := os.Remove(brief); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, brief); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.buildSoldierPrompt(bound); err == nil || !strings.Contains(err.Error(), "is a symlink") || strings.Contains(r.prompt, "secret") {
+		t.Fatalf("buildSoldierPrompt = %v, prompt %q; want the linked brief refused", err, r.prompt)
+	}
+}
+
 func TestPrepareAndPersistLaunchManifestRefusesUnboundState(t *testing.T) {
 	t.Run("authority missing", func(t *testing.T) {
 		f := newLaunchFixture(t, "manifest-no-authority")
