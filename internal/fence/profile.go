@@ -21,7 +21,9 @@ type Fence struct {
 	profile string
 	digest  string
 	refuse  []string // directories in which a write must be refused
-	roots   []string // the launch's resolved extra writable roots
+	// readRefuse are the existing credential paths whose read must be refused.
+	readRefuse []string
+	roots      []string // the launch's resolved extra writable roots
 }
 
 var branchPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
@@ -81,6 +83,7 @@ func New(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	readRefuse := denyCredentialReads(&b, userHome)
 	// Observe only: the report modifier logs every outbound connect to the
 	// Sandbox log (log show --predicate 'sender == "Sandbox"') and refuses
 	// nothing. It sits before the socket denies, which are last-match-wins,
@@ -236,7 +239,7 @@ func New(l Launch) (*Fence, error) {
 	sum := sha256.Sum256([]byte(b.String()))
 	return &Fence{
 		role: l.Role, harness: l.Harness,
-		profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse), roots: p.roots,
+		profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse), readRefuse: readRefuse, roots: p.roots,
 	}, nil
 }
 
@@ -740,6 +743,26 @@ func dedupe(in []string) []string {
 // quote renders s as a profile string literal.
 func quote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// denyCredentialReads refuses reading the credential paths under userHome, each
+// as given and symlink-resolved, and returns those that exist for the probe: a
+// missing one reads ENOENT and proves nothing. It follows (deny file-write*)
+// and no rule after it allows a read. ~/Library/Keychains, ~/.config/gh,
+// ~/.gitconfig, ~/.claude* and ~/.pi stay readable.
+// Words: Human, selected, 2026-10-17: "Làm, qua council" (council 3/3: seat credential read deny)
+func denyCredentialReads(b *strings.Builder, userHome string) []string {
+	dirs := withResolved(homePaths(userHome, credentialDirs))
+	files := withResolved(homePaths(userHome, credentialFiles))
+	rule(b, "deny", "file-read*", "subpath", dirs)
+	rule(b, "deny", "file-read*", "literal", files)
+	var exist []string
+	for _, p := range append(dirs, files...) {
+		if _, err := os.Stat(p); err == nil {
+			exist = append(exist, p)
+		}
+	}
+	return exist
 }
 
 func allow(b *strings.Builder, filter string, paths ...string) {
