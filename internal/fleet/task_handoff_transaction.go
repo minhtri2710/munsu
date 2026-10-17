@@ -648,7 +648,7 @@ func resumeTransfer(h *mhome.Home, lk *mhome.Lock, journal *taskHandoffJournal) 
 // carryTaskBrief copies the source brief, operator edits included, to the
 // destination. A replay after the source brief is gone leaves the copy as it is.
 func carryTaskBrief(sourceHome string, destinationAuth *taskauthority.Canonical, destinationHome, taskID string) error {
-	data, err := os.ReadFile(Path(sourceHome, taskID))
+	data, err := mhome.ReadRegularFile(Path(sourceHome, taskID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
