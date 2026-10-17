@@ -4,7 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestIsActive_FlagNotSet(t *testing.T) {
@@ -14,41 +15,49 @@ func TestIsActive_FlagNotSet(t *testing.T) {
 	}
 }
 
-func TestIsActive_FlagSet(t *testing.T) {
-	tmp := t.TempDir()
-	flagPath := filepath.Join(tmp, afkFlagFile)
-	os.MkdirAll(filepath.Dir(flagPath), 0755)
-	if err := os.WriteFile(flagPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644); err != nil {
-		t.Fatal(err)
+// TestIsActive_FlagOwner pins that the consent flag counts only while a daemon
+// holds the AFK lock: a daemon killed without cleanup leaves the flag and its
+// pid in the lock file, but no flock.
+func TestIsActive_FlagOwner(t *testing.T) {
+	cases := []struct {
+		name string
+		hold func(t *testing.T, homeDir string)
+		want bool
+	}{
+		{name: "dead owner", hold: func(t *testing.T, homeDir string) {
+			if err := os.WriteFile(home.AFKLockPath(homeDir), []byte("99999\t2024-01-01T00:00:00Z\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}, want: false},
+		{name: "live owner", hold: func(t *testing.T, homeDir string) { holdAFKLockFor(t, homeDir, os.Getpid()) }, want: true},
 	}
-	if !IsActive(tmp) {
-		t.Error("IsActive() = false when flag file exists, want true")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			setAFKFlag(t, tmp)
+			tc.hold(t, tmp)
+			if got := IsActive(tmp); got != tc.want {
+				t.Errorf("IsActive() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestIsActive_FlagRemoved(t *testing.T) {
-	tmp := t.TempDir()
-	flagPath := filepath.Join(tmp, afkFlagFile)
-	os.MkdirAll(filepath.Dir(flagPath), 0755)
-	if err := os.WriteFile(flagPath, []byte("2024-01-01T00:00:00Z\n"), 0644); err != nil {
+func setAFKFlag(t *testing.T, homeDir string) {
+	t.Helper()
+	flagPath := filepath.Join(homeDir, afkFlagFile)
+	if err := os.MkdirAll(filepath.Dir(flagPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if !IsActive(tmp) {
-		t.Fatal("IsActive() = false when flag file exists")
-	}
-	os.Remove(flagPath)
-	if IsActive(tmp) {
-		t.Error("IsActive() = true after flag removed, want false")
+	if err := os.WriteFile(flagPath, []byte("2024-01-01T00:00:00Z\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestDisable_RemovesFlag(t *testing.T) {
 	tmp := t.TempDir()
-	flagPath := filepath.Join(tmp, afkFlagFile)
-	os.MkdirAll(filepath.Dir(flagPath), 0755)
-	if err := os.WriteFile(flagPath, []byte("2024-01-01T00:00:00Z\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	setAFKFlag(t, tmp)
+	holdAFKLockFor(t, tmp, os.Getpid())
 	if !IsActive(tmp) {
 		t.Fatal("IsActive() should be true before Disable()")
 	}
