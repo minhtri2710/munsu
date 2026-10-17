@@ -320,10 +320,22 @@ func TestSoldierFenceWritableSet(t *testing.T) {
 			t.Fatalf("%s is gone after a rename the fence must refuse: %v", mv.dir, err)
 		}
 	}
-	if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", gitFile); err == nil || !strings.Contains(o, "Operation not permitted") {
-		t.Errorf("rewriting the worktree's .git was not refused by the fence: %v %s", err, o)
+	// The gitDir's commondir and gitdir, as `git worktree add` leaves them, are
+	// as fixed as the .git file: they pick the repo unfenced git loads and the
+	// path `git worktree prune/remove` acts on.
+	commonFile, backFile := filepath.Join(l.gitDir, "commondir"), filepath.Join(l.gitDir, "gitdir")
+	if err := os.WriteFile(commonFile, []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	mustNotSwap(t, f, gitFile)
+	if err := os.WriteFile(backFile, []byte(gitFile+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{gitFile, commonFile, backFile} {
+		if o, err := fenced(t, f, "/bin/sh", "-c", `printf x >> "$1"`, "sh", p); err == nil || !strings.Contains(o, "Operation not permitted") {
+			t.Errorf("rewriting %s was not refused by the fence: %v %s", p, err, o)
+		}
+		mustNotSwap(t, f, p)
+	}
 	if err := os.WriteFile(filepath.Join(l.worktree, "a"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
