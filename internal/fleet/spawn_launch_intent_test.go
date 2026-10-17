@@ -339,7 +339,8 @@ func prepareLaunchWithRecordedManifestAnchor(t *testing.T, f *launchFixture) (ta
 }
 
 // A fenced captain can replace a brief with a link after preflight; the prompt
-// pastes nothing read through it. Every launch test builds the regular brief.
+// and the dispatch-profile description read nothing through it. Every launch
+// test builds the regular brief.
 func TestBuildSoldierPromptRefusesALinkedBrief(t *testing.T) {
 	f := newLaunchFixture(t, "linked-brief")
 	r := f.runner
@@ -365,6 +366,9 @@ func TestBuildSoldierPromptRefusesALinkedBrief(t *testing.T) {
 	}
 	if err := r.buildSoldierPrompt(bound); err == nil || !strings.Contains(err.Error(), "is a symlink") || strings.Contains(r.prompt, "secret") {
 		t.Fatalf("buildSoldierPrompt = %v, prompt %q; want the linked brief refused", err, r.prompt)
+	}
+	if got := r.taskDescription(); got != f.taskID {
+		t.Fatalf("taskDescription = %q, want the task id, nothing read through the link", got)
 	}
 }
 

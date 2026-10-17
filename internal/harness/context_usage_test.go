@@ -166,6 +166,23 @@ func TestContextUsagePi(t *testing.T) {
 	}
 }
 
+// newestJSONL skips a linked session file, but a seat can swap the file it
+// picked for a link before tailLines opens it; tailLines reads nothing
+// through the link. Every ContextUsage row above reads the regular file.
+func TestTailLinesReadsNothingThroughALink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "secret.jsonl")
+	if err := os.WriteFile(target, []byte(`{"usage":{"totalTokens":5}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if got := tailLines(link); got != nil {
+		t.Fatalf("tailLines = %q, want nothing read through the link", got)
+	}
+}
+
 // Seats munsu does not launch, and a harness with no session format, read nothing.
 func TestContextUsageOtherHarnesses(t *testing.T) {
 	cwd, _ := realCwd(t)
