@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,6 +192,47 @@ func TestProjectConfigSetInvalidHarnessRefused(t *testing.T) {
 	registerProject(t, home, "sample")
 	if _, err := runProjectConfig(t, "set", "sample", "soldier-harness", "no-such-harness"); err == nil {
 		t.Fatal("set with an unsupported soldier-harness should be refused")
+	}
+}
+
+// TestProjectConfigSetBackend verifies the overlay backend setter refuses an
+// unsupported identity without writing the overlay, stores each supported one,
+// and clears a stored one on an empty value.
+func TestProjectConfigSetBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name, seed, value string
+		want              string // refusal text; "" allows
+	}{
+		{"bogus", "", "bogus", `unknown session backend: "bogus" (supported: herdr, tmux)`},
+		{"auto", "", "auto", `unknown session backend: "auto" (supported: herdr, tmux)`},
+		{"clear", "tmux", "", ""},
+		{"herdr", "", "herdr", ""},
+		{"tmux", "", "tmux", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("MUNSU_HOME", home)
+			registerProject(t, home, "sample")
+			if tc.seed != "" {
+				if _, err := runProjectConfig(t, "set", "sample", "backend", tc.seed); err != nil {
+					t.Fatalf("seed backend %q: %v", tc.seed, err)
+				}
+			}
+			_, err := runProjectConfig(t, "set", "sample", "backend", tc.value)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("set backend %q: err = %v, want %q", tc.value, err, tc.want)
+				}
+				if _, statErr := os.Stat(filepath.Join(home, config.ProjectOverlayDocumentPath)); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("a refused set wrote the overlay document: %v", statErr)
+				}
+				return
+			}
+			overlay, loadErr := config.LoadProjectOverlay(home, "sample")
+			if err != nil || loadErr != nil || overlay.Backend != tc.value {
+				t.Fatalf("set backend %q: err = %v, load = %v, stored %q", tc.value, err, loadErr, overlay.Backend)
+			}
+		})
 	}
 }
 
