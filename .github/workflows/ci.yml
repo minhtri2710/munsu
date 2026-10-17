@@ -148,9 +148,8 @@ jobs:
       # without them every branch only integration-tagged tests reach would
       # read as untested.
       #
-      # Note `//go:build !race` (orchestrator/lifecycle_lifecycle_test.go) is
-      # still excluded here and always will be -- see .github/build-tags.manifest.
-      # The build lane runs it.
+      # Note `//go:build !race` files are excluded here by design -- see
+      # .github/build-tags.manifest. The build lane runs them.
       - run: mkdir -p coverage
       - run: |
           set -o pipefail
