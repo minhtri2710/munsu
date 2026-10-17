@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -468,11 +469,16 @@ Examples:
 				return fmt.Errorf("appending resolved status: %w", err)
 			}
 			var unblocked, failed []string
+			var errs []error
 			for _, depID := range unblock {
 				if depID == "" {
 					continue
 				}
-				if err := unblockDependent(ctx, auth, depID, key); err != nil {
+				err := unblockDependent(ctx, auth, depID, key)
+				var partial *LifecyclePartialError
+				if errors.As(err, &partial) {
+					errs = append(errs, err)
+				} else if err != nil {
 					failed = append(failed, fmt.Sprintf("%s (%v)", depID, err))
 					continue
 				}
@@ -484,7 +490,10 @@ Examples:
 				msg += "\nUnblocked: " + strings.Join(unblocked, ", ")
 			}
 			if len(failed) > 0 {
-				return fmt.Errorf("%s\nNot unblocked: %s", msg, strings.Join(failed, "; "))
+				errs = append(errs, fmt.Errorf("Not unblocked: %s", strings.Join(failed, "; ")))
+			}
+			if len(errs) > 0 {
+				return fmt.Errorf("%s\n%w", msg, errors.Join(errs...))
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,

@@ -201,33 +201,55 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 }
 
 // TestDecisionHoldResolveUnblocksThroughAuthority proves --unblock moves a
-// blocked dependent to queued in the Authority, and reports a dependent the
-// Authority refuses to unblock instead of claiming it was unblocked.
+// blocked dependent to queued in the Authority, names every dependent it could
+// not unblock, and reports a committed unblock whose status projection failed
+// as a non-retryable conflict.
 func TestDecisionHoldResolveUnblocksThroughAuthority(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		blocked bool
+		name      string
+		dep       string
+		seed      string // "", "queued" or "blocked"
+		statusDir bool
+		wantCode  string // "" means success
+		want      []string
+		notWant   []string
 	}{
-		{name: "blocked dependent is unblocked", blocked: true},
-		{name: "queued dependent is reported", blocked: false},
+		{name: "blocked dependent is unblocked", dep: "dep-task-1", seed: "blocked",
+			want: []string{"Unblocked: dep-task-1"}},
+		{name: "queued dependent is reported", dep: "dep-task-1", seed: "queued", wantCode: "error",
+			want: []string{"Not unblocked: dep-task-1 (", "unblock requires blocked task"}, notWant: []string{"Unblocked:"}},
+		{name: "unknown dependent is reported", dep: "ghost", wantCode: "error",
+			want: []string{"Not unblocked: ghost (", "task ghost not found"}, notWant: []string{"Unblocked:"}},
+		{name: "invalid dependent id is reported", dep: "bad:id", wantCode: "error",
+			want: []string{"Not unblocked: bad:id (", `invalid typed identity: "bad:id"`}, notWant: []string{"Unblocked:"}},
+		{name: "projection failure after unblock is a conflict", dep: "dep-task-1", seed: "blocked", statusDir: true, wantCode: "conflict",
+			want: []string{"Unblocked: dep-task-1", "task dep-task-1 is authoritatively queued; projection failed"}, notWant: []string{"Not unblocked"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			auth := testAuthorityFor(t, homeDir)
-			seedAuthorityTask(t, auth, "dep-task-1")
-			if tc.blocked {
-				agg, err := auth.Get(mustTaskIDFor(t, "dep-task-1"))
+			if tc.seed != "" {
+				seedAuthorityTask(t, auth, tc.dep)
+			}
+			if tc.seed == "blocked" {
+				agg, err := auth.Get(mustTaskIDFor(t, tc.dep))
 				if err != nil {
 					t.Fatal(err)
 				}
 				req := taskauthority.CanonicalBlockRequest{
 					HomeID:       auth.HomeID(),
-					TaskID:       mustTaskIDFor(t, "dep-task-1"),
+					TaskID:       mustTaskIDFor(t, tc.dep),
 					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
 					Detail:       "decision",
 					Reason:       "seed",
 				}
 				if _, err := auth.Block(mustCanonicalOp(t, "seed-block", req), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			statusPath := filepath.Join(homeDir, "state", tc.dep+".status")
+			if tc.statusDir {
+				if err := os.MkdirAll(statusPath, 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -240,24 +262,54 @@ func TestDecisionHoldResolveUnblocksThroughAuthority(t *testing.T) {
 			out, err := runRoot(t, "decision-hold", "resolve", "approach",
 				"--answer", "Choose React", "--from", "scout-r2",
 				"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
-				"--unblock", "dep-task-1", "--home", homeDir, "--output", "json")
+				"--unblock", tc.dep, "--home", homeDir, "--output", "json")
 
-			agg, gerr := auth.Get(mustTaskIDFor(t, "dep-task-1"))
+			var envelope struct {
+				Data  MessageResult `json:"data"`
+				Error ErrorEnvelope `json:"error"`
+			}
+			if jerr := json.Unmarshal([]byte(out), &envelope); jerr != nil {
+				t.Fatalf("resolve output not JSON: %v\n%s", jerr, out)
+			}
+			message := envelope.Data.Message
+			if tc.wantCode == "" {
+				if err != nil {
+					t.Fatalf("resolve: %v\n%s", err, out)
+				}
+			} else {
+				if err == nil || envelope.Error.ErrorCode != tc.wantCode {
+					t.Fatalf("resolve err=%v error_code=%q, want %q\n%s", err, envelope.Error.ErrorCode, tc.wantCode, out)
+				}
+				if tc.wantCode == "conflict" && envelope.Error.Retryable {
+					t.Fatalf("conflict must not be retryable\n%s", out)
+				}
+				message = envelope.Error.Message
+			}
+			for _, s := range tc.want {
+				if !strings.Contains(message, s) {
+					t.Fatalf("message missing %q:\n%s", s, message)
+				}
+			}
+			for _, s := range tc.notWant {
+				if strings.Contains(message, s) {
+					t.Fatalf("message has %q:\n%s", s, message)
+				}
+			}
+
+			if tc.seed == "" {
+				return
+			}
+			agg, gerr := auth.Get(mustTaskIDFor(t, tc.dep))
 			if gerr != nil || agg.Phase != taskauthority.PhaseQueued {
 				t.Fatalf("dependent aggregate = %+v err=%v, want queued", agg, gerr)
 			}
-			depStatuses, _ := os.ReadFile(filepath.Join(homeDir, "state", "dep-task-1.status"))
-			hasUnblockedLine := strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]")
-			if tc.blocked {
-				if err != nil || !strings.Contains(out, "Unblocked: dep-task-1") || !hasUnblockedLine {
-					t.Fatalf("resolve err=%v status=%q\n%s", err, depStatuses, out)
-				}
+			if tc.statusDir {
 				return
 			}
-			if err == nil || !strings.Contains(out, "Not unblocked: dep-task-1") ||
-				!strings.Contains(out, "unblock requires blocked task") ||
-				strings.Contains(out, "Unblocked:") || hasUnblockedLine {
-				t.Fatalf("resolve err=%v status=%q\n%s", err, depStatuses, out)
+			depStatuses, _ := os.ReadFile(statusPath)
+			hasLine := strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]")
+			if hasLine != (tc.wantCode == "") {
+				t.Fatalf("dependent status = %q", depStatuses)
 			}
 		})
 	}
