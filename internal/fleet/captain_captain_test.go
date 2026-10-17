@@ -1667,7 +1667,7 @@ func TestCaptainIdentity(t *testing.T) {
 		{
 			name: "launch refuses an alive captain",
 			run: func(t *testing.T) error {
-				parent, captainHome := launchedCaptain(t, "")
+				parent, captainHome := launchedCaptain(t, "", nil)
 				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
 			},
 			want: "captain registered-id is alive in window old-window; launch refused",
@@ -1675,7 +1675,7 @@ func TestCaptainIdentity(t *testing.T) {
 		{
 			name: "launch refuses an alive window recorded under another home",
 			run: func(t *testing.T) error {
-				parent, captainHome := launchedCaptain(t, t.TempDir())
+				parent, captainHome := launchedCaptain(t, t.TempDir(), nil)
 				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
 			},
 			want: "captain registered-id is alive in window old-window; launch refused",
@@ -1683,7 +1683,7 @@ func TestCaptainIdentity(t *testing.T) {
 		{
 			name: "launch refuses an unproven captain",
 			run: func(t *testing.T) error {
-				parent, captainHome := launchedCaptain(t, "")
+				parent, captainHome := launchedCaptain(t, "", nil)
 				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true}}, fakeIntegrationPort{})
 			},
 			want: "captain registered-id launch refused: window old-window liveness is unproven: captain registered-id endpoint evidence is not authoritatively absent",
@@ -1691,7 +1691,7 @@ func TestCaptainIdentity(t *testing.T) {
 		{
 			name: "launch refuses a launched captain without a probe",
 			run: func(t *testing.T) error {
-				parent, captainHome := launchedCaptain(t, "")
+				parent, captainHome := launchedCaptain(t, "", nil)
 				return Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
 			},
 			want: "window old-window liveness is unproven: captain probe endpoint capability is required",
@@ -1699,7 +1699,7 @@ func TestCaptainIdentity(t *testing.T) {
 		{
 			name: "launch refuses while the converge lock is held",
 			run: func(t *testing.T) error {
-				parent, captainHome := launchedCaptain(t, "")
+				parent, captainHome := launchedCaptain(t, "", nil)
 				release, err := convergeLockAcquire(parent)
 				if err != nil {
 					t.Fatal(err)
@@ -1710,9 +1710,34 @@ func TestCaptainIdentity(t *testing.T) {
 			want: "acquiring converge lock: converge lock is held by another process",
 		},
 		{
+			name: "launch refuses unreadable captain meta",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"pad": strings.Repeat("x", 70000)})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id launch refused: scanning task meta captain:registered-id: bufio.Scanner: token too long",
+		},
+		{
+			name: "launch refuses a dead captain while its relaunch guard is armed",
+			run: func(t *testing.T) error {
+				until := strconv.FormatInt(time.Now().Add(2*time.Minute).Unix(), 10)
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"relaunch_liveness": "unproven", relaunchGuardUntilField: until})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id: prior relaunch liveness remains unproven; duplicate launch refused (guard expires in",
+		},
+		{
+			name: "launch allows a dead captain whose relaunch guard expired",
+			run: func(t *testing.T) error {
+				until := strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"relaunch_liveness": "unproven", relaunchGuardUntilField: until})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
 			name: "launch allows a dead captain",
 			run: func(t *testing.T) error {
-				parent, captainHome := launchedCaptain(t, "")
+				parent, captainHome := launchedCaptain(t, "", nil)
 				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
 			},
 		},
@@ -1794,8 +1819,9 @@ func launchableCaptain(t *testing.T) (parent, captainHome string) {
 }
 
 // launchedCaptain is launchableCaptain with captain meta naming window
-// old-window under metaHome, or the captain's own home when metaHome is "".
-func launchedCaptain(t *testing.T, metaHome string) (parent, captainHome string) {
+// old-window under metaHome, or the captain's own home when metaHome is "",
+// plus extra fields.
+func launchedCaptain(t *testing.T, metaHome string, extra map[string]string) (parent, captainHome string) {
 	t.Helper()
 	t.Setenv("MUNSU_ROLE", "")
 	parent, captainHome = launchableCaptain(t)
@@ -1807,6 +1833,9 @@ func launchedCaptain(t *testing.T, metaHome string) (parent, captainHome string)
 		metaHome = canon
 	}
 	meta := map[string]string{"kind": "captain", "sm_id": "registered-id", "home": metaHome, "window": "old-window", "backend": "test"}
+	for k, v := range extra {
+		meta[k] = v
+	}
 	if err := home.WriteMeta(parent, taskIDForCaptain("registered-id"), meta); err != nil {
 		t.Fatal(err)
 	}

@@ -900,7 +900,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint, probe Probe
 	if err != nil {
 		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
 	}
-	// Words: Human, typed, 2026-10-17: "ok làm đi" (council 3/3: captain launch refuses alive or unproven captain; dead or seeded relaunches)
+	// Words: Human, typed, 2026-10-17: "ok làm đi" (council 3/3: captain launch refuses alive or unproven captain, unreadable meta or armed relaunch guard; dead or seeded relaunches)
 	if err := refuseLiveCaptainLaunch(parentHome, id, probe); err != nil {
 		return err
 	}
@@ -2179,8 +2179,15 @@ func probeCaptainMeta(parentHome, id string, meta map[string]string, probe Probe
 // refuseLiveCaptainLaunch probes the window any captain meta for id names,
 // whatever home it records, so a relaunch never orphans a live pane.
 func refuseLiveCaptainLaunch(parentHome, id string, probe ProbeEndpoint) error {
-	meta, err := home.ReadMeta(parentHome, taskIDForCaptain(id))
-	if err != nil || meta["kind"] != "captain" || meta["sm_id"] != id || meta["window"] == "" {
+	taskID := taskIDForCaptain(id)
+	meta, err := home.ReadMeta(parentHome, taskID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("captain %s launch refused: %w", id, err)
+	}
+	if meta["kind"] != "captain" || meta["sm_id"] != id || meta["window"] == "" {
 		return nil
 	}
 	if probe == nil {
@@ -2189,6 +2196,13 @@ func refuseLiveCaptainLaunch(parentHome, id string, probe ProbeEndpoint) error {
 	state, err := probeCaptainMeta(parentHome, id, meta, probe)
 	switch state {
 	case CaptainDead:
+		refused, remaining, err := consultRelaunchGuard(parentHome, taskID, time.Now())
+		if err != nil {
+			return fmt.Errorf("captain %s launch refused: %w", id, err)
+		}
+		if refused {
+			return fmt.Errorf("captain %s: prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", id, remaining.Round(time.Second))
+		}
 		return nil
 	case CaptainAlive:
 		return fmt.Errorf("captain %s is alive in window %s; launch refused, use `munsu captain recover` or `munsu captain retire`", id, meta["window"])
