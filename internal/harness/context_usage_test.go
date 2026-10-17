@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -112,7 +113,7 @@ func TestContextUsagePi(t *testing.T) {
 	models := `{"providers":{"q":{"models":[{"id":"m","contextWindow":1}]},"p":{"models":[{"id":"other","contextWindow":1},{"id":"m","contextWindow":256000}]}}}`
 	for _, tc := range []struct {
 		name         string
-		models       string // models.json, "" for none
+		models       string // models.json, "" for none, "link:<json>" for a symlink to it, "fifo" for a FIFO
 		lines        []string
 		used, window int
 	}{
@@ -129,12 +130,28 @@ func TestContextUsagePi(t *testing.T) {
 		{"model not in models.json shows tokens only", `{"providers":{"p":{"models":[{"id":"other","contextWindow":1}]}}}`, []string{normal}, 9246, 0},
 		{"no models.json shows tokens only", "", []string{normal}, 9246, 0},
 		{"the model under another provider only shows tokens only", `{"providers":{"q":{"models":[{"id":"m","contextWindow":1}]}}}`, []string{normal}, 9246, 0},
+		{"a symlinked models.json shows tokens only", "link:" + models, []string{normal}, 9246, 0},
+		{"a FIFO models.json shows tokens only", "fifo", []string{normal}, 9246, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := t.TempDir()
 			cwd, real := realCwd(t)
-			if tc.models != "" {
-				if err := os.WriteFile(filepath.Join(agent, "models.json"), []byte(tc.models), 0o644); err != nil {
+			path := filepath.Join(agent, "models.json")
+			switch {
+			case tc.models == "fifo":
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case strings.HasPrefix(tc.models, "link:"):
+				target := filepath.Join(t.TempDir(), "models.json")
+				if err := os.WriteFile(target, []byte(strings.TrimPrefix(tc.models, "link:")), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			case tc.models != "":
+				if err := os.WriteFile(path, []byte(tc.models), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -318,7 +318,7 @@ func AppendStatus(homeDir string, id, line string) error {
 	// files; it can never write another task's documents, any review verdict,
 	// delivery authorization or gate record, or the fleet registries
 	// (projects.json, captains.json)."
-	f, err := openRegular(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := OpenRegular(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("opening status file: %w", err)
 	}
@@ -346,7 +346,7 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 	if err := validateStatePath(homeDir, p, false); err != nil {
 		return nil, err
 	}
-	f, err := openRegular(p, os.O_RDONLY, 0)
+	f, err := OpenRegular(p, os.O_RDONLY, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // no status yet
@@ -368,7 +368,7 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 // (Recommended): option 1 + 3 PRs with section 1 conditions; R3 worded as an
 // accident guard (not a boundary), error names munsu report <state>; [...]"
 func ReadRegularFile(path string) ([]byte, error) {
-	f, err := openRegular(path, os.O_RDONLY, 0)
+	f, err := OpenRegular(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
