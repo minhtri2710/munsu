@@ -178,7 +178,8 @@ func TestDashboardEventFilter(t *testing.T) {
 	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
 	complete := send(testDashModel(), goodRead(dashNow, rows, nil, nil))
 	partial := send(testDashModel(), goodRead(dashNow, rows, []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, nil))
-	stale := send(complete, dashRead{at: dashNow, snapErr: errors.New("hung")})
+	stale := complete
+	stale.now = func() time.Time { return dashNow.Add(dashboardStaleAfter + time.Second) }
 	removed := ev(1, "task.status", "greet-go", "k", "working: a")
 	for _, tc := range []struct {
 		name  string
@@ -252,12 +253,12 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 	}
 	failed := []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}
 	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
-	complete := func() (*fleet.DisplaySnapshot, error) { return &fleet.DisplaySnapshot{Tasks: rows}, nil }
+	complete := func() *fleet.DisplaySnapshot { return &fleet.DisplaySnapshot{Tasks: rows} }
 	for _, tc := range []struct {
 		name string
 		log  []orchestrator.Record
 		// snaps are the fleet reads in order, one per dashboard read.
-		snaps         []func() (*fleet.DisplaySnapshot, error)
+		snaps         []func() *fleet.DisplaySnapshot
 		reads         []int
 		shown, hidden int
 		newestShownID uint64
@@ -266,17 +267,14 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 		{"live events first", logOf(300, 0), nil, []int{200}, 200, 0, 300},
 		{"a short log", logOf(10, 300), nil, []int{200, 400}, 10, 300, 10},
 		{"orphans to the cap", logOf(0, 3000), nil, []int{200, 400, 800, 1600, 2000}, 0, 2000, 0},
-		{"a failed source", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
-			func() (*fleet.DisplaySnapshot, error) {
-				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+		{"a failed source", logOf(250, 300), []func() *fleet.DisplaySnapshot{
+			func() *fleet.DisplaySnapshot {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}
 			},
 		}, []int{200}, 200, 0, 550},
-		{"a failed first read, then a complete one", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
-			func() (*fleet.DisplaySnapshot, error) { return nil, errors.New("hung") }, complete, complete,
-		}, []int{200, 200, 400, 800}, 200, 300, 250},
-		{"a failed source first, then a complete read", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
-			func() (*fleet.DisplaySnapshot, error) {
-				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+		{"a failed source first, then a complete read", logOf(250, 300), []func() *fleet.DisplaySnapshot{
+			func() *fleet.DisplaySnapshot {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}
 			}, complete, complete,
 		}, []int{200, 200, 400, 800}, 200, 300, 250},
 	} {
@@ -292,7 +290,7 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 			m.after = func(uint64, int) ([]orchestrator.Record, int, error) { return nil, 0, nil }
 			snaps := tc.snaps
 			if snaps == nil {
-				snaps = []func() (*fleet.DisplaySnapshot, error){complete}
+				snaps = []func() *fleet.DisplaySnapshot{complete}
 			}
 			for _, s := range snaps {
 				m.readFleet = s
@@ -425,7 +423,6 @@ func TestDashboardGoldenStale(t *testing.T) {
 		row("t-work", "working", "implementing", "primary", ""),
 		row("t-q", "queued", "waiting", "primary", ""),
 	}, nil, nil))
-	m = send(m, dashRead{at: dashNow, snapErr: errors.New("reading canonical task authority state: recovery required")})
 	assertGolden(t, "stale", m.frame())
 }
 
@@ -477,7 +474,7 @@ func TestDashboardRowsEqualSnapshot(t *testing.T) {
 func TestDashboardFeedAppendsAfterCursor(t *testing.T) {
 	m := testDashModel()
 	var calls []string
-	m.readFleet = func() (*fleet.DisplaySnapshot, error) { return &fleet.DisplaySnapshot{}, nil }
+	m.readFleet = func() *fleet.DisplaySnapshot { return &fleet.DisplaySnapshot{} }
 	m.latest = func(int) ([]orchestrator.Record, int, error) {
 		calls = append(calls, "latest")
 		return []orchestrator.Record{ev(1, "t", "p", "k", "one"), ev(2, "t", "p", "k", "two")}, 0, nil
@@ -734,18 +731,7 @@ func TestDashboardStaleRowIsNeverColored(t *testing.T) {
 	}
 }
 
-// A failed read is stale even while the last good read is recent.
-func TestDashboardFailedReadInsideWindowIsStale(t *testing.T) {
-	m := testDashModel()
-	m = send(m, goodRead(dashNow.Add(-2*time.Second), []fleet.TaskSnapshot{row("t-work", "working", "a", "primary", "")}, nil, nil))
-	m = send(m, dashRead{at: dashNow, snapErr: errors.New("boom")})
-	f := ansiSeq.ReplaceAllString(m.frame(), "")
-	if m.state() != stateStale || !strings.Contains(f, "STALE") || strings.Contains(f, "REFRESHED") {
-		t.Fatalf("state = %v; want a stale frame:\n%s", m.state(), f)
-	}
-}
-
-// A read older than the stale window is stale even without an error.
+// A read older than the stale window is stale.
 func TestDashboardAgedReadIsStale(t *testing.T) {
 	m := testDashModel()
 	m = send(m, goodRead(dashNow.Add(-(dashboardStaleAfter+time.Second)), []fleet.TaskSnapshot{row("t-work", "working", "a", "primary", "")}, nil, nil))
@@ -1171,19 +1157,6 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		assertNoRaw(t, "last status", f)
 		assertShown(t, "last status", f, `ls\x00`)
 	})
-	t.Run("stale read error", func(t *testing.T) {
-		m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}, nil, nil))
-		m = send(m, dashRead{at: dashNow, snapErr: errors.New("re\x00\u202e\x1b[8m")})
-		f := m.frame()
-		assertNoRaw(t, "stale read error", f)
-		assertShown(t, "stale read error", f, `re\x00\u202e\x1b[8m`)
-	})
-	t.Run("failed first read", func(t *testing.T) {
-		m := send(testDashModel(), dashRead{at: dashNow, snapErr: errors.New("fr\x00\u202e\x1b[8m")})
-		f := m.frame()
-		assertNoRaw(t, "failed first read", f)
-		assertShown(t, "failed first read", f, `FAILED   fr\x00\u202e\x1b[8m`, `Fleet read failed: fr\x00\u202e\x1b[8m`)
-	})
 	t.Run("form value and confirm argv", func(t *testing.T) {
 		// textinput drops control runes (ESC, NUL) from a paste and keeps a
 		// format rune such as the bidi override, which the field draws escaped.
@@ -1464,13 +1437,13 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 		calls = append(calls, execCall{exe, args})
 		return nil
 	}
-	m.readFleet = func() (*fleet.DisplaySnapshot, error) {
+	m.readFleet = func() *fleet.DisplaySnapshot {
 		return &fleet.DisplaySnapshot{Tasks: []fleet.TaskSnapshot{
 			{ID: "captain:registry-id", Kind: "captain", Home: parent, Source: "primary"},
 			{ID: "captain:ghost", Kind: "captain", Home: parent, Source: "primary"},
 			row("c-1", "working", "in captain home", "captain:dir-name", captainHome),
 			row("s-1", "working", "in stray home", "captain:stray", strayHome),
-		}, Failures: []fleet.SourceFailure{{Source: "captain:failed", Home: failedHome, Err: errors.New("unreadable")}}}, nil
+		}, Failures: []fleet.SourceFailure{{Source: "captain:failed", Home: failedHome, Err: errors.New("unreadable")}}}
 	}
 	m = send(m, m.read())
 	canonHome, err := home.CanonicalCaptainHome(captainHome)
@@ -1547,7 +1520,6 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		home       string
 		result     bool // a finished command with a long argv and a two-digit exit code
 		skipped    int  // malformed lines the good event read skipped
-		firstFail  bool // the first and only read failed: no good read before it
 		// then moves the model into another mode or adds free text the frame
 		// draws; such a row skips the browse-only checks of the fixed-width loop.
 		then func(*testing.T, dashboardModel) dashboardModel
@@ -1562,85 +1534,79 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		return what + " " + strings.Repeat("with a realistic amount of detail ", 5)
 	}
 	states := []state{
-		{"fresh", 30, 3, 3, false, false, "", false, 0, false, nil, map[int][]string{
+		{"fresh", 30, 3, 3, false, false, "", false, 0, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 12 of 33 (page 1 of 3)", "Events"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 3", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"},
 		}},
-		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, false, nil, map[int][]string{
+		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, nil, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks - Showing 19 of 30 (page 1 of 2)", "Events - Showing 5 of 40"},
 			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 2 of 40"},
 			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 1 of 40"},
 			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)"},
 		}},
-		{"stale", 30, 3, 3, true, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 11 of 33 (page 1 of 3)", "Events"},
-			12: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 2", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
-			6:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
-			4:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 0"},
+		{"stale", 30, 3, 3, true, false, "", false, 0, nil, map[int][]string{
+			30: {" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 12 of 33 (page 1 of 3)", "Events"},
+			12: {" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 3", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			6:  {" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			4:  {" munsu   STALE last good read 60s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"},
 		}},
-		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 14 of 32 (page 1 of 3)", "Events - Showing 5 of 40"},
-			12: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
-			6:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
-			4:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2 - showing 0"},
+		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, nil, map[int][]string{
+			30: {" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 15 of 32 (page 1 of 3)", "Events - Showing 5 of 40"},
+			12: {" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 1 of 40"},
+			6:  {" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
+			4:  {" munsu   STALE last good read 60s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)"},
 		}},
-		{"zero tasks", 5, 0, 3, false, false, "", false, 0, false, nil, map[int][]string{
+		{"zero tasks", 5, 0, 3, false, false, "", false, 0, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks", "Events"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 3", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 0", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)"},
 		}},
-		{"zero failures", 0, 6, 3, false, false, "", false, 0, false, nil, map[int][]string{
+		{"zero failures", 0, 6, 3, false, false, "", false, 0, nil, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
 			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events - Showing 2 of 3"},
 			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 1 of 3"},
 			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)"},
 		}},
-		{"zero events", 3, 6, 0, false, false, "", false, 0, false, nil, map[int][]string{
+		{"zero events", 3, 6, 0, false, false, "", false, 0, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3", "Failed sources and tasks", "Events"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3 - showing 0", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)"},
 		}},
-		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, false, nil, map[int][]string{
+		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 - unreadable:"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 - unreadable:"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 - unreadable:"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
-		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, false, nil, map[int][]string{
+		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
-		{"command result", 2, 6, 40, false, false, "", true, 0, false, nil, map[int][]string{
+		{"command result", 2, 6, 40, false, false, "", true, 0, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40", "exit 12:"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40", "exit 12:"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40", "exit 12:"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "exit 12:"},
 		}},
-		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, false, nil, map[int][]string{
+		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 (3 malformed lines skipped) - unreadable:"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 (3 malformed lines skipped) - unreadable:"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped) - unreadable:"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
-		{"first read failed", 0, 0, 0, false, false, "", false, 0, true, nil, map[int][]string{
-			30: {" munsu   FAILED ", "Fleet read failed:", "Events"},
-			12: {" munsu   FAILED ", "Fleet read failed:", "Events"},
-			6:  {" munsu   FAILED ", "Fleet read failed:", "Events"},
-			4:  {" munsu   FAILED ", "Fleet read failed:", "Events"},
-		}},
-		{"empty", 0, 0, 0, false, false, "", false, 0, false, nil, map[int][]string{
+		{"empty", 0, 0, 0, false, false, "", false, 0, nil, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
 			12: {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
 			6:  {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
 			4:  {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
 		}},
-		{"loading", 0, 0, 0, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+		{"loading", 0, 0, 0, false, false, "", false, 0, func(t *testing.T, m dashboardModel) dashboardModel {
 			return testDashModel()
 		}, map[int][]string{
 			30: {" munsu   LOADING ", "Loading fleet...", "Events"},
@@ -1648,13 +1614,13 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			6:  {" munsu   LOADING ", "Loading fleet...", "Events"},
 			4:  {" munsu   LOADING ", "Loading fleet...", "Events"},
 		}},
-		{"lines skipped, feed readable", 2, 6, 40, false, false, "", false, 3, false, nil, map[int][]string{
+		{"lines skipped, feed readable", 2, 6, 40, false, false, "", false, 3, nil, map[int][]string{
 			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 (3 malformed lines skipped)"},
 			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 (3 malformed lines skipped)"},
 			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped)"},
 			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
-		{"read in progress", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+		{"read in progress", 0, 3, 3, false, false, "", false, 0, func(t *testing.T, m dashboardModel) dashboardModel {
 			m.reading = true
 			return m
 		}, map[int][]string{
@@ -1663,7 +1629,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			6:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"},
 			4:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 		}},
-		{"form mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+		{"form mode", 0, 3, 3, false, false, "", false, 0, func(t *testing.T, m dashboardModel) dashboardModel {
 			return press(selectTask(t, m, "t-00"), "m")
 		}, map[int][]string{
 			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
@@ -1671,7 +1637,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			6:  {" munsu  refreshed 0s ago"},
 			4:  {" munsu  refreshed 0s ago"},
 		}},
-		{"confirm mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+		{"confirm mode", 0, 3, 3, false, false, "", false, 0, func(t *testing.T, m dashboardModel) dashboardModel {
 			m = press(selectTask(t, m, "t-00"), "s")
 			return press(send(m, tea.PasteMsg{Content: longText("send this line to the task")}), "enter")
 		}, map[int][]string{
@@ -1680,7 +1646,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 			4:  {" munsu  refreshed 0s ago"},
 		}},
-		{"running mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+		{"running mode", 0, 3, 3, false, false, "", false, 0, func(t *testing.T, m dashboardModel) dashboardModel {
 			m.mode = modeRunning
 			return m
 		}, map[int][]string{
@@ -1689,7 +1655,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"},
 			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 		}},
-		{"browse result with output, an error and a notice", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
+		{"browse result with output, an error and a notice", 0, 3, 3, false, false, "", false, 0, func(t *testing.T, m dashboardModel) dashboardModel {
 			m.result = &dashExecDone{
 				argv:   []string{"task", "done", longText("t-00")},
 				err:    errors.New(longText("fork/exec /bin/munsu: no such file or directory")),
@@ -1752,34 +1718,34 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		},
 		"stale": {
 			30: {
-				{15, 60, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 12 of 33 (page 1 of 3)", "Events"}},
-				{61, 120, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 7 of 33 (page 1 of 5)", "Events"}},
+				{15, 60, []string{" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 13 of 33 (page 1 of 3)", "Events"}},
+				{61, 120, []string{" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 8 of 33 (page 1 of 5)", "Events"}},
 			},
 			12: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 4", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
-				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 1 of 3"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
 			},
 			4: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "NEEDS YOU 30 - showing 0"}},
 			},
 		},
 		"stale many tasks": {
 			30: {
-				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 15 of 32 (page 1 of 3)", "Events - Showing 5 of 40"}},
-				{62, 120, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 10 of 32 (page 1 of 4)", "Events - Showing 5 of 40"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 16 of 32 (page 1 of 2)", "Events - Showing 5 of 40"}},
+				{62, 120, []string{" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 11 of 32 (page 1 of 3)", "Events - Showing 5 of 40"}},
 			},
 			12: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 1 of 40"}},
-				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 2 of 40"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 2 of 40"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 32 (page 1 of 11)", "Events - Showing 2 of 40"}},
 			},
 			6: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"}},
 			},
 			4: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
 			},
 		},
 		"zero tasks": {
@@ -1864,11 +1830,6 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
 			},
 		},
-		"first read failed": {
-			4: {
-				{1, 14, []string{" munsu   FAILED ", "Fleet read failed:"}},
-			},
-		},
 		"empty": {
 			4: {
 				{1, 14, []string{" munsu  refreshed 0s ago", "No tasks and no failed sources."}},
@@ -1951,13 +1912,9 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		if st.home != "" {
 			base.home = st.home
 		}
-		if st.firstFail {
-			base = send(base, dashRead{at: dashNow, snapErr: errors.New("scanning captain home /Users/someone/.munsu/projects/example/state/captains/c01: " + feedErr)})
-		} else {
-			good := goodRead(dashNow, tasks, failures, events)
-			good.skipped = st.skipped
-			base = send(base, good)
-		}
+		good := goodRead(dashNow, tasks, failures, events)
+		good.skipped = st.skipped
+		base = send(base, good)
 		if st.result {
 			base.result = &dashExecDone{argv: []string{"task", "done", strings.Repeat("a long argument ", 10)}, err: exitStatus12(t)}
 		}
@@ -1965,12 +1922,11 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			base = send(base, dashRead{at: dashNow, snap: &fleet.DisplaySnapshot{Tasks: tasks, Failures: failures}, eventErr: errors.New(feedErr)})
 		}
 		if st.stale {
-			base = send(base, dashRead{at: dashNow.Add(time.Minute), snapErr: errors.New(longText("scanning captain home: read tasks: i/o error"))})
 			base.now = func() time.Time { return dashNow.Add(time.Minute) }
 		}
 		total := st.nf + st.nt
 		notes := 0
-		if st.stale || st.result {
+		if st.result {
 			notes = 1
 		}
 		if st.then != nil {

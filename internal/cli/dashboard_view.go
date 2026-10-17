@@ -124,10 +124,10 @@ func (m dashboardModel) feedMax() int {
 // tried first: Detail beside Tasks, then stacked panels, then flat sections. A
 // bordered look is taken only when it draws every section the flat look draws
 // and every protected part fits inside its border, so the split and then the
-// borders give way before a protected part does. It returns the header and
-// notes lines, which no look or size changes.
+// borders give way before a protected part does. It returns the header
+// lines, which no look or size changes.
 func (m *dashboardModel) resize() (top []dashLine) {
-	top = append(m.header(), m.notes()...)
+	top = m.header()
 	fixed := len(top) + len(m.footer())
 	needs, events := m.needsLines(dashNeedsMax+1), m.eventLines()
 	flat := *m
@@ -153,7 +153,7 @@ func (m dashboardModel) shown() [3]bool {
 }
 
 // size sizes every component for a look from the terminal size, the lines the
-// header, notes and footer take (fixed), NEEDS YOU at its longest and the
+// header and footer take (fixed), NEEDS YOU at its longest and the
 // event lines. The confirm viewport gets its rows first, so the command the
 // Human approves is never what gives way; then the list's
 // title with one row (when both fit), then the feed's title, then NEEDS YOU
@@ -311,8 +311,6 @@ func keepState(s dashState, since time.Duration, reading bool, needs int, th das
 	switch s {
 	case stateLoading:
 		phrase, color = "LOADING", styleWarn
-	case stateFailed:
-		phrase = "FAILED"
 	case stateStale:
 		phrase = "STALE last good read " + age + " ago"
 	case statePartial:
@@ -337,18 +335,12 @@ func keepState(s dashState, since time.Duration, reading bool, needs int, th das
 type dashStem int
 
 const (
-	stemLastReadFailed dashStem = iota + 1
-	stemFleetReadFailed
-	stemLoadingFleet
+	stemLoadingFleet dashStem = iota + 1
 	stemNoTasks
 )
 
 func keepStem(s dashStem) dashKeep {
 	switch s {
-	case stemLastReadFailed:
-		return dashKeep{styleFail.Render("Last read failed:")}
-	case stemFleetReadFailed:
-		return dashKeep{styleFail.Render("Fleet read failed:")}
 	case stemLoadingFleet:
 		return dashKeep{styleMuted.Render("Loading fleet...")}
 	case stemNoTasks:
@@ -477,7 +469,7 @@ func (m dashboardModel) layout() []dashLine {
 	return m.lines(m.resize())
 }
 
-// lines lays the frame out below the header and notes (top) in the look and
+// lines lays the frame out below the header (top) in the look and
 // sizes resize set; the footer follows the sizes. A line outside a panel has
 // the terminal's width for room.
 func (m dashboardModel) lines(top []dashLine) []dashLine {
@@ -570,9 +562,6 @@ func (m dashboardModel) frame() string {
 func (m dashboardModel) header() []dashLine {
 	th := m.theme()
 	left, needs := "", 0
-	if m.state() == stateFailed {
-		left = th.bar.Inherit(styleFail).Render(dashText(fmt.Sprint(m.readErr)))
-	}
 	if !m.lastGood.IsZero() {
 		left, needs = m.chips(th), len(m.needs())
 	}
@@ -635,14 +624,6 @@ func (m dashboardModel) chips(th dashTheme) string {
 		sub.Render(fmt.Sprintf("working %d", working)) + sep + sub.Render("unacked "+unacked)
 }
 
-// notes are the lines between the header and the body.
-func (m dashboardModel) notes() []dashLine {
-	if m.state() == stateStale && m.readErr != nil {
-		return []dashLine{{keep: keepStem(stemLastReadFailed), rest: styleFail.Render(" " + dashText(m.readErr.Error()))}}
-	}
-	return nil
-}
-
 // body is the list section: a title that counts what the list draws, the
 // column header when there is room, then the list, in the focused panel. The
 // count is the list's own page, not window arithmetic here.
@@ -653,8 +634,6 @@ func (m dashboardModel) body() []dashLine {
 	switch m.state() {
 	case stateLoading:
 		return []dashLine{{keep: keepStem(stemLoadingFleet)}}
-	case stateFailed:
-		return []dashLine{{keep: keepStem(stemFleetReadFailed), rest: styleFail.Render(" " + dashText(fmt.Sprint(m.readErr)))}}
 	case stateEmpty:
 		return []dashLine{{keep: keepStem(stemNoTasks)}}
 	}
