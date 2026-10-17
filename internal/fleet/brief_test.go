@@ -110,7 +110,8 @@ func TestScaffoldReplacesALinkedBrief(t *testing.T) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(target, []byte("{}"), 0o644); err != nil {
+		const secret = "## Test-impact map\nsecret\n## Definition of done\n"
+		if err := os.WriteFile(target, []byte(secret), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		brief := filepath.Join(dir, "brief.md")
@@ -126,8 +127,8 @@ func TestScaffoldReplacesALinkedBrief(t *testing.T) {
 		}
 		got, _ := os.ReadFile(target)
 		fi, err := os.Lstat(brief)
-		if string(got) != "{}" || err != nil || !fi.Mode().IsRegular() || !strings.Contains(readFile(t, brief), "Task brief: t1") {
-			t.Fatalf("linked=%v: target %q, brief %v %v; want the brief rewritten as a regular file and the target untouched", linked, got, fi, err)
+		if string(got) != secret || err != nil || !fi.Mode().IsRegular() || !strings.Contains(readFile(t, brief), "Task brief: t1") || strings.Contains(readFile(t, brief), "secret") {
+			t.Fatalf("linked=%v: target %q, brief %v %v; want the brief rewritten as a regular file, nothing read through the link, and the target untouched", linked, got, fi, err)
 		}
 	}
 }

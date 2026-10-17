@@ -246,6 +246,31 @@ func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	}
 }
 
+// A fenced captain can replace its brief with a link; the unfenced handoff
+// copies nothing through it. TestHandoffTransfersQueuedTaskToCaptain is the
+// regular brief.
+func TestHandoffRefusesALinkedBrief(t *testing.T) {
+	parent, captain := seedHandoffPair(t)
+	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(Path(parent, "TASK-1")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, Path(parent, "TASK-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Handoff(parent, captain, []string{"TASK-1"}); err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("Handoff = %v, want the linked brief refused", err)
+	}
+	if _, err := os.Lstat(Path(captain, "TASK-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("captain brief: %v, want none copied", err)
+	}
+}
+
 // TestHandoffCarriesTheWholeDefinition proves the destination re-creates a
 // task with the source definition, only the owner changed: a dropped scout
 // scope leaves a task no launch accepts. Every field the scout can carry is

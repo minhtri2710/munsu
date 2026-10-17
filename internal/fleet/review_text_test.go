@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -222,9 +223,32 @@ func TestLintBriefAcceptsEveryScaffoldedKindAndNamesTheMissingSections(t *testin
 	}
 }
 
-func TestLintBriefRefusesAnAbsentBrief(t *testing.T) {
-	if err := LintBrief(t.TempDir(), "absent", taskauthority.KindShip); err == nil || !strings.Contains(err.Error(), "reading brief for task absent") {
-		t.Fatalf("LintBrief absent brief error = %v", err)
+func TestLintBriefRefusesAnUnreadableBrief(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		plant      func(t *testing.T, home string)
+	}{
+		{"absent", "reading brief for task t1", func(*testing.T, string) {}},
+		{"symlink", "is a symlink", func(t *testing.T, home string) {
+			outside := t.TempDir()
+			if err := Scaffold(ScaffoldOptions{HomeDir: outside, ID: "t1", Repo: "munsu", Mode: "direct-PR"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(Path(home, "t1")), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(Path(outside, "t1"), Path(home, "t1")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			tc.plant(t, home)
+			if err := LintBrief(home, "t1", taskauthority.KindShip); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LintBrief error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

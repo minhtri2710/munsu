@@ -35,7 +35,7 @@ func TestGuardBurnDownLaunchRefusesNilEndpoint(t *testing.T) {
 	captainHome := seedCaptainForTest(t, parentHome, "launch-endpoint")
 	writeCanonicalPiIntegration(t, captainHome)
 
-	err := Launch(captainHome, parentHome, nil, fakeIntegrationPort{})
+	err := Launch(captainHome, parentHome, nil, nil, fakeIntegrationPort{})
 	if err == nil || err.Error() != "captain launch endpoint capability is required" {
 		t.Fatalf("Launch error = %v, want nil-endpoint refusal", err)
 	}

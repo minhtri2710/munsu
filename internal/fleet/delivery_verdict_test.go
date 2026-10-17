@@ -155,7 +155,7 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 			data, _ := json.Marshal(f.goodDoc())
 			f.writeRaw(t, append(data, []byte(` {"second":true}`)...))
 		}, want: "data after the verdict object"},
-		{name: "oversize file", prepare: func(t *testing.T, f verdictFixture) { f.writeRaw(t, make([]byte, reviewVerdictMaxBytes+1)) }, want: "not a regular file"},
+		{name: "oversize file", prepare: func(t *testing.T, f verdictFixture) { f.writeRaw(t, make([]byte, reviewVerdictMaxBytes+1)) }, want: "is over 262144 bytes"},
 		{name: "symlinked file", prepare: func(t *testing.T, f verdictFixture) {
 			target := filepath.Join(t.TempDir(), "target.json")
 			data, _ := json.Marshal(f.goodDoc())
@@ -168,7 +168,7 @@ func TestRecordReviewVerdictRefusesWhatTheFileOrTaskCannotSupport(t *testing.T) 
 			if err := os.Symlink(target, f.verdictPath()); err != nil {
 				t.Fatal(err)
 			}
-		}, want: "not a regular file"},
+		}, want: "is a symlink"},
 		{name: "digest of another file", prepare: doc(func(map[string]any) {}), digest: strings.Repeat("0", 64), want: "changed after it was observed"},
 		{name: "stale generation", prepare: doc(func(map[string]any) {}), generation: 2, want: "not the observed generation 2"},
 		{name: "ship task is not a review task", prepare: doc(func(map[string]any) {}), review: "ship-1", want: "not a review task"},

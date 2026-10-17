@@ -1463,7 +1463,7 @@ func (r *Runner) resolveHarness() error {
 // taskDescription returns text used to match dispatch profiles (brief body or id).
 func (r *Runner) taskDescription() string {
 	briefPath := Path(r.homeDir, r.args.ID)
-	if data, err := os.ReadFile(briefPath); err == nil {
+	if data, err := home.ReadRegularFile(briefPath); err == nil {
 		s := strings.TrimSpace(string(data))
 		if s != "" {
 			return s
@@ -1794,7 +1794,7 @@ func (r *Runner) recordedAcquiredEndpoint() *taskauthority.AcquiredEndpoint {
 func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	// Read brief content from the registered brief path.
 	briefPath := Path(r.homeDir, r.args.ID)
-	briefData, readErr := os.ReadFile(briefPath)
+	briefData, readErr := home.ReadRegularFile(briefPath)
 	if readErr != nil {
 		return fmt.Errorf("reading brief %s: %w", briefPath, readErr)
 	}

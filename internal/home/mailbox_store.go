@@ -320,12 +320,12 @@ func (s *Store) WriteAck(ack *ProcessingAck) error {
 	if err := validateStatePath(s.homeDir, path, true); err != nil {
 		return fmt.Errorf("write ack: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
+	f, err := OpenRegular(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("write ack: opening ack log: %w", err)
 	}
 	defer f.Close()
-	if err := secureFile(path); err != nil {
+	if err := secureOpened(f); err != nil {
 		return fmt.Errorf("write ack: securing ack log: %w", err)
 	}
 	if err := lockFile(f, false); err != nil {

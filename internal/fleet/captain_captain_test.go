@@ -1628,7 +1628,7 @@ func TestCaptainIdentity(t *testing.T) {
 			run: func(t *testing.T) error {
 				parent, captainHome := launchableCaptain(t)
 				t.Setenv("MUNSU_ROLE", "captain")
-				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
 			},
 			want: "cannot launch other captains",
 		},
@@ -1640,7 +1640,7 @@ func TestCaptainIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Setenv("MUNSU_ROLE", "")
-				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
 			},
 			want: "cannot launch another captain",
 		},
@@ -1652,16 +1652,114 @@ func TestCaptainIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Setenv("MUNSU_ROLE", "")
-				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
 			},
 			want: "active home has invalid captain provenance",
 		},
 		{
-			name: "launch allows a general launching a captain",
+			name: "launch allows a general launching a seeded captain",
 			run: func(t *testing.T) error {
 				parent, captainHome := launchableCaptain(t)
 				t.Setenv("MUNSU_ROLE", "")
-				return Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch refuses an alive captain",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", nil)
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id is alive in window old-window; launch refused",
+		},
+		{
+			name: "launch refuses an alive window recorded under another home",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, t.TempDir(), nil)
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id is alive in window old-window; launch refused",
+		},
+		{
+			name: "launch refuses an unproven captain",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", nil)
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id launch refused: window old-window liveness is unproven: captain registered-id endpoint evidence is not authoritatively absent",
+		},
+		{
+			name: "launch refuses a launched captain without a probe",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", nil)
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
+			},
+			want: "window old-window liveness is unproven: captain probe endpoint capability is required",
+		},
+		{
+			name: "launch refuses while the converge lock is held",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", nil)
+				release, err := convergeLockAcquire(parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer release()
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+			want: "acquiring converge lock: converge lock is held by another process",
+		},
+		{
+			name: "launch allows meta of a foreign kind as seeded",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"kind": "ship"})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch allows meta bound to another captain id as seeded",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"sm_id": "other-id"})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch allows captain meta with no window as seeded",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"window": ""})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch refuses unreadable captain meta",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"pad": strings.Repeat("x", 70000)})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id launch refused: scanning task meta captain:registered-id: bufio.Scanner: token too long",
+		},
+		{
+			name: "launch refuses a dead captain while its relaunch guard is armed",
+			run: func(t *testing.T) error {
+				until := strconv.FormatInt(time.Now().Add(2*time.Minute).Unix(), 10)
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"relaunch_liveness": "unproven", relaunchGuardUntilField: until})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+			want: "captain registered-id: prior relaunch liveness remains unproven; duplicate launch refused (guard expires in",
+		},
+		{
+			name: "launch allows a dead captain whose relaunch guard expired",
+			run: func(t *testing.T) error {
+				until := strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"relaunch_liveness": "unproven", relaunchGuardUntilField: until})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch allows a dead captain",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", nil)
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}, fakeIntegrationPort{})
 			},
 		},
 		{
@@ -1708,7 +1806,7 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
-	err := Launch(smHome, tmp, testLaunchEndpoint{}, fakeIntegrationPort{})
+	err := Launch(smHome, tmp, testLaunchEndpoint{}, nil, fakeIntegrationPort{})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -1741,12 +1839,36 @@ func launchableCaptain(t *testing.T) (parent, captainHome string) {
 	return parent, captainHome
 }
 
+// launchedCaptain is launchableCaptain with captain meta naming window
+// old-window under metaHome, or the captain's own home when metaHome is "",
+// plus extra fields.
+func launchedCaptain(t *testing.T, metaHome string, extra map[string]string) (parent, captainHome string) {
+	t.Helper()
+	t.Setenv("MUNSU_ROLE", "")
+	parent, captainHome = launchableCaptain(t)
+	if metaHome == "" {
+		canon, err := canonicalCaptainHome(captainHome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metaHome = canon
+	}
+	meta := map[string]string{"kind": "captain", "sm_id": "registered-id", "home": metaHome, "window": "old-window", "backend": "test"}
+	for k, v := range extra {
+		meta[k] = v
+	}
+	if err := home.WriteMeta(parent, taskIDForCaptain("registered-id"), meta); err != nil {
+		t.Fatal(err)
+	}
+	return parent, captainHome
+}
+
 func TestLaunch_UsesCaptainIDWhenHomeBasenameDiffers(t *testing.T) {
 	parent, captainHome := launchableCaptain(t)
 
 	var request LaunchRequest
 	endpoint := launchCaptureEndpoint{launch: func(req LaunchRequest) { request = req }}
-	if err := Launch(captainHome, parent, endpoint, fakeIntegrationPort{}); err != nil {
+	if err := Launch(captainHome, parent, endpoint, nil, fakeIntegrationPort{}); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	body, err := os.ReadFile(filepath.Join(captainHome, ".captain-launch.sh"))
@@ -1772,7 +1894,7 @@ func TestLaunch_HarnessReadiness(t *testing.T) {
 			bin := t.TempDir()
 			testutil.WriteFakeExecutable(t, filepath.Join(bin, "pi"), "#!/bin/sh\n[ \"$1\" = --list-models ] || exit 2\n"+tc.pi)
 			testutil.PrependPath(t, bin)
-			err := Launch(captainHome, parent, launchCaptureEndpoint{}, fakeIntegrationPort{})
+			err := Launch(captainHome, parent, launchCaptureEndpoint{}, nil, fakeIntegrationPort{})
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("Launch: %v", err)
@@ -1812,7 +1934,7 @@ func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
 	// base.json has SoldierHarness/Backend but the CaptainProfile is absent.
 	// Re-publishing keeps the snapshot profile empty.
 	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
-	err := Launch(captainHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
+	err := Launch(captainHome, parent, testLaunchEndpoint{}, nil, fakeIntegrationPort{})
 	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
 		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot", err)
 	}
@@ -1835,7 +1957,7 @@ func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *tes
 	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
 		t.Fatal(err)
 	}
-	err := Launch(captainHome, parent, testLaunchEndpoint{}, fakeIntegrationPort{})
+	err := Launch(captainHome, parent, testLaunchEndpoint{}, nil, fakeIntegrationPort{})
 	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
 		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot despite flat captain-harness pin", err)
 	}
