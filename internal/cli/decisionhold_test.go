@@ -140,9 +140,8 @@ func TestDecisionHoldHoldIsIdempotent(t *testing.T) {
 }
 
 // TestDecisionHoldResolveRoutesThroughAuthority proves `decision-hold
-// resolve` releases the Authority hold, records the answer in the status
-// projection, and unblocks dependents — without touching the legacy hold
-// path.
+// resolve` releases the Authority hold and records the answer in the status
+// projection.
 func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
@@ -155,7 +154,7 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	out, err := runRoot(t, "decision-hold", "resolve", "approach",
 		"--answer", "Choose React", "--from", "scout-r2",
 		"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
-		"--unblock", "dep-task-1", "--home", homeDir, "--output", "json")
+		"--home", homeDir, "--output", "json")
 	if err != nil {
 		t.Fatalf("resolve: %v\n%s", err, out)
 	}
@@ -182,13 +181,6 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	if !strings.Contains(string(statuses), "resolved: Choose React [key=approach]") {
 		t.Fatalf("origin status = %q", statuses)
 	}
-	depStatuses, err := os.ReadFile(filepath.Join(homeDir, "state", "dep-task-1.status"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]") {
-		t.Fatalf("dependent status = %q", depStatuses)
-	}
 
 	// List now reports no unresolved holds.
 	out, err = runRoot(t, "decision-hold", "list", "scout-r2", "--home", homeDir, "--output", "json")
@@ -205,6 +197,121 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	}
 	if envelope.Data.Count != 0 {
 		t.Fatalf("unresolved count = %d, want 0", envelope.Data.Count)
+	}
+}
+
+// TestDecisionHoldResolveUnblocksThroughAuthority proves --unblock moves a
+// blocked dependent to queued in the Authority, names every dependent it could
+// not unblock, and reports a committed unblock whose status projection failed
+// as a non-retryable conflict.
+func TestDecisionHoldResolveUnblocksThroughAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		dep       string
+		seed      string // "", "queued" or "blocked"
+		statusDir bool
+		wantCode  string // "" means success
+		want      []string
+		notWant   []string
+	}{
+		{name: "blocked dependent is unblocked", dep: "dep-task-1", seed: "blocked",
+			want: []string{"Unblocked: dep-task-1"}},
+		{name: "queued dependent is reported", dep: "dep-task-1", seed: "queued", wantCode: "error",
+			want: []string{"Not unblocked: dep-task-1 (", "unblock requires blocked task"}, notWant: []string{"Unblocked:"}},
+		{name: "unknown dependent is reported", dep: "ghost", wantCode: "error",
+			want: []string{"Not unblocked: ghost (", "task ghost not found"}, notWant: []string{"Unblocked:"}},
+		{name: "invalid dependent id is reported", dep: "bad:id", wantCode: "error",
+			want: []string{"Not unblocked: bad:id (", `invalid typed identity: "bad:id"`}, notWant: []string{"Unblocked:"}},
+		{name: "projection failure after unblock is a conflict", dep: "dep-task-1", seed: "blocked", statusDir: true, wantCode: "conflict",
+			want: []string{"Unblocked: dep-task-1", "task dep-task-1 is authoritatively queued; projection failed"}, notWant: []string{"Not unblocked"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			auth := testAuthorityFor(t, homeDir)
+			if tc.seed != "" {
+				seedAuthorityTask(t, auth, tc.dep)
+			}
+			if tc.seed == "blocked" {
+				agg, err := auth.Get(mustTaskIDFor(t, tc.dep))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := taskauthority.CanonicalBlockRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       mustTaskIDFor(t, tc.dep),
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Detail:       "decision",
+					Reason:       "seed",
+				}
+				if _, err := auth.Block(mustCanonicalOp(t, "seed-block", req), req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			statusPath := filepath.Join(homeDir, "state", tc.dep+".status")
+			if tc.statusDir {
+				if err := os.MkdirAll(statusPath, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if out, err := runRoot(t, "decision-hold", "hold", "approach",
+				"--reason", "Pick the UI framework", "--from", "scout-r2",
+				"--home", homeDir, "--output", "json"); err != nil {
+				t.Fatalf("hold: %v\n%s", err, out)
+			}
+
+			out, err := runRoot(t, "decision-hold", "resolve", "approach",
+				"--answer", "Choose React", "--from", "scout-r2",
+				"--grantor", "human", "--channel", "herdr", "--quote", "go with it",
+				"--unblock", tc.dep, "--home", homeDir, "--output", "json")
+
+			var envelope struct {
+				Data  MessageResult `json:"data"`
+				Error ErrorEnvelope `json:"error"`
+			}
+			if jerr := json.Unmarshal([]byte(out), &envelope); jerr != nil {
+				t.Fatalf("resolve output not JSON: %v\n%s", jerr, out)
+			}
+			message := envelope.Data.Message
+			if tc.wantCode == "" {
+				if err != nil {
+					t.Fatalf("resolve: %v\n%s", err, out)
+				}
+			} else {
+				if err == nil || envelope.Error.ErrorCode != tc.wantCode {
+					t.Fatalf("resolve err=%v error_code=%q, want %q\n%s", err, envelope.Error.ErrorCode, tc.wantCode, out)
+				}
+				if tc.wantCode == "conflict" && envelope.Error.Retryable {
+					t.Fatalf("conflict must not be retryable\n%s", out)
+				}
+				message = envelope.Error.Message
+			}
+			for _, s := range tc.want {
+				if !strings.Contains(message, s) {
+					t.Fatalf("message missing %q:\n%s", s, message)
+				}
+			}
+			for _, s := range tc.notWant {
+				if strings.Contains(message, s) {
+					t.Fatalf("message has %q:\n%s", s, message)
+				}
+			}
+
+			if tc.seed == "" {
+				return
+			}
+			agg, gerr := auth.Get(mustTaskIDFor(t, tc.dep))
+			if gerr != nil || agg.Phase != taskauthority.PhaseQueued {
+				t.Fatalf("dependent aggregate = %+v err=%v, want queued", agg, gerr)
+			}
+			if tc.statusDir {
+				return
+			}
+			depStatuses, _ := os.ReadFile(statusPath)
+			hasLine := strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]")
+			if hasLine != (tc.wantCode == "") {
+				t.Fatalf("dependent status = %q", depStatuses)
+			}
+		})
 	}
 }
 

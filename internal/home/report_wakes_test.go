@@ -115,6 +115,44 @@ func TestDeriveReportWakes(t *testing.T) {
 			deriveReports(t, h)
 			return reportWakePayloads(t, h)
 		}, []string{"t1: blocked: one [key=default]", "t1: failed: three [key=default]"}},
+		{"torn tail", func(t *testing.T, h string) []string {
+			appendReport(t, h, "t1", "working", "start")
+			p, err := StatusFilePath(h, "t1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			torn := domain.ReportStatusLine("blocked", "one", "default")
+			writeRaw := func(s string) {
+				f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				if _, err := f.WriteString(s); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeRaw(torn[:9])
+			deriveReports(t, h)
+			writeRaw(torn[9:] + "\n")
+			appendReport(t, h, "t1", "failed", "two")
+			deriveReports(t, h)
+			return reportWakePayloads(t, h)
+		}, []string{"t1: blocked: one [key=default]", "t1: failed: two [key=default]"}},
+		{"empty status file", func(t *testing.T, h string) []string {
+			p, err := StatusFilePath(h, "t1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(StateDir(h), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			deriveReports(t, h)
+			return reportWakePayloads(t, h)
+		}, nil},
 		{"claim with no watcher", func(t *testing.T, h string) []string {
 			appendReport(t, h, "t1", "failed", "red")
 			claim, err := ClaimWakes(h, "general", 60, 10)

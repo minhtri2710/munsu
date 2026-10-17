@@ -2,6 +2,7 @@ package home
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -60,5 +61,33 @@ func TestStatusReadsTakeALineOverTheScannerLimit(t *testing.T) {
 	lines, err := ReadStatus(h, "task-1")
 	if err != nil || len(lines) != 2 || lines[1] != line {
 		t.Fatalf("ReadStatus() = %d lines, %v; want 2 lines, the last as written", len(lines), err)
+	}
+}
+
+// A line appended after a torn last line, cut off before its newline, starts
+// on its own line instead of being glued onto the torn one.
+func TestAppendStatusEndsATornTailFirst(t *testing.T) {
+	h := t.TempDir()
+	if err := AppendStatus(h, "task-1", "working: one"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := StatusFilePath(h, "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("worki"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if err := AppendStatus(h, "task-1", "failed: two"); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := ReadStatus(h, "task-1")
+	if want := []string{"working: one", "worki", "failed: two"}; err != nil || !slices.Equal(lines, want) {
+		t.Fatalf("ReadStatus() = %q, %v; want %q", lines, err, want)
 	}
 }
