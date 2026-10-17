@@ -150,18 +150,19 @@ func TestResolveProjectBackendAgreesWithTheSnapshotResolver(t *testing.T) {
 	future := validBase()
 	future.SchemaVersion = "future"
 	for _, tc := range []struct {
-		name          string
+		name, path    string
 		base          FleetBaseDocument
 		overlay       ProjectOverlay
 		want, wantErr string
 	}{
-		{"overlay herdr", validBase(), ProjectOverlay{Backend: "herdr"}, "herdr", ""},
-		{"invalid base schema version", future, ProjectOverlay{Backend: "herdr"}, "", "schemaVersion"},
-		{"invalid overlay tool", validBase(), ProjectOverlay{Worktree: &ToolEntry{Adapter: "nope", Path: "/x"}}, "", "worktree tool has unknown adapter"},
-		{"unknown overlay backend resolves; backend.Resolve refuses it", validBase(), ProjectOverlay{Backend: "screen"}, "screen", ""},
+		{"overlay herdr", "/alpha", validBase(), ProjectOverlay{Backend: "herdr"}, "herdr", ""},
+		{"invalid base schema version", "/alpha", future, ProjectOverlay{Backend: "herdr"}, "", "schemaVersion"},
+		{"invalid overlay tool", "/alpha", validBase(), ProjectOverlay{Worktree: &ToolEntry{Adapter: "nope", Path: "/x"}}, "", "worktree tool has unknown adapter"},
+		{"project without a path", "", validBase(), ProjectOverlay{Backend: "herdr"}, "", "path is required"},
+		{"unknown overlay backend resolves; backend.Resolve refuses it", "/alpha", validBase(), ProjectOverlay{Backend: "screen"}, "screen", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			facts := validFacts("alpha", "/alpha", tc.overlay)
+			facts := validFacts("alpha", tc.path, tc.overlay)
 			got, err := ResolveProjectBackend(tc.base, facts)
 			if got != tc.want || (tc.wantErr == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("ResolveProjectBackend = %q, %v; want %q, %q", got, err, tc.want, tc.wantErr)
