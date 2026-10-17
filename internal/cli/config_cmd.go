@@ -156,14 +156,15 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 					return fmt.Errorf("config set %s: %w", key, err)
 				}
 			case "backend":
-				if strings.TrimSpace(value) == "" {
+				v := strings.TrimSpace(value)
+				if v == "" {
 					return fmt.Errorf("config set backend: backend identity must not be empty")
 				}
 				// Words: Human, typed, 2026-10-17: "làm cả 2" (refuse unsupported backend at config set)
-				if err := backend.ValidateBackend(value); err != nil {
+				if err := backend.ValidateBackend(v); err != nil {
 					return fmt.Errorf("config set backend: %w", err)
 				}
-				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.Backend = value })
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.Backend = v })
 			}
 			return config.Set(ctx.Home, key, value)
 		}),

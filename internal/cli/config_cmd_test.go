@@ -499,18 +499,20 @@ func TestConfigSetBackendAuthorsFleetBase(t *testing.T) {
 
 // TestConfigSetTypedKeysValidateInput verifies typed-key set validates its
 // input: an empty or unsupported backend identity is refused and nothing is
-// stored; each supported identity is stored.
+// stored; each supported identity is stored trimmed.
 func TestConfigSetTypedKeysValidateInput(t *testing.T) {
 	cases := []struct {
-		key   string
-		value string
-		want  string // refusal text; "" allows
+		key    string
+		value  string
+		want   string // refusal text; "" allows
+		stored string
 	}{
-		{"backend", "", "backend identity must not be empty"},
-		{"backend", "bogus", `config set backend: unknown session backend: "bogus" (supported: herdr, tmux)`},
-		{"backend", "auto", `config set backend: unknown session backend: "auto" (supported: herdr, tmux)`},
-		{"backend", "herdr", ""},
-		{"backend", "tmux", ""},
+		{"backend", "", "backend identity must not be empty", ""},
+		{"backend", "bogus", `config set backend: unknown session backend: "bogus" (supported: herdr, tmux)`, ""},
+		{"backend", "auto", `config set backend: unknown session backend: "auto" (supported: herdr, tmux)`, ""},
+		{"backend", "herdr", "", "herdr"},
+		{"backend", "tmux", "", "tmux"},
+		{"backend", " tmux ", "", "tmux"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
@@ -529,8 +531,8 @@ func TestConfigSetTypedKeysValidateInput(t *testing.T) {
 			if err != nil {
 				t.Fatalf("config set %s %q: %v", tc.key, tc.value, err)
 			}
-			if got, _, _ := readBaseConfigField(tmpDir, tc.key); got != tc.value {
-				t.Fatalf("stored %s = %q, want %q", tc.key, got, tc.value)
+			if got, _, _ := readBaseConfigField(tmpDir, tc.key); got != tc.stored {
+				t.Fatalf("stored %s = %q, want %q", tc.key, got, tc.stored)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,37 +196,41 @@ func TestProjectConfigSetInvalidHarnessRefused(t *testing.T) {
 }
 
 // TestProjectConfigSetBackend verifies the overlay backend setter refuses an
-// unsupported identity without storing it and stores each supported one.
+// unsupported identity without writing the overlay, stores each supported one,
+// and clears a stored one on an empty value.
 func TestProjectConfigSetBackend(t *testing.T) {
 	for _, tc := range []struct {
-		value string
-		want  string // refusal text; "" allows
+		name, seed, value string
+		want              string // refusal text; "" allows
 	}{
-		{"bogus", `unknown session backend: "bogus" (supported: herdr, tmux)`},
-		{"", ""},
-		{"herdr", ""},
-		{"tmux", ""},
+		{"bogus", "", "bogus", `unknown session backend: "bogus" (supported: herdr, tmux)`},
+		{"auto", "", "auto", `unknown session backend: "auto" (supported: herdr, tmux)`},
+		{"clear", "tmux", "", ""},
+		{"herdr", "", "herdr", ""},
+		{"tmux", "", "tmux", ""},
 	} {
-		t.Run(tc.value, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("MUNSU_HOME", home)
 			registerProject(t, home, "sample")
-			_, err := runProjectConfig(t, "set", "sample", "backend", tc.value)
-			overlay, loadErr := config.LoadProjectOverlay(home, "sample")
-			if loadErr != nil {
-				t.Fatalf("LoadProjectOverlay: %v", loadErr)
+			if tc.seed != "" {
+				if _, err := runProjectConfig(t, "set", "sample", "backend", tc.seed); err != nil {
+					t.Fatalf("seed backend %q: %v", tc.seed, err)
+				}
 			}
+			_, err := runProjectConfig(t, "set", "sample", "backend", tc.value)
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("set backend %q: err = %v, want %q", tc.value, err, tc.want)
 				}
-				if overlay.Backend != "" {
-					t.Fatalf("a refused backend was stored: %q", overlay.Backend)
+				if _, statErr := os.Stat(filepath.Join(home, config.ProjectOverlayDocumentPath)); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("a refused set wrote the overlay document: %v", statErr)
 				}
 				return
 			}
-			if err != nil || overlay.Backend != tc.value {
-				t.Fatalf("set backend %q: err = %v, stored %q", tc.value, err, overlay.Backend)
+			overlay, loadErr := config.LoadProjectOverlay(home, "sample")
+			if err != nil || loadErr != nil || overlay.Backend != tc.value {
+				t.Fatalf("set backend %q: err = %v, load = %v, stored %q", tc.value, err, loadErr, overlay.Backend)
 			}
 		})
 	}
