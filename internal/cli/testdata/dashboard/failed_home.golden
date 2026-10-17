@@ -1,12 +1,12 @@
- munsu   PARTIAL refreshed 0s ago  watcher absent · captains 1 · working 1 · unacked 0           /h
-unresolved 2  Human-needed 0  failed sources 1
+ munsu   PARTIAL refreshed 0s ago  · needs you 1  watcher absent · captains 1 · working 1 · unacked…
 ╭─ NEEDS YOU 1 ────────────────────────────────────────────────────────────────────────────────────╮
 │ failed   captain:beta         reading canonical task authority state for /h/captains/beta: home… │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Failed sources and tasks ───────────────────────────────────────────────────────────────────────╮
-│     GROUP        NAME                 STATE              AGE   SINCE CTX  ROLE   STATUS          │
+│     NAME     STATE              AGE   SINCE CTX  ROLE   STATUS                                   │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────── │
 │ ▌ ✗ captain:beta  reading canonical task authority state for /h/captains/beta: home: not initia… │
-│     general      t-work               ● working          -     -     -    ship   implementing    │
+│     t-work   ● working          -     -     -    ship   implementing                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Failed source ──────────────────────────────────────────────────────────────────────────────────╮
 │ source captain:beta  home /h/captains/beta                                                       │
@@ -14,6 +14,4 @@ unresolved 2  Human-needed 0  failed sources 1
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Events - unreadable: open /h/state/events.log: permission denied ───────────────────────────────╮
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-j/k move • b block • u unblock • d done • t retry • o reopen • x teardown • p promote • s send
-h hold • e resolve • c complete • R retire • V recover • C converge • v record-verdict • m pr-merge
-enter decide • q quit
+j/k move • R retire • C converge • v record-verdict • ? help • q quit

@@ -44,9 +44,9 @@ func popupHumanNeeded(homeDir string, events []humanNeededEvent) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			eventType, detail := "popup.sent", verb
+			eventType, detail := EventPopupSent, verb
 			if err := notifier.Notify("munsu: Human needed", fmt.Sprintf("%s on %s", verb, ev.TaskID)); err != nil {
-				eventType, detail = "popup.failed", verb+": "+strings.Join(strings.Fields(err.Error()), " ")
+				eventType, detail = EventPopupFailed, verb+": "+strings.Join(strings.Fields(err.Error()), " ")
 				fmt.Fprintf(os.Stderr, "warning: popup for %s: %v\n", ev.TaskID, err)
 			}
 			if _, err := Append(homeDir, eventType, ev.TaskID, verb, detail); err != nil {

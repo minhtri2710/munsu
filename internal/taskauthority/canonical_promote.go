@@ -53,7 +53,7 @@ func (c *Canonical) Promote(op domain.Operation, req CanonicalPromoteRequest) (O
 		if cur.Definition.Kind != req.CurrentKind {
 			return Aggregate{}, preconditionError("task %s generation %s has kind %q, only scout tasks promote to ship", cur.TaskID, cur.Generation, cur.Definition.Kind)
 		}
-		if cur.Phase != PhaseDone && cur.Phase != PhaseResolved {
+		if !Promotable(cur.Definition.Kind, cur.Phase) {
 			return Aggregate{}, preconditionError("task %s generation %s is %s, promotion requires a done or resolved scout", cur.TaskID, cur.Generation, cur.Phase)
 		}
 		next := cur.clone()

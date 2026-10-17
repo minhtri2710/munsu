@@ -25,11 +25,19 @@ func TestDashboardDetailPane(t *testing.T) {
 	}
 	m = selectTask(t, m, "echo")
 	assertShown(t, "detail", ansi.Strip(m.View().Content),
-		"echo  ship  project munsu  working unknown  general",
-		"seat claude opus  mode direct-PR  window w-echo  pane unknown  worktree /wt/echo",
-		"last working: fine")
+		"│ echo  working unknown  kind ship  project munsu  group general",
+		"│ harness claude  model opus  mode direct-PR  window w-echo  pane unknown  worktree /wt/echo",
+		"│ last working: fine")
+	if sub := m.theme().subtle; !strings.Contains(m.View().Content, sub.Render("harness")+" claude") {
+		t.Fatalf("a label is not drawn dim before its plain value:\n%q", m.View().Content)
+	}
+	// A task with no seat draws neither its seat line nor an unknown field.
 	m = selectTask(t, m, "golf")
-	assertShown(t, "no window", ansi.Strip(m.View().Content), "seat - -  mode -  window -  pane -  worktree -")
+	f = ansi.Strip(m.View().Content)
+	assertShown(t, "no window", f, "│ golf  done  kind ship  project munsu  group general  ", "│ last failed: an old failure")
+	if strings.Contains(f, "window") || strings.Contains(f, "pane") {
+		t.Fatalf("a task with no seat draws its seat fields:\n%s", f)
+	}
 
 	alive := row("t-live", "working", "x", "primary", "")
 	alive.Window, alive.PaneAlive = "w-live", true

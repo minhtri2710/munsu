@@ -29,8 +29,11 @@ const (
 	// dashboardStaleAfter marks rows stale when no read has succeeded for this
 	// long, for example because a read is hung.
 	dashboardStaleAfter = 3 * dashboardTick
-	// dashboardFeedMax bounds the events the model keeps and each read returns.
+	// dashboardFeedMax bounds the events the feed shows.
 	dashboardFeedMax = 200
+	// dashboardFeedCap bounds the events the model keeps and a read returns:
+	// the first read reads back past hidden events up to it to fill the feed.
+	dashboardFeedCap = 2000
 	// dashboardOutputLines bounds the subprocess output tail shown after a run.
 	dashboardOutputLines = 4
 )
@@ -53,9 +56,17 @@ type dashRead struct {
 	holds    map[dashHoldKey][]dashHold
 	holdsErr error
 	latest   bool // events came from LatestEvents (replace) rather than EventsAfter (append)
+	// complete is whether a latest read was taken against a snapshot that
+	// holds every task, so its read-back past hidden events is final.
+	complete bool
 	events   []orchestrator.Record
 	skipped  int
 	eventErr error
+	// registry is the captain registry, nil when unreadable; captainIDs maps
+	// each captain home of the snapshot and the registry to the registry ID
+	// captainIDIn resolves for it.
+	registry   []fleet.Info
+	captainIDs map[string]string
 	// The header chips: the watcher beat and the unacked wakes (queued plus
 	// claimed and not yet resolved).
 	beat       home.WatcherBeatStatus
@@ -122,10 +133,15 @@ type dashboardModel struct {
 	beat       home.WatcherBeatStatus
 	unacked    int
 	unackedErr error
+	registry   []fleet.Info
+	captainIDs map[string]string
 
 	events     []orchestrator.Record
 	cursor     uint64
 	feedLoaded bool
+	// backfilled is whether a latest read completed against a complete
+	// snapshot; until then every read reads the log back again.
+	backfilled bool
 	skipped    int
 	eventErr   error
 
@@ -152,6 +168,7 @@ type dashboardModel struct {
 	deciding *dashDecision
 	notice   string // one-line message for the footer
 	result   *dashExecDone
+	help     bool // the footer lists every key, not only those that apply
 }
 
 // dashListKeys is the list's whole key map. Every other binding is absent, so
@@ -246,19 +263,62 @@ func dashboardExec(exe string, args []string) tea.Cmd {
 // read performs one read. It touches no model state, so it is safe to run as a
 // command while the model keeps updating.
 func (m dashboardModel) read() dashRead {
-	r := dashRead{at: m.now(), latest: !m.feedLoaded}
+	r := dashRead{at: m.now(), latest: !m.backfilled}
 	r.snap, r.snapErr = m.readFleet()
 	if r.snapErr == nil {
 		r.holds, r.holdsErr = m.readHolds(m.home, r.snap)
 	}
 	r.beat = m.watcher(r.at)
 	r.unacked, r.unackedErr = m.wakes(r.at)
-	if r.latest {
-		r.events, r.skipped, r.eventErr = m.latest(dashboardFeedMax)
-	} else {
-		r.events, r.skipped, r.eventErr = m.after(m.cursor, dashboardFeedMax)
+	r.registry, r.captainIDs = m.readCaptains(r.snap)
+	if !r.latest {
+		r.events, r.skipped, r.eventErr = m.after(m.cursor, dashboardFeedCap)
+		return r
 	}
-	return r
+	var snap *fleet.DisplaySnapshot
+	if r.snapErr == nil {
+		snap = r.snap
+	}
+	r.complete = snap != nil && len(snap.Failures) == 0
+	for n := dashboardFeedMax; ; n = min(2*n, dashboardFeedCap) {
+		r.events, r.skipped, r.eventErr = m.latest(n)
+		if shown, _ := dashShown(r.events, snap); r.eventErr != nil || len(r.events) < n || n == dashboardFeedCap || len(shown) >= dashboardFeedMax {
+			return r
+		}
+	}
+}
+
+// readCaptains reads the captain registry and resolves the registry ID of
+// every captain home the snapshot and the registry name. begin and the footer
+// both bind captain actions against this result, never the disk.
+func (m dashboardModel) readCaptains(snap *fleet.DisplaySnapshot) ([]fleet.Info, map[string]string) {
+	infos, err := m.captains()
+	if err != nil {
+		return nil, nil
+	}
+	homes := map[string]bool{}
+	for _, c := range infos {
+		homes[c.Home] = true
+	}
+	if snap != nil {
+		for _, ts := range snap.Tasks {
+			if strings.HasPrefix(ts.Source, "captain:") {
+				homes[ts.Home] = true
+			}
+		}
+		for _, f := range snap.Failures {
+			if strings.HasPrefix(f.Source, "captain:") {
+				homes[f.Home] = true
+			}
+		}
+	}
+	ids := map[string]string{}
+	for h := range homes {
+		if id, err := captainIDIn(infos, h); err == nil {
+			ids[h] = id
+		}
+	}
+	return infos, ids
 }
 
 func (m dashboardModel) readCmd() tea.Cmd {
@@ -328,6 +388,7 @@ func (m dashboardModel) update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 func (m *dashboardModel) applyRead(r dashRead) {
 	m.readDone = true
 	m.beat, m.unacked, m.unackedErr = r.beat, r.unacked, r.unackedErr
+	m.registry, m.captainIDs = r.registry, r.captainIDs
 	if r.snapErr != nil {
 		m.readErr = r.snapErr
 	} else {
@@ -343,12 +404,13 @@ func (m *dashboardModel) applyRead(r dashRead) {
 		return
 	}
 	m.eventErr, m.skipped, m.feedLoaded = nil, r.skipped, true
+	m.backfilled = m.backfilled || r.latest && r.complete
 	if r.latest {
 		m.events = r.events
 	} else {
 		m.events = append(m.events, r.events...)
 	}
-	if over := len(m.events) - dashboardFeedMax; over > 0 {
+	if over := len(m.events) - dashboardFeedCap; over > 0 {
 		m.events = m.events[over:]
 	}
 	if n := len(r.events); n > 0 {
@@ -451,6 +513,10 @@ func (m dashboardModel) onKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 	if key.Matches(k, dashQuit) {
 		return m, tea.Quit
 	}
+	if key.Matches(k, dashHelp) {
+		m.help = !m.help
+		return m, nil
+	}
 	if a := actionFor(k); a != nil {
 		return m.begin(a), nil
 	}
@@ -467,15 +533,18 @@ func (m dashboardModel) onKey(k tea.KeyPressMsg) (dashboardModel, tea.Cmd) {
 func (m dashboardModel) begin(a *dashAction) dashboardModel {
 	hasTarget := len(m.list.Items()) > 0
 	t := m.sel
+	if a.binding == bindCaptain {
+		t = captainTarget(t, m.registry)
+	}
 	home, problem := a.bind(t, hasTarget, m.home)
 	if problem != "" {
 		m.notice = a.name + ": " + problem
 		return m
 	}
 	if a.needsCaptainID {
-		id, err := m.captainIDOf(t.Home)
-		if err != nil {
-			m.notice = a.name + ": not bindable: " + err.Error()
+		id, ok := m.captainIDs[t.Home]
+		if !ok {
+			m.notice = a.name + ": not bindable: the last read resolved no registered captain for home " + t.Home
 			return m
 		}
 		t.CaptainID = id
@@ -507,16 +576,29 @@ func (p *dashPending) focus(i int) {
 	p.field = i
 }
 
-// captainIDOf resolves the registry ID of the captain whose canonical home is
-// the given row home, comparing the way fleet.Register stores it.
-func (m dashboardModel) captainIDOf(rowHome string) (string, error) {
+// captainTarget is the target a captain action takes for a primary-home
+// captain metadata row (ID "captain:<id>"): the home and source of the
+// registered captain <id>. Any other target, or an unregistered captain, is
+// returned as it is.
+func captainTarget(t dashTarget, infos []fleet.Info) dashTarget {
+	id, ok := strings.CutPrefix(t.ID, "captain:")
+	if !ok {
+		return t
+	}
+	for _, c := range infos {
+		if c.ID == id {
+			return dashTarget{ID: t.ID, Home: c.Home, Source: "captain:" + id}
+		}
+	}
+	return t
+}
+
+// captainIDIn resolves, from infos, the registry ID of the captain whose
+// canonical home is rowHome, comparing the way fleet.Register stores it.
+func captainIDIn(infos []fleet.Info, rowHome string) (string, error) {
 	canon, err := home.CanonicalCaptainHome(rowHome)
 	if err != nil {
 		return "", fmt.Errorf("home %s: %w", rowHome, err)
-	}
-	infos, err := m.captains()
-	if err != nil {
-		return "", err
 	}
 	for _, c := range infos {
 		if c.Home == canon {
@@ -612,29 +694,6 @@ func (d dashExecDone) outputTail() []string {
 		}
 	}
 	return lines[max(0, len(lines)-dashboardOutputLines):]
-}
-
-// unresolved counts the rows that are not finished, plus one per failed
-// source whose rows are unknown. done, resolved and retired rows are finished;
-// every other row, including one with no canonical phase, is not.
-func (m dashboardModel) unresolved() int {
-	n := len(m.failures)
-	for _, ts := range m.rows {
-		if !dashFinished(ts) {
-			n++
-		}
-	}
-	return n
-}
-
-func (m dashboardModel) humanNeeded() int {
-	n := 0
-	for _, ts := range m.rows {
-		if fleet.HumanNeeded(ts) {
-			n++
-		}
-	}
-	return n
 }
 
 type dashState int

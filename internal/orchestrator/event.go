@@ -28,6 +28,19 @@ type Record struct {
 
 const eventLogFile = "state/.event-log"
 
+// The event types munsu appends with a task ID as the producer.
+const (
+	EventTaskStatus  = "task.status"
+	EventPopupSent   = "popup.sent"
+	EventPopupFailed = "popup.failed"
+)
+
+// ProducedByTask is whether munsu appends events of this type with a task ID
+// as the producer.
+func ProducedByTask(eventType string) bool {
+	return eventType == EventTaskStatus || eventType == EventPopupSent || eventType == EventPopupFailed
+}
+
 // LogPath returns the full path to the event log file.
 func LogPath(homeDir string) string {
 	return filepath.Join(homeDir, eventLogFile)

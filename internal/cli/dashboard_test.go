@@ -152,6 +152,187 @@ func TestDashboardGoldenHealthy(t *testing.T) {
 	assertGolden(t, "healthy_150x32", healthyModel(150, 32).frame())
 }
 
+// The screen the Human reported: one queued task in one group, and a log that
+// still holds events of a task since removed, some from the day before.
+func TestDashboardGoldenQueued(t *testing.T) {
+	queued := func(w, h int) dashboardModel {
+		t1 := row("t1", "queued", "smoke", "primary", "")
+		t1.LastStatus = "queued: cli task add"
+		at := func(d time.Duration) int64 { return dashNow.Add(d).UnixNano() }
+		return send(resized(testDashModel(), w, h), goodRead(dashNow, []fleet.TaskSnapshot{t1}, nil, []orchestrator.Record{
+			{ID: 1, Timestamp: at(-22 * time.Hour), Type: "task.status", Producer: "greet-go", Key: "greet-go", Payload: "working: committed 1c74e55"},
+			{ID: 2, Timestamp: at(-13 * time.Hour), Type: "task.status", Producer: "t1", Key: "t1", Payload: "queued: cli task add"},
+			{ID: 3, Timestamp: at(-12*time.Hour - time.Second), Type: "task.status", Producer: "greet-go", Key: "default", Payload: "resolved: soldier torn down"},
+			{ID: 4, Timestamp: at(-time.Minute), Type: "watcher.cycle.failed", Producer: "munsu:watcher", Payload: "probe timed out"},
+			{ID: 5, Timestamp: at(-time.Second), Type: "task.status", Producer: "t1", Key: "smoke", Payload: "queued: waiting for a slot"},
+		}))
+	}
+	assertGolden(t, "queued_200x24", queued(200, 24).frame())
+	assertGolden(t, "queued_80x24", queued(80, 24).frame())
+}
+
+// The feed leaves out an event only when munsu writes its type with a task ID
+// as the producer, the producer is no captain, and a complete, fresh snapshot
+// holds no task of that ID. Every other event shows.
+func TestDashboardEventFilter(t *testing.T) {
+	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
+	complete := send(testDashModel(), goodRead(dashNow, rows, nil, nil))
+	partial := send(testDashModel(), goodRead(dashNow, rows, []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, nil))
+	stale := send(complete, dashRead{at: dashNow, snapErr: errors.New("hung")})
+	removed := ev(1, "task.status", "greet-go", "k", "working: a")
+	for _, tc := range []struct {
+		name  string
+		m     dashboardModel
+		e     orchestrator.Record
+		shown bool
+	}{
+		{"task.status of a task in the snapshot", complete, ev(1, "task.status", "t-1", "k", "working: a"), true},
+		{"task.status of a removed task", complete, removed, false},
+		{"popup.sent of a removed task", complete, ev(1, "popup.sent", "greet-go", "needs-decision", ""), false},
+		{"popup.failed of a removed task", complete, ev(1, "popup.failed", "greet-go", "needs-decision", ""), false},
+		{"a captain producer the snapshot does not hold", complete, ev(1, "popup.sent", "captain:alpha", "needs-decision", ""), true},
+		{"a munsu producer", complete, ev(1, "watcher.cycle.failed", "munsu:watcher", "", "probe"), true},
+		{"an operator producer of another type", complete, ev(1, "note", "general", "", "hello"), true},
+		{"no producer", complete, ev(1, "note", "", "", "hello"), true},
+		{"a removed task with a failed source", partial, removed, true},
+		{"a removed task while the read is stale", stale, removed, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.m
+			m.events = []orchestrator.Record{tc.e}
+			shown, hidden := m.shownEvents()
+			if got := len(shown) == 1; got != tc.shown || hidden != len(m.events)-len(shown) {
+				t.Fatalf("shown = %v hidden %d, want shown %v", got, hidden, tc.shown)
+			}
+		})
+	}
+	m := complete
+	m.events = []orchestrator.Record{removed}
+	if f := ansi.Strip(resized(m, 100, 24).frame()); !strings.Contains(f, "No events yet.") || !strings.Contains(f, "Events (1 of removed tasks hidden)") {
+		t.Fatalf("a feed whose events are all left out does not read as empty with one hidden:\n%s", f)
+	}
+}
+
+// An event of another day is dated; a key equal to its producer is printed once.
+func TestDashboardEventRows(t *testing.T) {
+	th := testDashModel().theme()
+	for _, tc := range []struct {
+		name string
+		e    orchestrator.Record
+		line string
+	}{
+		{"today", orchestrator.Record{Timestamp: dashNow.Truncate(24 * time.Hour).UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: "p"}, "00:00:00 t t-1 k p"},
+		{"the day before", orchestrator.Record{Timestamp: dashNow.Truncate(24 * time.Hour).Add(-time.Second).UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: "p"}, "Sep 30 23:59:59 t t-1 k p"},
+		{"key equal to producer", ev(1, "task.status", "t-1", "t-1", "working: a"), "12:00:01 task.status t-1 working: a"},
+		{"no producer", ev(1, "note", "", "", "hello"), "12:00:01 note hello"},
+	} {
+		if got := ansi.Strip(eventLine(tc.e, dashNow, th)); got != tc.line {
+			t.Errorf("%s: line = %q, want %q", tc.name, got, tc.line)
+		}
+	}
+}
+
+// The first read reads the log back, doubling, until the feed has
+// dashboardFeedMax events to show, the log ends, or dashboardFeedCap is read,
+// so events of removed tasks never push out live ones. A snapshot that may not
+// hold every task hides nothing, so one read is enough, and the next read
+// reads back again until one is taken against a complete snapshot; after that
+// reads only append (the third read in the last two rows reads no log back).
+func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
+	logOf := func(live, orphans int) []orchestrator.Record {
+		var log []orchestrator.Record
+		for i := range live + orphans {
+			p := "t-1"
+			if i >= live {
+				p = "gone"
+			}
+			log = append(log, ev(uint64(i+1), "task.status", p, "k", "working: a"))
+		}
+		return log
+	}
+	failed := []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}
+	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
+	complete := func() (*fleet.DisplaySnapshot, error) { return &fleet.DisplaySnapshot{Tasks: rows}, nil }
+	for _, tc := range []struct {
+		name string
+		log  []orchestrator.Record
+		// snaps are the fleet reads in order, one per dashboard read.
+		snaps         []func() (*fleet.DisplaySnapshot, error)
+		reads         []int
+		shown, hidden int
+		newestShownID uint64
+	}{
+		{"live events behind orphans", logOf(250, 300), nil, []int{200, 400, 800}, 200, 300, 250},
+		{"live events first", logOf(300, 0), nil, []int{200}, 200, 0, 300},
+		{"a short log", logOf(10, 300), nil, []int{200, 400}, 10, 300, 10},
+		{"orphans to the cap", logOf(0, 3000), nil, []int{200, 400, 800, 1600, 2000}, 0, 2000, 0},
+		{"a failed source", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
+			func() (*fleet.DisplaySnapshot, error) {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+			},
+		}, []int{200}, 200, 0, 550},
+		{"a failed first read, then a complete one", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
+			func() (*fleet.DisplaySnapshot, error) { return nil, errors.New("hung") }, complete, complete,
+		}, []int{200, 200, 400, 800}, 200, 300, 250},
+		{"a failed source first, then a complete read", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
+			func() (*fleet.DisplaySnapshot, error) {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+			}, complete, complete,
+		}, []int{200, 200, 400, 800}, 200, 300, 250},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := testDashModel()
+			m.readHolds = func(string, *fleet.DisplaySnapshot) (map[dashHoldKey][]dashHold, error) { return nil, nil }
+			m.captains = func() ([]fleet.Info, error) { return nil, nil }
+			var reads []int
+			m.latest = func(n int) ([]orchestrator.Record, int, error) {
+				reads = append(reads, n)
+				return tc.log[max(0, len(tc.log)-n):], 0, nil
+			}
+			m.after = func(uint64, int) ([]orchestrator.Record, int, error) { return nil, 0, nil }
+			snaps := tc.snaps
+			if snaps == nil {
+				snaps = []func() (*fleet.DisplaySnapshot, error){complete}
+			}
+			for _, s := range snaps {
+				m.readFleet = s
+				m = send(m, m.read())
+			}
+			shown, hidden := m.shownEvents()
+			if !slices.Equal(reads, tc.reads) || len(shown) != tc.shown || hidden != tc.hidden {
+				t.Fatalf("reads %v shown %d hidden %d, want reads %v shown %d hidden %d", reads, len(shown), hidden, tc.reads, tc.shown, tc.hidden)
+			}
+			if len(shown) > 0 && shown[len(shown)-1].ID != tc.newestShownID {
+				t.Fatalf("newest shown event %d, want %d", shown[len(shown)-1].ID, tc.newestShownID)
+			}
+		})
+	}
+}
+
+// NAME and GROUP are as wide as their longest cell over every row, within
+// their least and most widths; GROUP is not drawn while every row shares a
+// group.
+func TestDashboardColumnsFitContent(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		rows         []fleet.TaskSnapshot
+		group, width int
+	}{
+		{"one group, short names", []fleet.TaskSnapshot{row("t1", "queued", "x", "primary", "")}, 0, dashColMin[1]},
+		{"two groups", []fleet.TaskSnapshot{row("t1", "queued", "x", "primary", ""), row("t2", "queued", "x", "captain:alpha", "/h/c/a")}, len("general"), dashColMin[1]},
+		{"a name between the bounds", []fleet.TaskSnapshot{row("t1", "queued", "x", "primary", ""), row("twelve-chars", "queued", "x", "primary", "")}, 0, 12},
+		{"a name past the most", []fleet.TaskSnapshot{row("t-"+strings.Repeat("x", 40), "queued", "x", "primary", "")}, 0, dashColW[1]},
+		{"a group past the most", []fleet.TaskSnapshot{row("t1", "queued", "x", "primary", ""), row("t2", "queued", "x", "captain:"+strings.Repeat("g", 20), "/h/c/g")}, dashColW[0], dashColMin[1]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := send(resized(testDashModel(), 200, 24), goodRead(dashNow, tc.rows, nil, nil)).cols()
+			if c[0] != tc.group || c[1] != tc.width {
+				t.Fatalf("GROUP %d NAME %d, want %d and %d", c[0], c[1], tc.group, tc.width)
+			}
+		})
+	}
+}
+
 // The terminal's background reply picks the theme: the header bar is drawn in
 // the dark palette until a light background answers.
 func TestDashboardThemeFollowsBackground(t *testing.T) {
@@ -255,7 +436,7 @@ func TestDashboardGoldenTruncated(t *testing.T) {
 	}
 	var events []orchestrator.Record
 	for i := 1; i <= 40; i++ {
-		events = append(events, ev(uint64(i), "task.status", "t", "k", fmt.Sprintf("working: step %d", i)))
+		events = append(events, ev(uint64(i), "task.status", "t-00", "k", fmt.Sprintf("working: step %d", i)))
 	}
 	m := send(testDashModel(), goodRead(dashNow, tasks, nil, events))
 	assertGolden(t, "truncated", m.frame())
@@ -751,9 +932,9 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 		}
 		return out
 	}
-	// Header 2, NEEDS YOU 1, hints 2, one row: 6 lines is the least that draws anything.
+	// Header 1, NEEDS YOU 1, hints 2, one row: 5 lines is the least that draws anything.
 	run(t, "pr-merge", func(calls *[]execCall, w, h int) dashboardModel { return prMergeConfirm(t, calls, w, h) },
-		seq(1, 120), []int{6, 7, 10, 40}, func(int, int) bool { return true })
+		seq(1, 120), []int{5, 6, 7, 10, 40}, func(int, int) bool { return true })
 	run(t, "grapheme pairs", func(calls *[]execCall, w, h int) dashboardModel {
 		return sendConfirm(t, calls, "a\u2764\ufe0f\u2764\ufe0f\u2764\ufe0fb \u754c\u754c\u754c ab\u754ccd", w, h)
 	}, seq(1, 120), []int{6, 9, 40}, func(int, int) bool { return false })
@@ -773,27 +954,27 @@ func TestDashboardConfirmShowsFullArgv(t *testing.T) {
 	t.Run("scrolled down in a terminal with no argv row claims nothing and runs nothing", func(t *testing.T) {
 		for _, w := range []int{30, 100} {
 			var calls []execCall
-			m := resized(prMergeConfirm(t, &calls, 100, 40), w, 4)
+			m := resized(prMergeConfirm(t, &calls, 100, 40), w, 3)
 			for i := 0; i < 400; i++ {
 				m = press(m, "down")
 			}
 			if m.argv.Height() != 0 {
-				t.Fatalf("%dx4: argv height %d, want a zero-row viewport", w, m.argv.Height())
+				t.Fatalf("%dx3: argv height %d, want a zero-row viewport", w, m.argv.Height())
 			}
-			assertClaim(t, "pr-merge", w, 4, m)
+			assertClaim(t, "pr-merge", w, 3, m)
 			if m.fits() != (w == 100) {
-				t.Fatalf("%dx4: fits = %v:\n%s", w, m.fits(), m.frame())
+				t.Fatalf("%dx3: fits = %v:\n%s", w, m.fits(), m.frame())
 			}
 			m = press(m, "y")
 			if len(calls) != 0 || m.mode != modeConfirm {
-				t.Fatalf("%dx4: calls = %v, mode = %v; want no exec and still confirming", w, calls, m.mode)
+				t.Fatalf("%dx3: calls = %v, mode = %v; want no exec and still confirming", w, calls, m.mode)
 			}
-			assertWholeBeforeY(t, fmt.Sprintf("%dx4 grown to 100x6", w), resized(m, 100, 6), &calls)
+			assertWholeBeforeY(t, fmt.Sprintf("%dx3 grown to 100x5", w), resized(m, 100, 5), &calls)
 		}
 	})
 	t.Run("a viewport with no row runs nothing", func(t *testing.T) {
 		var calls []execCall
-		m := prMergeConfirm(t, &calls, 100, 4)
+		m := prMergeConfirm(t, &calls, 100, 3)
 		m = press(m, "y")
 		if len(calls) != 0 || m.mode != modeConfirm {
 			t.Fatalf("calls = %v, mode = %v; want no exec and still confirming", calls, m.mode)
@@ -846,21 +1027,21 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 			scroll func(dashboardModel) dashboardModel
 			w, h   int
 		}{
-			{"pr-merge wider", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 46, 6) },
+			{"pr-merge wider", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 50, 6) },
 				func(m dashboardModel) dashboardModel { return press(m, "down", "down") }, 120, 6},
-			{"120-token send wider", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(tokens, " "), 46, 6) },
+			{"120-token send wider", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(tokens, " "), 50, 6) },
 				func(m dashboardModel) dashboardModel { return press(m, "down", "down", "down", "down", "down", "down") }, 80, 6},
 			{"pr-merge narrowed", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 120, 6) },
-				func(m dashboardModel) dashboardModel { return m }, 46, 6},
-			{"120 double-width tokens", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(wide, " "), 46, 20) },
-				func(m dashboardModel) dashboardModel { return m }, 46, 20},
-			{"pr-merge taller, same width", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 46, 6) },
+				func(m dashboardModel) dashboardModel { return m }, 50, 6},
+			{"120 double-width tokens", func(c *[]execCall) dashboardModel { return sendConfirm(t, c, strings.Join(wide, " "), 50, 20) },
+				func(m dashboardModel) dashboardModel { return m }, 50, 20},
+			{"pr-merge taller, same width", func(c *[]execCall) dashboardModel { return prMergeConfirm(t, c, 50, 6) },
 				func(m dashboardModel) dashboardModel {
 					for i := 0; i < 50 && !m.argv.AtBottom(); i++ {
 						m = press(m, "pgdown")
 					}
 					return m
-				}, 46, 10},
+				}, 50, 9},
 		} {
 			var calls []execCall
 			m := tc.scroll(tc.build(&calls))
@@ -871,7 +1052,7 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 	// already at its bottom because the first one was scrolled.
 	t.Run("a second confirm after a scrolled one waits for its whole command", func(t *testing.T) {
 		var calls []execCall
-		m := prMergeConfirm(t, &calls, 50, 7)
+		m := prMergeConfirm(t, &calls, 50, 6)
 		for i := 0; i < 50 && !m.argv.AtBottom(); i++ {
 			m = press(m, "pgdown")
 		}
@@ -899,12 +1080,12 @@ func TestDashboardConfirmYWaitsForWholeArgv(t *testing.T) {
 	// shows it from its first row.
 	t.Run("scrolling under the too-small notice shows the command from its first row", func(t *testing.T) {
 		var calls []execCall
-		m := resized(prMergeConfirm(t, &calls, 46, 6), 20, 6)
+		m := resized(prMergeConfirm(t, &calls, 50, 6), 20, 6)
 		if m.fits() {
 			t.Fatalf("fixture: 20x6 fits:\n%s", m.frame())
 		}
 		m = press(m, "down", "down", "down")
-		assertWholeBeforeY(t, "46x6 after scrolling under the notice", resized(m, 46, 6), &calls)
+		assertWholeBeforeY(t, "50x6 after scrolling under the notice", resized(m, 50, 6), &calls)
 	})
 	t.Run("a second y does not run the command again", func(t *testing.T) {
 		var calls []execCall
@@ -951,14 +1132,14 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		m := testDashModel()
 		m.home = "/h\x00"
 		m.width = 120
-		r := goodRead(dashNow, []fleet.TaskSnapshot{hostileRow},
+		r := goodRead(dashNow, []fleet.TaskSnapshot{hostileRow, row("t-2", "working", "x", "primary", "")},
 			[]fleet.SourceFailure{{Source: "fs\x00", Err: errors.New("fe\x00\u202e\x1b[8m")}},
-			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "et\x00", Producer: "ep\x00", Key: "ek\x00", Payload: "pl\x00\u202e\x1b[8m"}})
+			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "et\x00", Producer: hostileRow.ID, Key: "ek\x00", Payload: "pl\x00\u202e\x1b[8m"}})
 		m = send(m, r)
 		f := m.frame()
 		assertNoRaw(t, "rows failures events", f)
 		assertShown(t, "rows failures events", f, `/h\x00`, `i\x00\u202e`, `k\x00`, `s\x00\u202e`, `p\x00`, `d\x00\u202e\x1b[8m`,
-			`fs\x00`, `fe\x00\u202e\x1b[8m`, `et\x00 ep\x00 ek\x00 pl\x00\u202e\x1b[8m`)
+			`fs\x00`, `fe\x00\u202e\x1b[8m`, `et\x00 i\x00\u202e ek\x00 pl\x00\u202e\x1b[8m`)
 	})
 	t.Run("event log error", func(t *testing.T) {
 		r := goodRead(dashNow, nil, nil, nil)
@@ -971,10 +1152,10 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		const in = "c\u0085\u009b\u2028\xff"
 		const shown = `c\u0085\u009b\u2028\xff`
 		r := goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t-1", Kind: "ship", CurrentState: "working", Source: "primary", CurrentDescription: in}}, nil,
-			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "t", Producer: "p", Key: "k", Payload: in}})
+			[]orchestrator.Record{{ID: 1, Timestamp: dashNow.UnixNano(), Type: "t", Producer: "t-1", Key: "k", Payload: in}})
 		f := send(resized(testDashModel(), 133, 24), r).frame()
 		assertNoRaw(t, "other classes", f)
-		assertShown(t, "other classes", f, "-              "+shown, "t p k "+shown)
+		assertShown(t, "other classes", f, "-              "+shown, "t t-1 k "+shown)
 
 		// A captured row ID is outside text too: it reaches the confirm argv.
 		m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{{ID: "t" + in, Kind: "ship", CurrentState: "working", Source: "primary"}}, nil, nil))
@@ -1001,7 +1182,7 @@ func TestDashboardHostileTextIsEscaped(t *testing.T) {
 		m := send(testDashModel(), dashRead{at: dashNow, snapErr: errors.New("fr\x00\u202e\x1b[8m")})
 		f := m.frame()
 		assertNoRaw(t, "failed first read", f)
-		assertShown(t, "failed first read", f, `FAILED  fr\x00\u202e\x1b[8m`, `Fleet read failed: fr\x00\u202e\x1b[8m`)
+		assertShown(t, "failed first read", f, `FAILED   fr\x00\u202e\x1b[8m`, `Fleet read failed: fr\x00\u202e\x1b[8m`)
 	})
 	t.Run("form value and confirm argv", func(t *testing.T) {
 		// textinput drops control runes (ESC, NUL) from a paste and keeps a
@@ -1090,14 +1271,44 @@ func TestDashboardCtx(t *testing.T) {
 			t.Errorf("dashCtx(%d, %d) = %q, want %q", tc.used, tc.window, got, tc.want)
 		}
 	}
-	// The column is drawn from list width 96, the terminal width less the panel borders.
+}
+
+// The AGE and SINCE, CTX, and HARNESS and MODEL columns are drawn from the
+// list width the drawn GROUP, NAME, STATE and ROLE leave room for, so a hidden
+// GROUP or short names draw them on a narrower terminal. Each gate is pinned
+// at its first width and the width before, for three GROUP and NAME widths.
+func TestDashboardColumnGates(t *testing.T) {
+	rowsOf := func(group, name string) []fleet.TaskSnapshot {
+		rows := []fleet.TaskSnapshot{row(name, "working", "x", "primary", "")}
+		if group != "" {
+			rows = append(rows, row("t-2", "working", "x", "captain:"+group, "/h/c/g"))
+		}
+		return rows
+	}
+	short, long := "t-1", strings.Repeat("n", 20)
 	for _, tc := range []struct {
-		width int
-		shown bool
-	}{{99, false}, {100, true}} {
-		m := healthyModel(tc.width, 32)
-		if got := strings.Contains(ansiSeq.ReplaceAllString(m.frame(), ""), " CTX "); m.listW() != tc.width-4 || got != tc.shown {
-			t.Errorf("width %d (list %d): CTX shown %v, want %v", tc.width, m.listW(), got, tc.shown)
+		name           string
+		rows           []fleet.TaskSnapshot
+		age, ctx, seat int // the least list width that draws each
+	}{
+		{"one group, short names", rowsOf("", short), 66, 71, 104},
+		{"general and alpha, short names", rowsOf("alpha", short), 74, 79, 112},
+		{"a long group, short names", rowsOf(strings.Repeat("g", 12), short), 79, 84, 117},
+		{"a long group, long names", rowsOf(strings.Repeat("g", 12), long), 91, 96, 129},
+	} {
+		for _, g := range []struct {
+			col   int
+			least int
+		}{{3, tc.age}, {4, tc.age}, {5, tc.ctx}, {7, tc.seat}, {8, tc.seat}} {
+			for _, w := range []int{g.least - 1, g.least} {
+				m := send(resized(testDashModel(), w+4, 40), goodRead(dashNow, tc.rows, nil, nil))
+				if m.listW() != w {
+					t.Fatalf("%s: terminal %d gives list width %d, want %d", tc.name, w+4, m.listW(), w)
+				}
+				if got := m.cols()[g.col] > 0; got != (w >= g.least) {
+					t.Errorf("%s: list width %d draws column %d %v, want %v", tc.name, w, g.col, got, w >= g.least)
+				}
+			}
 		}
 	}
 }
@@ -1154,10 +1365,10 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 	base := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("t-sel", "working", long, "primary", ""),
 		row("t-next", "working", "next", "primary", ""),
-	}, nil, []orchestrator.Record{ev(1, "task.status", "t", "k", long)}))
-	selRow := regexp.MustCompile(`t-sel {10}`)
+	}, nil, []orchestrator.Record{ev(1, "task.status", "t-sel", "k", long)}))
+	selRow := regexp.MustCompile(`t-sel {4}`)
 	looks := map[dashLook]bool{}
-	for _, h := range []int{12, 24} {
+	for _, h := range []int{6, 12, 24} {
 		for w := 1; w <= 200; w++ {
 			m := resized(base, w, h)
 			layout := m.layout()
@@ -1219,19 +1430,10 @@ func TestDashboardFrameLinesAreBoundedAndClosed(t *testing.T) {
 	}
 }
 
-// A retired task is finished: it is not counted as unresolved.
-func TestDashboardRetiredIsNotUnresolved(t *testing.T) {
-	m := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
-		row("t-ret", "retired", "x", "primary", ""),
-		row("t-work", "working", "x", "primary", ""),
-	}, nil, nil))
-	if n := m.unresolved(); n != 1 {
-		t.Fatalf("unresolved = %d, want 1 (the working row)", n)
-	}
-}
-
 // captain recover takes the registry ID, which need not equal the directory
-// name; a home no registered captain owns is not bindable.
+// name; a home no registered captain owns is not bindable. A primary-home
+// captain row takes its registered captain's home and ID. The footer offers
+// exactly what begin binds, from the same registry.
 func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 	parent := t.TempDir()
 	if _, err := home.Init(parent); err != nil {
@@ -1248,6 +1450,13 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 	if err := os.MkdirAll(strayHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	failedHome := filepath.Join(parent, "captains", "failed")
+	if err := os.MkdirAll(failedHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.Register(parent, "failed-id", failedHome, "", ""); err != nil {
+		t.Fatal(err)
+	}
 
 	var calls []execCall
 	m := newDashboardModel(parent, "/bin/munsu")
@@ -1255,21 +1464,50 @@ func TestDashboardRecoverResolvesRegistryID(t *testing.T) {
 		calls = append(calls, execCall{exe, args})
 		return nil
 	}
-	m = send(m, goodRead(dashNow, []fleet.TaskSnapshot{
-		row("c-1", "working", "in captain home", "captain:dir-name", captainHome),
-		row("s-1", "working", "in stray home", "captain:stray", strayHome),
-	}, nil, nil))
-
-	m = press(m, "V", "y")
-	want := []string{"--home", parent, "captain", "recover", "registry-id"}
-	if len(calls) != 1 || !reflect.DeepEqual(calls[0].args, want) {
-		t.Fatalf("exec = %+v, want %q", calls, want)
+	m.readFleet = func() (*fleet.DisplaySnapshot, error) {
+		return &fleet.DisplaySnapshot{Tasks: []fleet.TaskSnapshot{
+			{ID: "captain:registry-id", Kind: "captain", Home: parent, Source: "primary"},
+			{ID: "captain:ghost", Kind: "captain", Home: parent, Source: "primary"},
+			row("c-1", "working", "in captain home", "captain:dir-name", captainHome),
+			row("s-1", "working", "in stray home", "captain:stray", strayHome),
+		}, Failures: []fleet.SourceFailure{{Source: "captain:failed", Home: failedHome, Err: errors.New("unreadable")}}}, nil
+	}
+	m = send(m, m.read())
+	canonHome, err := home.CanonicalCaptainHome(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offers := func(m dashboardModel, k string) bool {
+		lit, _ := litKeys(resized(m, 1000, 24).helpLines())
+		return slices.ContainsFunc(lit, func(e string) bool { return strings.HasPrefix(e, k+" ") })
 	}
 
-	m = send(m, dashExecDone{})
-	m = press(m, "j", "V")
-	if m.mode != modeBrowse || len(calls) != 1 || !strings.Contains(m.notice, "not bindable") {
-		t.Fatalf("stray home: mode=%v calls=%d notice=%q; want not bindable and no exec", m.mode, len(calls), m.notice)
+	for _, tc := range []struct {
+		id      string
+		keys    []string
+		want    []string
+		notice  string
+		offered bool
+	}{
+		{"captain:registry-id", []string{"V", "y"}, []string{"--home", parent, "captain", "recover", "registry-id"}, "", true},
+		{"captain:registry-id", []string{"R", "y"}, []string{"--home", parent, "captain", "retire", canonHome}, "", true},
+		{"captain:ghost", []string{"R"}, nil, "captain retire: select a row from a captain home", false},
+		{"c-1", []string{"V", "y"}, []string{"--home", parent, "captain", "recover", "registry-id"}, "", true},
+		{"", []string{"V", "y"}, []string{"--home", parent, "captain", "recover", "failed-id"}, "", true},
+		{"s-1", []string{"V"}, nil, "not bindable", false},
+	} {
+		calls = nil
+		sel := selectTask(t, m, tc.id)
+		if got := offers(sel, tc.keys[0]); got != tc.offered {
+			t.Errorf("%s %s: footer offers %v, want %v", tc.id, tc.keys[0], got, tc.offered)
+		}
+		got := press(sel, tc.keys...)
+		if tc.want != nil && (len(calls) != 1 || !reflect.DeepEqual(calls[0].args, tc.want)) {
+			t.Errorf("%s %s: exec = %+v, want %q", tc.id, tc.keys[0], calls, tc.want)
+		}
+		if tc.want == nil && (got.mode != modeBrowse || len(calls) != 0 || !strings.Contains(got.notice, tc.notice)) {
+			t.Errorf("%s %s: mode=%v calls=%d notice=%q; want %q and no exec", tc.id, tc.keys[0], got.mode, len(calls), got.notice, tc.notice)
+		}
 	}
 }
 
@@ -1325,82 +1563,82 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	}
 	states := []state{
 		{"fresh", 30, 3, 3, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 11 of 33 (page 1 of 3)", "Events"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 2", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 12 of 33 (page 1 of 3)", "Events"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 3", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"},
 		}},
 		{"fresh many tasks", 0, 30, 40, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 17 of 30 (page 1 of 2)", "Events - Showing 5 of the last 40 read"},
-			12: {" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 30 (page 1 of 15)", "Events - Showing 2 of the last 40 read"},
-			6:  {" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of the last 40 read"},
-			4:  {" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you."},
+			30: {" munsu  refreshed 0s ago", "Tasks - Showing 19 of 30 (page 1 of 2)", "Events - Showing 5 of 40"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 2 of 40"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 1 of 40"},
+			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)"},
 		}},
 		{"stale", 30, 3, 3, true, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 10 of 33 (page 1 of 4)", "Events"},
-			12: {" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 1", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"},
-			4:  {" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:"},
+			30: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 11 of 33 (page 1 of 3)", "Events"},
+			12: {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 2", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			6:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"},
+			4:  {" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 0"},
 		}},
 		{"stale many tasks", 2, 30, 40, true, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 13 of 32 (page 1 of 3)", "Events - Showing 5 of the last 40 read"},
-			12: {" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"},
-			6:  {" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)"},
-			4:  {" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:"},
+			30: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 14 of 32 (page 1 of 3)", "Events - Showing 5 of 40"},
+			12: {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
+			6:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of 40"},
+			4:  {" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2 - showing 0"},
 		}},
 		{"zero tasks", 5, 0, 3, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks", "Events"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 2", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks", "Events"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 3", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 0", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)"},
 		}},
 		{"zero failures", 0, 6, 3, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events"},
-			12: {" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 6 (page 1 of 3)", "Events - Showing 2 of the last 3 read"},
-			6:  {" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of the last 3 read"},
-			4:  {" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you."},
+			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 1 of 3"},
+			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)"},
 		}},
 		{"zero events", 3, 6, 0, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks", "Events"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 2", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3", "Failed sources and tasks", "Events"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3 - showing 0", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)"},
 		}},
 		{"feed unreadable after a read", 2, 6, 40, false, true, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read - unreadable:"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 - unreadable:"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 - unreadable:"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 - unreadable:"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"long home", 2, 6, 40, false, false, strings.Repeat("h", 70), false, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"command result", 2, 6, 40, false, false, "", true, 0, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read", "exit 12:"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "exit 12:"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "exit 12:"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40", "exit 12:"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40", "exit 12:"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40", "exit 12:"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "exit 12:"},
 		}},
 		{"feed unreadable after a read, lines skipped", 2, 6, 40, false, true, "", false, 3, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 (3 malformed lines skipped) - unreadable:"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 (3 malformed lines skipped) - unreadable:"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped) - unreadable:"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"first read failed", 0, 0, 0, false, false, "", false, 0, true, nil, map[int][]string{
 			30: {" munsu   FAILED ", "Fleet read failed:", "Events"},
 			12: {" munsu   FAILED ", "Fleet read failed:", "Events"},
 			6:  {" munsu   FAILED ", "Fleet read failed:", "Events"},
-			4:  {" munsu   FAILED ", "Fleet read failed:"},
+			4:  {" munsu   FAILED ", "Fleet read failed:", "Events"},
 		}},
 		{"empty", 0, 0, 0, false, false, "", false, 0, false, nil, map[int][]string{
-			30: {" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "Nothing needs you.", "No tasks and no failed sources.", "Events"},
-			12: {" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "Nothing needs you.", "No tasks and no failed sources.", "Events"},
-			6:  {" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "Nothing needs you.", "No tasks and no failed sources.", "Events"},
-			4:  {" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources."},
+			30: {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
+			12: {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
+			6:  {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
+			4:  {" munsu  refreshed 0s ago", "No tasks and no failed sources.", "Events"},
 		}},
 		{"loading", 0, 0, 0, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			return testDashModel()
@@ -1408,48 +1646,48 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			30: {" munsu   LOADING ", "Loading fleet...", "Events"},
 			12: {" munsu   LOADING ", "Loading fleet...", "Events"},
 			6:  {" munsu   LOADING ", "Loading fleet...", "Events"},
-			4:  {" munsu   LOADING ", "Loading fleet..."},
+			4:  {" munsu   LOADING ", "Loading fleet...", "Events"},
 		}},
 		{"lines skipped, feed readable", 2, 6, 40, false, false, "", false, 3, false, nil, map[int][]string{
-			30: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"},
-			12: {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"},
-			6:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"},
-			4:  {" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"},
+			30: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks", "Events - Showing 5 of 40 (3 malformed lines skipped)"},
+			12: {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of 40 (3 malformed lines skipped)"},
+			6:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped)"},
+			4:  {" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"},
 		}},
 		{"read in progress", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			m.reading = true
 			return m
 		}, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events"},
-			12: {" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of the last 3 read"},
-			6:  {" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"},
-			4:  {" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."},
+			30: {" munsu  refreshed 0s ago (reading)", "Tasks", "Events"},
+			12: {" munsu  refreshed 0s ago (reading)", "Tasks", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"},
+			4:  {" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 		}},
 		{"form mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			return press(selectTask(t, m, "t-00"), "m")
 		}, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events"},
-			12: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"},
-			6:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0"},
-			4:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0"},
+			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"},
+			6:  {" munsu  refreshed 0s ago"},
+			4:  {" munsu  refreshed 0s ago"},
 		}},
 		{"confirm mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			m = press(selectTask(t, m, "t-00"), "s")
 			return press(send(m, tea.PasteMsg{Content: longText("send this line to the task")}), "enter")
 		}, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events"},
-			12: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"},
-			6:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."},
-			4:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0"},
+			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"},
+			4:  {" munsu  refreshed 0s ago"},
 		}},
 		{"running mode", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			m.mode = modeRunning
 			return m
 		}, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events"},
-			12: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of the last 3 read"},
-			6:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"},
-			4:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."},
+			30: {" munsu  refreshed 0s ago", "Tasks", "Events"},
+			12: {" munsu  refreshed 0s ago", "Tasks", "Events - Showing 2 of 3"},
+			6:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"},
+			4:  {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"},
 		}},
 		{"browse result with output, an error and a notice", 0, 3, 3, false, false, "", false, 0, false, func(t *testing.T, m dashboardModel) dashboardModel {
 			m.result = &dashExecDone{
@@ -1460,16 +1698,16 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 			m.notice = longText("selected task changed before the action ran")
 			return m
 		}, map[int][]string{
-			30: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events", "exit -1:"},
-			12: {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read", "exit -1:"},
-			6:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "exit -1:"},
-			4:  {" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "exit -1:"},
+			30: {" munsu  refreshed 0s ago", "Tasks", "Events", "exit -1:"},
+			12: {" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3", "exit -1:"},
+			6:  {" munsu  refreshed 0s ago", "exit -1:"},
+			4:  {" munsu  refreshed 0s ago", "exit -1:"},
 		}},
 	}
 	// Longer than the widest terminal the sweep uses, so a clip cuts it.
 	feedErr := "open /Users/someone/.munsu/projects/example/state/events.log: permission denied, " + strings.Repeat("and more ", 6)
 	titleRe := regexp.MustCompile(`^(Tasks|Failed sources and tasks)( - Showing (\d+) of (\d+) \(page \d+ of \d+\))?$`)
-	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of the last (\d+) read)?`)
+	eventsRe := regexp.MustCompile(`^Events( - Showing (\d+) of (\d+))?`)
 	itemRe := regexp.MustCompile(`^[▌ ] (✗ captain:c\d\d|[! ] [^ ]* *t-\d\d)`)
 	eventRe := regexp.MustCompile(`^\d\d:\d\d:\d\d `)
 	// A narrower terminal wraps the key footer onto more lines (and a confirm's
@@ -1483,500 +1721,216 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 	bands := map[string]map[int][]band{
 		"fresh": {
 			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 1 of the last 3 read"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 2 of 33 (page 1 of 17)", "Events - Showing 1 of the last 3 read"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events"}},
-				{20, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 2 of 33 (page 1 of 17)", "Events"}},
-				{22, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 4 of 33 (page 1 of 9)", "Events"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 5 of 33 (page 1 of 7)", "Events"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 6 of 33 (page 1 of 6)", "Events"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 7 of 33 (page 1 of 5)", "Events"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 8 of 33 (page 1 of 5)", "Events"}},
-				{58, 60, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 9 of 33 (page 1 of 4)", "Events"}},
-				{61, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 4 of 33 (page 1 of 9)", "Events"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 5 of 33 (page 1 of 7)", "Events"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 6 of 33 (page 1 of 6)", "Events"}},
+				{15, 60, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 13 of 33 (page 1 of 3)", "Events"}},
+				{61, 120, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 8 of 33 (page 1 of 5)", "Events"}},
 			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 1", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 1", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
+				{15, 61, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 1 of 3"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "NEEDS YOU 30 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 33  Human-needed 0  failed sources 30"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 30", "NEEDS YOU 30 - showing 0"}},
 			},
 		},
 		"fresh many tasks": {
 			30: {
-				{1, 14, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 3 of 30 (page 1 of 10)", "Events - Showing 3 of the last 40 read"}},
-				{15, 15, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 3 of the last 40 read"}},
-				{16, 17, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 4 of the last 40 read"}},
-				{18, 19, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 3 of 30 (page 1 of 10)", "Events - Showing 5 of the last 40 read"}},
-				{20, 20, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 4 of 30 (page 1 of 8)", "Events - Showing 5 of the last 40 read"}},
-				{21, 21, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 5 of 30 (page 1 of 6)", "Events - Showing 5 of the last 40 read"}},
-				{22, 26, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 6 of 30 (page 1 of 5)", "Events - Showing 5 of the last 40 read"}},
-				{27, 28, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 7 of 30 (page 1 of 5)", "Events - Showing 5 of the last 40 read"}},
-				{29, 29, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 8 of 30 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{30, 32, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 9 of 30 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{33, 38, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 10 of 30 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
-				{39, 42, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 11 of 30 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
-				{43, 48, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 7 of 30 (page 1 of 5)", "Events - Showing 5 of the last 40 read"}},
-				{49, 57, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 8 of 30 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{58, 74, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 9 of 30 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 10 of 30 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 11 of 30 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
+				{15, 42, []string{" munsu  refreshed 0s ago", "Tasks - Showing 20 of 30 (page 1 of 2)", "Events - Showing 5 of 40"}},
+				{43, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 16 of 30 (page 1 of 2)", "Events - Showing 5 of 40"}},
 			},
 			12: {
-				{1, 28, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0"}},
-				{29, 29, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{30, 32, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 30 (page 1 of 30)"}},
-				{33, 38, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of the last 40 read"}},
-				{39, 48, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of the last 40 read"}},
-				{49, 57, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 1 of the last 40 read"}},
-				{58, 74, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of the last 40 read"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 1 of the last 40 read"}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 30 (page 1 of 15)", "Events - Showing 1 of the last 40 read"}},
+				{15, 41, []string{" munsu  refreshed 0s ago", "Tasks - Showing 5 of 30 (page 1 of 6)", "Events - Showing 2 of 40"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 30 (page 1 of 30)"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 30 (page 1 of 30)", "Events - Showing 0 of 40"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 30  Human-needed 0  failed sources 0"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 30 (page 1 of 30)"}},
 			},
 		},
 		"stale": {
 			30: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 4", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{15, 15, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{16, 17, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 1 of the last 3 read"}},
-				{18, 19, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events - Showing 2 of the last 3 read"}},
-				{20, 20, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events"}},
-				{21, 26, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 2 of 33 (page 1 of 17)", "Events"}},
-				{27, 29, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events"}},
-				{30, 32, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 4 of 33 (page 1 of 9)", "Events"}},
-				{33, 38, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 5 of 33 (page 1 of 7)", "Events"}},
-				{39, 48, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 6 of 33 (page 1 of 6)", "Events"}},
-				{49, 57, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 7 of 33 (page 1 of 5)", "Events"}},
-				{58, 61, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 8 of 33 (page 1 of 5)", "Events"}},
-				{62, 74, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 3 of 33 (page 1 of 11)", "Events"}},
-				{75, 113, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 4 of 33 (page 1 of 9)", "Events"}},
-				{114, 120, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 5 of 33 (page 1 of 7)", "Events"}},
+				{15, 60, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 12 of 33 (page 1 of 3)", "Events"}},
+				{61, 120, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 7 of 33 (page 1 of 5)", "Events"}},
 			},
 			12: {
-				{1, 29, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:"}},
-				{30, 32, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 0"}},
-				{33, 38, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"}},
-				{39, 48, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{49, 57, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{75, 113, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 2", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
-				{114, 120, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 0", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 4", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "NEEDS YOU 30 - showing 5", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)", "Events - Showing 0 of 3"}},
 			},
 			6: {
-				{1, 113, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:"}},
-				{114, 120, []string{" munsu   STALE last good read 60s ago ", "unresolved 33  Human-needed 0  failed sources 30", "Last read failed:", "NEEDS YOU 30 - showing 0"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:", "Failed sources and tasks - Showing 1 of 33 (page 1 of 33)"}},
+			},
+			4: {
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 30", "Last read failed:"}},
 			},
 		},
 		"stale many tasks": {
 			30: {
-				{1, 14, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 1 of the last 40 read"}},
-				{15, 15, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 2 of the last 40 read"}},
-				{16, 17, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 32 (page 1 of 11)", "Events - Showing 2 of the last 40 read"}},
-				{18, 19, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 4 of the last 40 read"}},
-				{20, 20, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 32 (page 1 of 11)", "Events - Showing 4 of the last 40 read"}},
-				{21, 21, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 32 (page 1 of 11)", "Events - Showing 5 of the last 40 read"}},
-				{22, 26, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 4 of 32 (page 1 of 8)", "Events - Showing 5 of the last 40 read"}},
-				{27, 28, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 5 of 32 (page 1 of 7)", "Events - Showing 5 of the last 40 read"}},
-				{29, 29, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 32 (page 1 of 6)", "Events - Showing 5 of the last 40 read"}},
-				{30, 32, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 32 (page 1 of 5)", "Events - Showing 5 of the last 40 read"}},
-				{33, 38, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 8 of 32 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{39, 48, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 9 of 32 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{49, 57, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 10 of 32 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
-				{58, 60, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 11 of 32 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
-				{61, 74, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 32 (page 1 of 6)", "Events - Showing 5 of the last 40 read"}},
-				{75, 113, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 32 (page 1 of 5)", "Events - Showing 5 of the last 40 read"}},
-				{114, 120, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 8 of 32 (page 1 of 4)", "Events - Showing 5 of the last 40 read"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 15 of 32 (page 1 of 3)", "Events - Showing 5 of 40"}},
+				{62, 120, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 10 of 32 (page 1 of 4)", "Events - Showing 5 of 40"}},
 			},
 			12: {
-				{1, 29, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:"}},
-				{30, 32, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2 - showing 0"}},
-				{33, 38, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)"}},
-				{39, 48, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"}},
-				{49, 57, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"}},
-				{75, 113, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"}},
-				{114, 120, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)", "Events - Showing 0 of the last 40 read"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 1 of 40"}},
+				{15, 61, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 32 (page 1 of 16)", "Events - Showing 2 of 40"}},
 			},
 			6: {
-				{1, 113, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:"}},
-				{114, 120, []string{" munsu   STALE last good read 60s ago ", "unresolved 32  Human-needed 0  failed sources 2", "Last read failed:", "NEEDS YOU 2 - showing 0"}},
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:", "Failed sources and tasks - Showing 1 of 32 (page 1 of 32)"}},
+			},
+			4: {
+				{1, 14, []string{" munsu   STALE last good read 60s ago  · needs you 2", "Last read failed:"}},
 			},
 		},
 		"zero tasks": {
-			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 1 of the last 3 read"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 2 of 5 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 3 of 5 (page 1 of 2)", "Events"}},
-				{20, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 2 of 5 (page 1 of 3)", "Events"}},
-				{22, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 3 of 5 (page 1 of 2)", "Events"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 4 of 5 (page 1 of 2)", "Events"}},
-				{60, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 4 of 5 (page 1 of 2)", "Events"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 0", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 1", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 0", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 1", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of the last 3 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 1 of 3"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "NEEDS YOU 5 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "Failed sources and tasks - Showing 1 of 5 (page 1 of 5)", "Events - Showing 0 of 3"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 5  Human-needed 0  failed sources 5"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 5", "NEEDS YOU 5 - showing 0"}},
 			},
 		},
 		"zero failures": {
-			30: {
-				{1, 14, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 3 of 6 (page 1 of 2)", "Events"}},
-				{15, 17, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events"}},
-				{18, 19, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 3 of 6 (page 1 of 2)", "Events"}},
-				{20, 20, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 4 of 6 (page 1 of 2)", "Events"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0"}},
-				{29, 29, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{30, 32, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 6 (page 1 of 6)"}},
-				{33, 38, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of the last 3 read"}},
-				{39, 48, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of the last 3 read"}},
-				{49, 57, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 1 of the last 3 read"}},
-				{58, 74, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of the last 3 read"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 1 of the last 3 read"}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 6 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
+				{15, 40, []string{" munsu  refreshed 0s ago", "Tasks - Showing 5 of 6 (page 1 of 2)", "Events - Showing 2 of 3"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 6 (page 1 of 6)"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 6 (page 1 of 6)", "Events - Showing 0 of 3"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 6  Human-needed 0  failed sources 0"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 6 (page 1 of 6)"}},
 			},
 		},
 		"zero events": {
-			30: {
-				{1, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 2 of 9 (page 1 of 5)", "Events"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 3 of 9 (page 1 of 3)", "Events"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 2 of 9 (page 1 of 5)", "Events"}},
-				{20, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 3 of 9 (page 1 of 3)", "Events"}},
-				{22, 26, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 4 of 9 (page 1 of 3)", "Events"}},
-				{27, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 5 of 9 (page 1 of 2)", "Events"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 6 of 9 (page 1 of 2)", "Events"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 7 of 9 (page 1 of 2)", "Events"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 8 of 9 (page 1 of 2)", "Events"}},
-				{60, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 6 of 9 (page 1 of 2)", "Events"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 7 of 9 (page 1 of 2)", "Events"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 8 of 9 (page 1 of 2)", "Events"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 0", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 1", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 0", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 1", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"}},
+				{1, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3", "Failed sources and tasks - Showing 2 of 9 (page 1 of 5)", "Events"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "NEEDS YOU 3 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 3", "Failed sources and tasks - Showing 1 of 9 (page 1 of 9)", "Events"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 9  Human-needed 0  failed sources 3"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 3", "NEEDS YOU 3 - showing 0"}},
 			},
 		},
 		"feed unreadable after a read": {
-			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read - unreadable:"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read - unreadable:"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 3 of the last 40 read - unreadable:"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 4 of the last 40 read - unreadable:"}},
-				{20, 20, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 5 of the last 40 read - unreadable:"}},
-				{21, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read - unreadable:"}},
-				{22, 26, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 5 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read - unreadable:"}},
-				{27, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read - unreadable:"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read - unreadable:"}},
-				{60, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read - unreadable:"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read - unreadable:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40 - unreadable:"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40 - unreadable:"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 - unreadable:"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
 			},
 		},
 		"long home": {
-			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 3 of the last 40 read"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 4 of the last 40 read"}},
-				{20, 20, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 5 of the last 40 read"}},
-				{21, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
-				{22, 26, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 5 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
-				{27, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
-				{60, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
 			},
 		},
 		"command result": {
-			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 1 of the last 40 read", "exit 12:"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read", "exit 12:"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read", "exit 12:"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 4 of the last 40 read", "exit 12:"}},
-				{20, 20, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 4 of the last 40 read", "exit 12:"}},
-				{21, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-				{22, 26, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-				{27, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 5 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-				{60, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read", "exit 12:"}},
-			},
 			12: {
-				{1, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "exit 12:"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "exit 12:"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "exit 12:"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read", "exit 12:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 1 of 40", "exit 12:"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40", "exit 12:"}},
 			},
 			6: {
-				{1, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "exit 12:"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "exit 12:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "exit 12:"}},
+			},
+			4: {
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "exit 12:"}},
 			},
 		},
 		"feed unreadable after a read, lines skipped": {
-			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 3 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 4 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{20, 20, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{21, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{22, 26, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 5 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{27, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{75, 85, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 1 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{86, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped) - unreadable:"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40 (3 malformed lines skipped) - unreadable:"}},
+				{15, 71, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40 (3 malformed lines skipped) - unreadable:"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped) - unreadable:"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
 			},
 		},
 		"first read failed": {
-			12: {
-				{1, 28, []string{" munsu   FAILED "}},
-				{29, 29, []string{" munsu   FAILED ", "Fleet read failed:"}},
-			},
-			6: {
-				{1, 74, []string{" munsu   FAILED "}},
-				{75, 113, []string{" munsu   FAILED ", "Fleet read failed:"}},
-			},
 			4: {
-				{1, 120, []string{" munsu   FAILED "}},
+				{1, 14, []string{" munsu   FAILED ", "Fleet read failed:"}},
 			},
 		},
 		"empty": {
-			12: {
-				{1, 28, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0"}},
-				{29, 29, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources."}},
-				{30, 32, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources.", "Events"}},
-			},
-			6: {
-				{1, 74, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0"}},
-				{75, 113, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources."}},
-				{114, 120, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0", "No tasks and no failed sources.", "Events"}},
-			},
 			4: {
-				{1, 120, []string{" munsu   EMPTY refreshed 0s ago ", "unresolved 0  Human-needed 0  failed sources 0"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "No tasks and no failed sources."}},
 			},
 		},
 		"loading": {
-			12: {
-				{1, 28, []string{" munsu   LOADING "}},
-				{29, 29, []string{" munsu   LOADING ", "Loading fleet..."}},
-			},
-			6: {
-				{1, 74, []string{" munsu   LOADING "}},
-				{75, 113, []string{" munsu   LOADING ", "Loading fleet..."}},
-			},
 			4: {
-				{1, 120, []string{" munsu   LOADING "}},
+				{1, 14, []string{" munsu   LOADING ", "Loading fleet..."}},
 			},
 		},
 		"lines skipped, feed readable": {
-			30: {
-				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped)"}},
-				{15, 15, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of the last 40 read (3 malformed lines skipped)"}},
-				{16, 17, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 3 of the last 40 read (3 malformed lines skipped)"}},
-				{18, 19, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 4 of the last 40 read (3 malformed lines skipped)"}},
-				{20, 20, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"}},
-				{21, 21, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 4 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"}},
-				{22, 26, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 5 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"}},
-				{27, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 6 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"}},
-				{71, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 7 of 8 (page 1 of 2)", "Events - Showing 5 of the last 40 read (3 malformed lines skipped)"}},
-			},
 			12: {
-				{1, 28, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{29, 29, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{30, 32, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
-				{33, 38, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"}},
-				{39, 48, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"}},
-				{49, 57, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 1", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of the last 40 read (3 malformed lines skipped)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 2 of 8 (page 1 of 4)", "Events - Showing 2 of 40 (3 malformed lines skipped)"}},
+				{15, 59, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2", "Failed sources and tasks - Showing 3 of 8 (page 1 of 3)", "Events - Showing 2 of 40 (3 malformed lines skipped)"}},
 			},
 			6: {
-				{1, 74, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
-				{75, 113, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "NEEDS YOU 2 - showing 0"}},
-				{114, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "Failed sources and tasks - Showing 1 of 8 (page 1 of 8)", "Events - Showing 0 of 40 (3 malformed lines skipped)"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   PARTIAL refreshed 0s ago ", "unresolved 8  Human-needed 0  failed sources 2"}},
+				{1, 14, []string{" munsu   PARTIAL refreshed 0s ago  · needs you 2", "NEEDS YOU 2 - showing 0"}},
 			},
 		},
 		"read in progress": {
-			12: {
-				{1, 28, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0"}},
-				{29, 29, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{30, 32, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
-				{33, 38, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{39, 48, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{49, 57, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{58, 74, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"}},
-			},
 			6: {
-				{1, 74, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
+				{1, 14, []string{" munsu  refreshed 0s ago (reading)", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"}},
 			},
 			4: {
-				{1, 120, []string{" munsu   REFRESHED 0s ago  (reading)", "unresolved 3  Human-needed 0  failed sources 0"}},
+				{1, 14, []string{" munsu  refreshed 0s ago (reading)", "Tasks - Showing 0 of 3 (page 1 of 3)"}},
 			},
 		},
 		"form mode": {
 			12: {
-				{1, 29, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
+				{1, 29, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{30, 40, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of 3"}},
 			},
 		},
 		"confirm mode": {
 			30: {
-				{1, 9, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0"}},
-				{10, 10, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{11, 11, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{12, 12, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read"}},
-				{13, 13, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read"}},
-				{14, 14, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events - Showing 2 of the last 3 read"}},
+				{1, 9, []string{" munsu  refreshed 0s ago"}},
+				{10, 10, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
+				{11, 11, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{12, 13, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 2 of 3"}},
 			},
 			12: {
-				{1, 33, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0"}},
-				{34, 39, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you."}},
-				{40, 46, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
-				{47, 58, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{59, 78, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
-				{118, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read"}},
+				{1, 29, []string{" munsu  refreshed 0s ago"}},
+				{30, 33, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 3 (page 1 of 3)"}},
+				{34, 39, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)"}},
+				{40, 46, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"}},
+				{47, 58, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{59, 78, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of 3"}},
+				{79, 117, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3"}},
+				{118, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of 3"}},
 			},
 			6: {
-				{1, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0"}},
-			},
-		},
-		"running mode": {
-			12: {
-				{1, 41, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks", "Events - Showing 2 of the last 3 read"}},
+				{1, 117, []string{" munsu  refreshed 0s ago"}},
+				{118, 120, []string{" munsu  refreshed 0s ago", "Tasks - Showing 0 of 3 (page 1 of 3)"}},
 			},
 		},
 		"browse result with output, an error and a notice": {
-			30: {
-				{1, 14, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read", "exit -1:"}},
-				{15, 15, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of the last 3 read", "exit -1:"}},
-				{16, 17, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of the last 3 read", "exit -1:"}},
-				{41, 48, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events", "exit -1:"}},
-			},
 			12: {
-				{1, 57, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "exit -1:"}},
-				{58, 74, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Nothing needs you.", "exit -1:"}},
-				{75, 113, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "exit -1:"}},
-				{114, 120, []string{" munsu   REFRESHED 0s ago ", "unresolved 3  Human-needed 0  failed sources 0", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 0 of the last 3 read", "exit -1:"}},
+				{1, 14, []string{" munsu  refreshed 0s ago", "Tasks - Showing 1 of 3 (page 1 of 3)", "Events - Showing 1 of 3", "exit -1:"}},
+				{15, 40, []string{" munsu  refreshed 0s ago", "Tasks - Showing 2 of 3 (page 1 of 2)", "Events - Showing 1 of 3", "exit -1:"}},
 			},
 		},
 	}
@@ -1991,7 +1945,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 		}
 		var events []orchestrator.Record
 		for i := 1; i <= st.ne; i++ {
-			events = append(events, ev(uint64(i), "task.status", "t", "k", longText(fmt.Sprintf("step %d", i))))
+			events = append(events, ev(uint64(i), "watcher.cycle.failed", "munsu:watcher", "k", longText(fmt.Sprintf("step %d", i))))
 		}
 		base := testDashModel()
 		if st.home != "" {
@@ -2104,7 +2058,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					}
 					if feedTitle && st.ne > 0 {
 						if feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne {
-							t.Fatalf("%s: %d events drawn, title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, strings.Join(lines, "\n"))
+							t.Fatalf("%s: %d events drawn, title says %d of %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, strings.Join(lines, "\n"))
 						}
 					}
 				}
@@ -2216,7 +2170,7 @@ func TestDashboardFrameCountsAndBounds(t *testing.T) {
 					t.Fatalf("%s: %d items drawn, list title says %d of %d, total %d:\n%s", where, items, listN, listM, total, f)
 				}
 				if feedTitle && (feedN >= 0 && (evs != feedN || feedM != st.ne) || feedN < 0 && evs != st.ne) {
-					t.Fatalf("%s: %d events drawn, feed title says %d of the last %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, f)
+					t.Fatalf("%s: %d events drawn, feed title says %d of %d, read %d:\n%s", where, evs, feedN, feedM, st.ne, f)
 				}
 			}
 		}
@@ -2269,58 +2223,103 @@ func litKeys(lines []string) (lit, dim []string) {
 	return lit, dim
 }
 
-// The key footer draws every entry of the table, lighting exactly the actions
-// bind accepts for the selected row and dimming the rest, fills lines by width
-// without splitting an entry, and a key whose entry is dimmed still reaches
-// begin and gives its notice. q quits by its declaration.
+// The key footer offers, on one line, the movement entry, decide on a held
+// row, the actions offered for the selected row, then help and quit. ? lists
+// every entry, dimming those that do not apply. A key the footer does not
+// offer still reaches begin. q quits by its declaration.
 func TestDashboardKeyFooter(t *testing.T) {
 	const (
-		all      = "j/k move • b block • u unblock • d done • t retry • o reopen • x teardown • p promote • s send • h hold • e resolve • c complete • R retire • V recover • C converge • v record-verdict • m pr-merge • enter decide • q quit"
-		taskKeys = "b block  u unblock  d done  t retry  o reopen  x teardown  p promote  s send  h hold  e resolve  c complete"
-		anyKeys  = "C converge  v record-verdict"
+		all     = "j/k move • enter decide • b block • u unblock • d done • t retry • o reopen • x teardown • p promote • s send • h hold • e resolve • c complete • R retire • V recover • C converge • v record-verdict • m pr-merge • ? less • q quit"
+		tail    = "  ? help  q quit"
+		anyKeys = "C converge  v record-verdict"
+		notes   = "h hold  c complete  "
+		live    = "b block  d done  x teardown  " + notes
+		ended   = "t retry  o reopen  x teardown  " + notes
+		merge   = "  m pr-merge"
 	)
 	var calls []execCall
 	fixture := actionFixture(&calls)
+	inState := func(state, kind string) dashboardModel {
+		r := row("p-1", state, "primary task", "primary", "")
+		r.Kind = kind
+		return send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{r}, nil, nil))
+	}
+	bound := func(kind, worktree, window string) dashboardModel {
+		r := row("p-1", "working", "primary task", "primary", "")
+		r.Kind, r.Worktree, r.Window = kind, worktree, window
+		return send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{r}, nil, nil))
+	}
 	captains := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("p-1", "working", "primary task", "primary", ""),
 	}, []fleet.SourceFailure{{Source: "captains", Home: "/h", Err: errors.New("unlistable")}}, nil))
-	oneRow := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
-		row("p-1", "working", "primary task", "primary", ""),
-	}, nil, nil))
 	held := goodRead(dashNow, []fleet.TaskSnapshot{row("p-1", "working", "primary task", "primary", "")}, nil, nil)
 	held.holds = map[dashHoldKey][]dashHold{{"/h", "p-1"}: {{"approach", "pick one"}}}
-	heldRow := send(testDashModel(), held)
+	registered := func(r dashRead) dashRead {
+		r.registry = []fleet.Info{{ID: "alpha", Home: "/h/captains/alpha"}, {ID: "beta", Home: "/h/captains/beta"}}
+		r.captainIDs = map[string]string{"/h/captains/alpha": "alpha", "/h/captains/beta": "beta"}
+		return r
+	}
+	failedHome := registered(goodRead(dashNow, []fleet.TaskSnapshot{
+		row("p-1", "working", "primary task", "primary", ""),
+	}, []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, nil))
+	meta := func(id string) []fleet.TaskSnapshot {
+		return []fleet.TaskSnapshot{{ID: id, Kind: "captain", Home: "/h", Source: "primary", Window: "mu-captain"}}
+	}
 	tests := []struct {
 		name string
 		m    dashboardModel
 		want string
 	}{
-		{"empty fleet", testDashModel(), anyKeys + "  q quit"},
-		{"one row", oneRow, taskKeys + "  " + anyKeys + "  m pr-merge  q quit"},
-		{"held decision row", heldRow, taskKeys + "  " + anyKeys + "  m pr-merge  enter decide  q quit"},
-		{"failed captain-home row", fixture, "j/k move  R retire  V recover  " + anyKeys + "  q quit"},
-		{"captains failure row", captains, "j/k move  " + anyKeys + "  q quit"},
-		{"primary task row", selectTask(t, fixture, "p-1"), "j/k move  " + taskKeys + "  " + anyKeys + "  m pr-merge  q quit"},
-		{"captain task row", selectTask(t, fixture, "c-1"), "j/k move  " + taskKeys + "  R retire  V recover  " + anyKeys + "  m pr-merge  q quit"},
+		{"empty fleet", testDashModel(), anyKeys + tail},
+		{"queued task", inState("queued", "ship"), live + anyKeys + tail},
+		{"working task, unbound", inState("working", "ship"), live + anyKeys + tail},
+		{"working task, endpoint bound only", bound("ship", "", "mu-p-1"), "b block  d done  x teardown  s send  " + notes + anyKeys + tail},
+		{"working task, worktree bound only", bound("ship", "/wt/p-1", ""), live + anyKeys + tail},
+		{"working task, bound", bound("ship", "/wt/p-1", "mu-p-1"), "b block  d done  x teardown  s send  " + notes + anyKeys + merge + tail},
+		{"working review task, bound", bound("review", "/wt/p-1", "mu-p-1"), "b block  d done  x teardown  s send  " + notes + anyKeys + tail},
+		{"blocked task", inState("blocked", "ship"), "u unblock  d done  x teardown  " + notes + anyKeys + tail},
+		{"done ship task", inState("done", "ship"), ended + anyKeys + tail},
+		{"resolved ship task", inState("resolved", "ship"), ended + anyKeys + tail},
+		{"retired ship task", inState("retired", "ship"), ended + anyKeys + tail},
+		{"done scout task", inState("done", "scout"), "t retry  o reopen  x teardown  p promote  " + notes + anyKeys + tail},
+		{"resolved scout task", inState("resolved", "scout"), "t retry  o reopen  x teardown  p promote  " + notes + anyKeys + tail},
+		{"working scout task", inState("working", "scout"), live + anyKeys + tail},
+		{"task with no phase", inState("", "ship"), anyKeys + tail},
+		{"held decision row", send(testDashModel(), held), "enter decide  b block  d done  x teardown  h hold  e resolve  c complete  " + anyKeys + tail},
+		{"failed captain-home row, unregistered", fixture, "j/k move  R retire  " + anyKeys + tail},
+		{"failed captain-home row, registered", send(testDashModel(), failedHome), "j/k move  R retire  V recover  " + anyKeys + tail},
+		{"captains failure row", captains, "j/k move  " + anyKeys + tail},
+		{"captain task row", selectTask(t, fixture, "c-1"), "j/k move  " + live + "R retire  " + anyKeys + tail},
+		{"primary captain row, registered", send(testDashModel(), registered(goodRead(dashNow, meta("captain:alpha"), nil, nil))), "R retire  V recover  " + anyKeys + tail},
+		{"primary captain row, unregistered", send(testDashModel(), registered(goodRead(dashNow, meta("captain:ghost"), nil, nil))), anyKeys + tail},
+		{"task named like a captain", send(testDashModel(), registered(goodRead(dashNow, []fleet.TaskSnapshot{row("alpha", "working", "x", "primary", "")}, nil, nil))), live + anyKeys + tail},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := resized(tt.m, 1000, 24)
 			got := m.helpLines()
-			if len(got) != 1 || ansi.Strip(got[0]) != all {
-				t.Fatalf("footer = %q\n want  %q", got, all)
-			}
 			lit, dim := litKeys(got)
-			if strings.Join(lit, "  ") != tt.want {
-				t.Fatalf("lit keys = %q\n want     %q (dimmed %q)", strings.Join(lit, "  "), tt.want, dim)
+			if len(got) != 1 || len(dim) != 0 || strings.Join(lit, "  ") != tt.want {
+				t.Fatalf("footer = %q (dimmed %q)\n want    %q", strings.Join(lit, "  "), dim, tt.want)
 			}
-			if !strings.Contains(ansi.Strip(m.frame()), tt.want[:strings.Index(tt.want, "  ")]) {
+			if !strings.Contains(ansi.Strip(m.frame()), strings.Join(lit, " • ")) {
 				t.Fatalf("frame does not draw the footer:\n%s", m.frame())
+			}
+			m = press(m, "?")
+			got = m.helpLines()
+			if len(got) != 1 || ansi.Strip(got[0]) != all {
+				t.Fatalf("help footer = %q\n want        %q", got, all)
+			}
+			if lit, dim := litKeys(got); strings.Join(lit, "  ") != strings.Replace(tt.want, "? help", "? less", 1) {
+				t.Fatalf("help lit keys = %q (dimmed %q), want the footer's", strings.Join(lit, "  "), dim)
+			}
+			if lit, _ := litKeys(press(m, "?").helpLines()); strings.Join(lit, "  ") != tt.want {
+				t.Fatalf("a second ? footer = %q, want %q", strings.Join(lit, "  "), tt.want)
 			}
 		})
 	}
 
-	t.Run("the drawn frame dims exactly the unavailable keys", func(t *testing.T) {
+	t.Run("help draws exactly the unavailable keys dimmed", func(t *testing.T) {
 		lit := func(k, desc string) string {
 			return dashKey.Render(k) + " " + testDashModel().theme().subtle.Render(desc)
 		}
@@ -2330,9 +2329,9 @@ func TestDashboardKeyFooter(t *testing.T) {
 			on, dims []string
 		}{
 			{"empty fleet", testDashModel(), []string{lit("C", "converge"), lit("q", "quit")}, []string{"b block", "R retire", "enter decide", "j/k move"}},
-			{"primary task row", selectTask(t, fixture, "p-1"), []string{lit("b", "block"), lit("j/k", "move"), lit("m", "pr-merge")}, []string{"R retire", "V recover", "enter decide"}},
+			{"primary task row", selectTask(t, fixture, "p-1"), []string{lit("b", "block"), lit("j/k", "move")}, []string{"m pr-merge", "u unblock", "R retire", "V recover", "enter decide"}},
 		} {
-			f := resized(tc.m, 300, 24).View().Content
+			f := press(resized(tc.m, 300, 24), "?").View().Content
 			for _, e := range tc.on {
 				if !strings.Contains(f, e) {
 					t.Errorf("%s: lit %q is not drawn lit:\n%q", tc.name, ansi.Strip(e), f)
@@ -2366,12 +2365,18 @@ func TestDashboardKeyFooter(t *testing.T) {
 		}
 	})
 
-	t.Run("hidden action keys still give their notice", func(t *testing.T) {
+	t.Run("keys the footer does not offer still reach begin", func(t *testing.T) {
 		for key, want := range map[string]string{"b": "task block: select a task row", "R": "captain retire: select a row from a captain home"} {
 			m := press(resized(testDashModel(), 1000, 24), key)
 			if m.mode != modeBrowse || m.notice != want {
 				t.Errorf("%s on an empty fleet: mode %v, notice %q; want browse and %q", key, m.mode, m.notice, want)
 			}
+		}
+		// The command, not the footer, refuses an action the row's phase does
+		// not admit: u on a working task still asks to run task unblock.
+		m := press(resized(selectTask(t, fixture, "p-1"), 100, 40), "u")
+		if m.mode != modeConfirm || !slices.Equal(m.pending.argv, []string{"--home", "/h", "task", "unblock", "p-1"}) {
+			t.Fatalf("u on a working task: mode %v, pending %+v; want the confirm of task unblock", m.mode, m.pending)
 		}
 	})
 
@@ -2385,16 +2390,26 @@ func TestDashboardKeyFooter(t *testing.T) {
 		}
 	})
 
+	// The footer keeps to one line, dropping its last actions while help and
+	// quit do not fit; help fills lines by width without splitting an entry.
 	t.Run("lines fill by width", func(t *testing.T) {
-		m := selectTask(t, fixture, "p-1")
-		one := ansi.Strip(resized(m, 1000, 24).helpLines()[0])
-		if got := ansi.Strip(strings.Join(resized(m, 1000, 24).helpLines(), "")); got != one {
-			t.Fatalf("one line at 1000 columns, got %q", got)
-		}
 		const w = 60
+		m := selectTask(t, fixture, "p-1")
+		wide, _ := litKeys(resized(m, 1000, 24).helpLines())
+		narrow := resized(m, w, 24).helpLines()
+		lit, _ := litKeys(narrow)
+		if len(narrow) != 1 || ansi.StringWidth(ansi.Strip(narrow[0])) > w || len(lit) >= len(wide) ||
+			!slices.Equal(lit[:len(lit)-2], wide[:len(lit)-2]) || !slices.Equal(lit[len(lit)-2:], []string{"? help", "q quit"}) {
+			t.Fatalf("footer at %d columns = %q, want one line of the first entries of %q, then help and quit", w, lit, wide)
+		}
+		if next := append(lit[:len(lit)-2:len(lit)-2], wide[len(lit)-2], "? help", "q quit"); ansi.StringWidth(strings.Join(next, " • ")) <= w {
+			t.Fatalf("footer at %d columns leaves room for %q: %q", w, wide[len(lit)-2], lit)
+		}
+		m = press(m, "?")
+		one := ansi.Strip(resized(m, 1000, 24).helpLines()[0])
 		lines := resized(m, w, 24).helpLines()
 		if len(lines) < 3 {
-			t.Fatalf("%d lines at %d columns, want several: %q", len(lines), w, lines)
+			t.Fatalf("%d help lines at %d columns, want several: %q", len(lines), w, lines)
 		}
 		var joined []string
 		for i, l := range lines {

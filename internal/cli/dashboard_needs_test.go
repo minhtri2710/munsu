@@ -160,15 +160,16 @@ func needsLines(frame string) []string {
 
 // NEEDS YOU lists, from the real snapshot and holds, the open decisions, the
 // unresolved wakes, the failed sources and seats, the stuck seats and the
-// reported verdicts, in that order. It lists by status exactly the rows the
-// header counts as Human-needed, an open hold whatever the row's last line
-// says, and neither a working row nor a finished one.
+// reported verdicts, in that order. It lists by status exactly the rows
+// fleet.HumanNeeded counts, an open hold whatever the row's last line says,
+// and neither a working row nor a finished one. The header bar's count is the
+// section's.
 func TestDashboardNeedsYou(t *testing.T) {
 	h := attentionHome(t)
 	m := attentionModel(t, h, 120, 40)
 	f := m.View().Content
-	if !strings.Contains(ansi.Strip(f), "Human-needed 5") {
-		t.Fatalf("header: want Human-needed 5:\n%s", f)
+	if !strings.Contains(ansi.Strip(f), "· needs you 9  ") {
+		t.Fatalf("header: want needs you 9:\n%s", f)
 	}
 	first := needsLines(f)
 	want := []string{

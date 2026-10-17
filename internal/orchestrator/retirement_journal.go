@@ -66,7 +66,7 @@ func FinalizeRetirementJournals(homeDir, taskID string) ([]string, error) {
 		if err := home.AppendStatus(homeDir, taskID, line); err != nil {
 			return steps, err
 		}
-		if _, err := Append(homeDir, "task.status", taskID, activity.Key, line); err != nil {
+		if _, err := Append(homeDir, EventTaskStatus, taskID, activity.Key, line); err != nil {
 			return steps, err
 		}
 		steps = append(steps, fmt.Sprintf("closed keyed phase [key=%s]", activity.Key))

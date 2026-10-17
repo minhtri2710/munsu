@@ -361,6 +361,11 @@ func TestTaskLifecycleRefusals(t *testing.T) {
 			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
 			return stepComplete(t, c, "t1", 2, PhaseResolved)
 		}},
+		{name: "complete refuses a resolved task", class: ErrPrecondition, want: "complete requires a non-terminal task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseResolved))
+			return stepComplete(t, c, "t1", 2, PhaseDone)
+		}},
 		{name: "complete allows a queued task", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "t1")
 			return stepComplete(t, c, "t1", 1, PhaseDone)
@@ -384,6 +389,11 @@ func TestTaskLifecycleRefusals(t *testing.T) {
 		{name: "reopen allows a terminal task", run: func(t *testing.T, c *Canonical) error {
 			mustCreate(t, c, "t1")
 			mustStep(t, stepComplete(t, c, "t1", 1, PhaseDone))
+			return stepReopen(t, c, "t1", 2)
+		}},
+		{name: "reopen allows a resolved task", run: func(t *testing.T, c *Canonical) error {
+			mustCreate(t, c, "t1")
+			mustStep(t, stepComplete(t, c, "t1", 1, PhaseResolved))
 			return stepReopen(t, c, "t1", 2)
 		}},
 		{name: "reopen refuses a superseded generation", class: ErrConflict, want: "is not current; it is superseded and cannot be mutated", run: func(t *testing.T, c *Canonical) error {
