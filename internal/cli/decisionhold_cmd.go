@@ -490,10 +490,10 @@ Examples:
 				msg += "\nUnblocked: " + strings.Join(unblocked, ", ")
 			}
 			if len(failed) > 0 {
-				errs = append(errs, fmt.Errorf("Not unblocked: %s", strings.Join(failed, "; ")))
+				msg += "\nNot unblocked: " + strings.Join(failed, "; ")
 			}
-			if len(errs) > 0 {
-				return fmt.Errorf("%s\n%w", msg, errors.Join(errs...))
+			if len(failed) > 0 || len(errs) > 0 {
+				return errors.Join(append([]error{errors.New(msg)}, errs...)...)
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
