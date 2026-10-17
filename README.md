@@ -44,8 +44,8 @@ After installation, ensure the binary directory is on your `$PATH`:
 ## Quick start
 
 ```sh
-munsu home --mkdir       # create ~/.munsu/{state,data,config,projects}
-munsu init               # detect the soldier harness, seed config/base.json and AGENTS.md
+munsu init               # create ~/.munsu, detect the soldier harness, seed config/base.json and AGENTS.md
+munsu config set backend herdr   # or tmux; spawning requires a session backend
 munsu doctor             # run diagnostics with fix commands
 munsu --help             # see the full command tree
 munsu --version          # print version

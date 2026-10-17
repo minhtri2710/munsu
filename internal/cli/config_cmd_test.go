@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -497,20 +498,41 @@ func TestConfigSetBackendAuthorsFleetBase(t *testing.T) {
 }
 
 // TestConfigSetTypedKeysValidateInput verifies typed-key set validates its
-// input: an empty backend identity is rejected.
+// input: an empty or unsupported backend identity is refused and nothing is
+// stored; each supported identity is stored trimmed.
 func TestConfigSetTypedKeysValidateInput(t *testing.T) {
 	cases := []struct {
-		key   string
-		value string
+		key    string
+		value  string
+		want   string // refusal text; "" allows
+		stored string
 	}{
-		{"backend", ""},
+		{"backend", "", "backend identity must not be empty", ""},
+		{"backend", "bogus", `config set backend: unknown session backend: "bogus" (supported: herdr, tmux)`, ""},
+		{"backend", "auto", `config set backend: unknown session backend: "auto" (supported: herdr, tmux)`, ""},
+		{"backend", "herdr", "", "herdr"},
+		{"backend", "tmux", "", "tmux"},
+		{"backend", " tmux ", "", "tmux"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			t.Setenv("MUNSU_HOME", tmpDir)
-			if err := runConfigSet(t, "config", "set", tc.key, tc.value); err == nil {
-				t.Fatalf("config set %s %q: expected validation error", tc.key, tc.value)
+			err := runConfigSet(t, "config", "set", tc.key, tc.value)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("config set %s %q: err = %v, want %q", tc.key, tc.value, err, tc.want)
+				}
+				if _, statErr := os.Stat(filepath.Join(tmpDir, config.BaseDocumentPath)); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("a refused set wrote the base document: %v", statErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("config set %s %q: %v", tc.key, tc.value, err)
+			}
+			if got, _, _ := readBaseConfigField(tmpDir, tc.key); got != tc.stored {
+				t.Fatalf("stored %s = %q, want %q", tc.key, got, tc.stored)
 			}
 		})
 	}
