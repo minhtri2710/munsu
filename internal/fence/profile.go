@@ -167,6 +167,10 @@ func New(l Launch) (*Fence, error) {
 		deny(&b, "literal", p.gitDir)
 		// A worktree config can set hooks and commands that later run unfenced.
 		deny(&b, "literal", filepath.Join(p.gitDir, "config.worktree"))
+		// commondir names the repo whose config unfenced git loads; gitdir names
+		// the path `git worktree prune/remove` acts on.
+		// Words: Human, typed, 2026-10-17: "ok làm đi" (council 3/3: soldier fence denies gitDir commondir and gitdir; redirect to planted core.fsmonitor)
+		deny(&b, "literal", filepath.Join(p.gitDir, "commondir"), filepath.Join(p.gitDir, "gitdir"))
 		// The worktree's own name and every directory above it cannot be
 		// unlinked or renamed, and its .git file cannot be written: a seat
 		// that moved its worktree away and planted a link at its name, or
