@@ -84,3 +84,51 @@ func TestFencedCaptainRunsItsSeatCommandsOutsideTheFence(t *testing.T) {
 		t.Fatalf("the seat's spawn did not write outside the fence: %v", err)
 	}
 }
+
+// A claude captain runs from its own claude config dir, opened in its fence,
+// and never gets a pi agent dir.
+func TestFencedClaudeCaptainRunsFromItsClaudeConfigDir(t *testing.T) {
+	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(parent, "captains", "c"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	captainHome, err := canonicalPath(filepath.Join(parent, "captains", "c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := home.Init(captainHome); err != nil {
+		t.Fatal(err)
+	}
+	seat, err := prepareCaptainSeat(captainHome, parent, "c", "claude")
+	if err != nil {
+		t.Fatalf("prepareCaptainSeat: %v", err)
+	}
+	if _, err := buildLaunchScript("/test/bin/claude", nil, captainHome, parent, "c", seat); err != nil {
+		t.Fatalf("buildLaunchScript: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(captainHome, ".captain-launch.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(body)
+	claudeDir, err := claudeConfigDirPath(captainHome, taskIDForCaptain("c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	piDir, err := piAgentDirPath(captainHome, taskIDForCaptain("c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, "export CLAUDE_CONFIG_DIR="+shQuote(claudeDir)+"\n") || strings.Contains(script, "PI_CODING_AGENT_DIR") {
+		t.Fatalf("launch script:\n%s\nwant CLAUDE_CONFIG_DIR=%s and no pi agent dir", script, claudeDir)
+	}
+	if fi, err := os.Lstat(claudeDir); err != nil || !fi.IsDir() {
+		t.Fatalf("claude config dir not built: %v", err)
+	}
+	if _, err := os.Lstat(piDir); !os.IsNotExist(err) {
+		t.Fatalf("pi agent dir %s exists for a claude captain: %v", piDir, err)
+	}
+}

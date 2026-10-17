@@ -210,7 +210,7 @@ func shQuote(s string) string {
 // bash-only identity/env plumbing must not be typed directly into the pane.
 // With a fence the script runs the captain under it from `munsu captain
 // seat`, which stays outside to run the captain's seat commands, on exactly
-// the PATH the fence denies and from the captain's own pi agent dir.
+// the PATH the fence denies and from the captain's own harness state dir.
 func buildLaunchScript(binPath string, args []string, cwd string, parentHome string, captainID string, seat captainSeat) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/bin/env bash\n")
@@ -246,8 +246,10 @@ func buildLaunchScript(binPath string, args []string, cwd string, parentHome str
 	} else {
 		b.WriteString("export PATH=")
 		b.WriteString(shQuote(strings.Join(seat.pathDirs, string(os.PathListSeparator))))
-		b.WriteString("\nexport PI_CODING_AGENT_DIR=")
-		b.WriteString(shQuote(seat.agentDir))
+		for _, kv := range seat.env {
+			b.WriteString("\nexport " + kv[0] + "=")
+			b.WriteString(shQuote(kv[1]))
+		}
 		b.WriteString("\nexport GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0\n")
 		wrapped, err := seat.fence.Wrap(argv)
 		if err != nil {

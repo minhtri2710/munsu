@@ -44,19 +44,20 @@ func CaptainSeatRuns(args []string) bool {
 }
 
 // captainSeat is a captain launch's write fence, probed, with the PATH it
-// denies and the pi agent dir the captain runs from. A nil fence is a launch
-// on a host with no fence, recorded with its reason.
+// denies and the harness config env the captain runs with. A nil fence is a
+// launch on a host with no fence, recorded with its reason.
 type captainSeat struct {
 	fence    *fence.Fence
 	digest   string
 	pathDirs []string
-	agentDir string
+	env      [][2]string
 	reason   string
 }
 
 // prepareCaptainSeat builds the captain's fence, F3, and proves it before any
-// pane exists, as probeFence does for a soldier. The captain gets its own pi
-// agent dir, built like a soldier's, and its docs dir. A fence that cannot be
+// pane exists, as probeFence does for a soldier. The captain gets its own
+// harness state dir (pi agent dir or claude config dir), built like a
+// soldier's, and its docs dir. A fence that cannot be
 // built or proved refuses the launch. A host with no fence launches the captain
 // unfenced and records why: a captain has no project to carry
 // fence-unsupported, and off darwin it launched unfenced before this fence
@@ -73,19 +74,32 @@ func prepareCaptainSeat(captainHome, parentHome, captainID, harnessName string) 
 		return captainSeat{reason: err.Error()}, nil
 	}
 	stateDir := home.StateDir(captainHome)
-	agentDir, err := piAgentDirPath(captainHome, taskIDForCaptain(captainID))
-	if err != nil {
-		return captainSeat{}, err
-	}
-	src, err := harness.HumanPiAgentDir(stateDir)
-	if err != nil {
-		return captainSeat{}, fmt.Errorf("captain fence: %w", err)
-	}
 	if err := os.MkdirAll(filepath.Join(stateDir, fence.CaptainDocsDir), 0o755); err != nil {
 		return captainSeat{}, fmt.Errorf("captain fence: %w", err)
 	}
-	if err := harness.BuildPiAgentDir(src, harness.SeatBuildDir(captainHome), agentDir); err != nil {
-		return captainSeat{}, fmt.Errorf("captain fence: %w", err)
+	taskID := taskIDForCaptain(captainID)
+	var stateEnvDir string
+	var env [][2]string
+	switch harnessName {
+	case harness.Pi:
+		dir, err := piAgentDirPath(captainHome, taskID)
+		if err != nil {
+			return captainSeat{}, err
+		}
+		src, err := harness.HumanPiAgentDir(stateDir)
+		if err != nil {
+			return captainSeat{}, fmt.Errorf("captain fence: %w", err)
+		}
+		if err := harness.BuildPiAgentDir(src, harness.SeatBuildDir(captainHome), dir); err != nil {
+			return captainSeat{}, fmt.Errorf("captain fence: %w", err)
+		}
+		stateEnvDir, env = dir, [][2]string{{"PI_CODING_AGENT_DIR", dir}}
+	case harness.Claude:
+		dir, cfg, err := provisionClaudeConfigDir(captainHome, taskID)
+		if err != nil {
+			return captainSeat{}, err
+		}
+		stateEnvDir, env = dir, [][2]string{{"CLAUDE_CONFIG_DIR", dir}, {"CLAUDE_SECURESTORAGE_CONFIG_DIR", cfg.SecureStorage}}
 	}
 	userHome, err := os.UserHomeDir()
 	if err != nil {
@@ -94,7 +108,7 @@ func prepareCaptainSeat(captainHome, parentHome, captainID, harnessName string) 
 	launch := fence.Launch{
 		Role: fence.RoleCaptain, Harness: harnessName, Home: captainHome, ParentHome: parentHome,
 		UserHome: userHome,
-		Socket:   captainSeatSocket(captainHome), HarnessStateDir: agentDir,
+		Socket:   captainSeatSocket(captainHome), HarnessStateDir: stateEnvDir,
 		PathDirs: seatPathDirs(captainHome), ShimDir: gitShimDir(captainHome),
 	}
 	if _, gitDir, commonDir, err := ClassifyIdentity(captainHome); err == nil {
@@ -110,7 +124,7 @@ func prepareCaptainSeat(captainHome, parentHome, captainID, harnessName string) 
 	if err != nil {
 		return captainSeat{}, fmt.Errorf("captain fence refused the launch: %w", err)
 	}
-	return captainSeat{fence: f, digest: ev.ProfileDigest, pathDirs: launch.PathDirs, agentDir: agentDir}, nil
+	return captainSeat{fence: f, digest: ev.ProfileDigest, pathDirs: launch.PathDirs, env: env}, nil
 }
 
 // meta is the seat's fence record in the captain's task meta.
