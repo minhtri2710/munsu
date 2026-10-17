@@ -126,3 +126,23 @@ func TestAggregateJSONIsDeterministic(t *testing.T) {
 		t.Fatalf("JSON does not carry schema identity: %s", first)
 	}
 }
+
+// Delivery accepts only a ship task, and only in working with its worktree and
+// endpoint bound: every phase and kind, and each binding missing alone.
+func TestDeliveryPredicates(t *testing.T) {
+	for _, p := range []Phase{"", PhaseQueued, PhaseBlocked, PhaseWorking, PhaseDone, PhaseResolved, PhaseRetired, "bogus"} {
+		if got, want := p.Deliverable(), p == PhaseWorking; got != want {
+			t.Errorf("Phase(%q).Deliverable() = %v, want %v", p, got, want)
+		}
+		for _, b := range []struct{ worktree, endpoint bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+			if got, want := DeliveryReady(p, b.worktree, b.endpoint), p == PhaseWorking && b.worktree && b.endpoint; got != want {
+				t.Errorf("DeliveryReady(%q, %v, %v) = %v, want %v", p, b.worktree, b.endpoint, got, want)
+			}
+		}
+	}
+	for _, kind := range []string{"", KindShip, KindScout, KindReview, "captain", "Ship"} {
+		if got, want := DeliversKind(kind), kind == KindShip; got != want {
+			t.Errorf("DeliversKind(%q) = %v, want %v", kind, got, want)
+		}
+	}
+}

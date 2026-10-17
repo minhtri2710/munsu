@@ -235,7 +235,9 @@ func TestDashboardEventRows(t *testing.T) {
 // The first read reads the log back, doubling, until the feed has
 // dashboardFeedMax events to show, the log ends, or dashboardFeedCap is read,
 // so events of removed tasks never push out live ones. A snapshot that may not
-// hold every task hides nothing, so one read is enough.
+// hold every task hides nothing, so one read is enough, and the next read
+// reads back again until one is taken against a complete snapshot; after that
+// reads only append (the third read in the last two rows reads no log back).
 func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 	logOf := func(live, orphans int) []orchestrator.Record {
 		var log []orchestrator.Record
@@ -248,10 +250,14 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 		}
 		return log
 	}
+	failed := []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}
+	rows := []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}
+	complete := func() (*fleet.DisplaySnapshot, error) { return &fleet.DisplaySnapshot{Tasks: rows}, nil }
 	for _, tc := range []struct {
-		name          string
-		log           []orchestrator.Record
-		failures      []fleet.SourceFailure
+		name string
+		log  []orchestrator.Record
+		// snaps are the fleet reads in order, one per dashboard read.
+		snaps         []func() (*fleet.DisplaySnapshot, error)
 		reads         []int
 		shown, hidden int
 		newestShownID uint64
@@ -260,13 +266,22 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 		{"live events first", logOf(300, 0), nil, []int{200}, 200, 0, 300},
 		{"a short log", logOf(10, 300), nil, []int{200, 400}, 10, 300, 10},
 		{"orphans to the cap", logOf(0, 3000), nil, []int{200, 400, 800, 1600, 2000}, 0, 2000, 0},
-		{"a failed source", logOf(250, 300), []fleet.SourceFailure{{Source: "captain:beta", Home: "/h/captains/beta", Err: errors.New("unreadable")}}, []int{200}, 200, 0, 550},
+		{"a failed source", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
+			func() (*fleet.DisplaySnapshot, error) {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+			},
+		}, []int{200}, 200, 0, 550},
+		{"a failed first read, then a complete one", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
+			func() (*fleet.DisplaySnapshot, error) { return nil, errors.New("hung") }, complete, complete,
+		}, []int{200, 200, 400, 800}, 200, 300, 250},
+		{"a failed source first, then a complete read", logOf(250, 300), []func() (*fleet.DisplaySnapshot, error){
+			func() (*fleet.DisplaySnapshot, error) {
+				return &fleet.DisplaySnapshot{Tasks: rows, Failures: failed}, nil
+			}, complete, complete,
+		}, []int{200, 200, 400, 800}, 200, 300, 250},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := testDashModel()
-			m.readFleet = func() (*fleet.DisplaySnapshot, error) {
-				return &fleet.DisplaySnapshot{Tasks: []fleet.TaskSnapshot{row("t-1", "working", "x", "primary", "")}, Failures: tc.failures}, nil
-			}
 			m.readHolds = func(string, *fleet.DisplaySnapshot) (map[dashHoldKey][]dashHold, error) { return nil, nil }
 			m.captains = func() ([]fleet.Info, error) { return nil, nil }
 			var reads []int
@@ -274,7 +289,15 @@ func TestDashboardFeedReadsBackPastHidden(t *testing.T) {
 				reads = append(reads, n)
 				return tc.log[max(0, len(tc.log)-n):], 0, nil
 			}
-			m = send(m, m.read())
+			m.after = func(uint64, int) ([]orchestrator.Record, int, error) { return nil, 0, nil }
+			snaps := tc.snaps
+			if snaps == nil {
+				snaps = []func() (*fleet.DisplaySnapshot, error){complete}
+			}
+			for _, s := range snaps {
+				m.readFleet = s
+				m = send(m, m.read())
+			}
 			shown, hidden := m.shownEvents()
 			if !slices.Equal(reads, tc.reads) || len(shown) != tc.shown || hidden != tc.hidden {
 				t.Fatalf("reads %v shown %d hidden %d, want reads %v shown %d hidden %d", reads, len(shown), hidden, tc.reads, tc.shown, tc.hidden)
@@ -2221,8 +2244,11 @@ func TestDashboardKeyFooter(t *testing.T) {
 		r.Kind = kind
 		return send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{r}, nil, nil))
 	}
-	windowed := row("p-1", "working", "primary task", "primary", "")
-	windowed.Window = "mu-p-1"
+	bound := func(kind, worktree, window string) dashboardModel {
+		r := row("p-1", "working", "primary task", "primary", "")
+		r.Kind, r.Worktree, r.Window = kind, worktree, window
+		return send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{r}, nil, nil))
+	}
 	captains := send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{
 		row("p-1", "working", "primary task", "primary", ""),
 	}, []fleet.SourceFailure{{Source: "captains", Home: "/h", Err: errors.New("unlistable")}}, nil))
@@ -2246,8 +2272,11 @@ func TestDashboardKeyFooter(t *testing.T) {
 	}{
 		{"empty fleet", testDashModel(), anyKeys + tail},
 		{"queued task", inState("queued", "ship"), live + anyKeys + tail},
-		{"working task", inState("working", "ship"), live + anyKeys + merge + tail},
-		{"working task with a window", send(testDashModel(), goodRead(dashNow, []fleet.TaskSnapshot{windowed}, nil, nil)), "b block  d done  x teardown  s send  " + notes + anyKeys + merge + tail},
+		{"working task, unbound", inState("working", "ship"), live + anyKeys + tail},
+		{"working task, endpoint bound only", bound("ship", "", "mu-p-1"), "b block  d done  x teardown  s send  " + notes + anyKeys + tail},
+		{"working task, worktree bound only", bound("ship", "/wt/p-1", ""), live + anyKeys + tail},
+		{"working task, bound", bound("ship", "/wt/p-1", "mu-p-1"), "b block  d done  x teardown  s send  " + notes + anyKeys + merge + tail},
+		{"working review task, bound", bound("review", "/wt/p-1", "mu-p-1"), "b block  d done  x teardown  s send  " + notes + anyKeys + tail},
 		{"blocked task", inState("blocked", "ship"), "u unblock  d done  x teardown  " + notes + anyKeys + tail},
 		{"done ship task", inState("done", "ship"), ended + anyKeys + tail},
 		{"resolved ship task", inState("resolved", "ship"), ended + anyKeys + tail},
@@ -2256,14 +2285,14 @@ func TestDashboardKeyFooter(t *testing.T) {
 		{"resolved scout task", inState("resolved", "scout"), "t retry  o reopen  x teardown  p promote  " + notes + anyKeys + tail},
 		{"working scout task", inState("working", "scout"), live + anyKeys + tail},
 		{"task with no phase", inState("", "ship"), anyKeys + tail},
-		{"held decision row", send(testDashModel(), held), "enter decide  b block  d done  x teardown  h hold  e resolve  c complete  " + anyKeys + merge + tail},
+		{"held decision row", send(testDashModel(), held), "enter decide  b block  d done  x teardown  h hold  e resolve  c complete  " + anyKeys + tail},
 		{"failed captain-home row, unregistered", fixture, "j/k move  R retire  " + anyKeys + tail},
 		{"failed captain-home row, registered", send(testDashModel(), failedHome), "j/k move  R retire  V recover  " + anyKeys + tail},
 		{"captains failure row", captains, "j/k move  " + anyKeys + tail},
-		{"captain task row", selectTask(t, fixture, "c-1"), "j/k move  " + live + "R retire  " + anyKeys + merge + tail},
+		{"captain task row", selectTask(t, fixture, "c-1"), "j/k move  " + live + "R retire  " + anyKeys + tail},
 		{"primary captain row, registered", send(testDashModel(), registered(goodRead(dashNow, meta("captain:alpha"), nil, nil))), "R retire  V recover  " + anyKeys + tail},
 		{"primary captain row, unregistered", send(testDashModel(), registered(goodRead(dashNow, meta("captain:ghost"), nil, nil))), anyKeys + tail},
-		{"task named like a captain", send(testDashModel(), registered(goodRead(dashNow, []fleet.TaskSnapshot{row("alpha", "working", "x", "primary", "")}, nil, nil))), live + anyKeys + merge + tail},
+		{"task named like a captain", send(testDashModel(), registered(goodRead(dashNow, []fleet.TaskSnapshot{row("alpha", "working", "x", "primary", "")}, nil, nil))), live + anyKeys + tail},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2300,7 +2329,7 @@ func TestDashboardKeyFooter(t *testing.T) {
 			on, dims []string
 		}{
 			{"empty fleet", testDashModel(), []string{lit("C", "converge"), lit("q", "quit")}, []string{"b block", "R retire", "enter decide", "j/k move"}},
-			{"primary task row", selectTask(t, fixture, "p-1"), []string{lit("b", "block"), lit("j/k", "move"), lit("m", "pr-merge")}, []string{"u unblock", "R retire", "V recover", "enter decide"}},
+			{"primary task row", selectTask(t, fixture, "p-1"), []string{lit("b", "block"), lit("j/k", "move")}, []string{"m pr-merge", "u unblock", "R retire", "V recover", "enter decide"}},
 		} {
 			f := press(resized(tc.m, 300, 24), "?").View().Content
 			for _, e := range tc.on {

@@ -56,6 +56,9 @@ type dashRead struct {
 	holds    map[dashHoldKey][]dashHold
 	holdsErr error
 	latest   bool // events came from LatestEvents (replace) rather than EventsAfter (append)
+	// complete is whether a latest read was taken against a snapshot that
+	// holds every task, so its read-back past hidden events is final.
+	complete bool
 	events   []orchestrator.Record
 	skipped  int
 	eventErr error
@@ -136,6 +139,9 @@ type dashboardModel struct {
 	events     []orchestrator.Record
 	cursor     uint64
 	feedLoaded bool
+	// backfilled is whether a latest read completed against a complete
+	// snapshot; until then every read reads the log back again.
+	backfilled bool
 	skipped    int
 	eventErr   error
 
@@ -257,7 +263,7 @@ func dashboardExec(exe string, args []string) tea.Cmd {
 // read performs one read. It touches no model state, so it is safe to run as a
 // command while the model keeps updating.
 func (m dashboardModel) read() dashRead {
-	r := dashRead{at: m.now(), latest: !m.feedLoaded}
+	r := dashRead{at: m.now(), latest: !m.backfilled}
 	r.snap, r.snapErr = m.readFleet()
 	if r.snapErr == nil {
 		r.holds, r.holdsErr = m.readHolds(m.home, r.snap)
@@ -273,6 +279,7 @@ func (m dashboardModel) read() dashRead {
 	if r.snapErr == nil {
 		snap = r.snap
 	}
+	r.complete = snap != nil && len(snap.Failures) == 0
 	for n := dashboardFeedMax; ; n = min(2*n, dashboardFeedCap) {
 		r.events, r.skipped, r.eventErr = m.latest(n)
 		if shown, _ := dashShown(r.events, snap); r.eventErr != nil || len(r.events) < n || n == dashboardFeedCap || len(shown) >= dashboardFeedMax {
@@ -281,8 +288,9 @@ func (m dashboardModel) read() dashRead {
 	}
 }
 
-// readCaptains reads the captain registry and resolves, the way begin does,
-// the registry ID of every captain home the snapshot and the registry name.
+// readCaptains reads the captain registry and resolves the registry ID of
+// every captain home the snapshot and the registry name. begin and the footer
+// both bind captain actions against this result, never the disk.
 func (m dashboardModel) readCaptains(snap *fleet.DisplaySnapshot) ([]fleet.Info, map[string]string) {
 	infos, err := m.captains()
 	if err != nil {
@@ -396,6 +404,7 @@ func (m *dashboardModel) applyRead(r dashRead) {
 		return
 	}
 	m.eventErr, m.skipped, m.feedLoaded = nil, r.skipped, true
+	m.backfilled = m.backfilled || r.latest && r.complete
 	if r.latest {
 		m.events = r.events
 	} else {
@@ -525,9 +534,7 @@ func (m dashboardModel) begin(a *dashAction) dashboardModel {
 	hasTarget := len(m.list.Items()) > 0
 	t := m.sel
 	if a.binding == bindCaptain {
-		if infos, err := m.captains(); err == nil {
-			t = captainTarget(t, infos)
-		}
+		t = captainTarget(t, m.registry)
 	}
 	home, problem := a.bind(t, hasTarget, m.home)
 	if problem != "" {
@@ -535,9 +542,9 @@ func (m dashboardModel) begin(a *dashAction) dashboardModel {
 		return m
 	}
 	if a.needsCaptainID {
-		id, err := m.captainIDOf(t.Home)
-		if err != nil {
-			m.notice = a.name + ": not bindable: " + err.Error()
+		id, ok := m.captainIDs[t.Home]
+		if !ok {
+			m.notice = a.name + ": not bindable: the last read resolved no registered captain for home " + t.Home
 			return m
 		}
 		t.CaptainID = id
@@ -567,16 +574,6 @@ func (p *dashPending) focus(i int) {
 		p.inputs[i].Focus()
 	}
 	p.field = i
-}
-
-// captainIDOf resolves the registry ID of the captain whose canonical home is
-// the given row home from the registry as it is now.
-func (m dashboardModel) captainIDOf(rowHome string) (string, error) {
-	infos, err := m.captains()
-	if err != nil {
-		return "", err
-	}
-	return captainIDIn(infos, rowHome)
 }
 
 // captainTarget is the target a captain action takes for a primary-home

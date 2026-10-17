@@ -66,13 +66,22 @@ func TestResolveTaskHome(t *testing.T) {
 }
 
 // TestRequireShipTask_ReadsCanonicalKind pins the kind refusal: a canonical
-// scout is refused, and a canonical ship in a captain home passes.
+// scout or review is refused, and a canonical ship in a captain home passes.
 func TestRequireShipTask_ReadsCanonicalKind(t *testing.T) {
 	t.Run("canonical scout is refused", func(t *testing.T) {
 		home := t.TempDir()
 		seedTaskInHome(t, home, "s1", taskauthority.KindScout)
 		_, err := RequireShipTask(home, "s1")
 		if err == nil || !strings.Contains(err.Error(), `kind="scout"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("canonical review is refused", func(t *testing.T) {
+		c, home := newFleetCanonical(t)
+		mustWorkingShipTask(t, c, "ship-1")
+		review := mustBindReviewTask(t, c, "ship-1", deliveryTestHead)
+		_, err := RequireShipTask(home, review.TaskID)
+		if err == nil || !strings.Contains(err.Error(), `kind="review"`) {
 			t.Fatalf("err = %v", err)
 		}
 	})

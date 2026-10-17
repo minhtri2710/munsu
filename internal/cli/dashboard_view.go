@@ -1102,8 +1102,9 @@ func (m dashboardModel) helpLines() []string {
 }
 
 // offered is whether the footer offers the action for the selected item: the
-// target begin captures binds, a captain ID resolves from the last read's
-// registry where begin needs one, and for a task action the row has a
+// target begin captures binds, a captain ID resolves from the last read where
+// begin needs one (begin reads the same m.registry and m.captainIDs), and for
+// a task action the row has a
 // canonical phase (a captain metadata row has none) that, with its holds, the
 // action's applies admits.
 func (m dashboardModel) offered(a *dashAction, it dashItem) bool {

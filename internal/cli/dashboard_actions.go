@@ -170,7 +170,8 @@ var dashActions = withBindings([]dashAction{
 			return []string{"delivery", "record-verdict", "--reviewer-task", v["reviewer"]}
 		}},
 	{key: "m", name: "delivery pr-merge", binding: bindTask, applies: func(ts fleet.TaskSnapshot, _ bool) bool {
-		return taskauthority.DeliversKind(ts.Kind) && taskauthority.Phase(ts.CurrentState).Deliverable()
+		// The snapshot sets Worktree and Window exactly from the bound worktree and endpoint.
+		return taskauthority.DeliversKind(ts.Kind) && taskauthority.DeliveryReady(taskauthority.Phase(ts.CurrentState), ts.Worktree != "", ts.Window != "")
 	},
 		fields: append([]dashField{{"pr", "PR URL", false}}, wordsFields...),
 		args: func(t dashTarget, v map[string]string) []string {

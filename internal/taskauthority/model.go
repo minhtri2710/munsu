@@ -84,6 +84,12 @@ func (p Phase) Unblockable() bool { return p == PhaseBlocked }
 // Deliverable reports whether a delivery authorization accepts the phase.
 func (p Phase) Deliverable() bool { return p == PhaseWorking }
 
+// DeliveryReady reports whether a delivery authorization accepts a task's
+// state: a deliverable phase with its worktree and endpoint bound.
+func DeliveryReady(p Phase, worktreeBound, endpointBound bool) bool {
+	return p.Deliverable() && worktreeBound && endpointBound
+}
+
 // DeliversKind reports whether delivery accepts a task of the kind.
 func DeliversKind(kind string) bool { return kind == KindShip }
 
