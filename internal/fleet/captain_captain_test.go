@@ -1710,6 +1710,27 @@ func TestCaptainIdentity(t *testing.T) {
 			want: "acquiring converge lock: converge lock is held by another process",
 		},
 		{
+			name: "launch allows meta of a foreign kind as seeded",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"kind": "ship"})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch allows meta bound to another captain id as seeded",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"sm_id": "other-id"})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
+			name: "launch allows captain meta with no window as seeded",
+			run: func(t *testing.T) error {
+				parent, captainHome := launchedCaptain(t, "", map[string]string{"window": ""})
+				return Launch(captainHome, parent, launchCaptureEndpoint{}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}, fakeIntegrationPort{})
+			},
+		},
+		{
 			name: "launch refuses unreadable captain meta",
 			run: func(t *testing.T) error {
 				parent, captainHome := launchedCaptain(t, "", map[string]string{"pad": strings.Repeat("x", 70000)})
