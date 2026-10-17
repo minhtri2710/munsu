@@ -51,6 +51,14 @@ func TestSoldierWritableFilesOpenOnlyAsRegularFiles(t *testing.T) {
 			}
 			return got.MessageID, err
 		}, "m1", ""},
+		{"ack write", "t1.acks", ack, func(home string) (string, error) {
+			if err := NewStore(home).WriteAck(&ProcessingAck{MessageID: "m2", SenderRank: RankGeneral, SenderIdentity: "general",
+				ReceiverRank: RankSoldier, ReceiverID: "t1", TaskID: "t1", PayloadHash: "h", ProcessedAt: 1, Outcome: "accepted"}); err != nil {
+				return "", err
+			}
+			b, err := os.ReadFile(filepath.Join(StateDir(home), "t1.acks"))
+			return string(b), err
+		}, `"message_id":"m2"`, ""},
 	}
 	plants := []struct {
 		name   string

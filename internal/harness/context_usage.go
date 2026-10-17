@@ -3,9 +3,12 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -127,7 +130,12 @@ func piRowUsage(line []byte) (used int, compaction bool, provider, model string)
 
 // piContextWindow is the model's contextWindow in the agent dir's models.json, 0 when absent.
 func piContextWindow(dir, provider, model string) int {
-	raw, err := os.ReadFile(filepath.Join(dir, "models.json"))
+	f, err := openRegular(filepath.Join(dir, "models.json"))
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(f)
 	if err != nil {
 		return 0
 	}
@@ -169,7 +177,7 @@ func lastUsage(path string, row func(line []byte) (used int, compaction bool)) i
 // tailLines is the lines in the last usageTailBytes of path. A line the
 // window cuts is not a JSON value, so the row decoders skip it.
 func tailLines(path string) [][]byte {
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return nil
 	}
@@ -182,6 +190,21 @@ func tailLines(path string) [][]byte {
 	buf := make([]byte, info.Size()-off)
 	n, _ := f.ReadAt(buf, off)
 	return bytes.Split(buf[:n], []byte("\n"))
+}
+
+// openRegular opens path for reading only if it is a regular file, never
+// through a symlink and never blocking on a FIFO: a seat writes its own harness
+// dir. home.OpenRegular does the same; harness may not import home.
+func openRegular(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return f, nil
 }
 
 // newestJSONL is the most recently modified regular *.jsonl directly in dir, "" when none.

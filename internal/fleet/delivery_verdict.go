@@ -132,17 +132,18 @@ func WorkingReviewTasks(homeDir string) ([]ReviewTaskRef, error) {
 // so a symlink or a device the reviewer left there is read as nothing.
 func readReviewVerdictFile(homeDir, taskID string, generation uint64) (data []byte, present bool, err error) {
 	path := reviewVerdictFile(reviewLaunchDir(homeDir, taskID, fmt.Sprint(generation)))
-	info, err := os.Lstat(path)
+	f, err := home.OpenRegular(path, os.O_RDONLY, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, true, fmt.Errorf("reading verdict file: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() > reviewVerdictMaxBytes {
-		return nil, true, fmt.Errorf("verdict file %s is not a regular file of at most %d bytes", path, reviewVerdictMaxBytes)
+	defer f.Close()
+	data, err = io.ReadAll(io.LimitReader(f, reviewVerdictMaxBytes+1))
+	if len(data) > reviewVerdictMaxBytes {
+		return nil, true, fmt.Errorf("verdict file %s is over %d bytes", path, reviewVerdictMaxBytes)
 	}
-	data, err = os.ReadFile(path)
 	if err != nil {
 		return nil, true, fmt.Errorf("reading verdict file: %w", err)
 	}

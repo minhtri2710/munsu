@@ -55,7 +55,7 @@ func Scaffold(opts ScaffoldOptions) error {
 	}
 	content = strings.ReplaceAll(content, "{TASK}", opts.Task)
 	path := filepath.Join(dir, "brief.md")
-	if old, err := os.ReadFile(path); err == nil {
+	if old, err := home.ReadRegularFile(path); err == nil {
 		if filled := testImpactSection(string(old)); filled != "" && !strings.Contains(filled, "{TEST_IMPACT}") {
 			if fresh := testImpactSection(content); fresh != "" {
 				content = strings.Replace(content, fresh, filled, 1)
@@ -314,7 +314,7 @@ func LintBrief(homeDir, id, kind string) error {
 	if err != nil {
 		return err
 	}
-	data, err := os.ReadFile(Path(homeDir, id))
+	data, err := home.ReadRegularFile(Path(homeDir, id))
 	if err != nil {
 		return fmt.Errorf("reading brief for task %s: %w", id, err)
 	}

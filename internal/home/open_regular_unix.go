@@ -7,11 +7,11 @@ import (
 	"syscall"
 )
 
-// openRegular opens path only if it is a regular file, never through a
+// OpenRegular opens path only if it is a regular file, never through a
 // symlink, and without blocking on a FIFO. A fenced soldier writes its own
 // status, ack log and scout report, so it can put a symlink, a FIFO or a
 // directory at those names; no unfenced reader or writer may follow one.
-func openRegular(path string, flag int, perm os.FileMode) (*os.File, error) {
+func OpenRegular(path string, flag int, perm os.FileMode) (*os.File, error) {
 	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, perm)
 	switch {
 	case errors.Is(err, syscall.ELOOP):
