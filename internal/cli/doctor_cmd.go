@@ -18,12 +18,15 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Read-only diagnostics with fix commands",
 		Long: `Run bootstrap diagnostics and print fix commands for each issue.
 
-Hard-required tools (doctor exits non-zero if missing):
-  git, the configured session backend's binary (herdr or tmux), and at least
-  one coding harness (pi, claude, agy, etc.) if soldier-harness detection fails.
+Doctor exits non-zero when any of these holds:
+  git is not on PATH;
+  a session backend binary (herdr or tmux) set in the fleet base config or a
+    registered project's overlay is not on PATH;
+  the home resolves no session backend (fleet base config, or a captain
+    home's published snapshot);
+  config/base.json is unreadable or invalid.
 
-Optional tools get warnings but do not fail the exit code:
-  gh-axi, gh, and GitHub auth.
+Everything else (gh-axi, gh, fuser, GitHub auth) warns without failing.
 
 Use --role for role-specific integration matrix:
   --role general   Harness adapter, session backend, gh auth, go toolchain, per-project launch readiness
@@ -65,10 +68,7 @@ Use --role for role-specific integration matrix:
 				return nil
 			}
 
-			result, err := bootstrap.Run(ctx.Home, false, nil)
-			if err != nil {
-				return fmt.Errorf("bootstrap: %w", err)
-			}
+			result := bootstrap.Run(ctx.Home, false, nil)
 
 			exitCode := 0
 			m := outputMarks(os.Stdout)
@@ -95,6 +95,10 @@ Use --role for role-specific integration matrix:
 			}
 			for _, c := range result.Configs {
 				fmt.Println(c.String())
+			}
+			if result.Backend == "" {
+				fmt.Println("    Fix: munsu config set backend herdr|tmux")
+				exitCode = 1
 			}
 			if result.WriteFence != nil {
 				fmt.Println(result.WriteFence.String())

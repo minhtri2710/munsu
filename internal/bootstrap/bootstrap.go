@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -83,7 +84,7 @@ type Result struct {
 
 // Run executes bootstrap diagnostics for the given munsu home.
 // If lockHeld is true, mutating sweeps (fleet-sync) may run.
-func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) (*Result, error) {
+func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) *Result {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = home
@@ -92,7 +93,7 @@ func Run(home string, lockHeld bool, reclaim ReclaimTaskDataDir) (*Result, error
 	return runWithRuntimeIdentity(home, lockHeld, &runtimeIdentity, reclaim)
 }
 
-func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) (*Result, error) {
+func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *RuntimeIdentity, reclaim ReclaimTaskDataDir) *Result {
 	res := &Result{
 		LockAcquired:    lockHeld,
 		RuntimeIdentity: runtimeIdentity,
@@ -104,10 +105,21 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 		res.Backend = backendIdentity
 	}
 
-	// 1. Check tools: the fixed set, plus the resolved backend's binary.
-	tools := checkedTools
-	if res.Backend != "" {
-		tools = append(tools[:len(tools):len(tools)], ToolSpec{res.Backend, true})
+	// 1. Check tools: the fixed set, plus every backend binary a spawn can use,
+	// the home's and each registered project's (base merged with its overlay).
+	// A project that fails to resolve adds nothing; doctor --role general
+	// reports it.
+	backends := []string{res.Backend}
+	projects, _ := fleet.List(home)
+	for _, p := range projects {
+		b, _ := fleet.ResolveProjectBackend(home, p.Name)
+		backends = append(backends, b)
+	}
+	tools := slices.Clone(checkedTools)
+	for _, b := range backends {
+		if b != "" && !slices.ContainsFunc(tools, func(s ToolSpec) bool { return s.Name == b }) {
+			tools = append(tools, ToolSpec{b, true})
+		}
 	}
 	for _, spec := range tools {
 		path, err := exec.LookPath(spec.Name)
@@ -183,7 +195,7 @@ func runWithRuntimeIdentity(home string, lockHeld bool, runtimeIdentity *Runtime
 		}
 	}
 
-	return res, nil
+	return res
 }
 
 // writeFenceDiagnostic is nil where the host has a write fence.

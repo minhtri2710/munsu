@@ -77,10 +77,7 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 			// Run bootstrap diagnostics and print
 			fmt.Println()
 			fmt.Println("--- Diagnostics ---")
-			result, err := bootstrap.Run(ctx.Home, false, nil)
-			if err != nil {
-				return fmt.Errorf("bootstrap diagnostics: %w", err)
-			}
+			result := bootstrap.Run(ctx.Home, false, nil)
 			for _, d := range result.Tools {
 				fmt.Println(d.String())
 			}

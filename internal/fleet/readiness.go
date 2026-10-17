@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	fleetconfig "github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fence"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -73,7 +74,8 @@ type ProjectReadiness struct {
 }
 
 // ProbeProjectReadiness runs the preflights a General-direct spawn of project
-// would run, in spawn's order: the delivery mode and the harness. The dispatch profile is selected with no task, so no profile matches
+// would run, in spawn's order: the delivery mode, the harness, and the session
+// backend (an unset backend refuses at resolution). The dispatch profile is selected with no task, so no profile matches
 // on the project's name. It reads project configuration and probes tools; it
 // mutates nothing.
 func ProbeProjectReadiness(homeDir, project string) (ProjectReadiness, error) {
@@ -93,7 +95,11 @@ func defaultLaunchError(homeDir string, cfg SpawnProjectConfig) error {
 	if err := deliveryPreflight(cfg.Soldier.Mode, cfg.ProjectPath, cfg.ForgeStep); err != nil {
 		return err
 	}
-	return launchHarnessError(homeDir, cfg.Soldier.Harness)
+	if err := launchHarnessError(homeDir, cfg.Soldier.Harness); err != nil {
+		return err
+	}
+	_, _, err := backend.Resolve(cfg.Frozen.Config().Backend)
+	return err
 }
 
 // launchHarnessError is the harness half of a spawn's preflight: the binary

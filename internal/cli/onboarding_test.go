@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
@@ -129,7 +130,8 @@ func TestInitDiagnosticsAndNextStepsFollowHomeState(t *testing.T) {
 		harness         string
 		onPath          []string
 		addProject      bool
-		wantTool        string
+		overlay         string // the registered project's overlay backend
+		wantTools       []string
 		wantSteps       []string
 		absentTool      []string
 		absentStep      []string
@@ -137,8 +139,8 @@ func TestInitDiagnosticsAndNextStepsFollowHomeState(t *testing.T) {
 	}{
 		{
 			name: "herdr resolved", backend: "herdr", harness: "claude",
-			onPath:   []string{"gh-axi", "gh", "fuser", "herdr"},
-			wantTool: "FOUND: herdr at ", wantSteps: []string{projectStep},
+			onPath:    []string{"gh-axi", "gh", "fuser", "herdr"},
+			wantTools: []string{"FOUND: herdr at "}, wantSteps: []string{projectStep},
 			absentTool: []string{"tmux"}, absentStep: []string{backendStep, harnessStep, doctorStep},
 			wantMissingNone: true,
 		},
@@ -151,14 +153,27 @@ func TestInitDiagnosticsAndNextStepsFollowHomeState(t *testing.T) {
 		},
 		{
 			name: "tmux resolved but missing, no harness", backend: "tmux",
-			onPath:   []string{"gh-axi", "gh", "fuser"},
-			wantTool: "MISSING: tmux", wantSteps: []string{harnessStep, doctorStep, projectStep},
+			onPath:    []string{"gh-axi", "gh", "fuser"},
+			wantTools: []string{"MISSING: tmux"}, wantSteps: []string{harnessStep, doctorStep, projectStep},
 			absentStep: []string{backendStep},
 		},
 		{
 			name: "project registered", backend: "tmux", harness: "claude",
 			onPath: []string{"gh-axi", "gh", "fuser", "tmux"}, addProject: true,
-			wantTool: "FOUND: tmux at ", absentStep: []string{backendStep, harnessStep, doctorStep, projectStep},
+			wantTools: []string{"FOUND: tmux at "}, absentStep: []string{backendStep, harnessStep, doctorStep, projectStep},
+			wantMissingNone: true,
+		},
+		{
+			name: "base tmux present, overlay herdr absent", backend: "tmux", harness: "claude",
+			onPath: []string{"gh-axi", "gh", "fuser", "tmux"}, addProject: true, overlay: "herdr",
+			wantTools: []string{"FOUND: tmux at ", "MISSING: herdr"}, wantSteps: []string{doctorStep},
+			absentStep: []string{backendStep, projectStep},
+		},
+		{
+			name: "base unset, overlay herdr present", harness: "claude",
+			onPath: []string{"gh-axi", "gh", "fuser", "herdr"}, addProject: true, overlay: "herdr",
+			wantTools: []string{"FOUND: herdr at "}, wantSteps: []string{backendStep},
+			absentTool: []string{"tmux"}, absentStep: []string{doctorStep, projectStep},
 			wantMissingNone: true,
 		},
 	} {
@@ -172,8 +187,11 @@ func TestInitDiagnosticsAndNextStepsFollowHomeState(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.addProject {
-				if out, err := runRoot(t, "project", "add", "sample", t.TempDir(), "--home", homeDir); err != nil {
-					t.Fatalf("project add: %v\n%s", err, out)
+				if err := fleet.Add(homeDir, "sample", t.TempDir(), true); err != nil {
+					t.Fatal(err)
+				}
+				if err := config.StoreProjectOverlay(homeDir, "sample", config.ProjectOverlay{Backend: tc.overlay}); err != nil {
+					t.Fatal(err)
 				}
 			}
 			git, err := exec.LookPath("git")
@@ -189,17 +207,21 @@ func TestInitDiagnosticsAndNextStepsFollowHomeState(t *testing.T) {
 			}
 			testutil.SetPath(t, bin)
 
-			res, err := bootstrap.Run(homeDir, false, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			res := bootstrap.Run(homeDir, false, nil)
 			var diag []string
+			seen := map[string]bool{}
 			for _, d := range res.Tools {
+				if seen[d.Tool] {
+					t.Errorf("diagnostics check %s twice", d.Tool)
+				}
+				seen[d.Tool] = true
 				diag = append(diag, d.String())
 			}
 			diagText := strings.Join(diag, "\n")
-			if tc.wantTool != "" && !strings.Contains(diagText, tc.wantTool) {
-				t.Errorf("diagnostics lack %q:\n%s", tc.wantTool, diagText)
+			for _, want := range tc.wantTools {
+				if !strings.Contains(diagText, want) {
+					t.Errorf("diagnostics lack %q:\n%s", want, diagText)
+				}
 			}
 			for _, tool := range tc.absentTool {
 				if strings.Contains(diagText, ": "+tool+" ") {

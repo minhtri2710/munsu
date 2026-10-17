@@ -75,6 +75,16 @@ func ResolveProjectSnapshot(homeDir, projectName string) (config.ResolvedSnapsho
 	return config.NewResolvedSnapshotWithToolProbe(base, facts, configuredToolProbe)
 }
 
+// ResolveProjectBackend resolves one Project's session backend from the same
+// facts and merge as ResolveProjectSnapshot, without probing its tools.
+func ResolveProjectBackend(homeDir, projectName string) (string, error) {
+	base, facts, err := loadProjectFacts(homeDir, projectName)
+	if err != nil {
+		return "", err
+	}
+	return config.ResolveProjectBackend(base, facts)
+}
+
 // resolveCapturedProjectSnapshot resolves one Project's snapshot against the
 // forge step its task generation captured, without probing the overlay's
 // current tool entry.

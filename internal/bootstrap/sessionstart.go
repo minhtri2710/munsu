@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -71,7 +70,6 @@ type CaptainLivenessResult struct {
 type CaptainLivenessFunc func(home string, recover bool) CaptainLivenessResult
 
 var sessionStartBootstrap = runWithRuntimeIdentity
-var sessionStartRelease = orchestrator.ReleaseSession
 var sessionStartSetConfig = config.Set
 
 func printDataFile(w io.Writer, home, name string) {
@@ -318,18 +316,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		recordGeneralDelivery(w, home)
 	}
 
-	bootRes, err := sessionStartBootstrap(home, acquired, res.RuntimeIdentity, reclaim)
-	if err != nil {
-		bootstrapErr := fmt.Errorf("bootstrap: %w", err)
-		if !acquired {
-			return res, bootstrapErr
-		}
-		if releaseErr := sessionStartRelease(home); releaseErr != nil {
-			return res, errors.Join(bootstrapErr, fmt.Errorf("lock release: %w", releaseErr))
-		}
-		res.LockAcquired = false
-		return res, bootstrapErr
-	}
+	bootRes := sessionStartBootstrap(home, acquired, res.RuntimeIdentity, reclaim)
 	res.Bootstrap = bootRes
 
 	fmt.Fprintln(w, "--- Bootstrap Diagnostics ---")

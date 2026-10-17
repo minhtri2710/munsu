@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 
@@ -75,39 +75,23 @@ func TestDoctorReturnsWhenHardRequiredToolMissing(t *testing.T) {
 	}
 }
 
-// TestDoctorReturnsZeroExitWhenNothingHardRequiredIsMissing pins the other
-// half of the external contract: a healthy run asks for no exit code at all,
-// so `munsu doctor` still exits 0 from cmd/munsu/main.go.
-func TestDoctorReturnsZeroExitWhenNothingHardRequiredIsMissing(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	t.Setenv("MUNSU_HOME", homeDir)
-
-	codes := captureExit(t, func() {
-		captureProcessStderr(t, func() {
-			if got, err := runRoot(t, "doctor"); err != nil {
-				t.Errorf("doctor returned an error: %v\n%s", err, got)
-			}
-		})
-	})
-
-	for _, code := range codes {
-		if code != 0 {
-			t.Fatalf("healthy doctor asked for exit %d, want none non-zero (all codes: %v)", code, codes)
-		}
-	}
-}
-
-// TestDoctorRequiresOnlyTheResolvedBackendBinary: the session backend's binary
-// is hard-required only once a backend is resolved, and only that binary.
-func TestDoctorRequiresOnlyTheResolvedBackendBinary(t *testing.T) {
+// TestDoctorRequiresTheBackendsASpawnUses: doctor exits 1 when the home
+// resolves no backend, or when the binary of the home's backend or of a
+// registered project's backend (base merged with its overlay) is missing.
+func TestDoctorRequiresTheBackendsASpawnUses(t *testing.T) {
+	const fix = "Fix: munsu config set backend herdr|tmux"
 	for _, tc := range []struct {
-		name, backend string
-		wantExit      bool
+		name, base, overlay string
+		onPath              []string
+		wantMissing         bool // "Some required tools are missing." and exit 1
+		wantFix             bool // the set-backend fix and exit 1
 	}{
-		{"herdr resolved, herdr present, tmux absent", "herdr", false},
-		{"tmux resolved, tmux absent", "tmux", true},
-		{"no backend resolved", "", false},
+		{"herdr resolved, herdr present, tmux absent", "herdr", "", []string{"herdr"}, false, false},
+		{"tmux resolved, tmux absent", "tmux", "", []string{"herdr"}, true, false},
+		{"no backend resolved", "", "", []string{"herdr", "tmux"}, false, true},
+		{"base tmux present, overlay herdr absent", "tmux", "herdr", []string{"tmux"}, true, false},
+		{"base tmux absent, overlay herdr present", "tmux", "herdr", []string{"herdr"}, true, false},
+		{"base unset, overlay herdr present", "", "herdr", []string{"herdr"}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -115,32 +99,42 @@ func TestDoctorRequiresOnlyTheResolvedBackendBinary(t *testing.T) {
 			t.Setenv("MUNSU_HOME", homeDir)
 			if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
 				SchemaVersion: config.FleetBaseSchemaVersion,
-				Config:        config.FleetBaseConfig{Backend: tc.backend},
+				Config:        config.FleetBaseConfig{Backend: tc.base},
 			}); err != nil {
 				t.Fatal(err)
 			}
-			binDir := t.TempDir()
-			testutil.WriteFakeExecutable(t, filepath.Join(binDir, "git"), "#!/bin/sh\nexit 0\n")
-			testutil.WriteFakeExecutable(t, filepath.Join(binDir, "herdr"), "#!/bin/sh\nexit 0\n")
-			testutil.SetPath(t, binDir)
-			if _, err := exec.LookPath("tmux"); err == nil {
-				t.Fatal("test PATH unexpectedly contains tmux")
+			if tc.overlay != "" {
+				if err := fleet.Add(homeDir, "p1", t.TempDir(), true); err != nil {
+					t.Fatal(err)
+				}
+				if err := config.StoreProjectOverlay(homeDir, "p1", config.ProjectOverlay{Backend: tc.overlay}); err != nil {
+					t.Fatal(err)
+				}
 			}
+			binDir := t.TempDir()
+			for _, tool := range append([]string{"git"}, tc.onPath...) {
+				testutil.WriteFakeExecutable(t, filepath.Join(binDir, tool), "#!/bin/sh\nexit 0\n")
+			}
+			testutil.SetPath(t, binDir)
 
-			var stderr string
+			var stdout, stderr string
 			codes := captureExit(t, func() {
-				stderr = captureProcessStderr(t, func() {
+				stdout, stderr = captureBoth(func() {
 					if got, err := runRoot(t, "doctor"); err != nil {
 						t.Errorf("doctor returned an error: %v\n%s", err, got)
 					}
 				})
 			})
-			if tc.wantExit {
-				if len(codes) != 1 || codes[0] != 1 || !strings.Contains(stderr, "Some required tools are missing.") {
-					t.Fatalf("doctor exit codes = %v, stderr = %q, want [1] and the missing-tools report", codes, stderr)
-				}
-			} else if len(codes) != 0 {
-				t.Fatalf("doctor asked for exit codes %v, want none; stderr = %q", codes, stderr)
+			wantExit := tc.wantMissing || tc.wantFix
+			exited := len(codes) == 1 && codes[0] == 1
+			if wantExit != exited || !wantExit && len(codes) != 0 {
+				t.Fatalf("doctor exit codes = %v, want exit 1 = %v\nstdout:\n%s\nstderr:\n%s", codes, wantExit, stdout, stderr)
+			}
+			if got := strings.Contains(stderr, "Some required tools are missing."); got != tc.wantMissing {
+				t.Fatalf("missing-tools report = %v, want %v\nstdout:\n%s\nstderr:\n%s", got, tc.wantMissing, stdout, stderr)
+			}
+			if got := strings.Contains(stdout, fix); got != tc.wantFix {
+				t.Fatalf("set-backend fix = %v, want %v\nstdout:\n%s", got, tc.wantFix, stdout)
 			}
 		})
 	}

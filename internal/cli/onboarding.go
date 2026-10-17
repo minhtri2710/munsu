@@ -21,7 +21,7 @@ func printNextSteps(w io.Writer, homeDir string, res *bootstrap.Result) {
 	if len(res.MissingTools) > 0 {
 		steps = append(steps, step{"munsu doctor", "Show fix commands for the diagnostics above"})
 	}
-	if projects, err := fleet.List(homeDir); err != nil || len(projects) == 0 {
+	if projects, _ := fleet.List(homeDir); len(projects) == 0 {
 		steps = append(steps, step{"munsu project add <name> <path-or-url>", "Register a project"})
 	}
 	steps = append(steps, step{"munsu session-start", "Start a session"})
