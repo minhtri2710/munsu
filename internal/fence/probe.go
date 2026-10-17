@@ -16,6 +16,7 @@ import (
 const (
 	sandboxExec = "/usr/bin/sandbox-exec"
 	touchBin    = "/usr/bin/touch"
+	statBin     = "/usr/bin/stat"
 )
 
 // Wrap returns the fenced argv for a launch argv: sandbox-exec with the exact
@@ -33,10 +34,12 @@ func (f *Fence) Wrap(argv []string) ([]string, error) {
 // the primary checkout, the git common dir, for a soldier its home roots, and for a reviewer the checkout under review, its git
 // dir and its home.
 // A home root that does not exist yet (.journal, .lock) is probed by creating
-// it, which the profile must refuse too. It returns a nil error only when the control
-// succeeds and every refused write fails with "Operation not permitted". A
-// write that succeeds, a missing sandbox-exec, a profile that does not compile
-// and any other error are failures. The Evidence is returned either way.
+// it, which the profile must refuse too. Then it stats each existing credential
+// path the profile must refuse to read. It returns a nil error only when the
+// control succeeds and every refused write and read fails with "Operation not
+// permitted". A write or read that succeeds, a missing sandbox-exec, a profile
+// that does not compile and any other error are failures. The Evidence is
+// returned either way.
 func (f *Fence) Probe(ctx context.Context) (Evidence, error) {
 	ev := Evidence{Role: f.role, Harness: f.harness, ProfileDigest: f.digest, WritableRoots: f.roots}
 	fail := func(s ProbeStep) (Evidence, error) {
@@ -75,6 +78,19 @@ func (f *Fence) Probe(ctx context.Context) (Evidence, error) {
 		if _, statErr := os.Lstat(target); statErr == nil {
 			os.Remove(target)
 			return fail(ProbeStep{Command: f.record(cmd), Outcome: OutcomeWritten, Detail: detail(out, runErr)})
+		}
+		var exit *exec.ExitError
+		if !errors.As(runErr, &exit) || !bytes.Contains(out, []byte("Operation not permitted")) {
+			return fail(ProbeStep{Command: f.record(cmd), Outcome: OutcomeError, Detail: detail(out, runErr)})
+		}
+		ev.Steps = append(ev.Steps, ProbeStep{Command: f.record(cmd), Outcome: OutcomeRefused})
+	}
+
+	for _, p := range f.readRefuse {
+		cmd := []string{sandboxExec, "-p", f.profile, statBin, "-f", "%i", p}
+		out, runErr := run(ctx, cmd)
+		if runErr == nil {
+			return fail(ProbeStep{Command: f.record(cmd), Outcome: OutcomeRead, Detail: detail(out, runErr)})
 		}
 		var exit *exec.ExitError
 		if !errors.As(runErr, &exit) || !bytes.Contains(out, []byte("Operation not permitted")) {

@@ -41,11 +41,8 @@ func newCaptain(l Launch) (*Fence, error) {
 	p, parent, git, socket, docs := c.launchPaths, c.parent, c.git, c.socket, c.docs
 	state := filepath.Join(p.home, "state")
 
-	userHome, err := os.UserHomeDir()
+	userHome, err := resolvePath(l.UserHome, true)
 	if err != nil {
-		return nil, fmt.Errorf("fence: resolving user home: %w", err)
-	}
-	if userHome, err = resolvePath(userHome, true); err != nil {
 		return nil, fmt.Errorf("fence: user home: %w", err)
 	}
 	dirs, binDirs, err := harnessState(l.Harness, userHome, p.stateDir)
@@ -55,6 +52,7 @@ func newCaptain(l Launch) (*Fence, error) {
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
+	readRefuse := denyCredentialReads(&b, userHome)
 	denySocketConnects(&b, socket)
 	var roots []string
 	allowRoots := func(paths ...string) {
@@ -85,7 +83,7 @@ func newCaptain(l Launch) (*Fence, error) {
 	refuse := append(append([]string{p.home}, homeRoots(p.home)...), parent)
 	refuse = append(append(refuse, durableHomeRoots(parent)...), git...)
 	sum := sha256.Sum256([]byte(b.String()))
-	return &Fence{role: RoleCaptain, harness: l.Harness, profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse)}, nil
+	return &Fence{role: RoleCaptain, harness: l.Harness, profile: b.String(), digest: hex.EncodeToString(sum[:]), refuse: dedupe(refuse), readRefuse: readRefuse}, nil
 }
 
 // captainPaths is a captain Launch with every path resolved and validated.

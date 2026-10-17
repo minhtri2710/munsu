@@ -98,17 +98,38 @@ func withinOnDisk(child, root string) bool {
 	}
 }
 
+// credentialDirs and credentialFiles are the home-relative credential paths no
+// fenced seat reads (denied as subpath and literal) and no writable root
+// overlaps. The list is the known set, not exhaustive.
+var (
+	credentialDirs  = []string{".ssh", ".gnupg", ".aws", ".kube", ".azure", ".docker", ".password-store", ".config/gcloud"}
+	credentialFiles = []string{".netrc", ".git-credentials", ".npmrc", ".pypirc"}
+)
+
 // forbiddenRootPaths lists each protected path as given and, when it exists,
 // symlink-resolved, so a root cannot reach one through a symlinked parent. The
 // home-relative list is the known credential and tool set, not exhaustive.
 func forbiddenRootPaths(userHome string, facts RootFacts) []string {
 	paths := append([]string{facts.Home, "/opt/homebrew", "/usr/local"}, facts.Checkouts...)
-	for _, rel := range []string{".ssh", ".gnupg", ".config", ".pi", ".docker", ".aws", ".kube", ".azure", ".password-store", ".local/bin", "go/bin", ".cargo/bin", "Library/LaunchAgents", "Library/Keychains"} {
-		paths = append(paths, filepath.Join(userHome, filepath.FromSlash(rel)))
-	}
+	paths = append(paths, homePaths(userHome, credentialDirs)...)
+	paths = append(paths, homePaths(userHome, []string{".config", ".pi", ".local/bin", "go/bin", ".cargo/bin", "Library/LaunchAgents", "Library/Keychains"})...)
 	claude, _ := filepath.Glob(filepath.Join(userHome, ".claude*"))
 	paths = append(paths, claude...)
 	paths = append(paths, filepath.SplitList(os.Getenv("PATH"))...)
+	return withResolved(paths)
+}
+
+func homePaths(userHome string, rels []string) []string {
+	var out []string
+	for _, rel := range rels {
+		out = append(out, filepath.Join(userHome, filepath.FromSlash(rel)))
+	}
+	return out
+}
+
+// withResolved returns each absolute path cleaned and, when it exists and
+// differs, symlink-resolved too; relative paths are dropped.
+func withResolved(paths []string) []string {
 	var out []string
 	for _, p := range paths {
 		if !filepath.IsAbs(p) {

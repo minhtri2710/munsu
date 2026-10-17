@@ -1283,6 +1283,8 @@ func TestProbeFailureOutcomes(t *testing.T) {
 		{"a profile that refuses the control write fails the control", &Fence{profile: "(version 1)\n(allow default)\n(deny file-write*)\n", digest: "d", refuse: []string{dir}}, OutcomeControlFailed, 1},
 		{"a refusal that is not the sandbox's is an error", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "file", "sub")}}, OutcomeError, 2},
 		{"a missing refused dir the profile lets the seat create is open", &Fence{profile: open, digest: "d", refuse: []string{filepath.Join(dir, "missing")}}, OutcomeWritten, 2},
+		{"a profile that lets the seat read a credential path is open", &Fence{profile: open, digest: "d", readRefuse: []string{dir}}, OutcomeRead, 2},
+		{"a read refusal that is not the sandbox's is an error", &Fence{profile: open, digest: "d", readRefuse: []string{filepath.Join(dir, "missing")}}, OutcomeError, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1542,5 +1544,104 @@ func TestCaptainProbeProvesItsHomeAndTheGeneralHomeRefused(t *testing.T) {
 		if !slices.Contains(f.refuse, want) {
 			t.Errorf("probe refuses %q, want %s among them", f.refuse, want)
 		}
+	}
+}
+
+// credentialHome is a user home apart from HOME holding a credential dir, a
+// symlinked one, a credential file, and the readable neighbours beside them.
+func credentialHome(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, gnupg := filepath.Join(root, "cred"), filepath.Join(root, "real-gnupg")
+	mkdirs(t, filepath.Join(home, ".ssh"), filepath.Join(home, ".sshcache"), filepath.Join(home, ".config", "gh"), gnupg)
+	for p, s := range map[string]string{
+		filepath.Join(home, ".ssh", "id"): "id", filepath.Join(gnupg, "k"): "k", filepath.Join(home, ".netrc"): "netrc",
+		filepath.Join(home, ".sshcache", "f"): "f", filepath.Join(home, ".config", "gh", "hosts.yml"): "hosts",
+	} {
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(gnupg, filepath.Join(home, ".gnupg")); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// Every fenced seat is refused reading the credential paths under the launch's
+// user home, a symlinked one at its target too, and still reads their
+// neighbours; its probe proves each existing one refused, and fails with
+// OutcomeRead on a profile without the deny.
+func TestSeatCannotReadCredentials(t *testing.T) {
+	seatEnv(t, t.TempDir())
+	for _, role := range []struct {
+		name  string
+		fence func(t *testing.T, home string) *Fence
+	}{
+		{"soldier", func(t *testing.T, home string) *Fence {
+			x := newLayout(t).soldier()
+			x.UserHome = home
+			return mustNew(t, x)
+		}},
+		{"reviewer", func(t *testing.T, home string) *Fence {
+			x := newLayout(t).reviewer()
+			x.UserHome = home
+			return mustNew(t, x)
+		}},
+		{"captain", func(t *testing.T, home string) *Fence {
+			_, x := captainFence(t, newLayout(t))
+			x.UserHome = home
+			return mustNew(t, x)
+		}},
+	} {
+		t.Run(role.name, func(t *testing.T) {
+			home := credentialHome(t)
+			f := role.fence(t, home)
+			for _, p := range []string{filepath.Join(home, ".ssh", "id"), filepath.Join(home, ".gnupg", "k"),
+				filepath.Join(filepath.Dir(home), "real-gnupg", "k"), filepath.Join(home, ".netrc")} {
+				if out, err := fenced(t, f, "/bin/cat", p); err == nil || !strings.Contains(out, "Operation not permitted") {
+					t.Errorf("read %s was not refused by the fence: %v %s", p, err, out)
+				}
+			}
+			for p, want := range map[string]string{filepath.Join(home, ".sshcache", "f"): "f", filepath.Join(home, ".config", "gh", "hosts.yml"): "hosts"} {
+				if out, err := fenced(t, f, "/bin/cat", p); err != nil || out != want {
+					t.Errorf("read %s = %q, %v; want %q", p, out, err, want)
+				}
+			}
+
+			ev, err := f.Probe(context.Background())
+			if err != nil {
+				t.Fatalf("Probe: %v", err)
+			}
+			var read []string
+			for _, s := range ev.Steps {
+				if s.Command[3] == statBin {
+					if s.Outcome != OutcomeRefused {
+						t.Errorf("read step %+v, want refused", s)
+					}
+					read = append(read, s.Command[len(s.Command)-1])
+				}
+			}
+			want := []string{filepath.Join(home, ".ssh"), filepath.Join(home, ".gnupg"), filepath.Join(filepath.Dir(home), "real-gnupg"), filepath.Join(home, ".netrc")}
+			if !slices.Equal(read, want) {
+				t.Errorf("probed reads %q, want %q", read, want)
+			}
+
+			open := *f
+			var kept []string
+			for _, line := range strings.Split(f.profile, "\n") {
+				if !strings.HasPrefix(line, "(deny file-read*") {
+					kept = append(kept, line)
+				}
+			}
+			open.profile = strings.Join(kept, "\n")
+			ev, err = open.Probe(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "fence probe: "+string(OutcomeRead)) || ev.Steps[len(ev.Steps)-1].Outcome != OutcomeRead {
+				t.Fatalf("Probe without the deny = %+v, %v; want a %s failure", ev.Steps, err, OutcomeRead)
+			}
+		})
 	}
 }

@@ -1,7 +1,8 @@
 // Package fence confines a launched seat's whole process tree to a set of
-// writable roots with an OS sandbox (macOS sandbox-exec), refuses every
-// unix-socket connect but DNS's and a captain's seat socket, and refuses the
-// removal or replacement of a claude or tmux socket. It also
+// writable roots with an OS sandbox (macOS sandbox-exec), refuses reading the
+// known credential paths under the user home, refuses every unix-socket
+// connect but DNS's and a captain's seat socket, and refuses the removal or
+// replacement of a claude or tmux socket. It also
 // reports every outbound connect to the Sandbox log: an observe-only (allow
 // network-outbound (with report)) sits before the socket denies, which are
 // last-match-wins, so it logs seat egress and refuses nothing. It is defense
@@ -104,8 +105,9 @@ type Outcome string
 
 const (
 	OutcomeAllowed       Outcome = "allowed"        // the control write to an allowed root succeeded
-	OutcomeRefused       Outcome = "refused"        // the write failed with "Operation not permitted"
+	OutcomeRefused       Outcome = "refused"        // the write or read failed with "Operation not permitted"
 	OutcomeWritten       Outcome = "written"        // the write succeeded: the fence is open
+	OutcomeRead          Outcome = "read"           // the credential read succeeded: the fence is open
 	OutcomeControlFailed Outcome = "control-failed" // a write to an allowed root failed: the profile did not compile or the sandbox did not run
 	OutcomeUnavailable   Outcome = "unavailable"    // sandbox-exec is missing
 	OutcomeError         Outcome = "error"          // any other probe error
@@ -119,7 +121,8 @@ type ProbeStep struct {
 }
 
 // Evidence is the typed probe record for LaunchEvidence. The first step is the
-// allowed-root control; every later step is a write the profile must refuse.
+// allowed-root control; every later step is a write, then a credential read,
+// the profile must refuse.
 // Probe always returns it, including on failure.
 type Evidence struct {
 	Role          Role
