@@ -194,6 +194,43 @@ func TestProjectConfigSetInvalidHarnessRefused(t *testing.T) {
 	}
 }
 
+// TestProjectConfigSetBackend verifies the overlay backend setter refuses an
+// unsupported identity without storing it and stores each supported one.
+func TestProjectConfigSetBackend(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  string // refusal text; "" allows
+	}{
+		{"bogus", `unknown session backend: "bogus" (supported: herdr, tmux)`},
+		{"", ""},
+		{"herdr", ""},
+		{"tmux", ""},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("MUNSU_HOME", home)
+			registerProject(t, home, "sample")
+			_, err := runProjectConfig(t, "set", "sample", "backend", tc.value)
+			overlay, loadErr := config.LoadProjectOverlay(home, "sample")
+			if loadErr != nil {
+				t.Fatalf("LoadProjectOverlay: %v", loadErr)
+			}
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("set backend %q: err = %v, want %q", tc.value, err, tc.want)
+				}
+				if overlay.Backend != "" {
+					t.Fatalf("a refused backend was stored: %q", overlay.Backend)
+				}
+				return
+			}
+			if err != nil || overlay.Backend != tc.value {
+				t.Fatalf("set backend %q: err = %v, stored %q", tc.value, err, overlay.Backend)
+			}
+		})
+	}
+}
+
 // TestProjectConfigMalformedOverlayDocFailsClosed verifies both get and set
 // fail closed when the Config-owned overlay document is present but carries an
 // unsupported schemaVersion, exercising the overlay-load refusal branch.

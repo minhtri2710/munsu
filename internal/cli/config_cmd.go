@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -157,6 +158,10 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 			case "backend":
 				if strings.TrimSpace(value) == "" {
 					return fmt.Errorf("config set backend: backend identity must not be empty")
+				}
+				// Words: Human, typed, 2026-10-17: "làm cả 2" (refuse unsupported backend at config set)
+				if err := backend.ValidateBackend(value); err != nil {
+					return fmt.Errorf("config set backend: %w", err)
 				}
 				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.Backend = value })
 			}
