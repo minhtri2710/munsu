@@ -17,7 +17,7 @@ func TestAFKReleaseKeepsSessionLock(t *testing.T) {
 	if err != nil || !acquired {
 		t.Fatalf("AcquireSession = %v, %v; want held", acquired, err)
 	}
-	t.Cleanup(func() { _ = ReleaseSession(h) })
+	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(h) })
 	before, err := os.Stat(mhome.SessionLockPath(h))
 	if err != nil {
 		t.Fatal(err)

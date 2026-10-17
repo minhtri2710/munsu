@@ -78,11 +78,9 @@ func releaseWatcherLock(p string) error {
 }
 func ReleaseWatchLock(h string) error { return releaseWatcherLock(WatchLockPath(h)) }
 
-// ReleaseSessionLock drops a session lock this process holds.
-//
-// Session-start holds this lock for the process lifetime and lets exit drop it,
-// so the success path never calls this. An ABORTED session-start must, because
-// the session it locked for never started (#549 group 10).
+// ReleaseSessionLock drops a session lock this process holds. Session-start
+// holds the lock for the process lifetime and lets exit drop it, so only tests,
+// which outlive the session they start, call this.
 func ReleaseSessionLock(h string) error { return releaseWatcherLock(SessionLockPath(h)) }
 
 // watcherLockHeld probes p with a transient non-blocking lock. It fails

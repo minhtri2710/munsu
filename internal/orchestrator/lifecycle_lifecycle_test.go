@@ -41,7 +41,7 @@ func TestLockExclusivity(t *testing.T) {
 	// on the success path releases it -- but a test is not a process lifetime.
 	// acquireWatcherLock parks the *os.File in home.watcherLocks and only
 	// releaseWatcherLock closes it.
-	t.Cleanup(func() { _ = ReleaseSession(home) })
+	t.Cleanup(func() { _ = mhome.ReleaseSessionLock(home) })
 
 	acq1, err := AcquireSession(home)
 	if err != nil {

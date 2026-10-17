@@ -17,8 +17,7 @@ func IsSessionLocked(homeDir string) (bool, error) { return home.IsSessionLockHe
 func AcquireWatch(homeDir string) (bool, error) {
 	return home.AcquireWatchLock(homeDir)
 }
-func ReleaseWatch(homeDir string) error   { return home.ReleaseWatchLock(homeDir) }
-func ReleaseSession(homeDir string) error { return home.ReleaseSessionLock(homeDir) }
+func ReleaseWatch(homeDir string) error { return home.ReleaseWatchLock(homeDir) }
 
 // --- Durable beat and queue operations (owned by home) ---
 func WriteBeat(homeDir string) error             { return home.WriteWatcherBeat(homeDir) }
